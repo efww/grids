@@ -612,18 +612,38 @@ pub(crate) unsafe fn delete_selection(i: usize, shift: bool) {
 }
 
 pub(crate) unsafe fn start_delete(srcs: Vec<String>, permanent: bool, ask_owner: isize) -> bool {
+    start_delete_notify(srcs, permanent, ask_owner, HWND::default(), 0)
+}
+
+/// Like `start_delete`, then `PostMessageW(notify, msg, success, 0)` when the worker finishes.
+/// `success` is 1 only when `PerformOperations` returned Ok (cancelled/failed = 0).
+pub(crate) unsafe fn start_delete_notify(
+    srcs: Vec<String>,
+    permanent: bool,
+    ask_owner: isize,
+    notify: HWND,
+    msg: u32,
+) -> bool {
     let busy = Busy::new();
+    let notify_hwnd = notify.0 as isize;
     let job = std::thread::Builder::new().spawn(move || {
         let _busy = busy;
         let com = CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok();
-        if let Err(e) = run_delete(&srcs, permanent, ask_owner) {
-            if e.code() != COPYENGINE_E_USER_CANCELLED && e.code() != ERROR_CANCELLED.to_hresult() {
-                let text = HSTRING::from(format!("{}{}", tr(crate::Key::DeleteFailed), e.message()));
-                _ = MessageBoxW(None, &text, w!("Maguro"), MB_ICONWARNING);
+        let ok = match run_delete(&srcs, permanent, ask_owner) {
+            Ok(()) => true,
+            Err(e) => {
+                if e.code() != COPYENGINE_E_USER_CANCELLED && e.code() != ERROR_CANCELLED.to_hresult() {
+                    let text = HSTRING::from(format!("{}{}", tr(crate::Key::DeleteFailed), e.message()));
+                    _ = MessageBoxW(None, &text, w!("Maguro"), MB_ICONWARNING);
+                }
+                false
             }
-        }
+        };
         if com {
             CoUninitialize();
+        }
+        if notify_hwnd != 0 && msg != 0 {
+            _ = PostMessageW(Some(HWND(notify_hwnd as _)), msg, WPARAM(ok as usize), LPARAM(0));
         }
     });
     let Ok(job) = job else { return false };

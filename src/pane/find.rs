@@ -394,6 +394,33 @@ pub(crate) fn find_neighbour(sel: usize, n: usize, prev: bool) -> Option<usize> 
     if prev { sel.checked_sub(1) } else { (sel + 1 < n).then_some(sel + 1) }
 }
 
+/// Neighbour of the current find selection without moving it (next, else previous).
+pub(crate) unsafe fn peek_find_neighbour(i: usize) -> Option<FindHit> {
+    let hwnd = pane_hwnd(i)?;
+    let map = find_map();
+    let u = map.get(&(hwnd.0 as isize))?;
+    if !u.show {
+        return None;
+    }
+    let next = find_neighbour(u.sel, u.hits.len(), false).or_else(|| find_neighbour(u.sel, u.hits.len(), true))?;
+    Some(u.hits[next].clone())
+}
+
+/// Point the find list at `path` if it is still a hit (after peek delete advances).
+pub(crate) unsafe fn peek_find_select_path(i: usize, path: &str) {
+    let Some(hwnd) = pane_hwnd(i) else { return };
+    let mut map = find_map();
+    let Some(u) = map.get_mut(&(hwnd.0 as isize)) else { return };
+    if let Some(k) = u.hits.iter().position(|h| h.path == path) {
+        u.sel = k;
+        let list = hwnd_of(u.list);
+        drop(map);
+        if !list.0.is_null() {
+            _ = InvalidateRect(Some(list), None, false);
+        }
+    }
+}
+
 /// Move the result selection by one row and return that hit. Stays put at either end.
 pub(crate) unsafe fn step_find_sel(i: usize, prev: bool) -> Option<FindHit> {
     let hwnd = pane_hwnd(i)?;

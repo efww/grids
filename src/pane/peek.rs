@@ -1,3 +1,4 @@
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use crate::imports::*;
@@ -5,7 +6,7 @@ use crate::app::*;
 use crate::ui::*;
 use crate::i18n::*;
 use super::preview::*;
-use super::{focus_find_list, focus_view, step_find_sel};
+use super::{focus_find_list, focus_view, peek_find_neighbour, peek_find_select_path, step_find_sel};
 use windows::Win32::Graphics::Dwm::{DWMNCRP_DISABLED, DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE, DWMWA_NCRENDERING_POLICY};
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Controls::ILD_NORMAL;
@@ -38,6 +39,7 @@ pub(crate) const WM_PEEK_LOST: u32 = WM_APP + 51; // the preview went inactive: 
 pub(crate) const WM_PEEK_HOSTED: u32 = WM_APP + 52; // wParam = generation, lParam = 1 shown / 0 failed
 const WM_PEEK_HOST_SIZE: u32 = WM_APP + 53; // thread message: the host window changed size
 const WM_PEEK_ZOOM: u32 = WM_APP + 54; // wParam = generation; a PDF page was re-rendered for zoom. Does not resize.
+const WM_PEEK_DELETED: u32 = WM_APP + 56; // wParam = 1 success / 0 cancel-or-fail; apply AFTER_DEL
 
 const ICON_PREV: &str = "";
 const ICON_NEXT: &str = "";
@@ -1030,6 +1032,175 @@ pub(crate) unsafe fn close_peek(h: HWND) {
     _ = DestroyWindow(h);
     if !(from_find && focus_find_list(i)) {
         focus_view(i);
+    }
+}
+
+/// Where preview should go after a successful Delete from the peek window.
+enum AfterDel {
+    /// Folder / find neighbour to show next (path + display name).
+    Show { path: String, name: String },
+    Close,
+}
+
+static AFTER_DEL: Mutex<Option<AfterDel>> = Mutex::new(None);
+
+/// Keep peek alive across Maguro confirm / IFileOperation progress (avoids WA_INACTIVE → close).
+static HOLD_PEEK: AtomicBool = AtomicBool::new(false);
+
+fn take_after_del() -> Option<AfterDel> {
+    AFTER_DEL.lock().unwrap_or_else(|e| e.into_inner()).take()
+}
+
+fn set_after_del(plan: Option<AfterDel>) {
+    *AFTER_DEL.lock().unwrap_or_else(|e| e.into_inner()) = plan;
+}
+
+unsafe fn visible_item_path(fv: &IFolderView2, cur: i32, prev: bool) -> Option<(String, String)> {
+    let mut next = -1;
+    let hr = (Interface::vtable(fv).GetVisibleItem)(Interface::as_raw(fv), cur, prev.into(), &mut next);
+    let n = fv.ItemCount(SVGIO_ALLVIEW).unwrap_or(0);
+    if hr != S_OK || !(0..n).contains(&next) {
+        return None;
+    }
+    let it = fv.GetItem::<IShellItem>(next).ok()?;
+    let path = it
+        .GetDisplayName(SIGDN_FILESYSPATH)
+        .ok()
+        .or_else(|| it.GetDisplayName(SIGDN_DESKTOPABSOLUTEPARSING).ok())
+        .map(|p| pwstr(p))?;
+    let name = it.GetDisplayName(SIGDN_NORMALDISPLAY).ok().map(|p| pwstr(p)).unwrap_or_else(|| {
+        Path::new(&path)
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.clone())
+    });
+    Some((path, name))
+}
+
+unsafe fn plan_after_peek_delete() -> AfterDel {
+    if FROM_FIND.load(Ordering::SeqCst) {
+        let i = app(|a| a.peek_pane);
+        return match peek_find_neighbour(i) {
+            Some(hit) => AfterDel::Show { path: hit.path, name: hit.name },
+            None => AfterDel::Close,
+        };
+    }
+    let Some(fv) = view_of::<IFolderView2>(app(|a| a.peek_pane)) else {
+        return AfterDel::Close;
+    };
+    let cur = fv.GetFocusedItem().unwrap_or(-1);
+    if let Some((path, name)) = visible_item_path(&fv, cur, false).or_else(|| visible_item_path(&fv, cur, true)) {
+        AfterDel::Show { path, name }
+    } else {
+        AfterDel::Close
+    }
+}
+
+unsafe fn select_peek_path(i: usize, path: &str) -> bool {
+    let Some(fv) = view_of::<IFolderView2>(i) else {
+        return false;
+    };
+    let n = fv.ItemCount(SVGIO_ALLVIEW).unwrap_or(0);
+    let flags = (SVSI_SELECT.0 | SVSI_DESELECTOTHERS.0 | SVSI_ENSUREVISIBLE.0 | SVSI_FOCUSED.0) as u32;
+    for k in 0..n {
+        let Ok(it) = fv.GetItem::<IShellItem>(k) else {
+            continue;
+        };
+        let shown = |kind| it.GetDisplayName(kind).ok().map(|p| pwstr(p));
+        let item = shown(SIGDN_FILESYSPATH).or_else(|| shown(SIGDN_DESKTOPABSOLUTEPARSING));
+        if item.as_deref() == Some(path) {
+            return fv.SelectItem(k, flags).is_ok();
+        }
+    }
+    false
+}
+
+unsafe fn apply_after_peek_delete(h: HWND) {
+    HOLD_PEEK.store(false, Ordering::SeqCst);
+    let plan = take_after_del();
+    let i = app(|a| a.peek_pane);
+    if let Some(sv) = view_of::<IShellView>(i) {
+        _ = sv.Refresh();
+    }
+    match plan {
+        Some(AfterDel::Show { path, name }) => {
+            if FROM_FIND.load(Ordering::SeqCst) {
+                peek_find_select_path(i, &path);
+                app(|a| a.peek_name = name);
+                show_path(&path, false);
+            } else if Path::new(&path).exists() && select_peek_path(i, &path) {
+                load_peek(false);
+            } else if Path::new(&path).exists() {
+                app(|a| a.peek_name = name);
+                show_path(&path, false);
+            } else {
+                close_peek(h);
+                return;
+            }
+            if !h.0.is_null() && IsWindow(Some(h)).as_bool() && GetActiveWindow() != h {
+                _ = SetActiveWindow(h);
+                _ = SetFocus(Some(h));
+            }
+        }
+        _ => {
+            if !h.0.is_null() && IsWindow(Some(h)).as_bool() {
+                close_peek(h);
+            }
+        }
+    }
+}
+
+/// Delete the file the preview is showing (`peek_job` path), not an arbitrary pane selection.
+pub(crate) unsafe fn delete_peek(shift: bool) {
+    let h = app(|a| a.peek);
+    if h.0.is_null() {
+        return;
+    }
+    let Some(path) = peek_job().req.as_ref().map(|r| r.path.clone()).filter(|p| !p.is_empty()) else {
+        _ = MessageBeep(MB_ICONWARNING);
+        return;
+    };
+    let (ask, permanent) = app(|a| (a.s.confirm, shift || a.s.del == 1));
+    // Confirm / shell progress deactivate peek; without HOLD_PEEK, WA_INACTIVE would DestroyWindow it.
+    HOLD_PEEK.store(true, Ordering::SeqCst);
+    if ask {
+        let verb = if permanent {
+            tr(crate::Key::PermanentlyDelete)
+        } else {
+            tr(crate::Key::MoveRecycleBin)
+        };
+        let name = app(|a| a.peek_name.clone());
+        let label = if name.is_empty() {
+            Path::new(&path)
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.clone())
+        } else {
+            name
+        };
+        let text = HSTRING::from(format!("{verb}\n{label}"));
+        // Own on main (same as delete_selection) so the dialog is not a child of the peek surface.
+        let owner = app(|a| a.main);
+        if MessageBoxW(Some(owner), &text, w!("Maguro"), MB_YESNO | MB_ICONQUESTION) != IDYES {
+            HOLD_PEEK.store(false, Ordering::SeqCst);
+            if IsWindow(Some(h)).as_bool() {
+                _ = SetActiveWindow(h);
+                _ = SetFocus(Some(h));
+            }
+            return;
+        }
+    }
+    let plan = plan_after_peek_delete();
+    set_after_del(Some(plan));
+    let owner = if permanent && !ask { app(|a| a.main.0 as isize) } else { 0 };
+    if !crate::start_delete_notify(vec![path], permanent, owner, h, WM_PEEK_DELETED) {
+        set_after_del(None);
+        HOLD_PEEK.store(false, Ordering::SeqCst);
+        _ = MessageBeep(MB_ICONWARNING);
+        if IsWindow(Some(h)).as_bool() {
+            _ = SetActiveWindow(h);
+            _ = SetFocus(Some(h));
+        }
     }
 }
 
@@ -3106,12 +3277,14 @@ fn peek_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                 let k = VIRTUAL_KEY(wp.0 as u16);
                 let repeat = lp.0 & (1 << 30) != 0;
                 let ctrl = GetKeyState(VK_CONTROL.0 as i32) < 0;
+                let shift = GetKeyState(VK_SHIFT.0 as i32) < 0;
                 if ctrl && matches!(k, VK_0 | VK_NUMPAD0) {
                     set_zoom(h, 1.0, None);
                 } else {
                     match k {
                         // a held F3 only opens it; its repeats must not close it again
                         VK_ESCAPE | VK_SPACE | VK_F3 if !repeat => close_peek(h),
+                        VK_DELETE if !repeat && !ctrl => delete_peek(shift),
                         VK_LEFT | VK_RIGHT => step_peek(k == VK_LEFT),
                         VK_UP | VK_DOWN => arrow_scroll(h, k == VK_DOWN, repeat),
                         VK_NEXT => scroll_peek(h, page(), 0),
@@ -3122,9 +3295,25 @@ fn peek_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                     }
                 }
             }
+            WM_PEEK_DELETED => {
+                if wp.0 != 0 {
+                    apply_after_peek_delete(h);
+                } else {
+                    set_after_del(None);
+                    HOLD_PEEK.store(false, Ordering::SeqCst);
+                    if GetActiveWindow() != h {
+                        _ = SetActiveWindow(h);
+                        _ = SetFocus(Some(h));
+                    }
+                }
+            }
             // another app or a click behind closes it; stepping takes the activation away only for a moment
-            WM_ACTIVATE if (wp.0 & 0xffff) as u32 == WA_INACTIVE => _ = PostMessageW(Some(h), WM_PEEK_LOST, WPARAM(0), LPARAM(0)),
-            WM_PEEK_LOST if GetActiveWindow() != h => _ = DestroyWindow(h),
+            WM_ACTIVATE if (wp.0 & 0xffff) as u32 == WA_INACTIVE => {
+                if !HOLD_PEEK.load(Ordering::SeqCst) {
+                    _ = PostMessageW(Some(h), WM_PEEK_LOST, WPARAM(0), LPARAM(0));
+                }
+            }
+            WM_PEEK_LOST if GetActiveWindow() != h && !HOLD_PEEK.load(Ordering::SeqCst) => _ = DestroyWindow(h),
             WM_DESTROY => {
                 let from_find = FROM_FIND.load(Ordering::SeqCst);
                 let i = app(|a| a.peek_pane);
