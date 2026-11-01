@@ -30,6 +30,8 @@ const ID_CTX_PACK: u32 = 0x8100;
 const PACK_LIMIT: u32 = 48;
 
 static CACHE: Mutex<Option<Vec<PackRow>>> = Mutex::new(None);
+/// Titles from a prior CoCreate/GetTitle. Inject reuses them and CoCreates only on invoke.
+static TITLE_CACHE: Mutex<Option<std::collections::HashMap<String, String>>> = Mutex::new(None);
 
 link!("shlwapi.dll" "system" fn SHLoadIndirectString(src: PCWSTR, dst: PWSTR, cch: u32, reserved: *mut core::ffi::c_void) -> HRESULT);
 
@@ -80,6 +82,7 @@ impl PackRow {
 }
 
 pub(crate) fn invalidate() {
+    if let Ok(mut t) = TITLE_CACHE.lock() { *t = None; }
     if let Ok(mut g) = CACHE.lock() {
         *g = None;
     }
@@ -686,13 +689,23 @@ pub(crate) unsafe fn inject_menu(menu: HMENU, paths: &[String], items: &[(String
     let mut added = 0u32;
     let mut opened = false;
     for row in hits {
-        let Ok(cmd) = CoCreateInstance::<_, IExplorerCommand>(&row.clsid, None, CLSCTX_INPROC_SERVER | CLSCTX_LOCAL_SERVER) else { continue };
-        if let Some(state) = command_state(&cmd, arr.as_ref()) {
-            if state & ECS_HIDDEN.0 as u32 != 0 {
-                continue;
+        let cached = TITLE_CACHE.lock().ok().and_then(|g| g.as_ref().and_then(|c| c.get(&row.id).cloned()));
+        let title = if let Some(title) = cached {
+            // Safe reuse: title was shown for this command before; CoCreate only on invoke.
+            title
+        } else {
+            let Ok(cmd) = CoCreateInstance::<_, IExplorerCommand>(&row.clsid, None, CLSCTX_INPROC_SERVER | CLSCTX_LOCAL_SERVER) else { continue };
+            if let Some(state) = command_state(&cmd, arr.as_ref()) {
+                if state & ECS_HIDDEN.0 as u32 != 0 {
+                    continue;
+                }
             }
-        }
-        let Some(title) = command_title(&cmd, arr.as_ref()) else { continue };
+            let Some(title) = command_title(&cmd, arr.as_ref()) else { continue };
+            if let Ok(mut guard) = TITLE_CACHE.lock() {
+                guard.get_or_insert_with(std::collections::HashMap::new).insert(row.id.clone(), title.clone());
+            }
+            title
+        };
         if !opened {
             _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
             opened = true;

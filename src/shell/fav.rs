@@ -341,6 +341,93 @@ pub(crate) unsafe fn cmd_verb(cm: &IContextMenu, offset: usize) -> String {
     String::from_utf16_lossy(&buf[..end])
 }
 
+/// One GetCommandString pass for observe / properties / fav_anchor / fast_paste / WM_INITMENUPOPUP.
+#[derive(Clone, Default)]
+struct VerbIndex {
+    by_id: std::collections::HashMap<u32, String>,
+}
+
+thread_local! {
+    static VERB_INDEX: std::cell::RefCell<Option<VerbIndex>> = const { std::cell::RefCell::new(None) };
+}
+
+impl VerbIndex {
+    unsafe fn build(menu: HMENU, cm: &IContextMenu, id_first: u32, id_last: u32) -> Self {
+        let mut by_id = std::collections::HashMap::new();
+        let n = GetMenuItemCount(Some(menu)).max(0) as u32;
+        for i in 0..n {
+            if menu_sep(menu, i) {
+                continue;
+            }
+            let id = GetMenuItemID(menu, i as i32);
+            if id == u32::MAX || id < id_first || id >= id_last {
+                continue;
+            }
+            let verb = cmd_verb(cm, (id - id_first) as usize);
+            if !verb.is_empty() {
+                by_id.insert(id, verb);
+            }
+        }
+        Self { by_id }
+    }
+
+    fn verb(&self, id: u32) -> &str {
+        self.by_id.get(&id).map(String::as_str).unwrap_or("")
+    }
+
+    unsafe fn has_verb(&self, menu: HMENU, want: &str) -> bool {
+        let n = GetMenuItemCount(Some(menu)).max(0) as u32;
+        (0..n).any(|i| {
+            if menu_sep(menu, i) {
+                return false;
+            }
+            let id = GetMenuItemID(menu, i as i32);
+            self.verb(id).trim().eq_ignore_ascii_case(want)
+        })
+    }
+
+    unsafe fn find_pos_after(&self, menu: HMENU, want: &str) -> Option<u32> {
+        let n = GetMenuItemCount(Some(menu)).max(0) as u32;
+        for i in 0..n {
+            if menu_sep(menu, i) {
+                continue;
+            }
+            let id = GetMenuItemID(menu, i as i32);
+            if self.verb(id).trim().eq_ignore_ascii_case(want) {
+                return Some(i + 1);
+            }
+        }
+        None
+    }
+
+    unsafe fn fav_anchor(&self, menu: HMENU, start: u32) -> u32 {
+        let n = GetMenuItemCount(Some(menu));
+        if n <= 0 {
+            return 0;
+        }
+        let mut properties = None;
+        for i in start.min(n as u32)..n as u32 {
+            if menu_sep(menu, i) {
+                continue;
+            }
+            let id = GetMenuItemID(menu, i as i32);
+            if self.verb(id).trim().eq_ignore_ascii_case("properties") {
+                properties = Some(i);
+                break;
+            }
+        }
+        fav_anchor(properties, n)
+    }
+}
+
+unsafe fn insert_fast_paste_idx(menu: HMENU, verbs: &VerbIndex) {
+    if let Some(i) = menu_index(menu, ID_CTX_FAST as usize) {
+        let _ = DeleteMenu(menu, i, MF_BYPOSITION);
+    }
+    let Some(at) = verbs.find_pos_after(menu, "paste") else { return };
+    let _ = InsertMenuW(menu, at, MF_STRING | MF_BYPOSITION, ID_CTX_FAST as usize, &HSTRING::from(tr(crate::Key::FastPaste)));
+}
+
 /// Index of the "properties" verb. Shell command ids are `id_first + offset`; separators and submenus have no id.
 pub(crate) unsafe fn fav_anchor_pos(menu: HMENU, cm: &IContextMenu, id_first: u32, id_last: u32, start: u32) -> u32 {
     let n = GetMenuItemCount(Some(menu));
@@ -503,6 +590,7 @@ pub(crate) struct ClearBridge;
 impl Drop for ClearBridge {
     fn drop(&mut self) {
         MENU_BRIDGE.with(|b| *b.borrow_mut() = None);
+    VERB_INDEX.with(|v| *v.borrow_mut() = None);
         CTX_MENU.with(|m| m.set(0));
         CTX_BACKGROUND.with(|c| c.set(false));
         CTX_OPEN.store(false, Ordering::Release);
@@ -639,13 +727,16 @@ pub(crate) unsafe fn show_ctx(i: usize, pt: POINT) -> bool {
     if CTX_OPEN.swap(true, Ordering::AcqRel) {
         return true;
     }
+    let t_pre = std::time::Instant::now();
     let _open = ClearBridge;
     let Some(sv) = view_of::<IShellView>(i) else { return false };
     let owner = sv.GetWindow().unwrap_or_else(|_| app(|a| a.main));
     if owner.0.is_null() {
         return false;
     }
+    let t_select = std::time::Instant::now();
     select_clicked(i, pt);
+    super::ctxmenu::log_phase("select", t_select);
     let items = selected_items(i);
     let paths: Vec<String> = items.iter().map(|(p, _)| p.clone()).collect();
     let pidls = selection_pidls(i);
@@ -655,12 +746,15 @@ pub(crate) unsafe fn show_ctx(i: usize, pt: POINT) -> bool {
     let targets = super::ctxmenu::click_targets(background, &items);
     // Same shell menu as an unfiltered click. Disabled commands are removed afterwards.
     // The probe is also how a handler's own menu strings are learned. It is not shown.
+    let t_arm = std::time::Instant::now();
     let _probe = view_of::<IFolderView2>(i)
         .and_then(|fv| fv.GetFolder::<IShellFolder>().ok())
         .map(|folder| super::ctxmenu::arm_probe(owner, &folder, &refs));
     if super::ctxmenu::needs_filter(targets) {
         super::ctxmenu::arm_strip(targets);
     }
+    super::ctxmenu::log_phase("probe-arm", t_arm);
+    let t_cm = std::time::Instant::now();
     let cm = if background {
         sv.GetItemObject::<IContextMenu>(SVGIO_BACKGROUND).ok()
     } else if let Some(folder) = view_of::<IFolderView2>(i).and_then(|fv| fv.GetFolder::<IShellFolder>().ok()) {
@@ -668,6 +762,7 @@ pub(crate) unsafe fn show_ctx(i: usize, pt: POINT) -> bool {
     } else {
         sv.GetItemObject::<IContextMenu>(SVGIO_SELECTION).ok()
     };
+    super::ctxmenu::log_phase("get-cm", t_cm);
     for p in pidls {
         CoTaskMemFree(Some(p as _));
     }
@@ -675,7 +770,7 @@ pub(crate) unsafe fn show_ctx(i: usize, pt: POINT) -> bool {
         let _ = super::ctxmenu::take_strip();
         return false;
     };
-    popup_ctx(owner, cm, &paths, &items, background, true, &props, pt, i)
+    popup_ctx(owner, cm, &paths, &items, background, true, &props, pt, i, t_pre)
 }
 
 /// Explorer menu for files that are not the pane's current selection (search results, by full path).
@@ -703,7 +798,7 @@ pub(crate) unsafe fn show_paths_ctx(i: usize, items: &[(String, bool)], pt: POIN
         let _ = super::ctxmenu::take_strip();
         return false;
     };
-    popup_ctx(owner, cm, &paths, items, false, false, "", pt, i)
+    popup_ctx(owner, cm, &paths, items, false, false, "", pt, i, std::time::Instant::now())
 }
 
 unsafe fn menu_for_paths(paths: &[String]) -> Option<IContextMenu> {
@@ -753,7 +848,7 @@ impl Drop for ClearPackIds {
     }
 }
 
-unsafe fn popup_ctx(owner: HWND, cm: IContextMenu, paths: &[String], items: &[(String, bool)], background: bool, pane_selection: bool, props_folder: &str, pt: POINT, pane: usize) -> bool {
+unsafe fn popup_ctx(owner: HWND, cm: IContextMenu, paths: &[String], items: &[(String, bool)], background: bool, pane_selection: bool, props_folder: &str, pt: POINT, pane: usize, t_pre: std::time::Instant) -> bool {
     let _pack_ids = ClearPackIds;
     CTX_BACKGROUND.with(|c| c.set(background));
     let Ok(menu) = CreatePopupMenu() else { return false };
@@ -774,9 +869,17 @@ unsafe fn popup_ctx(owner: HWND, cm: IContextMenu, paths: &[String], items: &[(S
     }
     // Handlers are in memory now. A later idle period is measured from this menu.
     super::warmup::note_menu();
-    // Read labels before anything is deleted, and do not change this menu while doing it.
     let targets = super::ctxmenu::click_targets(background, items);
-    super::ctxmenu::observe_menu(menu, &cm, targets);
+    // First open pays for the shell-extension catalogue scan once; strip/observe then hit the cache.
+    let t_cat = std::time::Instant::now();
+    super::ctxmenu::ensure_catalogue();
+    super::ctxmenu::log_phase("catalogue", t_cat);
+    // Labels are learned after TrackPopupMenu so settings writes are not on the open path.
+    // One GetCommandString pass first; strip/app-insert reuse the index (and warm the COM cache).
+    let t_verbs = std::time::Instant::now();
+    let verbs = VerbIndex::build(menu, &cm, 1, ID_CTX_FAV);
+    VERB_INDEX.with(|v| *v.borrow_mut() = Some(verbs.clone()));
+    super::ctxmenu::log_phase("verbs-walk", t_verbs);
     let strip = super::ctxmenu::take_strip();
     if strip != 0 {
         let t_strip = std::time::Instant::now();
@@ -784,16 +887,11 @@ unsafe fn popup_ctx(owner: HWND, cm: IContextMenu, paths: &[String], items: &[(S
         super::ctxmenu::log_phase("strip", t_strip);
     }
     // The background menu of some views (Windows 10) comes without Properties. Add the folder's own.
+    let t_app = std::time::Instant::now();
     let mut add_props = false;
     if background {
+        let has = verbs.has_verb(menu, "properties");
         let n = GetMenuItemCount(Some(menu)).max(0) as u32;
-        let has = (0..n).any(|i| {
-            if menu_sep(menu, i) {
-                return false;
-            }
-            let id = GetMenuItemID(menu, i as i32);
-            id != u32::MAX && id >= 1 && id < ID_CTX_FAV && cmd_verb(&cm, (id - 1) as usize).trim().eq_ignore_ascii_case("properties")
-        });
         if !has && n > 0 {
             if !menu_sep(menu, n - 1) {
                 _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
@@ -803,7 +901,7 @@ unsafe fn popup_ctx(owner: HWND, cm: IContextMenu, paths: &[String], items: &[(S
         }
     }
     if !paths.is_empty() {
-        let at = fav_anchor_pos(menu, &cm, 1, ID_CTX_FAV, 0);
+        let at = verbs.fav_anchor(menu, 0);
         insert_fav(menu, at, ID_CTX_FAV as usize, fav_menu_label(&paths));
     }
     // Directly above favourites, in the normal menu and after a filtered shell menu.
@@ -819,20 +917,26 @@ unsafe fn popup_ctx(owner: HWND, cm: IContextMenu, paths: &[String], items: &[(S
         let at = menu_index(menu, ID_CTX_FAV as usize).map(|i| i + 1).unwrap_or(0);
         crate::winmerge::insert_ctx(menu, at, pane, items);
     } else if background {
-        let at = fav_anchor_pos(menu, &cm, 1, ID_CTX_FAV, 0);
+        let at = verbs.fav_anchor(menu, 0);
         crate::winmerge::insert_ctx(menu, at, pane, items);
     }
+    super::ctxmenu::log_phase("app-insert", t_app);
     // After strip. Packaged commands are not in this shell menu; inject_menu appends them.
+    let t_inject = std::time::Instant::now();
     super::ctxpack::inject_menu(menu, paths, items, background, props_folder);
+    super::ctxmenu::log_phase("inject", t_inject);
     // After every removal and insertion. The shell can still add a row when the menu opens.
     finish_shell_menu(menu, Some(&cm), background);
     tidy_fav_item(menu, ID_CTX_FAV as usize);
-    insert_fast_paste(menu, &cm);
+    insert_fast_paste_idx(menu, &verbs);
+    super::ctxmenu::dump_menu_items(if background { "background" } else if items.first().is_some_and(|(_, f)| !*f) { "folder" } else { "file" }, menu);
+    super::ctxmenu::log_phase("total-pre", t_pre);
     MENU_BRIDGE.with(|b| {
         *b.borrow_mut() = Some(MenuBridge { cm3: cm.cast().ok(), cm2: cm.cast().ok() });
     });
     CTX_MENU.with(|m| m.set(menu.0 as isize));
     let cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_LEFTALIGN | TPM_TOPALIGN, pt.x, pt.y, None, owner, None).0;
+    super::ctxmenu::observe_menu(menu, &cm, targets);
     MENU_BRIDGE.with(|b| *b.borrow_mut() = None);
     if cmd == ID_CTX_FAST as i32 {
         let dest = fast_paste_dest(pane, background, items);
@@ -920,7 +1024,9 @@ unsafe fn ctx_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM, _a1: usize, 
         // Favourites keeps its one separator after New folder and the bars are settled.
         if top {
             tidy_fav_item(popup, ID_CTX_FAV as usize);
-            if let Some(cm) = open_cm() {
+            if let Some(verbs) = VERB_INDEX.with(|v| v.borrow().clone()) {
+                insert_fast_paste_idx(popup, &verbs);
+            } else if let Some(cm) = open_cm() {
                 insert_fast_paste(popup, &cm);
             }
         }

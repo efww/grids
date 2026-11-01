@@ -721,9 +721,37 @@ pub(crate) fn log_phase(phase: &str, t0: Instant) {
         return;
     }
     let ms = t0.elapsed().as_millis();
-    let text = format!("[maguro] ctx {phase} {ms} ms\0");
-    let w: Vec<u16> = text.encode_utf16().collect();
+    log_line(&format!("[maguro] ctx {phase} {ms} ms"));
+}
+
+pub(crate) fn log_line(msg: &str) {
+    if !timing() {
+        return;
+    }
+    let line = msg.trim_end_matches('\0');
+    let dbg = format!("{line}\0");
+    let w: Vec<u16> = dbg.encode_utf16().collect();
     unsafe { OutputDebugStringW(PCWSTR(w.as_ptr())) };
+    if let Some(path) = timing_log_path() {
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+            let _ = writeln!(f, "{line}");
+        }
+    }
+}
+
+fn timing_log_path() -> Option<std::path::PathBuf> {
+    static PATH: OnceLock<Option<std::path::PathBuf>> = OnceLock::new();
+    PATH.get_or_init(|| {
+        if let Ok(p) = std::env::var("MAGURO_CTX_TIMING_LOG") {
+            let p = p.trim();
+            if !p.is_empty() {
+                return Some(std::path::PathBuf::from(p));
+            }
+        }
+        std::env::current_exe().ok().and_then(|exe| exe.parent().map(|d| d.join("maguro-ctx-timing.log")))
+    })
+    .clone()
 }
 
 fn timing() -> bool {
@@ -732,6 +760,32 @@ fn timing() -> bool {
         Ok(v) => v == "1" || v.eq_ignore_ascii_case("true"),
         Err(_) => false,
     })
+}
+
+fn dump_menu() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| match std::env::var("MAGURO_CTX_DUMP") {
+        Ok(v) => v == "1" || v.eq_ignore_ascii_case("true"),
+        Err(_) => false,
+    })
+}
+
+/// One line per visible top-level item for before/after item-set checks.
+pub(crate) unsafe fn dump_menu_items(tag: &str, menu: HMENU) {
+    if !dump_menu() && !timing() {
+        return;
+    }
+    let n = GetMenuItemCount(Some(menu)).max(0) as u32;
+    log_line(&format!("[maguro] ctx menu-dump {tag} count={n}"));
+    for i in 0..n {
+        if super::menu_sep(menu, i) {
+            log_line(&format!("[maguro] ctx menu-dump {tag} [{i}] ---"));
+            continue;
+        }
+        let id = GetMenuItemID(menu, i as i32);
+        let text = item_text(menu, i).replace('\n', " ").replace('\r', "");
+        log_line(&format!("[maguro] ctx menu-dump {tag} [{i}] id={id} {text}"));
+    }
 }
 
 #[allow(dead_code)] // Kept so the filtered-key builder still compiles. The popup does not call it.
@@ -927,6 +981,7 @@ fn item_dropped(verb: &str, text: &str, verbs: &[String], names: &[String]) -> b
     !key.is_empty() && names.iter().any(|n| n == &key)
 }
 
+#[derive(Clone)]
 struct ProbeItem {
     verb: String,
     /// `menu_match_key` of the raw item text. Deletion compares this, not the cleaned label.
@@ -937,10 +992,25 @@ struct ProbeItem {
 
 /// Strings a disabled COM handler inserts. An empty menu is remembered as quiet.
 /// Labels for the settings row are taken from the real menu, once a row is actually removed.
+/// Process-lifetime cache: disabled COM handlers are CoCreated once per (id, targets).
+static PROBE_MARK_CACHE: Mutex<Option<HashMap<(String, u8), Vec<ProbeItem>>>> = Mutex::new(None);
+
 unsafe fn probe_marks(row: &Row, targets: u8) -> Option<Vec<ProbeItem>> {
+    let key = (row.id.clone(), targets);
+    if let Ok(cache) = PROBE_MARK_CACHE.lock() {
+        if let Some(map) = cache.as_ref() {
+            if let Some(hit) = map.get(&key) {
+                log_line(&format!("[maguro] ctx probe-cache hit {}", row.id));
+                return Some(hit.clone());
+            }
+        }
+    }
     let items = probe_items(row, targets)?;
     if items.iter().all(|i| i.verb.is_empty() && i.folded.is_empty()) {
         note_quiet(&row.id);
+    }
+    if let Ok(mut cache) = PROBE_MARK_CACHE.lock() {
+        cache.get_or_insert_with(HashMap::new).insert(key, items.clone());
     }
     Some(items)
 }
@@ -1003,6 +1073,7 @@ unsafe fn probe_items(row: &Row, targets: u8) -> Option<Vec<ProbeItem>> {
 }
 
 unsafe fn probe_contract(row: &Row, guid: &GUID, folder_pidl: *const ITEMIDLIST, data: Option<&IDataObject>, targets: u8) -> Option<Vec<ProbeItem>> {
+    let t0 = Instant::now();
     let cm = cocreate(guid, &row.anchor, folder_pidl, data)?;
     let menu = CreatePopupMenu().ok()?;
     let mut flags = CMF_EXPLORE | CMF_CANRENAME;
@@ -1013,6 +1084,9 @@ unsafe fn probe_contract(row: &Row, guid: &GUID, folder_pidl: *const ITEMIDLIST,
         flags |= CMF_EXTENDEDVERBS;
     }
     let hr = cm.QueryContextMenu(menu, 0, 1, 0x7FFF, flags);
+    let dll = clsid_server_dll(guid);
+    let label = if dll.is_empty() { row.id.clone() } else { dll };
+    log_line(&format!("[maguro] ctx probe {} {} ms", label, t0.elapsed().as_millis()));
     if hr.is_err() {
         _ = DestroyMenu(menu);
         return None;
@@ -2614,6 +2688,10 @@ struct Cache {
 
 static CACHE: Mutex<Option<Cache>> = Mutex::new(None);
 
+pub(crate) fn ensure_catalogue() {
+    let _ = catalogue();
+}
+
 fn catalogue() -> Vec<Row> {
     let mut guard = CACHE.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(c) = guard.as_ref() {
@@ -3251,6 +3329,11 @@ fn clsid_meta(guid: &GUID, approved: &HashMap<String, String>, dlls: &mut HashMa
     }
     clsids.insert(key, (name.clone(), dll.clone(), company.clone()));
     (name, dll, company)
+}
+
+fn clsid_server_dll(guid: &GUID) -> String {
+    let (_, _, dll) = unsafe { read_clsid(&guid_text(guid)) };
+    dll
 }
 
 /// CLSID default, LocalizedString, and the server DLL. LocalizedString is often `@dll,-id`.
