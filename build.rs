@@ -2,6 +2,7 @@
 // and assets/maguro-dark-bg.ico (dark background, group 2).
 // Writes a binary .res by hand and lets windres only convert it to COFF, so no C preprocessor is needed.
 fn main() {
+    emit_git_hash();
     println!("cargo:rerun-if-changed=app.manifest");
     println!("cargo:rerun-if-changed=app.ico");
     println!("cargo:rerun-if-changed=assets/maguro-dark-bg.ico");
@@ -160,4 +161,35 @@ fn version_info() -> Vec<u8> {
     };
     let var_file = version_node("VarFileInfo", &[], 0, false, &[translation]);
     version_node("VS_VERSION_INFO", &fixed, 52, false, &[string_file, var_file])
+}
+
+fn emit_git_hash() {
+    // Short hash for About/title on debug and portable builds (see live_about).
+    // Missing git is fine (empty env); CI checkouts without .git stay version-only.
+    println!("cargo:rerun-if-env-changed=MAGURO_GIT_HASH");
+    if let Ok(out) = std::process::Command::new("git")
+        .args(["rev-parse", "--git-path", "HEAD"])
+        .output()
+    {
+        if out.status.success() {
+            if let Ok(p) = String::from_utf8(out.stdout) {
+                let p = p.trim();
+                if !p.is_empty() {
+                    println!("cargo:rerun-if-changed={p}");
+                }
+            }
+        }
+    }
+    let hash = std::env::var("MAGURO_GIT_HASH").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| {
+        std::process::Command::new("git")
+            .args(["rev-parse", "--short", "HEAD"])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_default()
+    });
+    println!("cargo:rustc-env=MAGURO_GIT_HASH={hash}");
 }

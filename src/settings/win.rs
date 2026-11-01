@@ -2089,9 +2089,21 @@ pub(crate) fn about_lay(client_w: i32, client_h: i32, dpi: i32, desc_h: i32, lic
     AboutLay { icon, title, version, desc, license, repo, ok }
 }
 
+fn about_version_label() -> String {
+    let base = env!("CARGO_PKG_VERSION");
+    let hash = env!("MAGURO_GIT_HASH");
+    // Debug + portable builds only: makes a stale test exe obvious in About.
+    let show = cfg!(debug_assertions) || crate::settings::store::exe_dir().join("portable.txt").is_file();
+    if show && !hash.is_empty() {
+        format!("{base} ({hash})")
+    } else {
+        base.into()
+    }
+}
+
 fn live_about() -> AboutCopy {
     about_copy(
-        env!("CARGO_PKG_VERSION"),
+        &about_version_label(),
         tx(crate::Key::FastMultiPaneFileManagerForWindows),
         tx(crate::Key::MitLicense2026Efww),
     )
@@ -2256,7 +2268,16 @@ pub(crate) unsafe fn show_about(owner: HWND) {
     let _ = GetWindowRect(owner, &mut orc);
     let x = orc.left + (orc.right - orc.left - ww) / 2;
     let y = orc.top + (orc.bottom - orc.top - hh) / 2;
-    let title = HSTRING::from(tx(crate::Key::AboutMaguro));
+    let title = {
+        let base = tx(crate::Key::AboutMaguro);
+        let hash = env!("MAGURO_GIT_HASH");
+        let show = cfg!(debug_assertions) || crate::settings::store::exe_dir().join("portable.txt").is_file();
+        if show && !hash.is_empty() {
+            HSTRING::from(format!("{base} · {hash}"))
+        } else {
+            HSTRING::from(base)
+        }
+    };
     let h = CreateWindowExW(WS_EX_DLGMODALFRAME, w!("MaguroAbout"), &title, ask_style(), x, y, ww, hh, Some(owner), None, None, None).unwrap_or_default();
     if h.0.is_null() {
         return;
