@@ -691,11 +691,20 @@ pub(crate) enum Key {
     JumpToAFolderInAFileDialog,
     FoldersInOpenAndSaveDialogs,
     WhileAnotherAppSOpenOrSaveDialogIsInFront,
+    FileInUse,
+    FileInUseNone,
+    FileInUseHolder,
+    FileInUsePartial,
+    FileInUseKeep,
+    WhoIsUsingThisFile,
+    SwitchToProgram,
+    CloseProgram,
+    CloseProgramAsk,
 }
 
-pub(crate) const KEY_COUNT: usize = 688;
+pub(crate) const KEY_COUNT: usize = 697;
 
-const _: () = assert!((Key::WhileAnotherAppSOpenOrSaveDialogIsInFront as usize) + 1 == KEY_COUNT);
+const _: () = assert!((Key::CloseProgramAsk as usize) + 1 == KEY_COUNT);
 
 pub(crate) const EN: [&str; KEY_COUNT] = [
     "About",
@@ -1386,6 +1395,15 @@ pub(crate) const EN: [&str; KEY_COUNT] = [
     "Jump to a folder in a file dialog",
     "Folders in Open and Save dialogs",
     "While another app's Open or Save dialog is in front, this shortcut lists the folders open here. Pick one to open it there. Change this chord under Shortcuts.",
+    "This item is open in another program",
+    "No program was found. A Windows service or a program running as administrator may be using it.",
+    "{app} — {process} (PID {pid})",
+    "Some programs could not be listed. One of them may be running as administrator.",
+    "Maguro will not close {app}.",
+    "Who is using this file?",
+    "Switch to program",
+    "Close program",
+    "Ask {app} to close?\n\nMaguro will ask it to close. It will not be forced to quit.",
 
 ];
 
@@ -2078,6 +2096,15 @@ pub(crate) const KEY_ID: [&str; KEY_COUNT] = [
     "jump_to_a_folder_in_a_file_dialog",
     "folders_in_open_and_save_dialogs",
     "while_another_app_s_open_or_save_dialog_is_in_front",
+    "file_in_use",
+    "file_in_use_none",
+    "file_in_use_holder",
+    "file_in_use_partial",
+    "file_in_use_keep",
+    "who_is_using_this_file",
+    "switch_to_program",
+    "close_program",
+    "close_program_ask",
 
 ];
 

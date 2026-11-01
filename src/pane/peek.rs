@@ -1201,11 +1201,14 @@ pub(crate) unsafe fn rename_peek() {
         }
     };
     let new_path_s = new_path.to_string_lossy().into_owned();
-    let ok = match crate::run_rename_one(&path, &new_name) {
+    let ok = match crate::run_rename_one(&path, &new_name, owner) {
         Ok(()) => true,
         Err(e) => {
-            let text = HSTRING::from(format!("{}{}", tr(crate::Key::RenameFailed), e.message()));
-            _ = MessageBoxW(Some(owner), &text, w!("Maguro"), MB_ICONWARNING);
+            // Cancel on the in-use dialog already told the user. A second box would repeat it.
+            if !crate::shell::inuse::is_cancel(&e) {
+                let text = HSTRING::from(format!("{}{}", tr(crate::Key::RenameFailed), e.message()));
+                _ = MessageBoxW(Some(owner), &text, w!("Maguro"), MB_ICONWARNING);
+            }
             false
         }
     };

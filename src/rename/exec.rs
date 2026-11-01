@@ -190,10 +190,11 @@ pub(crate) fn take_done() -> Option<Finished> {
 
 pub(crate) unsafe fn start(notify: HWND, waves: Vec<Vec<Step>>) {
     // HWND is a raw pointer. Pass the address as an integer so the worker can post back.
+    // The same window owns the in-use dialog if a rename hits a sharing violation.
     let notify = notify.0 as isize;
     let job = std::thread::Builder::new().name("maguro-rename".into()).spawn(move || {
         let com = CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok();
-        let outcome = run_waves(&waves);
+        let outcome = run_waves(&waves, notify);
         if com {
             CoUninitialize();
         }
@@ -218,13 +219,13 @@ pub(crate) unsafe fn start(notify: HWND, waves: Vec<Vec<Step>>) {
     }
 }
 
-fn run_waves(waves: &[Vec<Step>]) -> Outcome {
+fn run_waves(waves: &[Vec<Step>], owner: isize) -> Outcome {
     let mut done: Vec<Vec<Step>> = Vec::new();
     for wave in waves {
         if wave.is_empty() {
             continue;
         }
-        match unsafe { run_wave(wave) } {
+        match unsafe { run_wave(wave, owner) } {
             Wave::Ok => done.push(wave.clone()),
             Wave::Cancel => {
                 rollback(&done);
@@ -245,38 +246,47 @@ enum Wave {
     Failed(String),
 }
 
-unsafe fn run_wave(wave: &[Step]) -> Wave {
+unsafe fn run_wave(wave: &[Step], owner: isize) -> Wave {
+    let mut fallback = Vec::new();
+    for step in wave {
+        fallback.push(super::engine::join_path(&step.dir, &step.from));
+        fallback.push(super::engine::join_path(&step.dir, &step.to));
+    }
+    // Retry rebuilds the operation. Cancel from the in-use dialog rolls finished waves back.
+    match crate::shell::inuse::recover(HWND(owner as *mut _), crate::shell::inuse::OpKind::Rename, &fallback, || rename_wave_once(wave)) {
+        Ok(()) => Wave::Ok,
+        Err(e) if cancelled(&e) => Wave::Cancel,
+        Err(e) => Wave::Failed(e.message().to_string()),
+    }
+}
+
+unsafe fn rename_wave_once(wave: &[Step]) -> crate::shell::inuse::Attempt {
     let op: IFileOperation = match CoCreateInstance(&FileOperation, None, CLSCTX_ALL) {
         Ok(op) => op,
-        Err(e) => return Wave::Failed(e.message().to_string()),
+        Err(e) => return crate::shell::inuse::Attempt { result: Err(e), locked: Vec::new() },
     };
-    // No confirmation: the preview already blocked invalid names. Errors come back here
-    // instead of a second dialog. The progress window still shows.
+    // No confirmation: the preview already blocked invalid names. FOF_NOERRORUI lets
+    // Maguro name the program instead of the shell "File In Use" box. Progress still shows.
     let flags = FOF_ALLOWUNDO | FOF_NOCONFIRMMKDIR | FOF_NOCONFIRMATION | FOF_NOERRORUI | FOFX_ADDUNDORECORD;
     if let Err(e) = op.SetOperationFlags(flags) {
-        return Wave::Failed(e.message().to_string());
+        return crate::shell::inuse::Attempt { result: Err(e), locked: Vec::new() };
     }
     for step in wave {
         let path = super::engine::join_path(&step.dir, &step.from);
         let item: IShellItem = match SHCreateItemFromParsingName(&HSTRING::from(&path), None) {
             Ok(it) => it,
-            Err(e) => return Wave::Failed(e.message().to_string()),
+            Err(e) => return crate::shell::inuse::Attempt { result: Err(e), locked: Vec::new() },
         };
         let new_name = HSTRING::from(&step.to);
         if let Err(e) = op.RenameItem(&item, PCWSTR(new_name.as_ptr()), None) {
-            return Wave::Failed(e.message().to_string());
+            return crate::shell::inuse::Attempt { result: Err(e), locked: Vec::new() };
         }
     }
-    if let Err(e) = op.PerformOperations() {
-        if cancelled(&e) {
-            return Wave::Cancel;
-        }
-        return Wave::Failed(e.message().to_string());
+    let (result, locked) = crate::shell::inuse::perform_watched(&op);
+    if result.is_ok() && locked.is_empty() && op.GetAnyOperationsAborted().unwrap_or(BOOL(0)).as_bool() {
+        return crate::shell::inuse::Attempt { result: Err(Error::from(COPYENGINE_E_USER_CANCELLED)), locked };
     }
-    if op.GetAnyOperationsAborted().unwrap_or(BOOL(0)).as_bool() {
-        return Wave::Cancel;
-    }
-    Wave::Ok
+    crate::shell::inuse::Attempt { result, locked }
 }
 
 fn cancelled(e: &windows::core::Error) -> bool {
@@ -347,7 +357,7 @@ fn rollback(done: &[Vec<Step>]) {
             .map(|s| Step { dir: s.dir.clone(), from: s.to.clone(), to: s.from.clone() })
             .collect();
         if !rev.is_empty() {
-            let _ = unsafe { run_wave(&rev) };
+            let _ = unsafe { run_wave(&rev, 0) };
         }
     }
 }

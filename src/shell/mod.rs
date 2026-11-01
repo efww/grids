@@ -7,6 +7,7 @@ mod fastcopy;
 mod fav;
 mod fileop;
 mod gather;
+pub(crate) mod inuse;
 mod pins;
 
 pub(crate) use askdrop::*;

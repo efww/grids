@@ -534,13 +534,18 @@ pub(crate) unsafe fn tidy_fav_item(menu: HMENU, id: usize) {
     }
 }
 
-/// Favourites, or the batch-rename row sitting directly above it.
+/// Favourites, or the app rows sitting directly above it (batch rename, who is using).
 unsafe fn pair_top(menu: HMENU, fav: u32) -> u32 {
-    if fav > 0 && GetMenuItemID(menu, (fav - 1) as i32) as u32 == ID_CTX_BATCH {
-        fav - 1
-    } else {
-        fav
+    let mut top = fav;
+    while top > 0 {
+        let id = GetMenuItemID(menu, (top - 1) as i32) as u32;
+        if id == ID_CTX_BATCH || id == ID_CTX_WHO {
+            top -= 1;
+        } else {
+            break;
+        }
     }
+    top
 }
 
 /// Favourites command at `at` (directly above Properties, or the last item). The separator is decided afterwards.
@@ -572,6 +577,7 @@ pub(crate) const ID_CTX_FAV: u32 = 0x8000; // outside the id range handed to ICo
 pub(crate) const ID_CTX_PROPS: u32 = 0x8001; // folder Properties, added when the background menu has none (Windows 10)
 pub(crate) const ID_CTX_BATCH: u32 = 0x8002; // batch rename, also outside the shell id range
 pub(crate) const ID_CTX_FAST: u32 = 0x8003; // Fast paste, also outside the shell id range
+pub(crate) const ID_CTX_WHO: u32 = 0x8004; // who is using this file, also outside the shell id range
 
 pub(crate) struct MenuBridge {
     pub(crate) cm3: Option<IContextMenu3>,
@@ -582,6 +588,7 @@ thread_local! {
     static MENU_BRIDGE: RefCell<Option<MenuBridge>> = const { RefCell::new(None) };
     static CTX_MENU: Cell<isize> = const { Cell::new(0) }; // top HMENU; separator cleanup also walks its submenus
     static CTX_BACKGROUND: Cell<bool> = const { Cell::new(false) };
+    static WHO_PATH: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
 pub(crate) static CTX_OPEN: AtomicBool = AtomicBool::new(false);
@@ -848,8 +855,40 @@ impl Drop for ClearPackIds {
     }
 }
 
+struct ClearWho;
+impl Drop for ClearWho {
+    fn drop(&mut self) {
+        WHO_PATH.with(|p| *p.borrow_mut() = None);
+    }
+}
+
+/// One filesystem file. Folders and a background click have no single file to ask about.
+fn who_path(items: &[(String, bool)], background: bool) -> Option<String> {
+    if background || items.len() != 1 {
+        return None;
+    }
+    let (path, file) = &items[0];
+    if *file && is_fs(path) { Some(path.clone()) } else { None }
+}
+
+/// Directly above batch rename (or favourites, if that row is the one present).
+unsafe fn insert_who(menu: HMENU) {
+    if let Some(i) = menu_index(menu, ID_CTX_WHO as usize) {
+        let _ = DeleteMenu(menu, i, MF_BYPOSITION);
+    }
+    let Some(path) = WHO_PATH.with(|p| p.borrow().clone()) else { return };
+    if path.is_empty() {
+        return;
+    }
+    let Some(at) = menu_index(menu, ID_CTX_BATCH as usize).or_else(|| menu_index(menu, ID_CTX_FAV as usize)) else { return };
+    let label = HSTRING::from(tr(crate::Key::WhoIsUsingThisFile));
+    _ = InsertMenuW(menu, at, MF_STRING | MF_BYPOSITION, ID_CTX_WHO as usize, &label);
+}
+
 unsafe fn popup_ctx(owner: HWND, cm: IContextMenu, paths: &[String], items: &[(String, bool)], background: bool, pane_selection: bool, props_folder: &str, pt: POINT, pane: usize, t_pre: std::time::Instant) -> bool {
     let _pack_ids = ClearPackIds;
+    let _clear_who = ClearWho;
+    WHO_PATH.with(|p| *p.borrow_mut() = who_path(items, background));
     CTX_BACKGROUND.with(|c| c.set(background));
     let Ok(menu) = CreatePopupMenu() else { return false };
     let mut flags = CMF_EXPLORE | CMF_CANRENAME;
@@ -912,6 +951,7 @@ unsafe fn popup_ctx(owner: HWND, cm: IContextMenu, paths: &[String], items: &[(S
             _ = InsertMenuW(menu, fav_at, MF_STRING | MF_BYPOSITION, ID_CTX_BATCH as usize, &label);
         }
     }
+    insert_who(menu);
     // Next to Favourites (or above Properties on a background click). Only commands that fit this click.
     if !paths.is_empty() {
         let at = menu_index(menu, ID_CTX_FAV as usize).map(|i| i + 1).unwrap_or(0);
@@ -938,7 +978,11 @@ unsafe fn popup_ctx(owner: HWND, cm: IContextMenu, paths: &[String], items: &[(S
     let cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_LEFTALIGN | TPM_TOPALIGN, pt.x, pt.y, None, owner, None).0;
     super::ctxmenu::observe_menu(menu, &cm, targets);
     MENU_BRIDGE.with(|b| *b.borrow_mut() = None);
-    if cmd == ID_CTX_FAST as i32 {
+    if cmd == ID_CTX_WHO as i32 {
+        if let Some(path) = WHO_PATH.with(|p| p.borrow().clone()) {
+            super::inuse::show_who(owner, &path);
+        }
+    } else if cmd == ID_CTX_FAST as i32 {
         let dest = fast_paste_dest(pane, background, items);
         super::fileop::try_fast_paste(pane, Some(dest));
     } else if cmd == ID_CTX_BATCH as i32 {
@@ -1023,6 +1067,8 @@ unsafe fn ctx_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM, _a1: usize, 
         }
         // Favourites keeps its one separator after New folder and the bars are settled.
         if top {
+            // The shell can rebuild the top menu as it opens. Put the file row back, then the separator.
+            insert_who(popup);
             tidy_fav_item(popup, ID_CTX_FAV as usize);
             if let Some(verbs) = VERB_INDEX.with(|v| v.borrow().clone()) {
                 insert_fast_paste_idx(popup, &verbs);

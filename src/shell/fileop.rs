@@ -449,16 +449,26 @@ unsafe fn start_transfer(srcs: Vec<String>, dst: String, rename: bool, mv: bool,
             super::fastcopy::run_fast(super::fastcopy::FastJob { owner, accent, face, srcs, dst, rename, mv });
             return;
         }
-        let first = run_copy(&srcs, &dst, rename, mv);
-        let result = if first.is_err() && after_drop && mv {
-            // Always-ask Move: drag source may still hold the item once after the dialog.
-            settle_drop_move(&srcs);
-            run_copy(&srcs, &dst, rename, mv)
+        let owner_hwnd = HWND(owner as *mut _);
+        let prepared: Vec<String> = srcs.iter().map(|s| final_dos(s)).collect();
+        let prepared_dst = final_dos(&dst);
+        let kind = if mv { super::inuse::OpKind::Move } else { super::inuse::OpKind::Copy };
+        let fallback = transfer_fallback(&prepared, &prepared_dst);
+        // A drop may still be holding the file after the first settle. Try once quietly,
+        // then ask which program has it if the move is still blocked.
+        let result = if after_drop && mv {
+            let first = copy_once(&prepared, &prepared_dst, rename, true);
+            if first.result.is_ok() && first.locked.is_empty() {
+                Ok(())
+            } else {
+                settle_drop_move(&srcs);
+                super::inuse::recover(owner_hwnd, kind, &fallback, || copy_once(&prepared, &prepared_dst, rename, true))
+            }
         } else {
-            first
+            super::inuse::recover(owner_hwnd, kind, &fallback, || copy_once(&prepared, &prepared_dst, rename, mv))
         };
         if let Err(e) = result {
-            if e.code() != COPYENGINE_E_USER_CANCELLED && e.code() != ERROR_CANCELLED.to_hresult() {
+            if !super::inuse::is_cancel(&e) {
                 let what = if mv { tr(crate::Key::MovingFailed) } else { tr(crate::Key::CopyingFailed) };
                 let text = HSTRING::from(format!("{what}{}", e.message()));
                 MessageBoxW(None, &text, w!("Maguro"), MB_ICONWARNING);
@@ -562,24 +572,67 @@ fn settle_drop_move(srcs: &[String]) {
     }
 }
 
-// No owner window: the progress and conflict dialogs belong to the worker thread.
 // Paths go through `final_dos` first, so a subst drive and its target folder are one place.
+// The progress window stays (FOF_SILENT is off). FOF_NOERRORUI suppresses the shell's
+// "File In Use" box so Maguro can name the program and offer Retry.
+// The worker calls `copy_once` itself. These wrappers exist so the drop-move test can
+// exercise that path without a window, and they stay out of the release binary.
+#[cfg(test)]
 pub(crate) unsafe fn run_copy(srcs: &[String], dst: &str, rename: bool, mv: bool) -> Result<()> {
+    run_copy_at(srcs, dst, rename, mv, HWND::default())
+}
+
+#[cfg(test)]
+unsafe fn run_copy_at(srcs: &[String], dst: &str, rename: bool, mv: bool, owner: HWND) -> Result<()> {
     let srcs: Vec<String> = srcs.iter().map(|s| final_dos(s)).collect();
     let dst = final_dos(dst);
-    let op: IFileOperation = CoCreateInstance(&FileOperation, None, CLSCTX_ALL)?;
-    let flags = FOF_ALLOWUNDO | FOF_NOCONFIRMMKDIR | FOFX_ADDUNDORECORD;
-    op.SetOperationFlags(if rename { flags | FOF_RENAMEONCOLLISION } else { flags })?;
-    let to: IShellItem = SHCreateItemFromParsingName(&HSTRING::from(&dst), None)?;
-    for s in &srcs {
-        let item: IShellItem = SHCreateItemFromParsingName(&HSTRING::from(s), None)?;
-        if mv {
-            op.MoveItem(&item, &to, PCWSTR::null(), None)?;
-        } else {
-            op.CopyItem(&item, &to, PCWSTR::null(), None)?;
+    let fallback = transfer_fallback(&srcs, &dst);
+    let kind = if mv { super::inuse::OpKind::Move } else { super::inuse::OpKind::Copy };
+    super::inuse::recover(owner, kind, &fallback, || copy_once(&srcs, &dst, rename, mv))
+}
+
+fn transfer_fallback(srcs: &[String], dst: &str) -> Vec<String> {
+    let mut out = srcs.to_vec();
+    if !dst.is_empty() {
+        out.push(dst.to_string());
+    }
+    for src in srcs {
+        let Some(name) = Path::new(src).file_name() else { continue };
+        let name = name.to_string_lossy();
+        if name.is_empty() {
+            continue;
+        }
+        let folder = dst.trim_end_matches(['\\', '/']);
+        out.push(format!("{folder}\\{name}"));
+    }
+    out
+}
+
+unsafe fn copy_once(srcs: &[String], dst: &str, rename: bool, mv: bool) -> super::inuse::Attempt {
+    let op: IFileOperation = match CoCreateInstance(&FileOperation, None, CLSCTX_ALL) {
+        Ok(op) => op,
+        Err(e) => return super::inuse::Attempt { result: Err(e), locked: Vec::new() },
+    };
+    let flags = FOF_ALLOWUNDO | FOF_NOCONFIRMMKDIR | FOF_NOERRORUI | FOFX_ADDUNDORECORD;
+    if let Err(e) = op.SetOperationFlags(if rename { flags | FOF_RENAMEONCOLLISION } else { flags }) {
+        return super::inuse::Attempt { result: Err(e), locked: Vec::new() };
+    }
+    let to: IShellItem = match SHCreateItemFromParsingName(&HSTRING::from(dst), None) {
+        Ok(it) => it,
+        Err(e) => return super::inuse::Attempt { result: Err(e), locked: Vec::new() },
+    };
+    for s in srcs {
+        let item: IShellItem = match SHCreateItemFromParsingName(&HSTRING::from(s), None) {
+            Ok(it) => it,
+            Err(e) => return super::inuse::Attempt { result: Err(e), locked: Vec::new() },
+        };
+        let queued = if mv { op.MoveItem(&item, &to, PCWSTR::null(), None) } else { op.CopyItem(&item, &to, PCWSTR::null(), None) };
+        if let Err(e) = queued {
+            return super::inuse::Attempt { result: Err(e), locked: Vec::new() };
         }
     }
-    op.PerformOperations()
+    let (result, locked) = super::inuse::perform_watched(&op);
+    super::inuse::Attempt { result, locked }
 }
 
 pub(crate) unsafe fn delete_selection(i: usize, shift: bool) {
@@ -626,13 +679,15 @@ pub(crate) unsafe fn start_delete_notify(
 ) -> bool {
     let busy = Busy::new();
     let notify_hwnd = notify.0 as isize;
+    // Captured here. The worker must not call `app()` while the UI thread is in a dialog.
+    let dialog_owner = app(|a| a.main.0 as isize);
     let job = std::thread::Builder::new().spawn(move || {
         let _busy = busy;
         let com = CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok();
-        let ok = match run_delete(&srcs, permanent, ask_owner) {
+        let ok = match run_delete(&srcs, permanent, ask_owner, dialog_owner) {
             Ok(()) => true,
             Err(e) => {
-                if e.code() != COPYENGINE_E_USER_CANCELLED && e.code() != ERROR_CANCELLED.to_hresult() {
+                if !super::inuse::is_cancel(&e) {
                     let text = HSTRING::from(format!("{}{}", tr(crate::Key::DeleteFailed), e.message()));
                     _ = MessageBoxW(None, &text, w!("Maguro"), MB_ICONWARNING);
                 }
@@ -652,33 +707,70 @@ pub(crate) unsafe fn start_delete_notify(
 }
 
 /// Rename a single filesystem item via IFileOperation (Recycle-friendly undo).
-pub(crate) unsafe fn run_rename_one(path: &str, new_name: &str) -> Result<()> {
-    let op: IFileOperation = CoCreateInstance(&FileOperation, None, CLSCTX_ALL)?;
-    let flags = FOF_ALLOWUNDO | FOF_NOCONFIRMMKDIR | FOF_NOCONFIRMATION | FOFX_ADDUNDORECORD;
-    op.SetOperationFlags(flags)?;
-    let item: IShellItem = SHCreateItemFromParsingName(&HSTRING::from(path), None)?;
-    let name = HSTRING::from(new_name);
-    op.RenameItem(&item, PCWSTR(name.as_ptr()), None)?;
-    op.PerformOperations()
+pub(crate) unsafe fn run_rename_one(path: &str, new_name: &str, owner: HWND) -> Result<()> {
+    let mut fallback = vec![path.to_string()];
+    if let Some(dir) = Path::new(path).parent() {
+        fallback.push(dir.join(new_name).to_string_lossy().into_owned());
+    }
+    super::inuse::recover(owner, super::inuse::OpKind::Rename, &fallback, || rename_once(path, new_name))
 }
 
-pub(crate) unsafe fn run_delete(srcs: &[String], permanent: bool, ask_owner: isize) -> Result<()> {
-    let op: IFileOperation = CoCreateInstance(&FileOperation, None, CLSCTX_ALL)?;
-    let mut flags = FOF_NOCONFIRMMKDIR;
+unsafe fn rename_once(path: &str, new_name: &str) -> super::inuse::Attempt {
+    let op: IFileOperation = match CoCreateInstance(&FileOperation, None, CLSCTX_ALL) {
+        Ok(op) => op,
+        Err(e) => return super::inuse::Attempt { result: Err(e), locked: Vec::new() },
+    };
+    let flags = FOF_ALLOWUNDO | FOF_NOCONFIRMMKDIR | FOF_NOCONFIRMATION | FOF_NOERRORUI | FOFX_ADDUNDORECORD;
+    if let Err(e) = op.SetOperationFlags(flags) {
+        return super::inuse::Attempt { result: Err(e), locked: Vec::new() };
+    }
+    let item: IShellItem = match SHCreateItemFromParsingName(&HSTRING::from(path), None) {
+        Ok(it) => it,
+        Err(e) => return super::inuse::Attempt { result: Err(e), locked: Vec::new() },
+    };
+    let name = HSTRING::from(new_name);
+    if let Err(e) = op.RenameItem(&item, PCWSTR(name.as_ptr()), None) {
+        return super::inuse::Attempt { result: Err(e), locked: Vec::new() };
+    }
+    let (result, locked) = super::inuse::perform_watched(&op);
+    super::inuse::Attempt { result, locked }
+}
+
+pub(crate) unsafe fn run_delete(srcs: &[String], permanent: bool, ask_owner: isize, dialog_owner: isize) -> Result<()> {
+    let fallback = srcs.to_vec();
+    super::inuse::recover(HWND(dialog_owner as *mut _), super::inuse::OpKind::Delete, &fallback, || delete_once(srcs, permanent, ask_owner))
+}
+
+unsafe fn delete_once(srcs: &[String], permanent: bool, ask_owner: isize) -> super::inuse::Attempt {
+    let op: IFileOperation = match CoCreateInstance(&FileOperation, None, CLSCTX_ALL) {
+        Ok(op) => op,
+        Err(e) => return super::inuse::Attempt { result: Err(e), locked: Vec::new() },
+    };
+    let mut flags = FOF_NOCONFIRMMKDIR | FOF_NOERRORUI;
     if ask_owner != 0 && permanent {
-        op.SetOwnerWindow(HWND(ask_owner as _))?;
+        if let Err(e) = op.SetOwnerWindow(HWND(ask_owner as _)) {
+            return super::inuse::Attempt { result: Err(e), locked: Vec::new() };
+        }
     } else {
         flags |= FOF_NOCONFIRMATION;
     }
     if !permanent {
         flags |= FOF_ALLOWUNDO | FOFX_ADDUNDORECORD;
     }
-    op.SetOperationFlags(flags)?;
-    for s in srcs {
-        let item: IShellItem = SHCreateItemFromParsingName(&HSTRING::from(s), None)?;
-        op.DeleteItem(&item, None)?;
+    if let Err(e) = op.SetOperationFlags(flags) {
+        return super::inuse::Attempt { result: Err(e), locked: Vec::new() };
     }
-    op.PerformOperations()
+    for s in srcs {
+        let item: IShellItem = match SHCreateItemFromParsingName(&HSTRING::from(s), None) {
+            Ok(it) => it,
+            Err(e) => return super::inuse::Attempt { result: Err(e), locked: Vec::new() },
+        };
+        if let Err(e) = op.DeleteItem(&item, None) {
+            return super::inuse::Attempt { result: Err(e), locked: Vec::new() };
+        }
+    }
+    let (result, locked) = super::inuse::perform_watched(&op);
+    super::inuse::Attempt { result, locked }
 }
 
 pub(crate) fn default_new_name() -> String {
@@ -983,6 +1075,51 @@ mod tests {
         assert_eq!(a.to_lowercase(), b.to_lowercase());
         assert!(a.to_lowercase().starts_with(r"c:\work\pgreadme\data\"));
         assert!(!a.to_lowercase().starts_with("g:"));
+    }
+
+    #[test]
+    fn locked_delete_reports_in_use_without_hanging() {
+        use std::os::windows::fs::OpenOptionsExt;
+        use std::sync::mpsc::channel;
+        let dir = std::env::temp_dir().join(format!("maguro-lockdel-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("locked.txt");
+        std::fs::write(&path, b"locked").unwrap();
+        let hold_path = path.clone();
+        let (ready_tx, ready_rx) = channel();
+        let (release_tx, release_rx) = channel::<()>();
+        let holder = std::thread::spawn(move || {
+            let f = std::fs::OpenOptions::new().read(true).share_mode(0).open(&hold_path).unwrap();
+            ready_tx.send(()).unwrap();
+            let _ = release_rx.recv();
+            drop(f);
+        });
+        ready_rx.recv().unwrap();
+        let shown = path.to_string_lossy().to_string();
+        let (done_tx, done_rx) = channel();
+        let _worker = std::thread::spawn(move || {
+            let com = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok() };
+            let attempt = unsafe { delete_once(&[shown], true, 0) };
+            if com {
+                unsafe { CoUninitialize() };
+            }
+            let code = attempt.result.as_ref().err().map(|e| e.code());
+            let msg = attempt.result.as_ref().err().map(|e| e.message()).unwrap_or_default();
+            let _ = done_tx.send((code, msg, attempt.locked));
+        });
+        let got = done_rx.recv_timeout(std::time::Duration::from_secs(12));
+        let _ = release_tx.send(());
+        let _ = holder.join();
+        let Ok((code, msg, locked)) = got else {
+            // A system "File In Use" dialog would keep this process alive. Exit so the suite can finish.
+            eprintln!("locked delete did not return; a system dialog may be showing");
+            std::process::exit(2);
+        };
+        let in_use = code.is_some_and(|c| super::super::inuse::is_in_use_code(c)) || super::super::inuse::message_says_in_use(&msg) || !locked.is_empty();
+        assert!(in_use, "code={code:?} msg={msg} locked={locked:?}");
+        assert!(path.exists(), "locked file should still be there");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 

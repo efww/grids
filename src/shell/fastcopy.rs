@@ -175,9 +175,16 @@ pub(crate) fn run_fast(job: FastJob) {
     let cancelled = ui.cancelled();
     if job.mv && !cancelled && !failed {
         for (path, is_dir) in &copied {
-            if !delete_source(path, *is_dir) && errors.len() < 40 {
-                errors.push(path.clone());
+            if let Err(code) = delete_source(path, *is_dir) {
                 failed = true;
+                let sharing = code == 32 || code == 33;
+                if sharing || errors.len() < 40 {
+                    if sharing {
+                        errors.push(format!("ERROR {code} (0x{code:08X}) {path}"));
+                    } else {
+                        errors.push(path.clone());
+                    }
+                }
             }
         }
     }
@@ -196,10 +203,53 @@ pub(crate) fn run_fast(job: FastJob) {
     }
     ui.close();
     if failed || !errors.is_empty() {
+        if errors.iter().any(|line| super::inuse::text_is_in_use(line)) {
+            let paths = fast_locked_paths(&job, &errors);
+            let retry = unsafe {
+                super::inuse::ask_retry(
+                    HWND(job.owner as *mut _),
+                    if job.mv { super::inuse::OpKind::Move } else { super::inuse::OpKind::Copy },
+                    &paths,
+                )
+            };
+            if retry {
+                run_fast(job);
+            }
+            return;
+        }
         let list = clip_list(&errors, 12);
         let text = tf(Key::NotCopied, &[("list", &list)]);
         complain(job.owner, &text);
     }
+}
+
+/// Sources, the destination folder, and each destination file. Robocopy lines may name the path too.
+fn fast_locked_paths(job: &FastJob, errors: &[String]) -> Vec<String> {
+    let mut out = job.srcs.clone();
+    if !job.dst.is_empty() {
+        out.push(job.dst.clone());
+    }
+    for src in &job.srcs {
+        let Some(name) = Path::new(src).file_name() else { continue };
+        let name = name.to_string_lossy();
+        if name.is_empty() {
+            continue;
+        }
+        let folder = job.dst.trim_end_matches(['\\', '/']);
+        out.push(format!("{folder}\\{name}"));
+    }
+    for line in errors {
+        if let Some(idx) = line.find(":\\") {
+            let start = idx.saturating_sub(1);
+            let path = line[start..].trim().trim_matches('"').to_string();
+            if path.len() > 3 {
+                out.push(path);
+            }
+        } else if line.starts_with(r"\\") {
+            out.push(line.trim().to_string());
+        }
+    }
+    out
 }
 
 fn notify_dir(path: &str) {
@@ -480,8 +530,9 @@ fn move_file(from: &Path, to: &Path) -> bool {
     false
 }
 
-fn delete_source(path: &str, is_dir: bool) -> bool {
-    if is_dir { std::fs::remove_dir_all(path).is_ok() } else { std::fs::remove_file(path).is_ok() }
+fn delete_source(path: &str, is_dir: bool) -> std::result::Result<(), i32> {
+    let result = if is_dir { std::fs::remove_dir_all(path) } else { std::fs::remove_file(path) };
+    result.map_err(|e| e.raw_os_error().unwrap_or(0))
 }
 
 fn run_robocopy(exe: &Path, dir: &Path, src: &str, dst: &str, files: &[String], tree: bool, ui: &mut Progress, errors: &mut Vec<String>) -> StepEnd {
