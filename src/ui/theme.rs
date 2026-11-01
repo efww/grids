@@ -73,6 +73,20 @@ pub(crate) fn group_tint(accent: u32, ground: u32, dark: bool) -> u32 {
 }
 
 // Text/icons on a coloured fill: near-black on light colours, white on dark ones (black accent -> white text).
+/// Pre-#222 mint brand (#2EC4A6). Saved settings that still use it follow the cerulean rebrand.
+pub(crate) const OLD_MINT_BRAND: u32 = 0x2EC4A6;
+/// Current brand accent (#0A9BD6).
+pub(crate) const CERULEAN_BRAND: u32 = 0x0A9BD6;
+
+/// Map the retired mint brand to cerulean. Any other chosen swatch is left alone.
+pub(crate) fn brand_accent(c: u32) -> u32 {
+    if c == OLD_MINT_BRAND {
+        CERULEAN_BRAND
+    } else {
+        c
+    }
+}
+
 pub(crate) fn on_color(bg: u32) -> u32 {
     let l = 0.2126 * (bg >> 16 & 0xFF) as f32 + 0.7152 * (bg >> 8 & 0xFF) as f32 + 0.0722 * (bg & 0xFF) as f32;
     if l > 160.0 {
@@ -132,6 +146,9 @@ mod tests {
         // Default accent is cerulean #0A9BD6. Mid luminance → white text on the fill
         // (mint #2EC4A6 used to keep dark ink; do not revive mint).
         assert_eq!(on_color(0x0A9BD6), 0xFFFFFF);
+        assert_eq!(on_color(CERULEAN_BRAND), 0xFFFFFF);
+        assert_eq!(brand_accent(OLD_MINT_BRAND), CERULEAN_BRAND);
+        assert_eq!(brand_accent(0xEFAE92), 0xEFAE92); // peach swatch stays
         assert_eq!(LIGHT.accents.len(), 6);
         assert_eq!(LIGHT.accents[1].1, 0xC5C5C5);
     }

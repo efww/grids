@@ -620,8 +620,8 @@ impl SettingsFile {
                 filters[p.index] = p.filter.clone();
             }
         }
-        s.accent = parse_color(&self.accent).unwrap_or(s.accent);
-        s.accent_dark = parse_color(&self.accent_dark).unwrap_or(s.accent_dark);
+        s.accent = crate::brand_accent(parse_color(&self.accent).unwrap_or(s.accent));
+        s.accent_dark = crate::brand_accent(parse_color(&self.accent_dark).unwrap_or(s.accent_dark));
         s.dark = self.dark;
         s.theme = match self.theme.as_str() {
             "light" => 1,
@@ -928,8 +928,17 @@ pub(crate) fn try_load_at(exe: &Path, cfg: &Path, old_cfg: &Path) -> Result<Sess
             forget_missing_face(&mut s);
             // The activity-bar choice is retired. Drop it once so the next launch does not see it.
             let had_panel = serde_json::from_str::<Value>(text).ok().is_some_and(|v| v.get("panel").is_some());
-            if had_panel {
-                let migrated = current_text();
+            // Pre-#222 mint brand in a saved file → rewrite as cerulean (brand_accent already applied above).
+            let had_mint = serde_json::from_str::<Value>(text).ok().is_some_and(|v| {
+                ["accent", "accent_dark"].iter().any(|k| {
+                    v.get(*k).and_then(|x| x.as_str()).is_some_and(|c| {
+                        let t = c.trim().trim_start_matches('#');
+                        u32::from_str_radix(t, 16).ok().is_some_and(|n| (n & 0xFFFFFF) == crate::OLD_MINT_BRAND)
+                    })
+                })
+            });
+            if had_panel || had_mint {
+                let migrated = sync_text(&s);
                 if migrated != text {
                     let _ = write_atomic(&json_path, migrated.as_bytes());
                 }
@@ -1847,6 +1856,16 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn mint_brand_accent_migrates_to_cerulean_on_adopt() {
+        let s = adopt(r#"{"version":1,"accent":"2EC4A6","accent_dark":"2EC4A6"}"#).unwrap();
+        assert_eq!(s.accent, crate::CERULEAN_BRAND);
+        assert_eq!(s.accent_dark, crate::CERULEAN_BRAND);
+        let peach = adopt(r#"{"version":1,"accent":"EFAE92","accent_dark":"A8624A"}"#).unwrap();
+        assert_eq!(peach.accent, 0xEFAE92);
+        assert_eq!(peach.accent_dark, 0xA8624A);
+    }
+
     fn space_preview_defaults_on_and_round_trips() {
         assert!(Session::default().space_preview);
         assert!(adopt(r#"{"version":1}"#).unwrap().space_preview);

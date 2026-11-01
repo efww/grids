@@ -874,6 +874,8 @@ impl Session {
             s.anchor();
         }
         s.tree = super::tree_from_flat(&s.favs);
+        s.accent = crate::brand_accent(s.accent);
+        s.accent_dark = crate::brand_accent(s.accent_dark);
         s
     }
 
