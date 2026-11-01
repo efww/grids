@@ -133,6 +133,7 @@ fn main_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
             }
             WM_TIMER if wp.0 == TIMER_CTX_WARM => crate::shell::warmup::on_timer(h),
             WM_TIMER if wp.0 == TIMER_DROP => on_tree_drop_timer(h),
+            WM_TIMER if wp.0 == TIMER_DLG_WATCH || wp.0 == TIMER_DLG_JUMP => crate::dialogjump::on_timer(wp.0),
             WM_SETCURSOR if wp.0 == h.0 as usize && (lp.0 & 0xffff) as u32 == HTCLIENT => {
                 let Some(d) = app(|a| a.drag).or_else(|| cursor_for(h)) else {
                     return DefWindowProcW(h, msg, wp, lp);
@@ -426,6 +427,7 @@ fn main_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
             WM_UPDATE => on_update(h, wp.0),
             crate::remote::WM_REMOTE => remote_arrived(),
             WM_HOTKEY if wp.0 == HOTKEY_ID as usize => hotkey_pressed(),
+            WM_HOTKEY if wp.0 == crate::dialogjump::DIALOG_HOTKEY_ID as usize => crate::dialogjump::on_hotkey(),
             WM_CLOSE => {
                 _ = KillTimer(Some(h), TIMER_SAVE);
                 _ = KillTimer(Some(h), TIMER_FVIEWS);
@@ -460,6 +462,7 @@ fn main_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
             }
             WM_DESTROY => {
                 release_hotkey_hwnd(h);
+                crate::dialogjump::release(h);
                 _ = KillTimer(Some(h), TIMER_STATUS);
                 _ = KillTimer(Some(h), TIMER_SAVE);
                 _ = KillTimer(Some(h), TIMER_WINS);
@@ -472,9 +475,11 @@ fn main_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                     release_desk_handles(handles.0, handles.1, handles.2, handles.3, handles.4);
                 }
                 if window_count() == 0 {
+                    crate::dialogjump::shutdown();
                     PostQuitMessage(0);
                 } else {
                     try_register_hotkey(app(|a| a.main));
+                    crate::dialogjump::install(app(|a| a.main));
                 }
             }
             _ => return DefWindowProcW(h, msg, wp, lp),
@@ -888,6 +893,8 @@ pub(crate) unsafe fn apply_hotkey(notify: bool) {
             a.status_key.clear();
         });
     }
+    // A rebind can change the dialog chord too. ID 1 is left as it is.
+    crate::dialogjump::sync();
 }
 
 pub(crate) unsafe fn release_hotkey_hwnd(h: HWND) {

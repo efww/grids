@@ -688,11 +688,14 @@ pub(crate) enum Key {
     HelpBodyShortcuts,
     HelpBodySettings,
     HelpBodyTroubleshooting,
+    JumpToAFolderInAFileDialog,
+    FoldersInOpenAndSaveDialogs,
+    WhileAnotherAppSOpenOrSaveDialogIsInFront,
 }
 
-pub(crate) const KEY_COUNT: usize = 685;
+pub(crate) const KEY_COUNT: usize = 688;
 
-const _: () = assert!((Key::HelpBodyTroubleshooting as usize) + 1 == KEY_COUNT);
+const _: () = assert!((Key::WhileAnotherAppSOpenOrSaveDialogIsInFront as usize) + 1 == KEY_COUNT);
 
 pub(crate) const EN: [&str; KEY_COUNT] = [
     "About",
@@ -1380,6 +1383,9 @@ pub(crate) const EN: [&str; KEY_COUNT] = [
     "Every Maguro chord is listed under this text. The same list opens in a compact window with Ctrl+/. F1 opens this Help. Both follow Settings, so a chord you change there shows up here without a restart.\n\nTo change a chord, open Settings, Shortcuts, double-click the row, and press the new keys. Esc cancels that capture. If another command already uses the chord, Maguro says so. Reset puts the original chord back.\n\nWindow tabs use Ctrl+T, Ctrl+W, Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+Shift+T, and Ctrl+Alt+K. Panes move with Ctrl+PageDown and Ctrl+PageUp, and Ctrl+1 through Ctrl+9 jumps to a pane. Alt+Left goes back, Alt+Up goes to the parent, and Ctrl+L, Alt+D, or F4 edits the address.\n\nF2 renames, Del deletes, and Ctrl+C, Ctrl+X, and Ctrl+V copy, cut, and paste. F5 reloads the active pane from anywhere in the window. F3, and Space when that option is on, opens preview. F6 and Shift+F6 move focus. Ctrl+, opens Settings. Ctrl+N opens a window. Win+Shift+E brings Maguro forward.\n\nThe list below is the full set, including mouse actions: the layout button, the address bar, splitters, pane headers, and pane tabs.",
     "Ctrl+, opens Settings. The search box jumps to a card whose title or description matches.\n\nGeneral covers the display language, the font, what opens on startup, using Maguro as the folder app, the default layout, single instance, single window, double-click on empty space to go to the parent folder, Everything search, and WinMerge.\n\nAppearance covers the theme, the accent colour, the toolbar, the drive buttons, and the status bar. Light and dark each keep their own accent. Follow Windows switches with the system. After a theme change, folder lists pick up the new colours the next time Maguro starts. The rest of the window updates straight away.\n\nPanes and view covers the default view for a new pane, remembering sort, columns, view, and icon size per folder, a default view for folders with nothing saved, hidden files, file extensions, folder sizes, folder sizes on network paths, the left panel and which of Favourites or the tree is on top, the active pane border, preview with Space, and the preview wheel.\n\nFile operations covers the Windows copy window, fast copy for network folders, confirm delete, the default delete, the new-file name, and the default drag and drop.\n\nFavourites, Shortcuts, and Sessions are their own pages. Session files live in the Maguro sessions folder. Save on exit writes each tab that already has a session file. The green dot marks a tab whose layout is not saved yet.\n\nAdvanced covers checking for a newer Maguro on startup, where the settings file is, and reset. A portable.txt file next to maguro.exe keeps the settings file there instead of under AppData. Reset returns preferences to their defaults. The layout, the folders, and the favourites stay.\n\nRight-click menu lists third-party items you can turn off. Classic and Windows 11 are the two menu shapes. Refresh reads the menu again.",
     "If a folder does not open, click that pane and press F5. F5 reloads the active pane from anywhere in the window, and it tries a failed network folder again.\n\nIf a search of subfolders finds nothing, install Everything and start it. Settings, General shows whether it is installed and running, and can install or start it. Maguro asks Everything only while that program is running.\n\nIf a copy to a network folder is slow or shows no Maguro progress, check Fast copy for network folders. On, paste and drag use robocopy and Maguro's own progress, with Cancel. Off, Windows shows its own copy window. Fast copy does not run for a purely local copy.\n\nIf WinMerge does not start, set its path under Settings, General, or install it. The pane has to be a real folder before a folder compare.\n\nIf SFTP does not connect, install rclone and WinFsp when Maguro asks, then check the host, the port, the user, and the password. For WebDAV, turn on HTTPS when the server requires it. For SMB, use the share path Windows would open. FTP uses the host and port from the connection.\n\nIf the window colour changed but the folder lists did not, restart Maguro. Those lists take the theme at startup.\n\nIf Maguro closed on its own last time, the next start tells you, and where the report was written. The report is in the crashes folder next to the settings. Open that folder from the note.\n\nA second launch of the same maguro.exe leaves immediately when single instance or single window is on, and the first window stays. An update that Maguro can install replaces maguro.exe and restarts. When a release only has a zip, Maguro does not extract it. Replace maguro.exe yourself when the update window says so.\n\nClose Maguro with the window's close button. That writes the session when save on exit is on.",
+    "Jump to a folder in a file dialog",
+    "Folders in Open and Save dialogs",
+    "While another app's Open or Save dialog is in front, this shortcut lists the folders open here. Pick one to open it there. Change this chord under Shortcuts.",
 
 ];
 
@@ -2069,6 +2075,9 @@ pub(crate) const KEY_ID: [&str; KEY_COUNT] = [
     "help_body_shortcuts",
     "help_body_settings",
     "help_body_troubleshooting",
+    "jump_to_a_folder_in_a_file_dialog",
+    "folders_in_open_and_save_dialogs",
+    "while_another_app_s_open_or_save_dialog_is_in_front",
 
 ];
 

@@ -264,6 +264,9 @@ struct SettingsFile {
     /// Global hotkey. Missing means on, so an older settings file keeps the hotkey on.
     #[serde(default = "yes", skip_serializing_if = "is_on")]
     hotkey: bool,
+    /// Folders in another app's Open or Save dialog. Missing means on.
+    #[serde(default = "yes", skip_serializing_if = "is_on")]
+    dialog_jump: bool,
     /// UI language. Missing means `"auto"`: the Windows display language (Korean, Japanese, otherwise English).
     #[serde(default = "lang_auto")]
     lang: String,
@@ -397,6 +400,7 @@ impl SettingsFile {
             update_check: true,
             dblup: true,
             hotkey: true,
+            dialog_jump: true,
             lang: lang_auto(),
             single: true,
             one_window: true,
@@ -498,6 +502,7 @@ impl SettingsFile {
             update_check: s.update_check,
             dblup: s.dblup,
             hotkey: s.hotkey,
+            dialog_jump: s.dialog_jump,
             lang: s.lang.ini().into(),
             single: s.single,
             one_window: s.one_window,
@@ -556,6 +561,7 @@ impl SettingsFile {
         self.extra.remove("one_window");
         self.extra.remove("drive_buttons");
         self.extra.remove("use_everything");
+        self.extra.remove("dialog_jump");
         self.extra.remove("ev_asked");
         self.extra.remove("remote_asked");
         self.extra.remove("winmerge_path");
@@ -657,6 +663,7 @@ impl SettingsFile {
         s.update_check = self.update_check;
         s.dblup = self.dblup;
         s.hotkey = self.hotkey;
+        s.dialog_jump = self.dialog_jump;
         s.lang = Lang::from_ini(&self.lang);
         s.single = self.single;
         s.one_window = self.one_window;
@@ -1829,6 +1836,23 @@ mod tests {
         assert!(text.contains("\"use_everything\": false"), "{text}");
         assert!(!adopt(&text).unwrap().use_everything);
         assert!(!pretty(&SettingsFile::from_session(&Session::default())).contains("use_everything"));
+    }
+
+    #[test]
+    fn dialog_jump_defaults_on_and_round_trips() {
+        assert!(Session::default().dialog_jump);
+        assert!(adopt(r#"{"version":1}"#).unwrap().dialog_jump);
+        let mut s = Session::default();
+        s.dialog_jump = false;
+        assert!(!Session::parse(&s.to_ini()).dialog_jump);
+        assert!(Session::parse("dialogjump=1").dialog_jump);
+        let text = pretty(&SettingsFile::from_session(&s));
+        assert!(text.contains("\"dialog_jump\": false"), "{text}");
+        assert!(!adopt(&text).unwrap().dialog_jump);
+        assert!(!pretty(&SettingsFile::from_session(&Session::default())).contains("dialog_jump"));
+        let mut kept = Session::default();
+        kept.take_layout(&Session { dialog_jump: false, ..Session::default() });
+        assert!(kept.dialog_jump);
     }
 
     #[test]

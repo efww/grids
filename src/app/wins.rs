@@ -397,6 +397,7 @@ pub(crate) unsafe fn open_window(mut s: Session) -> Result<HWND> {
     crate::shell::warmup::arm(main);
     // Taken by another app: the menu stays unchecked and hotkey stays on, so the next start tries again.
     try_register_hotkey(main);
+    crate::dialogjump::install(main);
     if !seed {
         _ = SetForegroundWindow(main);
     }

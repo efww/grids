@@ -66,6 +66,7 @@ const TG_FOLDER: u8 = 21;
 const TG_FSIZE: u8 = 22;
 const TG_FSIZE_NET: u8 = 23;
 const TG_FAST: u8 = 24;
+const TG_DIALOG: u8 = 25;
 
 const CB_SETMINVISIBLE: u32 = 0x1701;
 const EM_SETCUEBANNER: u32 = 0x1501;
@@ -195,6 +196,7 @@ const GEN: &[Spec] = &[
     Spec { title: crate::Key::DefaultLayout, desc: crate::Key::PanesInNewWindowAndOnFirst, live: true, ctl: Ctl::Layout },
     Spec { title: crate::Key::SingleInstance, desc: crate::Key::SecondLaunchOpensNewWindowInThis, live: true, ctl: Ctl::Toggle(TG_SINGLE) },
     Spec { title: crate::Key::SingleWindowMode, desc: crate::Key::OneWindowAnotherLaunchBringsItForward, live: true, ctl: Ctl::Toggle(TG_ONE) },
+    Spec { title: crate::Key::FoldersInOpenAndSaveDialogs, desc: crate::Key::WhileAnotherAppSOpenOrSaveDialogIsInFront, live: true, ctl: Ctl::Toggle(TG_DIALOG) },
     Spec { title: crate::Key::DoubleClickEmptySpaceForParentFolder, desc: crate::Key::InFileListDoubleClickOnEmpty, live: true, ctl: Ctl::Toggle(TG_DBLUP) },
     Spec { title: crate::Key::Status, desc: crate::Key::InstalledRunningVersion, live: true, ctl: Ctl::EvStatus },
     Spec { title: crate::Key::UseEverythingForSearch, desc: crate::Key::OnByDefaultSubfolderSearchAsksEverything, live: true, ctl: Ctl::Toggle(TG_EV) },
@@ -1024,6 +1026,7 @@ fn toggle_on(id: u8) -> bool {
         TG_FSIZE => app(|a| a.s.folder_sizes),
         TG_FSIZE_NET => app(|a| a.s.folder_sizes_network),
         TG_FAST => app(|a| a.s.fast_copy),
+        TG_DIALOG => app(|a| a.s.dialog_jump),
         TG_FOLDER => crate::folderapp::shown_on(),
         _ => false,
     }

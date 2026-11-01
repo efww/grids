@@ -1153,6 +1153,15 @@ fn flip(id: u8) {
         TG_EDGE => app(|a| a.s.edge ^= true),
         TG_CONFIRM => app(|a| a.s.confirm ^= true),
         TG_FAST => app(|a| a.s.fast_copy ^= true),
+        TG_DIALOG => {
+            app(|a| a.s.dialog_jump ^= true);
+            unsafe {
+                crate::save_session();
+                crate::dialogjump::sync();
+                redraw();
+            }
+            return;
+        }
         TG_AUTOSAVE => app(|a| a.s.autosave ^= true),
         TG_UPDATE => app(|a| a.s.update_check ^= true),
         TG_EV => {

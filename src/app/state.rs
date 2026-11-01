@@ -663,6 +663,7 @@ fn copy_shared(dst: &mut Session, src: &Session) {
     dst.peek_image = src.peek_image;
     dst.peek_doc = src.peek_doc;
     dst.hotkey = src.hotkey;
+    dst.dialog_jump = src.dialog_jump;
     dst.lang = src.lang;
     dst.single = src.single;
     dst.one_window = src.one_window;

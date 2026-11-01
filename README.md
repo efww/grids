@@ -184,6 +184,7 @@ Defaults; every one can be changed in Settings → Shortcuts.
 |  | Ctrl+, | Settings |
 |  | F1 / Ctrl+/ | Help / shortcut list |
 |  | Ctrl+N | New window |
+|  | Ctrl+Alt+G | Jump to a Maguro folder in another app's Open or Save dialog |
 |  | Win+Shift+E | Bring Maguro to the front (global) |
 
 ## Known issues

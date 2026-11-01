@@ -7,6 +7,7 @@ mod imports;
 mod langkey;
 mod i18n;
 mod keys;
+mod dialogjump;
 mod app;
 mod ui;
 mod pane;
@@ -357,6 +358,13 @@ mod tests {
         cur.take_layout(&Session::parse("hotkey=0\n"));
         assert!(cur.hotkey); // a loaded layout does not change the app-wide hotkey
         assert!(!layout_differs(&Session { hotkey: false, ..Session::default() }, &Session::default()));
+        assert!(Session::parse("side=300\n").dialog_jump);
+        assert!(!Session::parse("dialogjump=0\n").dialog_jump);
+        assert!(Session::parse("dialogjump=1\n").dialog_jump);
+        assert!(!Session::parse(&Session { dialog_jump: false, ..Session::default() }.to_ini()).dialog_jump);
+        cur.take_layout(&Session::parse("dialogjump=0\n"));
+        assert!(cur.dialog_jump); // a loaded layout does not change the dialog jump
+        assert!(!layout_differs(&Session { dialog_jump: false, ..Session::default() }, &Session::default()));
     }
 
     #[test]
