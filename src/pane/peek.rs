@@ -1150,6 +1150,100 @@ unsafe fn apply_after_peek_delete(h: HWND) {
     }
 }
 
+/// Rename the file the preview is showing (`peek_job` path); keep peek on the new name.
+pub(crate) unsafe fn rename_peek() {
+    let h = app(|a| a.peek);
+    if h.0.is_null() {
+        return;
+    }
+    let Some(path) = peek_job().req.as_ref().map(|r| r.path.clone()).filter(|p| !p.is_empty()) else {
+        _ = MessageBeep(MB_ICONWARNING);
+        return;
+    };
+    let cur_name = app(|a| a.peek_name.clone()).trim().to_string();
+    let cur_name = if cur_name.is_empty() {
+        Path::new(&path)
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.clone())
+    } else {
+        cur_name
+    };
+    // MaguroAsk deactivates peek; HOLD_PEEK keeps WA_INACTIVE from destroying it.
+    HOLD_PEEK.store(true, Ordering::SeqCst);
+    let owner = app(|a| a.main);
+    let Some(typed) = crate::settings::ask_stem(owner, tr(crate::Key::Rename), &cur_name) else {
+        HOLD_PEEK.store(false, Ordering::SeqCst);
+        if IsWindow(Some(h)).as_bool() {
+            _ = SetActiveWindow(h);
+            _ = SetFocus(Some(h));
+        }
+        return;
+    };
+    let new_name = typed.trim().to_string();
+    if new_name.is_empty() || new_name == cur_name || new_name.contains(['\\', '/', ':', '*', '?', '"', '<', '>', '|']) {
+        HOLD_PEEK.store(false, Ordering::SeqCst);
+        if new_name != cur_name && !new_name.is_empty() {
+            _ = MessageBeep(MB_ICONWARNING);
+        }
+        if IsWindow(Some(h)).as_bool() {
+            _ = SetActiveWindow(h);
+            _ = SetFocus(Some(h));
+        }
+        return;
+    }
+    let new_path = match Path::new(&path).parent() {
+        Some(dir) => dir.join(&new_name),
+        None => {
+            HOLD_PEEK.store(false, Ordering::SeqCst);
+            _ = MessageBeep(MB_ICONWARNING);
+            return;
+        }
+    };
+    let new_path_s = new_path.to_string_lossy().into_owned();
+    let ok = match crate::run_rename_one(&path, &new_name) {
+        Ok(()) => true,
+        Err(e) => {
+            let text = HSTRING::from(format!("{}{}", tr(crate::Key::RenameFailed), e.message()));
+            _ = MessageBoxW(Some(owner), &text, w!("Maguro"), MB_ICONWARNING);
+            false
+        }
+    };
+    if !ok {
+        HOLD_PEEK.store(false, Ordering::SeqCst);
+        if IsWindow(Some(h)).as_bool() {
+            _ = SetActiveWindow(h);
+            _ = SetFocus(Some(h));
+        }
+        return;
+    }
+    let i = app(|a| a.peek_pane);
+    if let Some(sv) = view_of::<IShellView>(i) {
+        _ = sv.Refresh();
+    }
+    app(|a| a.peek_name = new_name.clone());
+    if let Some(req) = peek_job().req.as_mut() {
+        req.path = new_path_s.clone();
+    }
+    if FROM_FIND.load(Ordering::SeqCst) {
+        peek_find_select_path(i, &new_path_s);
+        show_path(&new_path_s, false);
+    } else if select_peek_path(i, &new_path_s) {
+        load_peek(false);
+    } else if Path::new(&new_path_s).exists() {
+        show_path(&new_path_s, false);
+    } else {
+        close_peek(h);
+        HOLD_PEEK.store(false, Ordering::SeqCst);
+        return;
+    }
+    HOLD_PEEK.store(false, Ordering::SeqCst);
+    if !h.0.is_null() && IsWindow(Some(h)).as_bool() {
+        _ = SetActiveWindow(h);
+        _ = SetFocus(Some(h));
+    }
+}
+
 /// Delete the file the preview is showing (`peek_job` path), not an arbitrary pane selection.
 pub(crate) unsafe fn delete_peek(shift: bool) {
     let h = app(|a| a.peek);
@@ -3285,6 +3379,7 @@ fn peek_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                         // a held F3 only opens it; its repeats must not close it again
                         VK_ESCAPE | VK_SPACE | VK_F3 if !repeat => close_peek(h),
                         VK_DELETE if !repeat && !ctrl => delete_peek(shift),
+                        VK_F2 if !repeat && !ctrl => rename_peek(),
                         VK_LEFT | VK_RIGHT => step_peek(k == VK_LEFT),
                         VK_UP | VK_DOWN => arrow_scroll(h, k == VK_DOWN, repeat),
                         VK_NEXT => scroll_peek(h, page(), 0),

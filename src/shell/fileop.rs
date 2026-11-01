@@ -651,6 +651,17 @@ pub(crate) unsafe fn start_delete_notify(
     true
 }
 
+/// Rename a single filesystem item via IFileOperation (Recycle-friendly undo).
+pub(crate) unsafe fn run_rename_one(path: &str, new_name: &str) -> Result<()> {
+    let op: IFileOperation = CoCreateInstance(&FileOperation, None, CLSCTX_ALL)?;
+    let flags = FOF_ALLOWUNDO | FOF_NOCONFIRMMKDIR | FOF_NOCONFIRMATION | FOFX_ADDUNDORECORD;
+    op.SetOperationFlags(flags)?;
+    let item: IShellItem = SHCreateItemFromParsingName(&HSTRING::from(path), None)?;
+    let name = HSTRING::from(new_name);
+    op.RenameItem(&item, PCWSTR(name.as_ptr()), None)?;
+    op.PerformOperations()
+}
+
 pub(crate) unsafe fn run_delete(srcs: &[String], permanent: bool, ask_owner: isize) -> Result<()> {
     let op: IFileOperation = CoCreateInstance(&FileOperation, None, CLSCTX_ALL)?;
     let mut flags = FOF_NOCONFIRMMKDIR;

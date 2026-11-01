@@ -2450,6 +2450,24 @@ unsafe fn layout_ask(h: HWND) {
 
 /// One-line prompt. None means cancel.
 pub(crate) unsafe fn ask(owner: HWND, title: &str, initial: &str) -> Option<String> {
+    ask_with(owner, title, initial, false)
+}
+
+/// Like [`ask`], but selects the stem (before the last extension) like Explorer F2.
+pub(crate) unsafe fn ask_stem(owner: HWND, title: &str, initial: &str) -> Option<String> {
+    ask_with(owner, title, initial, true)
+}
+
+fn stem_utf16_len(name: &str) -> isize {
+    let p = std::path::Path::new(name);
+    match (p.file_stem(), p.extension()) {
+        (Some(stem), Some(_)) => stem.to_string_lossy().encode_utf16().count() as isize,
+        _ => -1,
+    }
+}
+
+/// One-line prompt. None means cancel. When `select_stem`, highlights the name stem.
+unsafe fn ask_with(owner: HWND, title: &str, initial: &str, select_stem: bool) -> Option<String> {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
         let Ok(m) = GetModuleHandleW(None) else { return };
@@ -2486,6 +2504,10 @@ pub(crate) unsafe fn ask(owner: HWND, title: &str, initial: &str) -> Option<Stri
     crate::keys::set_modal(true);
     let _ = windows::Win32::UI::Input::KeyboardAndMouse::EnableWindow(owner, false);
     let _ = windows::Win32::UI::Input::KeyboardAndMouse::SetFocus(Some(edit));
+    if select_stem {
+        // EM_SETSEL = 0xB1; Explorer F2 selects the stem only.
+        let _ = SendMessageW(edit, 0xB1, Some(WPARAM(0)), Some(LPARAM(stem_utf16_len(initial))));
+    }
     let mut msg = MSG::default();
     while ASK_OUT.with(|o| o.borrow().is_none()) {
         if !GetMessageW(&mut msg, None, 0, 0).as_bool() {
