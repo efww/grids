@@ -1,9 +1,10 @@
 // Packaged Explorer context menus (`windows.fileExplorerContextMenus` + PackagedCom).
 //
 // These registrations are not under `shellex\ContextMenuHandlers`. The classic
-// scanner never sees them, and the shell menu Maguro strips never contains
-// them either. Settings lists them on the Windows 11 view. The popup injects an
-// enabled command itself (`inject_menu`), in Maguro's own id range.
+// scanner never sees them. Some still appear in the shell menu through other
+// Windows 11 paths (Photos, Clipchamp, Copilot, …); `inject_menu` skips any
+// title the menu already shows. Settings lists them on the Windows 11 view.
+// The popup injects missing enabled commands (`inject_menu`) in Maguro's id range.
 //
 // The catalogue is built only when that view is laid out, Refresh runs while it
 // is showing, or a popup needs to inject. It is not read at process start.
@@ -658,12 +659,15 @@ pub(crate) fn clear_ids() {
     PACK_IDS.with(|m| m.borrow_mut().clear());
 }
 
-/// Append enabled packaged commands that match this click.
+/// Append enabled packaged commands that match this click and are not already
+/// on the menu under the same title (or the catalogue display name).
 ///
-/// Pure packaged `IExplorerCommand` registrations are not in the shell menu, so
-/// `strip_disabled` never reveals them. Maguro inserts the title itself with
-/// an id at `0x8100` or above and CoCreates the CLSID only when that item is
-/// built or chosen. A failed CoCreate, GetTitle, or Invoke skips that one item.
+/// Pure packaged `IExplorerCommand` registrations are often absent from the
+/// classic shell menu, so Maguro inserts the title with an id at `0x8100` or
+/// above and CoCreates the CLSID only when that item is built or chosen. When
+/// Windows already painted the same label (Photos / Clipchamp / Copilot, …),
+/// skip the inject so the popup does not grow a duplicate group after Properties.
+/// A failed CoCreate, GetTitle, or Invoke skips that one item.
 pub(crate) unsafe fn inject_menu(menu: HMENU, paths: &[String], items: &[(String, bool)], background: bool, folder: &str) {
     clear_ids();
     let targets = ctxmenu::click_targets(background, items);
@@ -686,9 +690,14 @@ pub(crate) unsafe fn inject_menu(menu: HMENU, paths: &[String], items: &[(String
         paths.iter().filter(|p| !p.trim().is_empty()).cloned().collect()
     };
     let arr = shell_array(&use_paths);
+    let mut existing = ctxmenu::folded_menu_titles(menu);
     let mut added = 0u32;
     let mut opened = false;
     for row in hits {
+        // Catalogue display name often matches the shell label before GetTitle runs.
+        if title_already_present(&existing, &row.name) {
+            continue;
+        }
         let cached = TITLE_CACHE.lock().ok().and_then(|g| g.as_ref().and_then(|c| c.get(&row.id).cloned()));
         let title = if let Some(title) = cached {
             // Safe reuse: title was shown for this command before; CoCreate only on invoke.
@@ -706,6 +715,9 @@ pub(crate) unsafe fn inject_menu(menu: HMENU, paths: &[String], items: &[(String
             }
             title
         };
+        if title_already_present(&existing, &title) {
+            continue;
+        }
         if !opened {
             _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
             opened = true;
@@ -713,11 +725,17 @@ pub(crate) unsafe fn inject_menu(menu: HMENU, paths: &[String], items: &[(String
         let id = ID_CTX_PACK + added;
         added += 1;
         _ = AppendMenuW(menu, MF_STRING, id as usize, &HSTRING::from(&title));
+        existing.insert(ctxmenu::fold_menu_label(&title));
         PACK_IDS.with(|m| m.borrow_mut().push((id, row.clsid)));
         if added >= PACK_LIMIT {
             break;
         }
     }
+}
+
+fn title_already_present(existing: &std::collections::HashSet<String>, title: &str) -> bool {
+    let folded = ctxmenu::fold_menu_label(title);
+    !folded.is_empty() && existing.contains(&folded)
 }
 
 pub(crate) unsafe fn invoke_menu_command(cmd: u32, paths: &[String], background: bool, folder: &str) -> bool {
@@ -797,6 +815,18 @@ pub(crate) fn seed_cache(rows: Vec<PackRow>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn title_already_present_folds_accelerators() {
+        let mut set = std::collections::HashSet::new();
+        set.insert(ctxmenu::fold_menu_label("속성(&R)"));
+        set.insert(ctxmenu::fold_menu_label("Copilot에게 질문하기"));
+        assert!(title_already_present(&set, "속성(&R)"));
+        assert!(title_already_present(&set, "속성(R)"));
+        assert!(title_already_present(&set, "Copilot에게 질문하기"));
+        assert!(!title_already_present(&set, "Clipchamp로 편집"));
+        assert!(!title_already_present(&set, ""));
+    }
 
     #[test]
     fn packaged_id_is_lowercase_with_braces() {

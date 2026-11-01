@@ -788,6 +788,23 @@ pub(crate) unsafe fn dump_menu_items(tag: &str, menu: HMENU) {
     }
 }
 
+/// Folded titles of current top-level items (accelerators stripped). Used to skip
+/// packaged injects the shell already painted under the same label.
+pub(crate) unsafe fn folded_menu_titles(menu: HMENU) -> std::collections::HashSet<String> {
+    let mut set = std::collections::HashSet::new();
+    let n = GetMenuItemCount(Some(menu)).max(0) as u32;
+    for i in 0..n {
+        if super::menu_sep(menu, i) {
+            continue;
+        }
+        let folded = fold_menu_label(&item_text(menu, i));
+        if !folded.is_empty() {
+            set.insert(folded);
+        }
+    }
+    set
+}
+
 #[allow(dead_code)] // Kept so the filtered-key builder still compiles. The popup does not call it.
 pub(crate) unsafe fn compose(owner: HWND, folder: &IShellFolder, children: &[*const ITEMIDLIST], targets: u8, paths: &[String]) -> Option<IContextMenu> {
     let t0 = Instant::now();
@@ -2130,6 +2147,11 @@ fn real_module(s: &str) -> bool {
 }
 
 fn fold_menu(s: &str) -> String {
+    fold_menu_label(s)
+}
+
+/// Menu label folded for equality: accelerators stripped, ASCII lowercased.
+pub(crate) fn fold_menu_label(s: &str) -> String {
     strip_accel(s).to_ascii_lowercase()
 }
 
