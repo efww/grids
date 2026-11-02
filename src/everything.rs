@@ -62,6 +62,7 @@ pub(crate) struct EvState {
     top: usize,
     hot: Option<EvSpot>,
     rows: usize, // rows on screen while open
+    w: i32,      // popup width while open, narrower on a small screen (ev_width)
     closed: Option<Instant>,
     last: String, // text kept for the next time it opens (runtime only)
     pick: Option<EvPick>,
@@ -231,9 +232,14 @@ pub(crate) struct EvGeo {
     pub(crate) rows: Vec<RECT>,
 }
 
-pub(crate) fn ev_geo(fh: i32, dpi: i32, n: usize) -> EvGeo {
+/// Popup width: wide enough for the four columns, but never wider than the screen's `avail` px.
+pub(crate) fn ev_width(avail: i32, dpi: i32) -> i32 {
+    (860 * dpi / 96).min(avail).max(420 * dpi / 96)
+}
+
+pub(crate) fn ev_geo(fh: i32, dpi: i32, n: usize, w: i32) -> EvGeo {
     let s = |v: i32| v * dpi / 96;
-    let (pad, w, rh) = (s(6), s(860), s(EV_RH));
+    let (pad, rh) = (s(6), s(EV_RH));
     let field = RECT { left: pad, top: pad, right: w - pad, bottom: pad + s(32) };
     let glass = RECT { right: field.left + s(30), ..field };
     let et = (field.top + field.bottom - fh) / 2;
@@ -245,8 +251,8 @@ pub(crate) fn ev_geo(fh: i32, dpi: i32, n: usize) -> EvGeo {
     let count = RECT { left: scope.right, right: line.right - s(8), ..line };
     let ht = line.bottom + s(4);
     let (x0, xr) = (pad, w - pad - s(6));
-    let x3 = xr - s(136);
-    let x2 = x3 - s(88);
+    let x3 = xr - s(126).max((xr - x0) * 16 / 100);
+    let x2 = x3 - s(80).max((xr - x0) * 10 / 100);
     let x1 = x0 + (x2 - x0) * 42 / 100;
     let col = |l: i32, r: i32| RECT { left: l, top: ht, right: r, bottom: ht + s(26) };
     let head = [col(x0, x1), col(x1, x2), col(x2, x3), col(x3, xr)];
@@ -265,7 +271,7 @@ pub(crate) enum EvSpot {
 
 /// Rows that fit in `avail` px of height: the full list, else fewer, never under 3.
 pub(crate) fn ev_rows_fit(avail: i32, fh: i32, dpi: i32) -> usize {
-    let head = ev_geo(fh, dpi, 0).h;
+    let head = ev_geo(fh, dpi, 0, ev_width(i32::MAX, dpi)).h;
     ((avail - head) / (EV_RH * dpi / 96)).clamp(3, EV_ROWS as i32) as usize
 }
 
@@ -308,8 +314,8 @@ pub(crate) unsafe fn ev_watch() {
 // ---------- popup ----------
 
 unsafe fn geo_now() -> EvGeo {
-    let n = ev(|e| e.rows);
-    app(|a| ev_geo(a.fh, a.dpi, n))
+    let (n, w) = ev(|e| (e.rows, e.w));
+    app(|a| ev_geo(a.fh, a.dpi, n, w))
 }
 
 pub(crate) unsafe fn open_ev() {
@@ -339,8 +345,9 @@ pub(crate) unsafe fn open_ev() {
     let mut mi = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
     _ = GetMonitorInfoW(MonitorFromWindow(main, MONITOR_DEFAULTTONEAREST), &mut mi);
     let rows = ev_rows_fit(mi.rcWork.bottom - rc.bottom - 12 * dpi / 96, fh, dpi);
-    ev(|e| e.rows = rows);
-    let g = ev_geo(fh, dpi, rows);
+    let w = ev_width(mi.rcWork.right - mi.rcWork.left - 12 * dpi / 96, dpi);
+    ev(|e| (e.rows, e.w) = (rows, w));
+    let g = ev_geo(fh, dpi, rows, w);
     let at = fit(RECT { left: rc.left, top: rc.bottom + g.field.top, right: rc.left + g.w, bottom: rc.bottom + g.field.top + g.h }, mi.rcWork);
     let prev = GetFocus();
     let style = WS_POPUP | WS_VISIBLE | WS_CLIPCHILDREN;
@@ -833,7 +840,12 @@ mod tests {
 
     #[test]
     fn everything_popup_layout() {
-        let g = ev_geo(16, 96, EV_ROWS);
+        let g = ev_geo(16, 96, EV_ROWS, ev_width(4000, 96));
+        assert_eq!((ev_width(4000, 96), ev_width(628, 96), ev_width(200, 96), ev_width(4000, 192)), (860, 628, 420, 1720));
+        // on a small screen the columns get narrower but stay in order, the date still fits
+        let n = ev_geo(16, 96, 3, 628);
+        assert!(n.w == 628 && n.head.windows(2).all(|p| p[0].right == p[1].left && p[0].left < p[0].right) && n.head[3].right <= n.list.right);
+        assert!(n.head[3].right - n.head[3].left >= 126 && n.head[2].right - n.head[2].left >= 80);
         assert_eq!(g.rows.len(), EV_ROWS);
         // a short screen gets fewer rows, never under 3
         assert_eq!((ev_rows_fit(2000, 16, 96), ev_rows_fit(g.h, 16, 96), ev_rows_fit(g.h - 80, 16, 96), ev_rows_fit(50, 16, 96)), (16, 16, 12, 3));
