@@ -67,6 +67,7 @@ mod keyboard;
 mod tabs;
 mod window_ui;
 mod dialog_jump;
+mod shellx;
 
 use ui_defs::*;
 // explicit, so it wins over the same name glob-imported from windows (a glob clash would turn match patterns into bindings)
@@ -94,6 +95,7 @@ use select_pattern::*;
 use keyboard::*;
 use tabs::*;
 use window_ui::*;
+use shellx::*;
 
 fn main() -> Result<()> {
     unsafe {

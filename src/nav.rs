@@ -352,6 +352,8 @@ pub(crate) unsafe fn open_in_menu(h: HWND, src: usize) {
             _ = AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, &HSTRING::from(text));
         }
     }
+    let others: Vec<(usize, HSTRING, String)> = items.iter().map(|(k, disp, path, t)| (*k, label(*k, *t, disp), path.clone())).collect();
+    let wm = shell_menu(menu, src, &picked, &others);
     let mut rc = RECT::default();
     if let Some(b) = pane_ctl(src, ID_OPEN_IN) {
         _ = GetWindowRect(b, &mut rc);
@@ -362,6 +364,7 @@ pub(crate) unsafe fn open_in_menu(h: HWND, src: usize) {
         (0, _) => {}
         (p @ 1..=100, _) => open_in(src, p - 1),
         (p @ 301..=316, _) => swap_panes(src, p - 301),
+        (p, picked) if is_shell_pick(p) => shell_pick(h, src, p, picked, wm, &others),
         (p, Ok(srcs)) => {
             // only to the folder the menu showed, and only the whole selection it counted
             let (mv, k) = (p > 200, (p - 1) % 100);
