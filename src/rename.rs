@@ -189,15 +189,20 @@ struct Geo {
 // A kind has a mode or the two check boxes, never both, so they share a row.
 fn geo(w: i32, h: i32, dpi: i32, fh: i32) -> Geo {
     let s = |v: i32| v * dpi / 96;
-    let (pad, gap, rh, lw) = (s(12), s(6), s(28).max(fh + s(10)), s(340));
+    let th = fh + s(4);
+    // everything left of the preview but the rule list, for these spacings
+    let below = |pad: i32, gap: i32, rh: i32, hint_h: i32, tg: i32| pad + th + s(4) + gap + rh + tg + th + s(4) + 5 * (rh + gap) + hint_h + gap + rh + gap + rh + pad;
+    let normal = (s(12), s(6), s(28).max(fh + s(10)), fh * 2 + s(4), s(12), s(70));
+    // a short window (a 640 × 480 screen): tighter rows, a one-line hint, a shorter rule list
+    let tight = (s(8), s(4), s(22).max(fh + s(6)), fh + s(2), s(6), s(40));
+    let (n0, n1, n2, n3, n4, _) = normal;
+    let (pad, gap, rh, hint_h, tg, lb_min) = if h >= below(n0, n1, n2, n3, n4) + normal.5 { normal } else { tight };
+    let lw = s(340);
     let (x0, x1) = (pad, pad + lw);
     let r = |l: i32, t: i32, rr: i32, b: i32| RECT { left: l, top: t, right: rr, bottom: b };
     let mut ctl = Vec::new();
-    let th = fh + s(4);
-    let hint_h = fh * 2 + s(4);
     let t_rules = r(x0, pad, x1, pad + th);
-    let below = gap + rh + s(12) + th + s(4) + 5 * (rh + gap) + hint_h + gap + rh + gap + rh + pad;
-    let lb_h = (h - t_rules.bottom - s(4) - below).clamp(s(70), s(170));
+    let lb_h = (h - below(pad, gap, rh, hint_h, tg)).clamp(lb_min, s(170));
     let lb = r(x0, t_rules.bottom + s(4), x1, t_rules.bottom + s(4) + lb_h);
     ctl.push((ID_RULES, lb));
     let by = lb.bottom + gap;
@@ -206,7 +211,7 @@ fn geo(w: i32, h: i32, dpi: i32, fh: i32) -> Geo {
         let l = x0 + k as i32 * (bw + gap);
         ctl.push((id, r(l, by, if k == 4 { x1 } else { l + bw }, by + rh)));
     }
-    let t_edit = r(x0, by + rh + s(12), x1, by + rh + s(12) + th);
+    let t_edit = r(x0, by + rh + tg, x1, by + rh + tg + th);
     let (mut labels, mut fields) = ([RECT::default(); 5], [RECT::default(); 5]);
     let lx = x0 + s(110);
     for k in 0..5 {
@@ -255,6 +260,23 @@ unsafe fn geo_now(h: HWND) -> Geo {
     _ = GetClientRect(h, &mut rc);
     let (dpi, fh) = app(|a| (a.dpi, a.fh));
     geo(rc.right, rc.bottom, dpi, fh)
+}
+
+// Smallest window, in DIP: its client (about 584 × 361) still holds every control (rename_layout test).
+const MIN_W: i32 = 600;
+const MIN_H: i32 = 400;
+
+// Work area of the monitor h is on; the primary one's if that can't be read (never an empty rect).
+unsafe fn work_area(h: HWND) -> RECT {
+    let mut mi = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
+    if GetMonitorInfoW(MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST), &mut mi).as_bool() && mi.rcWork.right > mi.rcWork.left {
+        return mi.rcWork;
+    }
+    let mut r = RECT::default();
+    if SystemParametersInfoW(SPI_GETWORKAREA, 0, Some(&mut r as *mut _ as _), SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0)).is_ok() && r.right > r.left {
+        return r;
+    }
+    RECT { left: 0, top: 0, right: GetSystemMetrics(SM_CXSCREEN), bottom: GetSystemMetrics(SM_CYSCREEN) }
 }
 
 unsafe fn item(h: HWND, id: i32) -> HWND {
@@ -345,9 +367,7 @@ pub(crate) unsafe fn open_rename(i: usize) {
         return;
     }
     let (main, dpi) = app(|a| (a.main, a.dpi));
-    let mut mi = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
-    _ = GetMonitorInfoW(MonitorFromWindow(main, MONITOR_DEFAULTTONEAREST), &mut mi);
-    let work = mi.rcWork;
+    let work = work_area(main);
     let w = (980 * dpi / 96).min(work.right - work.left);
     let ht = (640 * dpi / 96).min(work.bottom - work.top);
     let mut rc = RECT::default();
@@ -980,7 +1000,8 @@ unsafe fn toggle_rule() {
 
 /// Keys for the rename window, from pre_translate. None: not this window's. Esc closes, Ctrl+Enter renames,
 /// Ctrl+Z undoes (outside a text field); in the rule list Space switches a rule on/off, Del removes it,
-/// Ins adds one and Alt+↑/↓ moves it. Tab and the rest go the dialog way.
+/// Ins adds one and Alt+↑/↓ moves it. Tab and the rest go the dialog way. Some(_) always: key() and its pane
+/// shortcuts (Ctrl+1…9, Ctrl+Tab, Ctrl+Shift+M, Alt+arrows ...) never see a key meant for this window.
 pub(crate) unsafe fn rename_key(m: &MSG) -> Option<bool> {
     let h = rn(|r| r.h);
     if h.0.is_null() || !(m.hwnd == h || IsChild(h, m.hwnd).as_bool()) {
@@ -996,6 +1017,13 @@ pub(crate) unsafe fn rename_key(m: &MSG) -> Option<bool> {
         let handled = match VIRTUAL_KEY(m.wParam.0 as u16) {
             VK_ESCAPE => {
                 _ = DestroyWindow(h);
+                true
+            }
+            // the shortcut list works from here too; it gives the keyboard back to this window
+            VK_OEM_2 if ctrl && !alt => {
+                if m.lParam.0 & (1 << 30) == 0 {
+                    toggle_keys();
+                }
                 true
             }
             VK_RETURN if ctrl => {
@@ -1049,7 +1077,10 @@ pub(crate) extern "system" fn rename_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPA
             WM_GETMINMAXINFO => {
                 let dpi = app(|a| a.dpi);
                 let mm = &mut *(lp.0 as *mut MINMAXINFO);
-                mm.ptMinTrackSize = POINT { x: 740 * dpi / 96, y: 520 * dpi / 96 }; // a client of about 720 × 480 DIP
+                // fits a 640 × 480 screen (geo goes tight); never more than the work area it is on
+                let work = work_area(h);
+                let (mw, mh) = (MIN_W * dpi / 96, MIN_H * dpi / 96);
+                mm.ptMinTrackSize = POINT { x: mw.min(work.right - work.left).max(1), y: mh.min(work.bottom - work.top).max(1) };
             }
             WM_CTLCOLOREDIT => return edit_colors(wp),
             WM_CTLCOLORLISTBOX => {
@@ -1148,14 +1179,15 @@ mod tests {
     #[test]
     fn rename_layout() {
         // at the smallest window size, at 100 / 150 / 200 %: everything inside, nothing on top of anything else
-        for dpi in [96, 144, 192] {
-            let (w, h, fh) = (720 * dpi / 96, 470 * dpi / 96, 16 * dpi / 96);
+        // client of the smallest window (minus frame and caption), the opening size, and in between
+        for (dpi, cw, ch) in [96, 144, 192].into_iter().flat_map(|d| [(d, MIN_W - 16, MIN_H - 39), (d, 720, 470), (d, 964, 601)]) {
+            let (w, h, fh) = (cw * dpi / 96, ch * dpi / 96, 16 * dpi / 96);
             let g = geo(w, h, dpi, fh);
             let inside = |r: &RECT| r.left >= 0 && r.top >= 0 && r.right <= w && r.bottom <= h && r.left < r.right && r.top < r.bottom;
             for (id, r) in &g.ctl {
                 assert!(inside(r), "{id} at {dpi}");
             }
-            assert!(g.note.right - g.note.left > 100 * dpi / 96 && g.hint.bottom <= g.ctl.iter().find(|(id, _)| *id == ID_PNAME).unwrap().1.top);
+            assert!(g.note.right - g.note.left > 60 * dpi / 96 && g.hint.bottom <= g.ctl.iter().find(|(id, _)| *id == ID_PNAME).unwrap().1.top);
             for (a, ra) in &g.ctl {
                 // the mode button shares its row with the two check boxes (never shown together)
                 for (b, rb) in g.ctl.iter().filter(|(b, _)| b > a && !(*a == ID_MODE && (*b == ID_FX || *b == ID_FY))) {
@@ -1164,7 +1196,7 @@ mod tests {
                 }
             }
             let lb = g.ctl.iter().find(|(id, _)| *id == ID_RULES).unwrap().1;
-            assert!(lb.bottom - lb.top >= 70 * dpi / 96);
+            assert!(lb.bottom - lb.top >= 40 * dpi / 96);
         }
     }
 }
