@@ -66,6 +66,7 @@ mod select_pattern;
 mod keyboard;
 mod tabs;
 mod window_ui;
+mod everything;
 
 use ui_defs::*;
 // explicit, so it wins over the same name glob-imported from windows (a glob clash would turn match patterns into bindings)
@@ -93,6 +94,7 @@ use select_pattern::*;
 use keyboard::*;
 use tabs::*;
 use window_ui::*;
+use everything::*;
 
 fn main() -> Result<()> {
     unsafe {
@@ -219,6 +221,14 @@ fn main() -> Result<()> {
             hInstance: hinst,
             hCursor: arrow,
             lpszClassName: w!("GridsPeekHost"),
+            ..Default::default()
+        });
+        RegisterClassW(&WNDCLASSW {
+            style: CS_DROPSHADOW,
+            lpfnWndProc: Some(ev_proc),
+            hInstance: hinst,
+            hCursor: arrow,
+            lpszClassName: w!("GridsEv"),
             ..Default::default()
         });
         KO.store(s.ko, Ordering::Relaxed);

@@ -154,7 +154,9 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                     redraw_all();
                 }
             }
+            WM_TIMER if wp.0 == TIMER_EV_SELECT => ev_pick_tick(h),
             WM_TIMER if wp.0 == TIMER_STATUS => {
+                ev_watch(); // Everything started or quit: its button comes or goes
                 update_status();
                 check_dirty();
                 autosave();
@@ -222,6 +224,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 id if id == ID_TB_SAVE as usize => save_current(),
                 id if id == ID_TB_LOAD as usize => open_load(),
                 id if id == ID_TB_FAV as usize => open_favs(),
+                id if id == ID_TB_EV as usize => open_ev(),
                 id if id == ID_TB_THEME as usize => {
                     app(|a| (a.s.dark, a.s.follow) = (!a.s.dark, false)); // picked by hand: stop following Windows
                     retheme();
@@ -568,7 +571,7 @@ pub(crate) unsafe fn about(owner: HWND) {
 }
 
 // Toolbar buttons: id, accessible name, tooltip.
-pub(crate) fn toolbar_tips() -> [(i32, &'static str, &'static str); 6] {
+pub(crate) fn toolbar_tips() -> [(i32, &'static str, &'static str); 7] {
     [
         (ID_TB_LAYOUT, "", tr("Layout: click = even grid, drag = rows per column", "레이아웃: 클릭 = 균등, 끌기 = 열마다 칸 수")),
         (ID_TB_SAVE, tr("Save session", "세션 저장"), ""), // tooltip set by refresh_save_button
@@ -576,6 +579,7 @@ pub(crate) fn toolbar_tips() -> [(i32, &'static str, &'static str); 6] {
         (ID_TB_VIEW, tr("View", "보기"), tr("View: hidden files · extensions · colours · language · help", "보기: 숨김 파일 · 확장명 · 선택 색 · 언어 · 도움말")),
         (ID_TB_FAV, tr("Favourites", "즐겨찾기"), tr("Favourite folders (Ctrl+B; open in the active pane)", "즐겨찾기 폴더 (Ctrl+B, 선택한 패널에서 열기)")),
         (ID_TB_THEME, tr("Theme", "테마"), tr("Light / dark theme", "라이트 / 다크 테마")),
+        (ID_TB_EV, tr("Search with Everything", "Everything으로 검색"), tr("Search with Everything (Ctrl+Shift+F)", "Everything으로 검색 (Ctrl+Shift+F)")),
     ]
 }
 

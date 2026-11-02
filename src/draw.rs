@@ -131,7 +131,8 @@ pub(crate) unsafe fn draw_button(d: &DRAWITEMSTRUCT) {
         return draw_star(dc, rc, fg, Star::Outline, dpi);
     }
     let dirty = id == ID_TB_SAVE && app(|a| a.dirty);
-    text(dc, rc, glyph(id), icon_font, if dirty { GREEN } else { fg }, DT_CENTER);
+    let ink = if dirty { GREEN } else if id == ID_TB_EV { EV_ORANGE } else { fg };
+    text(dc, rc, glyph(id), icon_font, ink, DT_CENTER);
     if dirty {
         fill(dc, RECT { left: rc.right - s(10), top: rc.top + s(4), right: rc.right - s(4), bottom: rc.top + s(10) }, GREEN);
     }

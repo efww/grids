@@ -8,6 +8,10 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
     if !peek.0.is_null() && m.hwnd == peek {
         return false;
     }
+    // the Everything search box takes its list keys; the rest is typing
+    if let Some(used) = ev_key(m) {
+        return used;
+    }
     let down = |k: VIRTUAL_KEY| GetKeyState(k.0 as i32) < 0;
     let (ctrl, shift, alt) = (down(VK_CONTROL), down(VK_SHIFT), down(VK_MENU));
     // the pattern box takes Enter / Esc; everything else is typing, so pane shortcuts stay out of it
@@ -81,6 +85,7 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
         VK_L if ctrl => return focus_ctl(a, ID_EDIT),
         VK_D if alt => return focus_ctl(a, ID_EDIT),
         VK_F4 if !alt => return focus_ctl(a, ID_EDIT),
+        VK_F if ctrl && shift && !alt => open_ev(),
         VK_F if ctrl => return focus_ctl(a, ID_FILTER),
         VK_H if ctrl => toggle_hidden(),
         VK_S if ctrl => save_current(),
