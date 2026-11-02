@@ -822,19 +822,7 @@ unsafe fn draw_card(dc: HDC, c: &CardItem, sn: &Snap, accent: u32) {
 }
 
 unsafe fn draw_tick(dc: HDC, r: RECT, tick: crate::shell::ctxmenu::Tick, accent: u32, dpi: i32, icon: HFONT, ground: u32) {
-    let rad = sc(dpi, 3);
-    match tick {
-        crate::shell::ctxmenu::Tick::On => {
-            crate::aa_rfill(dc, r, rad, accent, Some(accent), ground);
-            crate::text(dc, r, "\u{E73E}", icon, on_chrome(accent), DT_CENTER);
-        }
-        crate::shell::ctxmenu::Tick::Mixed => {
-            crate::aa_rfill(dc, r, rad, crate::pal().card, Some(accent), ground);
-            let mid = (r.top + r.bottom) / 2;
-            crate::fill(dc, RECT { left: r.left + sc(dpi, 3), top: mid - sc(dpi, 1), right: r.right - sc(dpi, 3), bottom: mid + sc(dpi, 1) }, accent);
-        }
-        crate::shell::ctxmenu::Tick::Off => crate::aa_rfill(dc, r, rad, crate::pal().card, Some(crate::pal().line), ground),
-    }
+    crate::draw_tick(dc, r, tick, accent, dpi, icon, ground, false);
 }
 
 unsafe fn draw_seg(dc: HDC, r: RECT, label: &str, on: bool, sn: &Snap, accent: u32) {

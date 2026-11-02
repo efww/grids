@@ -24,6 +24,7 @@ enum Hover {
     Active,
     Run(u64),
     Del(u64),
+    Sub(u64),
     Row(u64),
 }
 
@@ -33,6 +34,7 @@ struct WatchWin {
     font: HFONT,
     bold: HFONT,
     small: HFONT,
+    icon: HFONT,
     scroll: i32,
     drag: bool,
     hover: Hover,
@@ -47,6 +49,7 @@ impl WatchWin {
             font: HFONT::default(),
             bold: HFONT::default(),
             small: HFONT::default(),
+            icon: HFONT::default(),
             scroll: 0,
             drag: false,
             hover: Hover::None,
@@ -205,17 +208,21 @@ fn rebuild_fonts() {
     let font = make_font(&face, 12, 400, dpi);
     let small = make_font(&face, 11, 400, dpi);
     let bold = make_font(&face, 12, 700, dpi);
+    // Same icon face and size as the Settings checkbox.
+    let icon = make_font("Segoe MDL2 Assets", 14, 400, dpi);
     let old = WATCH.with(|w| {
         let mut u = w.borrow_mut();
-        let old = (u.font, u.bold, u.small);
+        let old = (u.font, u.bold, u.small, u.icon);
         u.font = font;
         u.bold = bold;
         u.small = small;
+        u.icon = icon;
         old
     });
     drop_font(old.0);
     drop_font(old.1);
     drop_font(old.2);
+    drop_font(old.3);
 }
 
 fn drop_font(font: HFONT) {
@@ -329,18 +336,20 @@ unsafe extern "system" fn watch_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             if WATCH.with(|w| w.borrow().hwnd) == h {
                 crate::drop_side(h);
                 let _ = RevokeDragDrop(h);
-                let (font, bold, small) = WATCH.with(|w| {
+                let (font, bold, small, icon) = WATCH.with(|w| {
                     let mut u = w.borrow_mut();
                     u.hwnd = HWND::default();
-                    let fonts = (u.font, u.bold, u.small);
+                    let fonts = (u.font, u.bold, u.small, u.icon);
                     u.font = HFONT::default();
                     u.bold = HFONT::default();
                     u.small = HFONT::default();
+                    u.icon = HFONT::default();
                     fonts
                 });
                 drop_font(font);
                 drop_font(bold);
                 drop_font(small);
+                drop_font(icon);
             }
             LRESULT(0)
         }
@@ -419,6 +428,9 @@ fn hover_at(lay: &Lay, x: i32, y: i32) -> Hover {
         }
         if inside(hit.del, x, y) {
             return Hover::Del(hit.id);
+        }
+        if inside(hit.sub, x, y) {
+            return Hover::Sub(hit.id);
         }
         if inside(hit.row, x, y) {
             return Hover::Row(hit.id);
@@ -510,9 +522,11 @@ unsafe fn layout(h: HWND, rows: &[Row]) -> Lay {
     let list = RECT { left: head.left, top: head.bottom, right: head.right, bottom: (frame.bottom - 1).max(head.bottom) };
     let status = RECT { left: 0, top: height - bar_h, right: w, bottom: height };
     let (run_w, del_w) = action_widths(dc, small, dpi);
+    let sub_text = measure(dc, small, crate::tr(crate::Key::WatchSub))
+        .max(measure(dc, small, crate::tr(crate::Key::WatchSubShort)) + sc(dpi, 16) + sc(dpi, 8));
     let _ = ReleaseDC(Some(h), dc);
     let actions_w = run_w + gap + del_w + sc(dpi, 8);
-    let sub_w = sc(dpi, 84);
+    let sub_w = sub_text + sc(dpi, 10);
     let status_w = sc(dpi, 112);
     let inner_l = list.left + sc(dpi, 4);
     let inner_r = list.right - sc(dpi, 4);
@@ -564,9 +578,9 @@ unsafe fn paint(h: HWND, dc: HDC, rc: RECT) {
     let rows = super::snapshot();
     let lay = layout(h, &rows);
     sync_scroll(h, &lay);
-    let (font, bold, small, drag, hover, banner) = WATCH.with(|w| {
+    let (font, bold, small, icon, drag, hover, banner) = WATCH.with(|w| {
         let u = w.borrow();
-        (u.font, u.bold, u.small, u.drag, u.hover, u.banner.clone())
+        (u.font, u.bold, u.small, u.icon, u.drag, u.hover, u.banner.clone())
     });
     let dpi = WATCH.with(|w| w.borrow().dpi.max(96));
     let pal = crate::pal();
@@ -602,7 +616,8 @@ unsafe fn paint(h: HWND, dc: HDC, rc: RECT) {
             continue;
         }
         let mut bg = if row.paused { paused_bg(dark) } else { pal.card };
-        if hover == Hover::Row(row.id) {
+        let row_hot = matches!(hover, Hover::Row(id) | Hover::Sub(id) if id == row.id);
+        if row_hot {
             bg = crate::blend(bg, pal.text, 0.04);
         }
         crate::fill(dc, hit.row, bg);
@@ -634,7 +649,8 @@ unsafe fn paint(h: HWND, dc: HDC, rc: RECT) {
         let shown = fit_path(dc, small, &parent, path_r.right - path_r.left);
         crate::text(dc, path_r, &shown, small, pal.sub, DT_LEFT | DT_PATH_ELLIPSIS);
         if !row.file {
-            checkbox(dc, hit.sub, row.subfolders, small, dpi);
+            let box_hot = matches!(hover, Hover::Sub(id) if id == row.id);
+            checkbox(dc, hit.sub, row.subfolders, small, icon, dpi, box_hot, bg);
         }
         let status_r = RECT { left: lay.cols.status + sc(dpi, 2), top: hit.row.top, right: lay.cols.last - sc(dpi, 4), bottom: hit.row.bottom };
         crate::text(dc, status_r, status_label(row), small, status_color(row.status, dark), DT_LEFT);
@@ -773,39 +789,17 @@ unsafe fn mini_btn(dc: HDC, r: RECT, label: &str, font: HFONT, danger: bool, hot
     crate::text(dc, r, label, font, ink, DT_CENTER);
 }
 
-unsafe fn checkbox(dc: HDC, r: RECT, on: bool, font: HFONT, dpi: i32) {
+unsafe fn checkbox(dc: HDC, r: RECT, on: bool, font: HFONT, icon: HFONT, dpi: i32, hot: bool, ground: u32) {
     if r.right <= r.left {
         return;
     }
-    let pal = crate::pal();
-    let side = sc(dpi, 13);
+    let side = sc(dpi, 16);
     let top = r.top + ((r.bottom - r.top) - side).max(0) / 2;
     let mark = RECT { left: r.left, top, right: r.left + side, bottom: top + side };
-    if on {
-        crate::fill(dc, mark, pal.text);
-        let pen = CreatePen(PS_SOLID, 1, crate::cref(pal.card));
-        if !pen.is_invalid() {
-            let obj = HGDIOBJ(pen.0);
-            let old = SelectObject(dc, obj);
-            let x1 = mark.left + side / 5;
-            let y1 = mark.top + side / 2;
-            let x2 = mark.left + side * 2 / 5;
-            let y2 = mark.bottom - side / 4;
-            let x3 = mark.right - side / 5;
-            let y3 = mark.top + side / 4;
-            let _ = MoveToEx(dc, x1, y1, None);
-            let _ = LineTo(dc, x2, y2);
-            let _ = MoveToEx(dc, x2, y2, None);
-            let _ = LineTo(dc, x3, y3);
-            SelectObject(dc, old);
-            let _ = DeleteObject(obj);
-        }
-    } else {
-        crate::fill(dc, mark, pal.card);
-        crate::frame(dc, mark, 1, pal.sub);
-    }
-    let label = RECT { left: mark.right + sc(dpi, 4), ..r };
-    crate::text(dc, label, crate::tr(crate::Key::WatchSubShort), font, pal.text, DT_LEFT);
+    let tick = if on { crate::shell::ctxmenu::Tick::On } else { crate::shell::ctxmenu::Tick::Off };
+    crate::draw_tick(dc, mark, tick, crate::settings::chrome_color(), dpi, icon, ground, hot);
+    let label = RECT { left: mark.right + sc(dpi, 8), ..r };
+    crate::text(dc, label, crate::tr(crate::Key::WatchSubShort), font, crate::pal().text, DT_LEFT);
 }
 
 unsafe fn sync_scroll(h: HWND, lay: &Lay) {

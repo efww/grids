@@ -37,6 +37,33 @@ pub(crate) unsafe fn text(dc: HDC, mut r: RECT, s: &str, font: HFONT, rgb: u32, 
     SelectObject(dc, old);
 }
 
+/// Settings checkbox. 16 DIP is the caller's box; the corner radius is 3 DIP.
+/// `hot` uses the same accent wash as a hovered settings button. Light and dark come from `pal()`.
+pub(crate) unsafe fn draw_tick(dc: HDC, r: RECT, tick: crate::shell::ctxmenu::Tick, accent: u32, dpi: i32, icon: HFONT, ground: u32, hot: bool) {
+    let s = |v: i32| v * dpi.max(96) / 96;
+    let rad = s(3).max(1);
+    let card = pal().card;
+    match tick {
+        crate::shell::ctxmenu::Tick::On => {
+            let wash = if hot { blend(accent, 0xFFFFFF, 0.12) } else { accent };
+            aa_rfill(dc, r, rad, wash, Some(wash), ground);
+            text(dc, r, "\u{E73E}", icon, on_color(wash), DT_CENTER);
+        }
+        crate::shell::ctxmenu::Tick::Mixed => {
+            let wash = if hot { blend(card, accent, 0.12) } else { card };
+            aa_rfill(dc, r, rad, wash, Some(accent), ground);
+            let mid = (r.top + r.bottom) / 2;
+            let bar = s(1).max(1);
+            fill(dc, RECT { left: r.left + s(3), top: mid - bar, right: r.right - s(3), bottom: mid + bar }, accent);
+        }
+        crate::shell::ctxmenu::Tick::Off => {
+            let wash = if hot { blend(card, accent, 0.12) } else { card };
+            let edge = if hot { accent } else { pal().line };
+            aa_rfill(dc, r, rad, wash, Some(edge), ground);
+        }
+    }
+}
+
 /// Multi-line text wrapped at `r`'s width. `calc` only measures, with the same font and flags.
 pub(crate) unsafe fn wrap_text(dc: HDC, mut r: RECT, s: &str, font: HFONT, rgb: u32, calc: bool) -> (i32, i32) {
     let mut w: Vec<u16> = s.encode_utf16().collect();
