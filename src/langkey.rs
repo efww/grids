@@ -742,11 +742,32 @@ pub(crate) enum Key {
     ReplaceCurrentTabs,
     AskBeforeLoadingWorkspace,
     WorkspaceSlotEmpty,
+    FolderWatch,
+    FolderWatchHint,
+    AddActivePane,
+    IncludeSubfolders,
+    WatchWatching,
+    WatchPaused,
+    WatchMissing,
+    WatchFailed,
+    LastChange,
+    ChangeAdded,
+    ChangeRemoved,
+    ChangeModified,
+    ChangeRenamed,
+    WatchStop,
+    WatchResume,
+    WatchEmpty,
+    WatchNotify,
+    WatchNotFolder,
+    WatchAlready,
+    WatchLimit,
+    NoChangeYet,
 }
 
-pub(crate) const KEY_COUNT: usize = 739;
+pub(crate) const KEY_COUNT: usize = 760;
 
-const _: () = assert!((Key::WorkspaceSlotEmpty as usize) + 1 == KEY_COUNT);
+const _: () = assert!((Key::NoChangeYet as usize) + 1 == KEY_COUNT);
 
 pub(crate) const EN: [&str; KEY_COUNT] = [
     "About",
@@ -1488,6 +1509,27 @@ pub(crate) const EN: [&str; KEY_COUNT] = [
     "Replace the current tabs with workspace {name}?",
     "Ask before loading",
     "{n}  (empty)",
+    "Folder Watch",
+    "These folders are watched only while Maguro is running.",
+    "Add active pane",
+    "Include subfolders",
+    "Watching",
+    "Paused",
+    "Folder not found",
+    "Could not watch",
+    "Last change",
+    "Added",
+    "Removed",
+    "Modified",
+    "Renamed",
+    "Stop",
+    "Resume",
+    "Drop a folder here, or add the active pane.",
+    "{kind}: {name}",
+    "That is not a folder.",
+    "That folder is already being watched.",
+    "Maguro can watch up to {n} folders.",
+    "No changes yet",
 
 ];
 
@@ -2231,6 +2273,27 @@ pub(crate) const KEY_ID: [&str; KEY_COUNT] = [
     "replace_current_tabs",
     "ask_before_loading_workspace",
     "workspace_slot_empty",
+    "folder_watch",
+    "folder_watch_hint",
+    "add_active_pane",
+    "include_subfolders",
+    "watch_watching",
+    "watch_paused",
+    "watch_missing",
+    "watch_failed",
+    "last_change",
+    "change_added",
+    "change_removed",
+    "change_modified",
+    "change_renamed",
+    "watch_stop",
+    "watch_resume",
+    "watch_empty",
+    "watch_notify",
+    "watch_not_folder",
+    "watch_already",
+    "watch_limit",
+    "no_change_yet",
 
 ];
 

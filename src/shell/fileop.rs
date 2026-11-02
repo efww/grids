@@ -954,6 +954,7 @@ pub(crate) unsafe fn import_settings(text: &str) -> bool {
     relayout();
     save_session();
     settings::refresh();
+    crate::watch::resync();
     true
 }
 

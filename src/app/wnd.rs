@@ -301,6 +301,7 @@ fn main_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                     settings::redraw();
                 }
                 ID_SETTINGS => settings::open(h),
+                ID_WATCH => crate::watch::open(h),
                 ID_LANG_AUTO => set_language(Lang::Auto),
                 id if (ID_LANG_FIRST..ID_LANG_FIRST + 64).contains(&id) => {
                     if let Some((lang, _)) = language_choices().get(id - ID_LANG_FIRST) {
@@ -365,6 +366,10 @@ fn main_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                 if let Some(i) = crate::keys::index("sess.save") {
                     let label = format!("{}\t{}", tr(crate::Key::SaveThisTab), crate::keys::chord_text(i));
                     _ = ModifyMenuW(menu, ID_SESS_SAVE as u32, MF_BYCOMMAND | MF_STRING, ID_SESS_SAVE, &HSTRING::from(label));
+                }
+                if let Some(i) = crate::keys::index("watch.open") {
+                    let label = format!("{}\t{}", tr(crate::Key::FolderWatch), crate::keys::chord_text(i));
+                    _ = ModifyMenuW(menu, ID_WATCH as u32, MF_BYCOMMAND | MF_STRING, ID_WATCH, &HSTRING::from(label));
                 }
                 check(ID_DBLUP, dblup);
                 check(ID_LANG_AUTO, lang == Lang::Auto);
@@ -471,6 +476,9 @@ fn main_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
             }
             WM_THEME_SYNC => theme_sync(),
             WM_ABOUT => about(h),
+            WM_WATCH => crate::watch::on_ui_event(),
+            WM_WATCH_OPEN => crate::watch::open_queued(),
+            WM_WATCH_TOAST => crate::watch::show_fallback(),
             WM_THEME_PANE => theme_pane_step(),
             WM_THEME_RELAUNCH => theme_relaunch(),
             WM_UPDATE => on_update(h, wp.0),
@@ -524,10 +532,12 @@ fn main_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                     release_desk_handles(handles.0, handles.1, handles.2, handles.3, handles.4);
                 }
                 if window_count() == 0 {
+                    crate::watch::shutdown();
                     crate::basket::close();
                     crate::dialogjump::shutdown();
                     PostQuitMessage(0);
                 } else {
+                    crate::watch::retarget(app(|a| a.main));
                     try_register_hotkey(app(|a| a.main));
                     crate::dialogjump::install(app(|a| a.main));
                 }
@@ -1123,6 +1133,8 @@ pub(crate) unsafe fn make_menus() -> Result<HMENU> {
     item(colors, MF_STRING, ID_ACCENT_PICK, tr(crate::Key::Custom))?;
     item(view, MF_POPUP, colors.0 as usize, tr(crate::Key::SelectionColour))?;
     AppendMenuW(view, MF_SEPARATOR, 0, PCWSTR::null())?;
+    let watch_chord = crate::keys::index("watch.open").map(crate::keys::chord_text).unwrap_or_default();
+    item(view, MF_STRING, ID_WATCH, &format!("{}\t{}", tr(crate::Key::FolderWatch), watch_chord))?;
     item(view, MF_STRING, ID_SETTINGS, tr(crate::Key::Settings))?;
     let langs = CreatePopupMenu()?;
     item(langs, MF_STRING, ID_LANG_AUTO, tr(crate::Key::FollowWindows))?;

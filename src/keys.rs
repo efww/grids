@@ -129,6 +129,7 @@ const CMDS: &[Cmd] = &[
     // Registered only while another app's Open or Save dialog is in front. See dialogjump.
     cmd("dialog.jump", WIN, crate::Key::JumpToAFolderInAFileDialog, 0x47, true, false, true, false, false),
     cmd("win.new", WIN, crate::Key::NewWindow, 0x4E, true, false, false, false, false),
+    cmd("watch.open", WIN, crate::Key::FolderWatch, 0x57, true, true, false, false, false),
 ];
 
 struct KeyState {

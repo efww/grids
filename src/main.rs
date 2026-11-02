@@ -24,6 +24,7 @@ mod folderapp;
 mod crash;
 mod winpath;
 mod remote;
+mod watch;
 
 use imports::*;
 
@@ -265,6 +266,7 @@ fn main() -> Result<()> {
         crash::show_previous();
         shell::blockext::apply(&s.blocked_shell_extensions);
         let main = open_window(s)?;
+        watch::start();
         apply_ext(app(|a| a.s.ext));
         if restore && boot != 0 && !keep_tabs {
             save_session();

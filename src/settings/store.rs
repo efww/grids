@@ -396,6 +396,9 @@ struct SettingsFile {
     /// Not written into grids.ini.
     #[serde(default = "excel_tidy_default", skip_serializing_if = "excel_tidy_is_default")]
     excel_tidy: ExcelTidyJson,
+    /// Folders watched while Maguro is running. Not part of a session and not written into grids.ini.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    folder_watches: Vec<crate::watch::WatchJson>,
     #[serde(default, flatten)]
     extra: Map<String, Value>,
 }
@@ -485,6 +488,7 @@ impl SettingsFile {
             workspace_confirm: false,
             file_basket: Vec::new(),
             excel_tidy: excel_tidy_default(),
+            folder_watches: Vec::new(),
             extra: Map::new(),
         }
     }
@@ -600,6 +604,7 @@ impl SettingsFile {
                 first_sheet: s.excel_tidy_first,
                 backup: s.excel_tidy_backup,
             },
+            folder_watches: crate::watch::export_saved(),
             extra: Map::new(),
         }
     }
@@ -657,11 +662,13 @@ impl SettingsFile {
         self.extra.remove("workspace_confirm");
         self.extra.remove("file_basket");
         self.extra.remove("excel_tidy");
+        self.extra.remove("folder_watches");
         // Older builds stored a pane-tab on/off switch. Tabs are always on; the key is dropped.
         self.extra.remove("pane_tabs");
     }
 
     fn to_session(&self) -> Session {
+        crate::watch::import_saved(&self.folder_watches);
         let mut s = Session::default();
         if let Some(w) = &self.window {
             s.win = Some([w.left, w.top, w.right, w.bottom, w.maximized as i32]);

@@ -39,6 +39,10 @@ pub(crate) const ID_RECENT: usize = 1121; // gear: open the Windows Recent folde
 pub(crate) const ID_REVEAL: usize = 1123; // gear: show the selected recent file in its folder
 pub(crate) const ID_SESS_SAVE: usize = 1130; // gear: save the current tab
 pub(crate) const ID_SESS_OPEN: usize = 1131; // gear: open a saved tab as a new tab
+pub(crate) const ID_WATCH: usize = 1132; // gear: folder watch
+pub(crate) const WM_WATCH: u32 = WM_APP + 75; // a watch thread posted a burst or a status (avoid preview 70-72)
+pub(crate) const WM_WATCH_OPEN: u32 = WM_APP + 76; // open a notified folder as a new tab
+pub(crate) const WM_WATCH_TOAST: u32 = WM_APP + 77; // balloon failed; show the in-app note
 /// Gear → Workspaces. Each range is slot 0..8 (keys 1..9).
 pub(crate) const ID_WS_SAVE: usize = 1900;
 pub(crate) const ID_WS_LOAD: usize = 1910;
