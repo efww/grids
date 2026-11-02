@@ -1,4 +1,4 @@
-// File basket: a small always-on-top tool window. Paths stay in maguro.json.
+// File basket: a small always-on-top window. Paths stay in maguro.json.
 // Copy and move go through IFileOperation on a worker, the same path as a pane paste.
 // Remove and Clear edit the list only. A drag out copies unless Shift is held.
 
@@ -395,10 +395,10 @@ unsafe fn open() {
     x = x.clamp(work.left, (work.right - w).max(work.left));
     y = y.clamp(work.top, (work.bottom - h).max(work.top));
     let title = HSTRING::from(tr(Key::FileBasket));
-    let ex = WS_EX_TOOLWINDOW | WS_EX_TOPMOST;
-    let style = WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_VSCROLL | WS_VISIBLE | WS_CLIPSIBLINGS;
-    // Unowned, so a click does not activate one main window and switch desks.
-    // The active pane stays the one the user was just using. The last window closes this.
+    // Same caption as Folder Watch and Settings: app icon, standard min/max/close.
+    // Still unowned and topmost, so a click does not activate one main window and switch desks.
+    let ex = WS_EX_TOPMOST;
+    let style = WS_OVERLAPPEDWINDOW | WS_VSCROLL | WS_CLIPCHILDREN | WS_VISIBLE | WS_CLIPSIBLINGS;
     let Ok(hwnd) = CreateWindowExW(ex, w!("MaguroBasket"), &title, style, x, y, w, h, None, None, None, None) else {
         return;
     };
@@ -1340,7 +1340,9 @@ unsafe fn draw_tool(dc: HDC, r: RECT, label: &str, font: HFONT, primary: bool, o
     let rad = sc(dpi, 2).max(1);
     if primary && on {
         let fill_c = primary_fill(hot);
-        aa_rfill(dc, r, rad, fill_c, Some(fill_c), pal.bg);
+        // A border that differs from the fill takes the same 1px inset as the other buttons.
+        let edge = if hot { 0x056A96 } else { CERULEAN_DEEP };
+        aa_rfill(dc, r, rad, fill_c, Some(edge), pal.bg);
         text(dc, r, label, font, 0xFFFFFF, DT_CENTER);
     } else {
         let fill_c = if hot && on { blend(pal.card, pal.text, 0.06) } else { pal.card };

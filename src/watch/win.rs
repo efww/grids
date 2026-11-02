@@ -68,7 +68,8 @@ struct Hit {
 }
 
 struct Cols {
-    folder: i32,
+    name: i32,
+    path: i32,
     sub: i32,
     status: i32,
     last: i32,
@@ -515,13 +516,17 @@ unsafe fn layout(h: HWND, rows: &[Row]) -> Lay {
     let status_w = sc(dpi, 112);
     let inner_l = list.left + sc(dpi, 4);
     let inner_r = list.right - sc(dpi, 4);
-    let usable = (inner_r - inner_l - actions_w - sub_w - status_w).max(sc(dpi, 80));
-    let folder_w = (usable * 58 / 100).max(sc(dpi, 48)).min(usable);
+    let usable = (inner_r - inner_l - actions_w - sub_w - status_w).max(0);
+    let name_min = sc(dpi, 96).min(usable);
+    let name_max = (usable * 55 / 100).max(name_min);
+    let name_w = (usable * 38 / 100).clamp(name_min, name_max);
+    let path_w = ((usable - name_w) * 62 / 100).max(0);
     let cols = Cols {
-        folder: inner_l,
-        sub: inner_l + folder_w,
-        status: inner_l + folder_w + sub_w,
-        last: inner_l + folder_w + sub_w + status_w,
+        name: inner_l,
+        path: inner_l + name_w,
+        sub: inner_l + name_w + path_w,
+        status: inner_l + name_w + path_w + sub_w,
+        last: inner_l + name_w + path_w + sub_w + status_w,
         actions: inner_r - actions_w,
         right: inner_r,
     };
@@ -568,7 +573,7 @@ unsafe fn paint(h: HWND, dc: HDC, rc: RECT) {
     let dark = crate::DARK_ON.load(Ordering::Relaxed);
     crate::fill(dc, rc, pal.bg);
     crate::text(dc, lay.hint, crate::tr(crate::Key::FolderWatchHint), small, pal.sub, DT_LEFT);
-    tool_btn(dc, lay.add, crate::tr(crate::Key::AddFolder), bold, true, hover == Hover::Add, dpi);
+    tool_btn(dc, lay.add, crate::tr(crate::Key::AddFolder), font, true, hover == Hover::Add, dpi);
     tool_btn(dc, lay.file, crate::tr(crate::Key::AddFile), font, false, hover == Hover::File, dpi);
     tool_btn(dc, lay.active, crate::tr(crate::Key::AddActivePane), font, false, hover == Hover::Active, dpi);
     if !banner.is_empty() {
@@ -601,7 +606,7 @@ unsafe fn paint(h: HWND, dc: HDC, rc: RECT) {
             bg = crate::blend(bg, pal.text, 0.04);
         }
         crate::fill(dc, hit.row, bg);
-        let ix = lay.cols.folder;
+        let ix = lay.cols.name;
         let iy = hit.row.top + (lay.row_h - slot).max(0) / 2;
         let missing = row.status == Status::Missing;
         if missing {
@@ -612,13 +617,22 @@ unsafe fn paint(h: HWND, dc: HDC, rc: RECT) {
         if let Some((list, idx, dim)) = crate::shell_icon(&row.path, row.file) {
             crate::draw_fav_icon(dc, list, idx, ix, iy, slot, dim || missing);
         }
-        let path_r = RECT {
+        let name_r = RECT {
             left: ix + slot + sc(dpi, 4),
             top: hit.row.top,
-            right: (lay.cols.sub - sc(dpi, 4)).max(ix + slot),
+            right: (lay.cols.path - sc(dpi, 4)).max(ix + slot),
             bottom: hit.row.bottom,
         };
-        crate::text(dc, path_r, &row.path, font, pal.text, DT_LEFT);
+        crate::text(dc, name_r, &super::model::leaf_name(&row.path), bold, pal.text, DT_LEFT);
+        let path_r = RECT {
+            left: lay.cols.path,
+            top: hit.row.top,
+            right: (lay.cols.sub - sc(dpi, 4)).max(lay.cols.path),
+            bottom: hit.row.bottom,
+        };
+        let parent = super::model::parent_of(&row.path);
+        let shown = fit_path(dc, small, &parent, path_r.right - path_r.left);
+        crate::text(dc, path_r, &shown, small, pal.sub, DT_LEFT | DT_PATH_ELLIPSIS);
         if !row.file {
             checkbox(dc, hit.sub, row.subfolders, small, dpi);
         }
@@ -662,11 +676,28 @@ fn status_label(row: &Row) -> &'static str {
 
 unsafe fn header_text(dc: HDC, head: RECT, cols: &Cols, font: HFONT, ink: u32) {
     let cell = |left, right| RECT { left, top: head.top, right, bottom: head.bottom };
-    crate::text(dc, cell(cols.folder, cols.sub), crate::tr(crate::Key::Folder), font, ink, DT_LEFT);
+    crate::text(dc, cell(cols.name, cols.path), crate::tr(crate::Key::Name), font, ink, DT_LEFT);
+    crate::text(dc, cell(cols.path, cols.sub), crate::tr(crate::Key::Path), font, ink, DT_LEFT);
     crate::text(dc, cell(cols.sub, cols.status), crate::tr(crate::Key::WatchSub), font, ink, DT_LEFT);
     crate::text(dc, cell(cols.status, cols.last), crate::tr(crate::Key::Status), font, ink, DT_LEFT);
     crate::text(dc, cell(cols.last, cols.actions), crate::tr(crate::Key::LastChange), font, ink, DT_LEFT);
     crate::text(dc, cell(cols.actions, cols.right), crate::tr(crate::Key::WatchActions), font, ink, DT_LEFT);
+}
+
+/// Keep the tail of a long parent path. `PathCompactPathW` puts the ellipsis in the middle.
+unsafe fn fit_path(dc: HDC, font: HFONT, path: &str, width: i32) -> String {
+    if path.is_empty() || width <= 8 {
+        return path.to_string();
+    }
+    let mut wide = [0u16; 260];
+    let units: Vec<u16> = path.encode_utf16().collect();
+    let src = if units.len() > 259 { &units[units.len() - 259..] } else { units.as_slice() };
+    wide[..src.len()].copy_from_slice(src);
+    let old = SelectObject(dc, font.into());
+    let _ = PathCompactPathW(Some(dc), &mut wide, width.max(0) as u32);
+    SelectObject(dc, old);
+    let n = wide.iter().position(|&c| c == 0).unwrap_or(wide.len());
+    String::from_utf16_lossy(&wide[..n])
 }
 
 fn last_line(row: &Row) -> String {
@@ -714,7 +745,9 @@ unsafe fn tool_btn(dc: HDC, r: RECT, label: &str, font: HFONT, primary: bool, ho
     let rad = sc(dpi, 2).max(1);
     if primary {
         let fill = if hot { 0x0786BC } else { CHROME };
-        crate::aa_rfill(dc, r, rad, fill, Some(fill), pal.bg);
+        // Same 1px inset as the secondary buttons, so the toolbar heights match.
+        let edge = if hot { 0x056A96 } else { 0x0786BC };
+        crate::aa_rfill(dc, r, rad, fill, Some(edge), pal.bg);
         crate::text(dc, r, label, font, crate::on_color(fill), DT_CENTER);
     } else {
         let fill = if hot { crate::blend(pal.card, pal.text, 0.06) } else { pal.card };

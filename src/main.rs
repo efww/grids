@@ -220,6 +220,7 @@ fn main() -> Result<()> {
             lpfnWndProc: Some(basket::basket_proc),
             hInstance: hinst,
             hCursor: arrow,
+            hIcon: LoadIconW(Some(hinst), PCWSTR(ICON_GROUP_LIGHT as _)).unwrap_or_default(),
             lpszClassName: w!("MaguroBasket"),
             ..Default::default()
         });
