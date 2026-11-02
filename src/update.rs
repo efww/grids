@@ -5,8 +5,9 @@ use windows::Win32::Security::Cryptography::{BCryptHash, BCRYPT_SHA256_ALG_HANDL
 use windows::Win32::UI::Controls::{TaskDialogIndirect, TASKDIALOGCONFIG, TASKDIALOG_BUTTON, TDF_ALLOW_DIALOG_CANCELLATION, TDF_POSITION_RELATIVE_TO_WINDOW};
 
 // ---------- updates: a blue "Update" button at the right of the toolbar when GitHub has a newer release ----------
-// A background thread asks for the latest release about a minute after start and then every 6 hours (only while
-// "Check for updates" is on; off = no network at all). Failures stay silent and are retried next time. Clicking the
+// A background thread asks for the latest release 5 s after start and then every 6 hours, and again when Grids
+// comes to the front an hour or more after the last look (only while "Check for updates" is on; off = no network at
+// all). Failures stay silent and are retried after 5 minutes, then 10, 20 ... up to the 6 hours. Clicking the
 // button asks once, then downloads the zip and SHA256SUMS.txt, checks the zip's SHA-256, takes grids.exe out of it,
 // swaps it in beside the running exe (which becomes grids.old.exe, removed on the next start) and restarts.
 // Anything going wrong changes nothing and offers the release page instead.
@@ -39,6 +40,12 @@ static BUSY: AtomicBool = AtomicBool::new(false); // a download is running
 static FAIL: Mutex<Option<UpFail>> = Mutex::new(None);
 static WAKE: (Mutex<bool>, Condvar) = (Mutex::new(false), Condvar::new()); // turned on: look now
 static RESTART: OnceLock<PathBuf> = OnceLock::new(); // set once the new exe is in place: started when Grids exits
+static LAST: Mutex<Option<Instant>> = Mutex::new(None); // when the thread last asked GitHub
+
+const FIRST_S: u64 = 5; // first look after start
+const EVERY_S: u64 = 6 * 3600; // then this often
+const RETRY_S: u64 = 5 * 60; // after a failed look, doubled each time up to EVERY_S
+const STALE_S: u64 = 3600; // coming to the front this long after the last look asks again
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum UpFail {
@@ -74,6 +81,19 @@ pub(crate) fn parse_ver(v: &str) -> Option<[u64; 3]> {
         *o = p.parse().ok().filter(|_| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))?;
     }
     Some(out)
+}
+
+/// Seconds to the next look: the usual 6 hours after an answer, a short retry after `fails` failures in a row.
+pub(crate) fn next_look_s(fails: u32) -> u64 {
+    match fails {
+        0 => EVERY_S,
+        n => RETRY_S.saturating_mul(1 << (n - 1).min(16)).min(EVERY_S),
+    }
+}
+
+/// Coming to the front: look again when the last look is an hour old (none yet: the first one is on its way).
+pub(crate) fn look_stale(since_last: Option<Duration>) -> bool {
+    since_last.is_some_and(|d| d >= Duration::from_secs(STALE_S))
 }
 
 pub(crate) fn newer(tag: &str, cur: &str) -> bool {
@@ -391,10 +411,26 @@ fn test_feed() -> bool {
     std::env::var_os("GRIDS_UPDATE_FEED").is_some()
 }
 
-fn check() -> Option<UpRelease> {
+// Err: GitHub didn't answer (offline, proxy, rate limit ...). Ok(None): it did, nothing newer.
+fn check() -> std::result::Result<Option<UpRelease>, ()> {
     let feed = std::env::var("GRIDS_UPDATE_FEED").unwrap_or_else(|_| FEED.into());
-    let json = http_get(&feed, 1 << 20, 15)?;
-    pick_release(&String::from_utf8_lossy(&json), env!("CARGO_PKG_VERSION"), test_feed())
+    let json = http_get(&feed, 1 << 20, 15).ok_or(())?;
+    Ok(pick_release(&String::from_utf8_lossy(&json), env!("CARGO_PKG_VERSION"), test_feed()))
+}
+
+fn wake() {
+    if let Ok(mut w) = WAKE.0.lock() {
+        *w = true;
+        WAKE.1.notify_one();
+    }
+}
+
+/// Grids came to the front: a look an hour or more ago is due again.
+pub(crate) fn update_nudge() {
+    let since = LAST.lock().ok().and_then(|l| l.map(|t| t.elapsed()));
+    if UPDATES_ON.load(Ordering::Relaxed) && look_stale(since) {
+        wake();
+    }
 }
 
 fn fetch(r: &UpRelease, exe: &Path) -> std::result::Result<(), UpFail> {
@@ -431,7 +467,8 @@ pub(crate) unsafe fn start_updates(main: HWND) {
         // leftovers of the last update are tidied every half second between checks (the old process may still be
         // on its way out), up to 20 s; the first check doesn't wait for that
         let mut tidy = 40;
-        let mut next = Instant::now() + Duration::from_secs(if fast { 3 } else { 60 });
+        let mut next = Instant::now() + Duration::from_secs(if fast { 3 } else { FIRST_S });
+        let mut fails = 0u32;
         loop {
             if tidy > 0 {
                 tidy = if tidy_exes(&dir, &me) { 0 } else { tidy - 1 };
@@ -450,11 +487,17 @@ pub(crate) unsafe fn start_updates(main: HWND) {
                     continue;
                 }
             }
-            next = Instant::now() + Duration::from_secs(6 * 3600);
+            next = Instant::now() + Duration::from_secs(EVERY_S);
             if !UPDATES_ON.load(Ordering::Relaxed) {
                 continue;
             }
-            if let Some(r) = check() {
+            if let Ok(mut l) = LAST.lock() {
+                *l = Some(Instant::now());
+            }
+            let got = check();
+            fails = if got.is_ok() { 0 } else { fails.saturating_add(1) };
+            next = Instant::now() + Duration::from_secs(next_look_s(fails));
+            if let Ok(Some(r)) = got {
                 *FOUND.lock().unwrap() = Some(r);
                 unsafe { _ = PostMessageW(Some(HWND(main as _)), WM_UPDATE, WPARAM(0), LPARAM(0)) };
             }
@@ -486,10 +529,7 @@ pub(crate) unsafe fn toggle_updates() {
     });
     UPDATES_ON.store(on, Ordering::Relaxed);
     if on {
-        if let Ok(mut w) = WAKE.0.lock() {
-            *w = true;
-            WAKE.1.notify_one();
-        }
+        wake();
     }
     relayout();
 }
@@ -611,6 +651,10 @@ mod tests {
         for bad in ["", "v1", "1.2.3.4", "1.2.3-beta", "1.x.3", "1..3", "v 1.2"] {
             assert_eq!(parse_ver(bad), None, "{bad}");
         }
+        // when to look: 6 h after an answer; after failures 5, 10, 20 min ... never past 6 h; again on coming to
+        // the front once the last look is an hour old
+        assert_eq!([0, 1, 2, 3, 7, 8, 99].map(next_look_s), [21600, 300, 600, 1200, 19200, 21600, 21600]);
+        assert!(!look_stale(None) && !look_stale(Some(Duration::from_secs(3599))) && look_stale(Some(Duration::from_secs(3600))));
         assert!(newer("v0.6.10", "0.6.9") && newer("v0.7.0", "0.6.5") && newer("v1.0", "0.9.9"));
         assert!(!newer("v0.6.5", "0.6.5") && !newer("v0.6.4", "0.6.5") && !newer("v0.7.0-rc1", "0.6.5") && !newer("junk", "0.6.5"));
 

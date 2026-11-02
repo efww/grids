@@ -137,6 +137,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             WM_ACTIVATEAPP => {
                 if wp.0 != 0 {
                     _ = PostMessageW(Some(h), WM_DRIVES, WPARAM(0), LPARAM(0));
+                    update_nudge(); // and a release check an hour or more old is due again
                 }
             }
             // Windows light/dark (or the accent) changed. Only queued: nothing is drawn inside the broadcast.
