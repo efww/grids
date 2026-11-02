@@ -336,10 +336,19 @@ struct SettingsFile {
     /// They leave the settings list only. A .grids file does not store this.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     ctx_quiet: BTreeSet<String>,
-    /// Packaged Windows 11 commands turned off (`packaged:{clsid}`). Empty means all on.
+    /// Older denylist (`packaged:{clsid}`). Read so a saved file does not keep the key
+    /// in `extra`, then dropped. Empty used to mean all on. Not written back.
+    #[serde(default, skip_serializing)]
+    #[allow(dead_code)]
+    ctx_packaged_off: BTreeSet<String>,
+    /// Packaged Windows 11 commands the user turned on. Empty means all off.
     /// Not written into grids.ini.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
-    ctx_packaged_off: BTreeSet<String>,
+    ctx_packaged_on: BTreeSet<String>,
+    /// Set after the one-time switch that turns previously-on packaged commands off.
+    /// Missing on an older file means that switch still has to run.
+    #[serde(default, skip_serializing_if = "is_off")]
+    ctx_win11_pack_migrated: bool,
     /// Settings right-click page is on the Windows 11 list. Omitted while classic.
     #[serde(default, skip_serializing_if = "is_off")]
     ctx_win11_view: bool,
@@ -426,6 +435,8 @@ impl SettingsFile {
             ctx_on: BTreeMap::new(),
             ctx_quiet: BTreeSet::new(),
             ctx_packaged_off: BTreeSet::new(),
+            ctx_packaged_on: BTreeSet::new(),
+            ctx_win11_pack_migrated: false,
             ctx_win11_view: false,
             blocked_shell_extensions: Vec::new(),
             extra: Map::new(),
@@ -527,7 +538,9 @@ impl SettingsFile {
             ctx_labels: clean_labels(&s.ctx_labels),
             ctx_on: clean_ctx(&s.ctx_on),
             ctx_quiet: clean_quiet(&s.ctx_quiet),
-            ctx_packaged_off: clean_packaged(&s.ctx_packaged_off),
+            ctx_packaged_off: BTreeSet::new(),
+            ctx_packaged_on: clean_packaged(&s.ctx_packaged_on),
+            ctx_win11_pack_migrated: s.ctx_win11_pack_migrated,
             ctx_win11_view: s.ctx_win11_view,
             blocked_shell_extensions: clean_blocked(&s.blocked_shell_extensions),
             extra: Map::new(),
@@ -577,6 +590,8 @@ impl SettingsFile {
         self.extra.remove("ctx_on");
         self.extra.remove("ctx_quiet");
         self.extra.remove("ctx_packaged_off");
+        self.extra.remove("ctx_packaged_on");
+        self.extra.remove("ctx_win11_pack_migrated");
         self.extra.remove("ctx_win11_view");
         self.extra.remove("blocked_shell_extensions");
         // Older builds stored a pane-tab on/off switch. Tabs are always on; the key is dropped.
@@ -682,7 +697,15 @@ impl SettingsFile {
         s.ctx_labels = clean_labels(&self.ctx_labels);
         s.ctx_on = clean_ctx(&self.ctx_on);
         s.ctx_quiet = clean_quiet(&self.ctx_quiet);
-        s.ctx_packaged_off = clean_packaged(&self.ctx_packaged_off);
+        // Older files listed commands to hide, and every other packaged command was on.
+        // Switch those on-commands off once. A later save keeps `ctx_packaged_on` and the flag,
+        // so a command the user then enables is not cleared on the next launch.
+        if self.ctx_win11_pack_migrated {
+            s.ctx_packaged_on = clean_packaged(&self.ctx_packaged_on);
+        } else {
+            s.ctx_packaged_on.clear();
+        }
+        s.ctx_win11_pack_migrated = true;
         s.ctx_win11_view = self.ctx_win11_view;
         s.blocked_shell_extensions = clean_blocked(&self.blocked_shell_extensions);
         crate::shell::ctxmenu::reconcile_winmerge(&mut s.ctx_off, &mut s.ctx_on);
@@ -933,6 +956,9 @@ pub(crate) fn try_load_at(exe: &Path, cfg: &Path, old_cfg: &Path) -> Result<Sess
             };
             // A name that is not installed falls back to the language default. Empty skips the lookup.
             forget_missing_face(&mut s);
+            // Pre-allowlist files showed every packaged command. Write the flag once so the
+            // next launch does not clear commands the user has since turned on.
+            let pack_migrate = serde_json::from_str::<Value>(text).ok().is_some_and(|v| v.get("ctx_win11_pack_migrated").and_then(|x| x.as_bool()) != Some(true));
             // The activity-bar choice is retired. Drop it once so the next launch does not see it.
             let had_panel = serde_json::from_str::<Value>(text).ok().is_some_and(|v| v.get("panel").is_some());
             // Pre-#222 mint brand in a saved file → rewrite as cerulean (brand_accent already applied above).
@@ -944,7 +970,7 @@ pub(crate) fn try_load_at(exe: &Path, cfg: &Path, old_cfg: &Path) -> Result<Sess
                     })
                 })
             });
-            if had_panel || had_mint {
+            if had_panel || had_mint || pack_migrate {
                 let migrated = sync_text(&s);
                 if migrated != text {
                     let _ = write_atomic(&json_path, migrated.as_bytes());
@@ -1210,29 +1236,61 @@ mod tests {
     }
 
     #[test]
-    fn ctx_packaged_off_round_trips_in_json_and_stays_out_of_grids_ini() {
+    fn win11_packaged_commands_start_off_and_migrate_once() {
         let id = "packaged:{9f156763-7844-4dc4-b2b1-901f640f5155}";
-        let mut s = Session::default();
-        s.ctx_packaged_off.insert(id.into());
-        s.ctx_packaged_off.insert("  ".into());
-        s.ctx_packaged_off.insert("clsid:nope".into());
-        s.ctx_win11_view = true;
-        let text = sync_text(&s);
-        let saved: Value = serde_json::from_str(&text).unwrap();
-        assert_eq!(saved["ctx_packaged_off"], serde_json::json!([id]));
-        assert_eq!(saved["ctx_win11_view"], true);
-        assert!(!s.to_ini().contains("ctx_packaged_off"));
-        assert!(!s.to_ini().contains("ctx_win11_view"));
-        assert!(!s.to_ini().contains("packaged:"));
-        let back = adopt(&text).unwrap();
-        assert!(back.ctx_packaged_off.contains(id));
-        assert!(!back.ctx_packaged_off.contains("clsid:nope"));
-        assert!(back.ctx_win11_view);
+        let old = r#"{"ctx_packaged_off":["packaged:{9f156763-7844-4dc4-b2b1-901f640f5155}"],"ctx_win11_view":true}"#;
+        let migrated = adopt(old).unwrap();
+        assert!(migrated.ctx_win11_pack_migrated);
+        assert!(migrated.ctx_packaged_on.is_empty(), "commands that used to be on are switched off once");
+        assert!(migrated.ctx_win11_view);
+        let saved = sync_text(&migrated);
+        let saved_v: Value = serde_json::from_str(&saved).unwrap();
+        assert_eq!(saved_v["ctx_win11_pack_migrated"], true);
+        assert!(saved_v.get("ctx_packaged_off").is_none(), "{saved}");
+        assert!(saved_v.get("ctx_packaged_on").is_none(), "{saved}");
+        assert!(!migrated.to_ini().contains("ctx_packaged"));
+        assert!(!migrated.to_ini().contains("ctx_win11_pack"));
+        assert!(!migrated.to_ini().contains("packaged:"));
+
+        let mut chosen = adopt(&saved).unwrap();
+        assert!(chosen.ctx_packaged_on.is_empty());
+        chosen.ctx_packaged_on.insert(id.into());
+        chosen.ctx_packaged_on.insert("  ".into());
+        chosen.ctx_packaged_on.insert("clsid:nope".into());
+        let again = sync_text(&chosen);
+        let again_v: Value = serde_json::from_str(&again).unwrap();
+        assert_eq!(again_v["ctx_packaged_on"], serde_json::json!([id]));
+        assert_eq!(again_v["ctx_win11_pack_migrated"], true);
+        assert!(again_v.get("ctx_packaged_off").is_none());
+        let back = adopt(&again).unwrap();
+        assert!(back.ctx_win11_pack_migrated);
+        assert!(back.ctx_packaged_on.contains(id));
+        assert!(!back.ctx_packaged_on.contains("clsid:nope"));
+        assert_eq!(back.ctx_packaged_on.len(), 1);
+
+        // Flag already set: an explicit on survives, and the old denylist is not applied again.
+        let kept = adopt(
+            r#"{"ctx_win11_pack_migrated":true,"ctx_packaged_on":["packaged:{9f156763-7844-4dc4-b2b1-901f640f5155}"],"ctx_packaged_off":["packaged:{aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee}"]}"#,
+        )
+        .unwrap();
+        assert!(kept.ctx_win11_pack_migrated);
+        assert!(kept.ctx_packaged_on.contains(id));
+        assert_eq!(kept.ctx_packaged_on.len(), 1);
+
+        // A false flag runs the switch again, so a stored on-list from a half-written file is cleared once.
+        let flipped = adopt(r#"{"ctx_win11_pack_migrated":false,"ctx_packaged_on":["packaged:{9f156763-7844-4dc4-b2b1-901f640f5155}"]}"#).unwrap();
+        assert!(flipped.ctx_win11_pack_migrated);
+        assert!(flipped.ctx_packaged_on.is_empty());
+
         let fresh = serde_json::from_str::<Value>(&sync_text(&Session::default())).unwrap();
+        assert_eq!(fresh["ctx_win11_pack_migrated"], true);
+        assert!(fresh.get("ctx_packaged_on").is_none());
         assert!(fresh.get("ctx_packaged_off").is_none());
         assert!(fresh.get("ctx_win11_view").is_none());
-        assert!(!adopt("{}").unwrap().ctx_win11_view);
-        assert!(adopt("{}").unwrap().ctx_packaged_off.is_empty());
+        let empty = adopt("{}").unwrap();
+        assert!(empty.ctx_win11_pack_migrated);
+        assert!(empty.ctx_packaged_on.is_empty());
+        assert!(!empty.ctx_win11_view);
     }
 
     #[test]

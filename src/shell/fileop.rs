@@ -899,6 +899,10 @@ pub(crate) unsafe fn reset_prefs() {
         a.s.winmerge_path.clear();
         a.s.ctx_off.clear();
         a.s.ctx_on.clear();
+        // Packaged Windows 11 commands default off. Reset drops whatever was turned on.
+        // The migration flag stays recorded so the next launch does not run that switch again.
+        a.s.ctx_packaged_on.clear();
+        a.s.ctx_win11_pack_migrated = true;
     });
     crate::winmerge::forget_status();
     // The folder association is not a saved preference. Reset turns it off.

@@ -320,9 +320,12 @@ pub(crate) struct Session {
     /// Handler ids that were asked and added no visible menu item. They leave the settings list.
     /// The shell menu is unchanged. maguro.json only.
     pub(crate) ctx_quiet: std::collections::BTreeSet<String>,
-    /// Packaged Windows 11 context-menu commands turned off. Empty means every one is on.
-    /// The id is `packaged:{clsid}`. maguro.json only; a .grids file does not carry this.
-    pub(crate) ctx_packaged_off: std::collections::BTreeSet<String>,
+    /// Packaged Windows 11 commands the user turned on (`packaged:{clsid}`).
+    /// Empty means every packaged command stays off. maguro.json only; a .grids file does not carry this.
+    pub(crate) ctx_packaged_on: std::collections::BTreeSet<String>,
+    /// One-time switch for configs that used to show every packaged command.
+    /// Once true, `ctx_packaged_on` is kept and that switch does not run again.
+    pub(crate) ctx_win11_pack_migrated: bool,
     /// Settings → Right-click menu is showing the Windows 11 list. maguro.json only.
     pub(crate) ctx_win11_view: bool,
     /// DLL file names that must not load inside this process. Empty means nothing extra is blocked.
@@ -458,7 +461,8 @@ impl Default for Session {
             ctx_labels: std::collections::BTreeMap::new(),
             ctx_on: std::collections::BTreeMap::new(),
             ctx_quiet: std::collections::BTreeSet::new(),
-            ctx_packaged_off: std::collections::BTreeSet::new(),
+            ctx_packaged_on: std::collections::BTreeSet::new(),
+            ctx_win11_pack_migrated: true,
             ctx_win11_view: false,
             blocked_shell_extensions: Vec::new(),
         };
@@ -538,7 +542,8 @@ impl PartialEq for Session {
             && self.ctx_labels == o.ctx_labels
             && self.ctx_on == o.ctx_on
             && self.ctx_quiet == o.ctx_quiet
-            && self.ctx_packaged_off == o.ctx_packaged_off
+            && self.ctx_packaged_on == o.ctx_packaged_on
+            && self.ctx_win11_pack_migrated == o.ctx_win11_pack_migrated
             && self.ctx_win11_view == o.ctx_win11_view
             && self.blocked_shell_extensions == o.blocked_shell_extensions
     }

@@ -1516,7 +1516,7 @@ pub(crate) unsafe fn dedupe_new_folder(menu: HMENU, cm: Option<&IContextMenu>) {
     }
 }
 
-fn item_text(menu: HMENU, pos: u32) -> String {
+pub(crate) fn item_text(menu: HMENU, pos: u32) -> String {
     let mut buf = [0u16; 256];
     let mut info = MENUITEMINFOW {
         cbSize: std::mem::size_of::<MENUITEMINFOW>() as u32,

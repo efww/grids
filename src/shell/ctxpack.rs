@@ -4,10 +4,12 @@
 // scanner never sees them. Some still appear in the shell menu through other
 // Windows 11 paths (Photos, Clipchamp, Copilot, …); `inject_menu` skips any
 // title the menu already shows. Settings lists them on the Windows 11 view.
-// The popup injects missing enabled commands (`inject_menu`) in Maguro's id range.
+// They start off. The popup inserts only the ones the user turned on, into the
+// upper group (with Open), never after Properties.
 //
 // The catalogue is built only when that view is laid out, Refresh runs while it
-// is showing, or a popup needs to inject. It is not read at process start.
+// is showing, or a popup has at least one command enabled. It is not read at
+// process start. A disabled command is never CoCreated.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -144,7 +146,7 @@ pub(crate) fn name_hit(q: &str) -> bool {
     rows.iter().any(|r| r.name.to_lowercase().contains(&q))
 }
 
-pub(crate) fn ui_rows(off: &BTreeSet<String>, q: &str) -> Vec<PackUi> {
+pub(crate) fn ui_rows(on: &BTreeSet<String>, q: &str) -> Vec<PackUi> {
     let q = q.trim().to_lowercase();
     let mut rows = catalogue();
     rows.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()).then_with(|| a.id.cmp(&b.id)));
@@ -156,7 +158,7 @@ pub(crate) fn ui_rows(off: &BTreeSet<String>, q: &str) -> Vec<PackUi> {
             r.name.to_lowercase().contains(&q) || r.detail().to_lowercase().contains(&q)
         })
         .map(|r| PackUi {
-            on: !off.contains(&r.id),
+            on: on.contains(&r.id),
             detail: r.detail(),
             id: r.id,
             name: r.name,
@@ -165,9 +167,19 @@ pub(crate) fn ui_rows(off: &BTreeSet<String>, q: &str) -> Vec<PackUi> {
         .collect()
 }
 
-pub(crate) fn toggle(off: &mut BTreeSet<String>, id: &str) {
-    if !off.remove(id) {
-        off.insert(id.to_string());
+/// Settings checkbox. `on` is the allow-list; a missing id stays off.
+pub(crate) fn toggle(on: &mut BTreeSet<String>, id: &str) {
+    if !on.remove(id) {
+        on.insert(id.to_string());
+    }
+}
+
+/// Reset → every packaged command the catalogue can see is on.
+/// An empty catalogue is left untouched so a failed scan does not clear an explicit choice.
+pub(crate) fn enable_all(on: &mut BTreeSet<String>) {
+    let ids: BTreeSet<String> = catalogue().into_iter().map(|r| r.id).collect();
+    if !ids.is_empty() {
+        *on = ids;
     }
 }
 
@@ -659,23 +671,116 @@ pub(crate) fn clear_ids() {
     PACK_IDS.with(|m| m.borrow_mut().clear());
 }
 
-/// Append enabled packaged commands that match this click and are not already
+/// Commands that may be CoCreated for this click. Disabled ids are absent, so the
+/// caller never creates those objects. Capped at [`PACK_LIMIT`].
+fn inject_candidates<'a>(rows: &'a [PackRow], on: &BTreeSet<String>, targets: u8) -> Vec<&'a PackRow> {
+    rows.iter().filter(|r| r.targets & targets != 0 && on.contains(&r.id)).take(PACK_LIMIT as usize).collect()
+}
+
+/// `open` / `openwith…` / `explore` sit in the upper block. Empty and other verbs do not.
+fn open_family_verb(verb: &str) -> bool {
+    let v = verb.trim().to_ascii_lowercase();
+    v == "open" || v == "opennew" || v == "openas" || v == "explore" || v.starts_with("openwith")
+}
+
+fn properties_verb(verb: &str) -> bool {
+    verb.trim().eq_ignore_ascii_case("properties")
+}
+
+fn label_stem(folded: &str) -> &str {
+    let t = folded.trim();
+    match t.rfind('(') {
+        Some(i) if t.ends_with(')') && i > 0 => t[..i].trim(),
+        _ => t,
+    }
+}
+
+/// Folded menu title, accelerators already stripped. Covers a shell row whose verb did not come back.
+fn properties_label(folded: &str) -> bool {
+    matches!(label_stem(folded), "properties" | "속성" | "プロパティ" | "propriétés" | "proprietes" | "eigenschaften")
+}
+
+fn open_label(folded: &str) -> bool {
+    matches!(
+        label_stem(folded),
+        "open" | "open with" | "explore" | "열기" | "연결 프로그램" | "다른 앱으로 열기" | "開く" | "プログラムから開く" | "ouvrir" | "ouvrir avec" | "öffnen" | "öffnen mit"
+    )
+}
+
+/// Index for one injected command.
+///
+/// `sep[i]` is a separator. `props` is the Properties row. `after_open` is the
+/// index just after the last Open-family command in the upper block.
+/// The upper block ends at the first separator before Properties (Explorer puts
+/// Open there). With no such separator, the command goes just after Open, still
+/// before Properties. The index is never past Properties, so a last Properties
+/// row stays last.
+fn packaged_insert_at(sep: &[bool], props: Option<usize>, after_open: Option<usize>) -> usize {
+    let n = sep.len();
+    let cap = props.filter(|&i| i <= n).unwrap_or(n);
+    if let Some(sep_at) = sep.iter().take(cap).position(|s| *s) {
+        return sep_at;
+    }
+    if let Some(at) = after_open.filter(|&i| i <= cap) {
+        return at;
+    }
+    0
+}
+
+/// End of the upper block on this menu, always at or before Properties.
+unsafe fn packaged_menu_anchor(menu: HMENU) -> u32 {
+    let n = GetMenuItemCount(Some(menu)).max(0) as usize;
+    if n == 0 {
+        return 0;
+    }
+    let mut sep = vec![false; n];
+    let mut props = None;
+    let mut after_open = None;
+    let mut seen_sep = false;
+    for i in 0..n {
+        if super::fav::menu_sep(menu, i as u32) {
+            sep[i] = true;
+            seen_sep = true;
+            continue;
+        }
+        let id = GetMenuItemID(menu, i as i32);
+        let verb = super::fav::indexed_verb(id);
+        let label = ctxmenu::fold_menu_label(&ctxmenu::item_text(menu, i as u32));
+        // Verb first. A missing verb still matches 속성 / Properties so the row stays last.
+        if id == super::fav::ID_CTX_PROPS || properties_verb(&verb) || properties_label(&label) {
+            props = Some(i);
+            break;
+        }
+        if !seen_sep && (open_family_verb(&verb) || open_label(&label)) {
+            after_open = Some(i + 1);
+        }
+    }
+    packaged_insert_at(&sep, props, after_open) as u32
+}
+
+/// Insert enabled packaged commands that match this click and are not already
 /// on the menu under the same title (or the catalogue display name).
 ///
+/// They join the upper block, with Open, and are never placed after Properties.
 /// Pure packaged `IExplorerCommand` registrations are often absent from the
 /// classic shell menu, so Maguro inserts the title with an id at `0x8100` or
-/// above and CoCreates the CLSID only when that item is built or chosen. When
-/// Windows already painted the same label (Photos / Clipchamp / Copilot, …),
-/// skip the inject so the popup does not grow a duplicate group after Properties.
-/// A failed CoCreate, GetTitle, or Invoke skips that one item.
+/// above. CoCreate runs only for an enabled command whose title is not cached
+/// and not already on the menu. When Windows already painted the same label
+/// (Photos / Clipchamp / Copilot, …), skip the inject. A failed CoCreate,
+/// GetTitle, or Invoke skips that one item.
 pub(crate) unsafe fn inject_menu(menu: HMENU, paths: &[String], items: &[(String, bool)], background: bool, folder: &str) {
     clear_ids();
+    let on = crate::app(|a| a.s.ctx_packaged_on.clone());
+    // Default is every packaged command off. Do not walk packages or CoCreate.
+    if on.is_empty() {
+        return;
+    }
     let targets = ctxmenu::click_targets(background, items);
     if targets == 0 {
         return;
     }
-    let off = crate::app(|a| a.s.ctx_packaged_off.clone());
-    let hits: Vec<PackRow> = catalogue().into_iter().filter(|r| r.targets & targets != 0 && !off.contains(&r.id)).take(PACK_LIMIT as usize).collect();
+    let rows = catalogue();
+    let hits = inject_candidates(&rows, &on, targets);
     if hits.is_empty() {
         return;
     }
@@ -689,10 +794,12 @@ pub(crate) unsafe fn inject_menu(menu: HMENU, paths: &[String], items: &[(String
     } else {
         paths.iter().filter(|p| !p.trim().is_empty()).cloned().collect()
     };
-    let arr = shell_array(&use_paths);
     let mut existing = ctxmenu::folded_menu_titles(menu);
     let mut added = 0u32;
-    let mut opened = false;
+    let at = packaged_menu_anchor(menu);
+    // Built on the first real CoCreate. A cached or duplicate title never parses the paths.
+    let mut arr: Option<IShellItemArray> = None;
+    let mut arr_ready = false;
     for row in hits {
         // Catalogue display name often matches the shell label before GetTitle runs.
         if title_already_present(&existing, &row.name) {
@@ -704,6 +811,10 @@ pub(crate) unsafe fn inject_menu(menu: HMENU, paths: &[String], items: &[(String
             title
         } else {
             let Ok(cmd) = CoCreateInstance::<_, IExplorerCommand>(&row.clsid, None, CLSCTX_INPROC_SERVER | CLSCTX_LOCAL_SERVER) else { continue };
+            if !arr_ready {
+                arr = shell_array(&use_paths);
+                arr_ready = true;
+            }
             if let Some(state) = command_state(&cmd, arr.as_ref()) {
                 if state & ECS_HIDDEN.0 as u32 != 0 {
                     continue;
@@ -718,13 +829,10 @@ pub(crate) unsafe fn inject_menu(menu: HMENU, paths: &[String], items: &[(String
         if title_already_present(&existing, &title) {
             continue;
         }
-        if !opened {
-            _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
-            opened = true;
-        }
         let id = ID_CTX_PACK + added;
+        let pos = at + added;
         added += 1;
-        _ = AppendMenuW(menu, MF_STRING, id as usize, &HSTRING::from(&title));
+        _ = InsertMenuW(menu, pos, MF_STRING | MF_BYPOSITION, id as usize, &HSTRING::from(&title));
         existing.insert(ctxmenu::fold_menu_label(&title));
         PACK_IDS.with(|m| m.borrow_mut().push((id, row.clsid)));
         if added >= PACK_LIMIT {
@@ -815,6 +923,81 @@ pub(crate) fn seed_cache(rows: Vec<PackRow>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn pack_row(id: &str, targets: u8) -> PackRow {
+        PackRow {
+            id: id.to_string(),
+            clsid: guid_of("{00000000-0000-0000-0000-000000000000}").unwrap(),
+            name: id.to_string(),
+            targets,
+            known: targets,
+            unknown: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn packaged_rows_start_off_and_disabled_ones_are_not_inject_candidates() {
+        let on_id = "packaged:{9f156763-7844-4dc4-b2b1-901f640f5155}";
+        let off_id = "packaged:{aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee}";
+        let rows = vec![pack_row(on_id, FILE), pack_row(off_id, FILE | FOLDER)];
+        set_test_rows(Some(rows.clone()));
+        let shown = ui_rows(&BTreeSet::new(), "");
+        assert_eq!(shown.len(), 2);
+        assert!(shown.iter().all(|r| !r.on));
+        let mut allow = BTreeSet::new();
+        allow.insert(on_id.to_string());
+        let shown = ui_rows(&allow, "");
+        assert!(shown.iter().find(|r| r.id == on_id).unwrap().on);
+        assert!(!shown.iter().find(|r| r.id == off_id).unwrap().on);
+        let hits = inject_candidates(&rows, &allow, FILE);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].id, on_id);
+        assert!(inject_candidates(&rows, &BTreeSet::new(), FILE).is_empty());
+        assert!(inject_candidates(&rows, &allow, DRIVE).is_empty());
+        enable_all(&mut allow);
+        assert!(allow.contains(on_id) && allow.contains(off_id));
+        set_test_rows(Some(Vec::new()));
+        let kept = on_id.to_string();
+        allow.clear();
+        allow.insert(kept.clone());
+        enable_all(&mut allow);
+        assert!(allow.contains(&kept), "an empty catalogue does not clear an explicit on");
+        set_test_rows(None);
+    }
+
+    #[test]
+    fn injected_items_land_in_the_upper_block_and_before_properties() {
+        // Open, Open with, separator, cut, separator, Properties.
+        let sep = [false, false, true, false, true, false];
+        assert_eq!(packaged_insert_at(&sep, Some(5), Some(2)), 2);
+        assert_eq!(packaged_insert_at(&sep, Some(5), None), 2);
+        // No separator: just after Open, still before Properties.
+        let flat = [false, false, false, false];
+        assert_eq!(packaged_insert_at(&flat, Some(3), Some(1)), 1);
+        // A separator that sits after Properties is not the upper block.
+        // With no earlier separator, land just after Open (index 1) or at the top.
+        let late = [false, false, true];
+        assert_eq!(packaged_insert_at(&late, Some(1), None), 0);
+        assert_eq!(packaged_insert_at(&late, Some(1), Some(1)), 1);
+        assert_eq!(packaged_insert_at(&late, Some(1), Some(3)), 0);
+        assert_eq!(packaged_insert_at(&[], None, None), 0);
+        assert!(open_family_verb("Open"));
+        assert!(open_family_verb("openwith"));
+        assert!(open_family_verb("explore"));
+        assert!(!open_family_verb("properties"));
+        assert!(properties_verb("Properties"));
+        assert!(!properties_verb("open"));
+        // A shell row can come back without a verb. The visible title still anchors the insert.
+        assert!(properties_label(&ctxmenu::fold_menu_label("속성(&R)")));
+        assert!(properties_label(&ctxmenu::fold_menu_label("プロパティ(R)")));
+        assert!(properties_label(&ctxmenu::fold_menu_label("Properties")));
+        assert!(properties_label(&ctxmenu::fold_menu_label("Eigenschaften")));
+        assert!(!properties_label(&ctxmenu::fold_menu_label("열기(&O)")));
+        assert!(open_label(&ctxmenu::fold_menu_label("열기(&O)")));
+        assert!(open_label(&ctxmenu::fold_menu_label("Open with(&W)")));
+        assert!(open_label(&ctxmenu::fold_menu_label("開く")));
+        assert!(!open_label(&ctxmenu::fold_menu_label("잘라내기")));
+    }
 
     #[test]
     fn title_already_present_folds_accelerators() {

@@ -558,7 +558,7 @@ unsafe fn draw(dc: HDC, rc: RECT, g: &Geo, sn: &Snap) {
             }
             Item::Note(r, t) => crate::text(dc, *r, tx(*t), sn.small, crate::pal().sub, DT_LEFT),
             Item::CtxNote(r) => {
-                let _ = crate::wrap_text(dc, *r, tx(CTX_NOTE), sn.small, crate::pal().sub, false);
+                let _ = crate::wrap_text(dc, *r, tx(ctx_note_key()), sn.small, crate::pal().sub, false);
             }
             Item::CtxSeg { classic, win11 } => {
                 let on_win = app(|a| a.s.ctx_win11_view);
@@ -1343,7 +1343,7 @@ unsafe fn on_command(h: HWND, id: i32, code: u32) {
             app(|a| {
                 let s = &mut a.s;
                 crate::shell::ctxmenu::reset_menu(&mut s.ctx_off, &mut s.ctx_on);
-                s.ctx_packaged_off.clear();
+                crate::shell::ctxpack::enable_all(&mut s.ctx_packaged_on);
             });
             crate::save_session();
             layout(h);
@@ -1700,7 +1700,7 @@ unsafe fn on_click(h: HWND, x: i32, y: i32) {
             if inside(*rect, x, y) {
                 if *packaged {
                     let id = id.clone();
-                    app(|a| crate::shell::ctxpack::toggle(&mut a.s.ctx_packaged_off, &id));
+                    app(|a| crate::shell::ctxpack::toggle(&mut a.s.ctx_packaged_on, &id));
                     crate::save_session();
                     layout(h);
                     let _ = InvalidateRect(Some(h), None, false);

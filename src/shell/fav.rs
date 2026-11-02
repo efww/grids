@@ -495,6 +495,12 @@ pub(crate) unsafe fn menu_sep(menu: HMENU, pos: u32) -> bool {
     GetMenuItemInfoW(menu, pos, true, &mut info).is_ok() && info.fType.0 & MFT_SEPARATOR.0 != 0
 }
 
+/// Verb recorded for a shell command id while this menu was built. Empty when
+/// the id is Maguro's own row or the index was not built.
+pub(crate) fn indexed_verb(id: u32) -> String {
+    VERB_INDEX.with(|v| v.borrow().as_ref().map(|idx| idx.verb(id).to_string()).unwrap_or_default())
+}
+
 pub(crate) unsafe fn menu_index(menu: HMENU, id: usize) -> Option<u32> {
     let n = GetMenuItemCount(Some(menu)).max(0);
     (0..n).find(|&i| GetMenuItemID(menu, i) as usize == id).map(|i| i as u32)
@@ -961,7 +967,7 @@ unsafe fn popup_ctx(owner: HWND, cm: IContextMenu, paths: &[String], items: &[(S
         crate::winmerge::insert_ctx(menu, at, pane, items);
     }
     super::ctxmenu::log_phase("app-insert", t_app);
-    // After strip. Packaged commands are not in this shell menu; inject_menu appends them.
+    // After strip. Enabled packaged commands are inserted in the upper group, not after Properties.
     let t_inject = std::time::Instant::now();
     super::ctxpack::inject_menu(menu, paths, items, background, props_folder);
     super::ctxmenu::log_phase("inject", t_inject);

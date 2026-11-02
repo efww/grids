@@ -92,6 +92,11 @@ fn tx(t: crate::Key) -> &'static str {
     tr(t)
 }
 
+/// Classic handlers start on. Windows 11 packaged apps start off, so that view uses its own note.
+fn ctx_note_key() -> crate::Key {
+    if app(|a| a.s.ctx_win11_view) { CTX_WIN11_NOTE } else { CTX_NOTE }
+}
+
 const CHROME_LIGHT: u32 = 0x0067C0;
 const CHROME_DARK: u32 = 0x4CC2FF;
 const WHITE: u32 = 0xFFFFFF;
@@ -150,6 +155,7 @@ const CTX_EMPTY: crate::Key = crate::Key::NoThirdPartyMenuItems;
 const CTX_CLASSIC: crate::Key = crate::Key::ClassicMenu;
 const CTX_WIN11: crate::Key = crate::Key::Windows11Menu;
 const CTX_WIN11_EMPTY: crate::Key = crate::Key::CtxWin11Empty;
+const CTX_WIN11_NOTE: crate::Key = crate::Key::CtxWin11Note;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Ctl {
@@ -310,6 +316,7 @@ fn page_match(q: &str, page: usize) -> bool {
     }
     if page == CTX_PAGE {
         return has(tx(CTX_NOTE), q)
+            || has(tx(CTX_WIN11_NOTE), q)
             || has(tx(CTX_RESET_L), q)
             || has(tx(CTX_REFRESH_L), q)
             || has(tx(CTX_EMPTY), q)
@@ -707,7 +714,7 @@ fn seg_w(label: &str, dpi: i32) -> i32 {
 
 fn ctx_items(g: &mut Geo, sn: &Snap, left: i32, right: i32, mut y: i32, rq: &str) -> i32 {
     let dpi = sn.dpi.max(96);
-    if rq.is_empty() || has(tx(CTX_NOTE), rq) {
+    if rq.is_empty() || has(tx(CTX_NOTE), rq) || has(tx(CTX_WIN11_NOTE), rq) {
         let h = sc(dpi, 72);
         g.items.push(Item::CtxNote(RECT { left, top: y, right, bottom: y + h }));
         y += h + sc(dpi, 8);
@@ -718,10 +725,10 @@ fn ctx_items(g: &mut Geo, sn: &Snap, left: i32, right: i32, mut y: i32, rq: &str
     let win11 = RECT { left: classic.right + gap, top: y, right: classic.right + gap + seg_w(tx(CTX_WIN11), dpi), bottom: y + sh };
     g.items.push(Item::CtxSeg { classic, win11 });
     y += sh + gap;
-    let (win11_view, pack_off, off, on, seen, quiet) = app(|a| {
+    let (win11_view, pack_on, off, on, seen, quiet) = app(|a| {
         (
             a.s.ctx_win11_view,
-            a.s.ctx_packaged_off.clone(),
+            a.s.ctx_packaged_on.clone(),
             a.s.ctx_off.clone(),
             a.s.ctx_on.clone(),
             a.s.ctx_labels.clone(),
@@ -729,7 +736,7 @@ fn ctx_items(g: &mut Geo, sn: &Snap, left: i32, right: i32, mut y: i32, rq: &str
         )
     });
     let rows = if win11_view { Vec::new() } else { crate::shell::ctxmenu::ui_rows(&off, &on, &seen, &quiet, rq) };
-    let pack_rows = if win11_view { crate::shell::ctxpack::ui_rows(&pack_off, rq) } else { Vec::new() };
+    let pack_rows = if win11_view { crate::shell::ctxpack::ui_rows(&pack_on, rq) } else { Vec::new() };
     let reset_w = sc(dpi, 220);
     let refresh_w = sc(dpi, 140);
     let bh = sc(dpi, 32);
@@ -1365,6 +1372,7 @@ mod tests {
         assert_eq!(CTX_PAGE, 8);
         assert_eq!(PAGES.len(), PAGE_N);
         assert_eq!(tx(PAGES[CTX_PAGE]), "Right-click menu items");
+        assert_eq!(tx(CTX_WIN11_NOTE), "Windows 11 apps start off. Turn on only what you need. Items already shown are not added again. Enabled ones sit with Open. Properties stays last.");
         assert_eq!(tx(CTX_RESET_L), "Reset to all enabled");
         assert_eq!(tx(CTX_REFRESH_L), "Refresh");
         assert!(page_match("Refresh", CTX_PAGE));
@@ -1387,6 +1395,7 @@ mod tests {
 
         crate::UI.store(1, Ordering::Relaxed);
         assert_eq!(tx(PAGES[CTX_PAGE]), "우클릭 메뉴 항목");
+        assert_eq!(tx(CTX_WIN11_NOTE), "Windows 11 앱은 꺼진 채로 시작해요. 필요한 것만 켜세요. 이미 있는 항목은 다시 넣지 않아요. 켠 항목은 열기 옆에 나오고, 속성은 맨 마지막이에요.");
         assert_eq!(tx(CTX_RESET_L), "모두 사용");
         assert_eq!(tx(CTX_REFRESH_L), "새로고침");
         assert!(page_match("새로고침", CTX_PAGE));
@@ -1399,6 +1408,7 @@ mod tests {
 
         crate::UI.store(2, Ordering::Relaxed);
         assert_eq!(tx(PAGES[CTX_PAGE]), "右クリックメニュー項目");
+        assert_eq!(tx(CTX_WIN11_NOTE), "Windows 11 のアプリはオフから始まります。必要なものだけオンにしてください。既にある項目は重ねません。オンにした項目は「開く」の近くに入り、プロパティは最後のままです。");
         assert_eq!(tx(CTX_RESET_L), "すべて有効に戻す");
         assert_eq!(tx(CTX_NOTE), "Maguro の右クリックメニューに出る項目です。開く、コピー、プロパティなどの Windows の項目はそのままです。新しい項目はオンで始まります。エクスプローラーは変わりません。");
         let (_, page) = commit_search(0, 0, "右クリックメニュー");
@@ -1427,6 +1437,7 @@ mod tests {
         let _lock = ui_lock();
         let _keep = lang(0);
         let _view = pin_view(false);
+        assert_eq!(ctx_note_key(), CTX_NOTE);
         assert!(page_match("Classic menu", CTX_PAGE));
         assert!(page_match("Windows 11 menu", CTX_PAGE));
         assert_eq!(tx(CTX_CLASSIC), "Classic menu");
@@ -1465,6 +1476,7 @@ mod tests {
         let _view = pin_view(true);
         crate::shell::ctxpack::set_test_rows(Some(Vec::new()));
         assert_eq!(tx(CTX_WIN11_EMPTY), "No Windows 11 packaged context-menu apps found on this PC.");
+        assert_eq!(ctx_note_key(), crate::Key::CtxWin11Note);
         let g = geo(client(), &shot(CTX_PAGE, "Right-click menu"));
         let key = g.items.iter().find_map(|it| match it {
             Item::CtxEmpty(_, k) => Some(*k),
