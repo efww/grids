@@ -31,6 +31,7 @@ pub(crate) const ID_EXT: usize = 1108;
 pub(crate) const ID_HOTKEY: usize = 1109;
 pub(crate) const ID_FOLLOW: usize = 1110;
 pub(crate) const ID_TABS: usize = 1111;
+pub(crate) const ID_DLGJUMP: usize = 1140;
 pub(crate) const HOME: &str = "https://github.com/efww/grids";
 pub(crate) const ID_ACCENT: usize = 1400; // + preset index
 pub(crate) const ID_ACCENT_PICK: usize = 1410;
@@ -206,6 +207,7 @@ F3, Space\tQuick preview of the focused file: pictures, text and code, Markdown,
 Ctrl+V\tWith a copied picture (screenshot, browser image): save it here as a PNG file\n\
 F1\tHelp (opens the README on GitHub)\n\
 Win+Alt+E\tBring Grids to front from any app (again: minimize)\n\
+Ctrl+Alt+G\tIn another app's Open / Save dialog: jump to a folder open in Grids\n\
 F2, Del, Ctrl+C/X/V, F5\tSame as Explorer\n\n\
 Address bar: click a folder in the path to go there; click a › to list the folders inside; click the current folder or empty space, or press Ctrl+L, to type a path\n\
 Layout button: click for an even grid, press and drag for rows per column (arrow keys + Enter work too)\n\
@@ -249,6 +251,7 @@ F3, Space\t포커스한 파일 빠른 미리보기: 사진, 텍스트·코드, �
 Ctrl+V\t복사한 그림(스크린샷, 브라우저 이미지)이 있으면 이 폴더에 PNG 파일로 저장\n\
 F1\t도움말 (GitHub README 열기)\n\
 Win+Alt+E\t어디서나 Grids 앞으로 (다시 누르면 최소화)\n\
+Ctrl+Alt+G\t다른 앱의 열기·저장 대화 상자에서: Grids에 열린 폴더로 이동\n\
 F2, Del, Ctrl+C/X/V, F5\t탐색기와 동일\n\n\
 주소 칸: 경로의 폴더를 누르면 그리로 이동, › 를 누르면 그 안의 폴더 목록, 현재 폴더·빈 곳을 누르거나 Ctrl+L이면 경로 입력\n\
 레이아웃 버튼: 클릭 = 균등 배치, 누른 채 끌기 = 열마다 칸 수 (방향키+Enter도 가능)\n\

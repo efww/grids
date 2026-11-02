@@ -19,6 +19,7 @@ pub(crate) struct Session {
     pub(crate) dblup: bool,            // double-click on empty space goes to the parent folder
     pub(crate) tree: bool,             // folder tree shown (side keeps its width while hidden)
     pub(crate) hotkey: bool,           // Win+Alt+E brings Grids to the front, app-wide (not part of a layout)
+    pub(crate) dlgjump: bool,          // Ctrl+Alt+G in other apps' file dialogs lists Grids' folders (dialog_jump.rs)
     pub(crate) file: String,          // named session (.grids) the layout was last loaded from / saved to
     pub(crate) favs: Vec<String>,      // favourite folders (parsing names), app-wide
     pub(crate) recent: Vec<String>,    // recently visited folders from every pane, newest first, app-wide
@@ -49,6 +50,7 @@ impl Default for Session {
             dblup: true,
             tree: true,
             hotkey: true,
+            dlgjump: true,
             file: String::new(),
             favs: Vec::new(),
             recent: Vec::new(),
@@ -144,6 +146,7 @@ impl Session {
                 "dblup" => s.dblup = v.trim() != "0",
                 "tree" => s.tree = v.trim() != "0",
                 "hotkey" => s.hotkey = v.trim() != "0",
+                "dialog_jump" => s.dlgjump = v.trim() != "0",
                 "tabs" => s.tabs_on = v.trim() == "1",
                 "lang" => s.ko = v.trim() == "ko",
                 "session" => s.file = v.trim().to_string(),
@@ -201,6 +204,7 @@ impl Session {
         o += &format!("accent={:06X}\naccent_dark={:06X}\ndark={}\n", self.accent, self.accent_dark, self.dark as u8);
         o += &format!("follow_theme={}\n", self.follow as u8);
         o += &format!("dblup={}\ntree={}\nhotkey={}\n", self.dblup as u8, self.tree as u8, self.hotkey as u8);
+        o += &format!("dialog_jump={}\n", self.dlgjump as u8);
         o += &format!("tabs={}\n", self.tabs_on as u8);
         o += &format!("lang={}\n", if self.ko { "ko" } else { "en" });
         if !self.file.is_empty() {

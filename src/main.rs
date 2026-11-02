@@ -66,6 +66,7 @@ mod select_pattern;
 mod keyboard;
 mod tabs;
 mod window_ui;
+mod dialog_jump;
 
 use ui_defs::*;
 // explicit, so it wins over the same name glob-imported from windows (a glob clash would turn match patterns into bindings)
@@ -311,6 +312,9 @@ fn main() -> Result<()> {
         if app(|a| a.s.hotkey) {
             let on = set_hotkey(main, true);
             app(|a| a.hot_on = on);
+        }
+        if app(|a| a.s.dlgjump) {
+            dialog_jump::enable(true);
         }
 
         let mut msg = MSG::default();
