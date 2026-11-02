@@ -15,7 +15,7 @@ use windows::Win32::Foundation::HANDLE;
 use windows::Win32::System::Threading::SetEvent;
 
 pub(crate) use model::WatchJson;
-use model::{AddFail, Book, Burst, ChangeKind, Status, MAX_WATCHES};
+use model::{leaf_name, parent_of, same_path, AddFail, Book, Burst, ChangeKind, Follow, Status, MAX_WATCHES};
 
 use crate::imports::*;
 
@@ -23,7 +23,10 @@ pub(crate) static MAIN: AtomicIsize = AtomicIsize::new(0);
 
 struct Note {
     path: String,
+    folder: String,
+    file: bool,
     kind: ChangeKind,
+    item: String,
 }
 
 struct Live {
@@ -108,9 +111,9 @@ pub(crate) unsafe fn on_ui_event() {
     reap();
     let notes = std::mem::take(&mut lock().notes);
     for note in &notes {
-        let name = leaf(&note.path);
-        let body = crate::tf(crate::Key::WatchNotify, &[("kind", crate::tr(note.kind.key())), ("name", &name)]);
-        notify::show(&note.path, crate::tr(crate::Key::FolderWatch), &body);
+        let body = crate::tf(crate::Key::WatchNotify, &[("kind", crate::tr(note.kind.key())), ("name", &note.item)]);
+        let title = if note.file { crate::tr(crate::Key::WatchFileChanged) } else { crate::tr(crate::Key::WatchChanged) };
+        notify::show(&note.path, title, &body, &note.folder, note.file);
     }
     if !notes.is_empty() {
         crate::note_save();
@@ -128,8 +131,23 @@ pub(crate) unsafe fn open_queued() {
         crate::reveal_window(main);
     }
     for path in paths {
-        crate::open_args_as_tabs(vec![path]);
+        if let Some((folder, name)) = file_open_target(&path) {
+            crate::new_tab_at(Some(&folder));
+            crate::cliphot::select_soon(&name);
+        } else {
+            crate::open_args_as_tabs(vec![path]);
+        }
     }
+}
+
+fn file_open_target(path: &str) -> Option<(String, String)> {
+    let g = lock();
+    let row = g.book.rows().iter().find(|r| r.file && same_path(&r.path, path))?;
+    let folder = parent_of(&row.path);
+    if folder.is_empty() {
+        return None;
+    }
+    Some((folder, leaf_name(&row.path)))
 }
 
 pub(crate) unsafe fn show_fallback() {
@@ -166,9 +184,65 @@ pub(crate) unsafe fn add_folder(path: &str) -> Option<&'static crate::Key> {
     None
 }
 
+pub(crate) unsafe fn add_file(path: &str) -> Option<&'static crate::Key> {
+    match engine::classify(path) {
+        engine::Entry::Dir => return Some(&crate::Key::WatchNotFile),
+        engine::Entry::Missing => return Some(&crate::Key::WatchFileMissing),
+        engine::Entry::File | engine::Entry::Unknown => {}
+    }
+    let id = match lock().book.add_file(path) {
+        Ok(id) => id,
+        Err(AddFail::Dup) => return Some(&crate::Key::WatchAlreadyFile),
+        Err(AddFail::Limit) => return Some(&crate::Key::WatchLimit),
+        Err(AddFail::Bad) => return Some(&crate::Key::WatchNotFile),
+    };
+    arm(id);
+    crate::note_save();
+    win::redraw();
+    None
+}
+
 pub(crate) unsafe fn add_active() -> Option<&'static crate::Key> {
-    let path = crate::app(|a| a.s.paths.get(a.s.active).cloned().unwrap_or_default());
-    add_folder(&path)
+    let selected = selected_paths();
+    if selected.is_empty() {
+        let path = crate::app(|a| a.s.paths.get(a.s.active).cloned().unwrap_or_default());
+        return add_folder(&path);
+    }
+    let mut err = None;
+    for path in selected {
+        let one = match engine::classify(&path) {
+            engine::Entry::File | engine::Entry::Unknown => add_file(&path),
+            engine::Entry::Dir => add_folder(&path),
+            engine::Entry::Missing => {
+                if leaf_name(&path).contains('.') {
+                    Some(&crate::Key::WatchFileMissing)
+                } else {
+                    Some(&crate::Key::WatchMissing)
+                }
+            }
+        };
+        if err.is_none() {
+            err = one;
+        }
+    }
+    err
+}
+
+unsafe fn selected_paths() -> Vec<String> {
+    let i = crate::active_pane();
+    let Some(fv) = crate::view_of::<IFolderView2>(i) else { return Vec::new() };
+    let Ok(arr) = fv.GetSelection(false) else { return Vec::new() };
+    let n = arr.GetCount().unwrap_or(0).min(10_000);
+    let mut out = Vec::new();
+    for k in 0..n {
+        let Ok(it) = arr.GetItemAt(k) else { continue };
+        let Ok(name) = it.GetDisplayName(SIGDN_FILESYSPATH) else { continue };
+        let path = crate::pwstr(name);
+        if model::canon_path(&path).is_some() {
+            out.push(path);
+        }
+    }
+    out
 }
 
 pub(crate) unsafe fn toggle_run(id: u64) {
@@ -194,6 +268,9 @@ pub(crate) unsafe fn toggle_subfolders(id: u64) {
     let restart = {
         let mut g = lock();
         let Some(row) = g.book.get_mut(id) else { return };
+        if row.file {
+            return;
+        }
         row.subfolders = !row.subfolders;
         !row.paused
     };
@@ -211,24 +288,56 @@ pub(crate) unsafe fn delete(id: u64) {
     win::redraw();
 }
 
-pub(crate) fn emit_burst(id: u64, gen: u64, epoch: u64, burst: Burst) {
+/// `Some(leaf)` when a file watch should follow a rename. `None` keeps the current filter.
+pub(crate) fn emit_burst(id: u64, gen: u64, epoch: u64, burst: Burst, item: &str, follow: Follow) -> Option<String> {
     let when = unix_now();
-    let note = {
+    let built = {
         let mut g = lock();
         if g.epoch != epoch || g.stops.get(&id).map(|s| s.gen) != Some(gen) {
-            return;
+            return None;
         }
-        let Some(row) = g.book.get_mut(id) else { return };
-        if row.paused {
-            return;
+        let paused = g.book.rows().iter().find(|r| r.id == id).map(|r| r.paused);
+        let Some(paused) = paused else { return None };
+        if paused {
+            return None;
+        }
+        let renamed = match &follow {
+            Follow::Renamed(new_path) => {
+                let clash = g.book.rows().iter().any(|r| r.id != id && same_path(&r.path, new_path));
+                Some((new_path.clone(), clash))
+            }
+            _ => None,
+        };
+        let Some(row) = g.book.get_mut(id) else { return None };
+        let mut followed = None;
+        match follow {
+            Follow::Renamed(_) => {
+                let (new_path, clash) = renamed.unwrap_or_default();
+                if clash {
+                    row.status = Status::Missing;
+                } else {
+                    row.path = new_path.clone();
+                    row.status = Status::Watching;
+                    followed = Some(leaf_name(&new_path));
+                }
+            }
+            Follow::Missing => row.status = Status::Missing,
+            Follow::Watching => row.status = Status::Watching,
         }
         row.last_ms = Some(when);
         row.last_kind = Some(burst.kind);
-        row.status = Status::Watching;
-        Note { path: row.path.clone(), kind: burst.kind }
+        if !item.is_empty() {
+            row.last_name = Some(item.to_string());
+        }
+        let file = row.file;
+        let path = row.path.clone();
+        let folder = if file { parent_of(&path) } else { path.clone() };
+        let shown = if item.is_empty() { leaf_name(&path) } else { item.to_string() };
+        (Note { path, folder, file, kind: burst.kind, item: shown }, followed)
     };
-    lock().notes.push(note);
+    lock().notes.push(built.0);
     post_watch();
+    built.1
 }
 
 pub(crate) fn set_status(id: u64, gen: u64, epoch: u64, status: Status) {
@@ -263,7 +372,7 @@ fn post(msg: u32) {
 
 unsafe fn arm(id: u64) {
     halt(id);
-    let (path, sub, epoch, gen) = {
+    let (path, sub, file, epoch, gen) = {
         let mut g = lock();
         let paused = g.book.rows().iter().find(|r| r.id == id).map(|r| r.paused);
         let Some(paused) = paused else { return };
@@ -277,27 +386,51 @@ unsafe fn arm(id: u64) {
         let gen = g.next_gen;
         let epoch = g.epoch;
         let Some(row) = g.book.rows().iter().find(|r| r.id == id) else { return };
-        (row.path.clone(), row.subfolders, epoch, gen)
+        (row.path.clone(), row.subfolders, row.file, epoch, gen)
     };
-    if let Some(status) = engine::directory_status(&path) {
-        if let Some(row) = lock().book.get_mut(id) {
-            row.status = status;
+    let (watch_path, only, preset_missing) = if file {
+        let parent = parent_of(&path);
+        let name = leaf_name(&path);
+        match engine::classify(&path) {
+            engine::Entry::Dir => {
+                if let Some(row) = lock().book.get_mut(id) {
+                    row.status = Status::Failed;
+                }
+                return;
+            }
+            engine::Entry::Missing => {
+                if engine::classify(&parent) == engine::Entry::Missing {
+                    if let Some(row) = lock().book.get_mut(id) {
+                        row.status = Status::Missing;
+                    }
+                    return;
+                }
+                (parent, Some(name), true)
+            }
+            engine::Entry::File | engine::Entry::Unknown => (parent, Some(name), false),
         }
-        return;
-    }
+    } else {
+        if let Some(status) = engine::directory_status(&path) {
+            if let Some(row) = lock().book.get_mut(id) {
+                row.status = status;
+            }
+            return;
+        }
+        (path, None, false)
+    };
     let Some((event, done, ready)) = engine::prepare() else {
         if let Some(row) = lock().book.get_mut(id) {
             row.status = Status::Failed;
         }
         return;
     };
-    let join = engine::launch(id, gen, epoch, path, sub, event, done.clone(), ready.clone());
+    let join = engine::launch(id, gen, epoch, watch_path, sub && only.is_none(), only, event, done.clone(), ready.clone());
     // Insert before the thread leaves its ready wait, so `gen_live` sees this generation.
     lock().stops.insert(id, engine::Running { event, join: Some(join), gen, done, ready: ready.clone() });
     ready.store(true, Ordering::SeqCst);
     if let Some(row) = lock().book.get_mut(id) {
         if !row.paused {
-            row.status = Status::Watching;
+            row.status = if preset_missing { Status::Missing } else { Status::Watching };
         }
     }
 }
@@ -323,11 +456,6 @@ fn reap() {
             }
         }
     }
-}
-
-fn leaf(path: &str) -> String {
-    let trimmed = path.trim_end_matches('\\');
-    trimmed.rsplit('\\').next().filter(|s| !s.is_empty()).unwrap_or(path).to_string()
 }
 
 fn unix_now() -> i64 {

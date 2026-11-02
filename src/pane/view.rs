@@ -1148,6 +1148,7 @@ pub(crate) unsafe fn apply_theme() {
     across_windows(|| apply_theme_desk());
     settings::refresh();
     crate::watch::restyle();
+    crate::basket::refresh();
     crate::rename::refresh();
     refresh_fav_manager();
     if changed {

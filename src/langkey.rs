@@ -767,11 +767,27 @@ pub(crate) enum Key {
     OpenClipboardPath,
     OpenClipboardPathHint,
     ClipboardPathMissing,
+    BasketHint,
+    BasketCount,
+    BasketMissingCount,
+    BasketKind,
+    AddFile,
+    WatchFileMissing,
+    WatchNotFile,
+    WatchAlreadyFile,
+    WatchSub,
+    WatchSubShort,
+    WatchActions,
+    WatchSummary,
+    WatchFoot,
+    WatchChanged,
+    WatchFileChanged,
+    WatchToastHint,
 }
 
-pub(crate) const KEY_COUNT: usize = 764;
+pub(crate) const KEY_COUNT: usize = 780;
 
-const _: () = assert!((Key::ClipboardPathMissing as usize) + 1 == KEY_COUNT);
+const _: () = assert!((Key::WatchToastHint as usize) + 1 == KEY_COUNT);
 
 pub(crate) const EN: [&str; KEY_COUNT] = [
     "About",
@@ -1514,7 +1530,7 @@ pub(crate) const EN: [&str; KEY_COUNT] = [
     "Ask before loading",
     "{n}  (empty)",
     "Folder Watch",
-    "These folders are watched only while Maguro is running.",
+    "Folders and files are watched only while Maguro is running. Maguro does not add a tray icon.",
     "Add active pane",
     "Include subfolders",
     "Watching",
@@ -1528,15 +1544,31 @@ pub(crate) const EN: [&str; KEY_COUNT] = [
     "Renamed",
     "Stop",
     "Resume",
-    "Drop a folder here, or add the active pane.",
+    "Drop a folder or a file here, or use the buttons above.",
     "{kind}: {name}",
     "That is not a folder.",
     "That folder is already being watched.",
-    "Maguro can watch up to {n} folders.",
+    "Maguro can watch up to {n} folders and files.",
     "No changes yet",
     "Open clipboard path",
     "While Maguro is running, Win+Shift+V opens the clipboard path in a new tab even when another window is in front. A folder becomes that tab. A file opens its parent folder and selects the file. Change the chord under Shortcuts, or turn this off.",
     "No folder or file was found on the clipboard.",
+    "Drop files or folders here. Taking one off the list leaves the original in place.",
+    "{n} items · {s} selected",
+    "{n} missing",
+    "Kind",
+    "Add file",
+    "File not found",
+    "That is not a file.",
+    "That file is already being watched.",
+    "Subfolders",
+    "Include",
+    "Actions",
+    "{n} items · {w} watching",
+    "Notifications only while Maguro is open",
+    "Folder change",
+    "File change",
+    "Click to open in a new tab",
 
 ];
 
@@ -2305,6 +2337,22 @@ pub(crate) const KEY_ID: [&str; KEY_COUNT] = [
     "open_clipboard_path",
     "open_clipboard_path_hint",
     "clipboard_path_missing",
+    "basket_hint",
+    "basket_count",
+    "basket_missing_count",
+    "basket_kind",
+    "add_file",
+    "watch_file_missing",
+    "watch_not_file",
+    "watch_already_file",
+    "watch_sub",
+    "watch_sub_short",
+    "watch_actions",
+    "watch_summary",
+    "watch_foot",
+    "watch_changed",
+    "watch_file_changed",
+    "watch_toast_hint",
 
 ];
 

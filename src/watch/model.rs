@@ -119,10 +119,34 @@ impl Burst {
     }
 }
 
-/// Fold a `ReadDirectoryChangesW` buffer into change kinds. A rename pair counts once.
-pub(crate) fn parse_notify(buf: &[u8], got: usize) -> Vec<ChangeKind> {
+/// One name from a `ReadDirectoryChangesW` buffer. A rename keeps the new name in `to`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct NamedChange {
+    pub kind: ChangeKind,
+    pub name: String,
+    pub to: Option<String>,
+}
+
+/// What a file watch should do with one event about that file.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct FileHit {
+    pub kind: ChangeKind,
+    pub gone: bool,
+    pub renamed_to: Option<String>,
+}
+
+/// Status to store when a burst is shown. A rename follows the file to its new name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Follow {
+    Watching,
+    Missing,
+    Renamed(String),
+}
+
+/// Fold a `ReadDirectoryChangesW` buffer into named changes. A rename pair counts once.
+pub(crate) fn parse_named(buf: &[u8], got: usize) -> Vec<NamedChange> {
     let got = got.min(buf.len());
-    let mut out = Vec::new();
+    let mut out: Vec<NamedChange> = Vec::new();
     let mut off = 0usize;
     let mut skip_new_name = false;
     while off + 12 <= got {
@@ -132,12 +156,18 @@ pub(crate) fn parse_notify(buf: &[u8], got: usize) -> Vec<ChangeKind> {
         if off + 12 + name_bytes > got {
             break;
         }
+        let name = utf16_name(&buf[off + 12..off + 12 + name_bytes]);
         if skip_new_name && action == 5 {
+            if let Some(prev) = out.last_mut() {
+                if prev.kind == ChangeKind::Renamed && prev.to.is_none() {
+                    prev.to = Some(name);
+                }
+            }
             skip_new_name = false;
         } else {
             let kind = ChangeKind::from_action(action);
             skip_new_name = action == 4;
-            out.push(kind);
+            out.push(NamedChange { kind, name, to: None });
         }
         if next == 0 {
             break;
@@ -149,6 +179,110 @@ pub(crate) fn parse_notify(buf: &[u8], got: usize) -> Vec<ChangeKind> {
         off = next_off;
     }
     out
+}
+
+/// Fold a `ReadDirectoryChangesW` buffer into change kinds. A rename pair counts once.
+pub(crate) fn parse_notify(buf: &[u8], got: usize) -> Vec<ChangeKind> {
+    parse_named(buf, got).into_iter().map(|n| n.kind).collect()
+}
+
+fn utf16_name(bytes: &[u8]) -> String {
+    let mut units = Vec::with_capacity(bytes.len() / 2);
+    let mut i = 0;
+    while i + 1 < bytes.len() {
+        let u = u16::from_le_bytes([bytes[i], bytes[i + 1]]);
+        if u == 0 {
+            break;
+        }
+        units.push(u);
+        i += 2;
+    }
+    String::from_utf16_lossy(&units)
+}
+
+/// Keep modified, renamed, added, and removed events for `file_name` only.
+/// Other names in the same directory are dropped. A delete sets `gone`.
+pub(crate) fn filter_file(file_name: &str, events: &[NamedChange]) -> Vec<FileHit> {
+    let mut out = Vec::new();
+    for ev in events {
+        if same_leaf(&ev.name, file_name) {
+            match ev.kind {
+                ChangeKind::Removed => out.push(FileHit { kind: ChangeKind::Removed, gone: true, renamed_to: None }),
+                ChangeKind::Renamed => {
+                    if let Some(to) = ev.to.as_deref() {
+                        let leaf = leaf_name(to);
+                        out.push(FileHit { kind: ChangeKind::Renamed, gone: false, renamed_to: Some(leaf) });
+                    } else {
+                        out.push(FileHit { kind: ChangeKind::Renamed, gone: true, renamed_to: None });
+                    }
+                }
+                kind => out.push(FileHit { kind, gone: false, renamed_to: None }),
+            }
+        } else if ev.kind == ChangeKind::Renamed {
+            if ev.to.as_deref().is_some_and(|to| same_leaf(to, file_name)) {
+                out.push(FileHit { kind: ChangeKind::Renamed, gone: false, renamed_to: None });
+            }
+        }
+    }
+    out
+}
+
+pub(crate) fn leaf_name(path: &str) -> String {
+    let t = path.trim_end_matches(['\\', '/']);
+    t.rsplit(['\\', '/']).next().filter(|s| !s.is_empty()).unwrap_or(path).to_string()
+}
+
+pub(crate) fn parent_of(path: &str) -> String {
+    let t = path.trim_end_matches(['\\', '/']);
+    let Some(i) = t.rfind('\\') else { return t.to_string() };
+    if i == 2 && t.as_bytes().get(1) == Some(&b':') {
+        return format!("{}\\", &t[..2]);
+    }
+    if i == 0 {
+        return t.to_string();
+    }
+    t[..i].to_string()
+}
+
+pub(crate) fn join_under(dir: &str, name: &str) -> String {
+    let name = name.trim_matches(['\\', '/']);
+    let dir = dir.trim_end_matches(['\\', '/']);
+    if dir.len() == 2 && dir.as_bytes().get(1) == Some(&b':') {
+        format!("{dir}\\{name}")
+    } else {
+        format!("{dir}\\{name}")
+    }
+}
+
+fn same_leaf(event_name: &str, want: &str) -> bool {
+    leaf_name(event_name).eq_ignore_ascii_case(&leaf_name(want))
+}
+
+/// Text colour for a watch status. Cerulean stays off this column.
+pub(crate) fn status_color(status: Status, dark: bool) -> u32 {
+    match status {
+        Status::Watching => {
+            if dark {
+                0x3DDB8A
+            } else {
+                0x1FA463
+            }
+        }
+        Status::Paused => {
+            if dark {
+                0xE0B15A
+            } else {
+                0xA07820
+            }
+        }
+        Status::Missing | Status::Failed => {
+            if dark {
+                0xF07167
+            } else {
+                0x9F1C14
+            }
+        }
+    }
 }
 
 /// Push kinds into a burst, flushing first when the open burst is already due.
@@ -227,6 +361,11 @@ pub(crate) struct WatchJson {
     pub last_ms: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_kind: Option<String>,
+    /// Missing in an older file means this entry is a folder.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub file: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_name: Option<String>,
 }
 
 fn default_sub() -> bool {
@@ -255,6 +394,8 @@ pub(crate) struct Row {
     pub status: Status,
     pub last_ms: Option<i64>,
     pub last_kind: Option<ChangeKind>,
+    pub file: bool,
+    pub last_name: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -298,6 +439,33 @@ impl Book {
             status: Status::Watching,
             last_ms: None,
             last_kind: None,
+            file: false,
+            last_name: None,
+        });
+        Ok(id)
+    }
+
+    /// One file. Subfolders stay off: the parent directory is watched and filtered to this name.
+    pub(crate) fn add_file(&mut self, path: &str) -> Result<u64, AddFail> {
+        let path = canon_path(path).ok_or(AddFail::Bad)?;
+        if self.rows.iter().any(|r| same_path(&r.path, &path)) {
+            return Err(AddFail::Dup);
+        }
+        if self.rows.len() >= MAX_WATCHES {
+            return Err(AddFail::Limit);
+        }
+        let id = self.next_id;
+        self.next_id = self.next_id.saturating_add(1);
+        self.rows.push(Row {
+            id,
+            path,
+            subfolders: false,
+            paused: false,
+            status: Status::Watching,
+            last_ms: None,
+            last_kind: None,
+            file: true,
+            last_name: None,
         });
         Ok(id)
     }
@@ -315,6 +483,8 @@ impl Book {
             paused: r.paused,
             last_ms: r.last_ms,
             last_kind: r.last_kind.map(ChangeKind::tag).map(str::to_string),
+            file: r.file,
+            last_name: r.last_name.clone(),
         }).collect()
     }
 
@@ -328,14 +498,17 @@ impl Book {
             let id = book.next_id;
             book.next_id += 1;
             let kind = row.last_kind.as_deref().and_then(ChangeKind::parse);
+            let file = row.file;
             book.rows.push(Row {
                 id,
                 path,
-                subfolders: row.subfolders,
+                subfolders: if file { false } else { row.subfolders },
                 paused: row.paused,
                 status: if row.paused { Status::Paused } else { Status::Watching },
                 last_ms: row.last_ms.filter(|ms| *ms > 0),
                 last_kind: kind,
+                file,
+                last_name: row.last_name.clone().filter(|s| !s.is_empty()),
             });
         }
         book
@@ -444,6 +617,8 @@ mod tests {
             paused: false,
             last_ms: None,
             last_kind: None,
+            file: false,
+            last_name: None,
         }]);
         let text = serde_json::to_string(&bare.to_json()).unwrap();
         assert!(!text.contains("subfolders"), "{text}");
@@ -451,6 +626,78 @@ mod tests {
         assert_eq!(bare.rows()[0].path, r"D:\Pics");
         assert!(bare.rows()[0].subfolders);
         assert_eq!(bare.rows()[0].status, Status::Watching);
+        assert!(!bare.rows()[0].file);
+    }
+
+    #[test]
+    fn an_older_folder_file_loads_and_a_file_row_round_trips() {
+        let old = r#"[{"path":"C:\\Work","paused":false}]"#;
+        let rows: Vec<WatchJson> = serde_json::from_str(old).unwrap();
+        assert!(!rows[0].file);
+        assert!(rows[0].last_name.is_none());
+        let book = Book::from_json(&rows);
+        assert!(!book.rows()[0].file);
+        assert!(book.rows()[0].subfolders);
+        let text = serde_json::to_string(&book.to_json()).unwrap();
+        assert!(!text.contains("\"file\""), "{text}");
+
+        let mut files = Book::new();
+        let id = files.add_file(r"C:\Work\a.txt").unwrap();
+        assert!(files.rows()[0].file);
+        assert!(!files.rows()[0].subfolders);
+        assert_eq!(files.add_file(r"c:\work\a.txt"), Err(AddFail::Dup));
+        assert!(files.add(r"C:\Work").is_ok());
+        files.get_mut(id).unwrap().last_name = Some("a.txt".into());
+        let saved = serde_json::to_string(&files.to_json()).unwrap();
+        assert!(saved.contains("\"file\":true"), "{saved}");
+        let back = Book::from_json(&serde_json::from_str::<Vec<WatchJson>>(&saved).unwrap());
+        let file = back.rows().iter().find(|r| r.file).unwrap();
+        assert_eq!(file.path, r"C:\Work\a.txt");
+        assert!(!file.subfolders);
+        assert_eq!(file.last_name.as_deref(), Some("a.txt"));
+        assert_eq!(back.rows().iter().filter(|r| !r.file).count(), 1);
+    }
+
+    #[test]
+    fn a_file_watch_ignores_other_names_and_follows_a_rename() {
+        let events = vec![
+            NamedChange { kind: ChangeKind::Modified, name: "other.txt".into(), to: None },
+            NamedChange { kind: ChangeKind::Modified, name: "a.txt".into(), to: None },
+            NamedChange { kind: ChangeKind::Removed, name: "A.TXT".into(), to: None },
+            NamedChange { kind: ChangeKind::Renamed, name: "a.txt".into(), to: Some("b.txt".into()) },
+            NamedChange { kind: ChangeKind::Added, name: r"sub\a.txt".into(), to: None },
+        ];
+        let hits = filter_file("a.txt", &events);
+        assert_eq!(hits.len(), 4);
+        assert_eq!(hits[0], FileHit { kind: ChangeKind::Modified, gone: false, renamed_to: None });
+        assert!(hits[1].gone);
+        assert_eq!(hits[1].kind, ChangeKind::Removed);
+        assert_eq!(hits[2].renamed_to.as_deref(), Some("b.txt"));
+        assert!(!hits[2].gone);
+        assert_eq!(hits[3].kind, ChangeKind::Added);
+        assert!(filter_file("a.txt", &[NamedChange { kind: ChangeKind::Modified, name: "notes.txt".into(), to: None }]).is_empty());
+        let onto = filter_file("b.txt", &[NamedChange { kind: ChangeKind::Renamed, name: "a.txt".into(), to: Some("b.txt".into()) }]);
+        assert_eq!(onto, vec![FileHit { kind: ChangeKind::Renamed, gone: false, renamed_to: None }]);
+        assert_eq!(parent_of(r"C:\Work\a.txt"), r"C:\Work");
+        assert_eq!(parent_of(r"C:\a.txt"), r"C:\");
+        assert_eq!(join_under(r"C:\Work", "b.txt"), r"C:\Work\b.txt");
+        assert_eq!(join_under(r"C:\", "b.txt"), r"C:\b.txt");
+        assert_eq!(leaf_name(r"C:\Work\a.txt"), "a.txt");
+    }
+
+    #[test]
+    fn status_colours_are_not_cerulean_or_mint() {
+        for dark in [false, true] {
+            for st in [Status::Watching, Status::Paused, Status::Missing, Status::Failed] {
+                let c = status_color(st, dark);
+                assert_ne!(c, CHROME);
+                assert_ne!(c, CERULEAN_BRAND);
+                assert_ne!(c, OLD_MINT_BRAND);
+                assert_ne!(c, 0x2EC4A6);
+            }
+        }
+        assert_eq!(status_color(Status::Watching, false), 0x1FA463);
+        assert_eq!(status_color(Status::Missing, false), 0x9F1C14);
     }
 
     #[test]

@@ -216,6 +216,11 @@ fn miss() {
     unsafe { crate::update_status() };
 }
 
+/// Open already happened. Select `name` in the new tab once the shell view fills.
+pub(crate) unsafe fn select_soon(name: &str) {
+    arm_select(name);
+}
+
 unsafe fn arm_select(name: &str) {
     let pane = crate::app(|a| a.s.active);
     if let Ok(mut p) = PENDING.lock() {

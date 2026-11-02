@@ -1,4 +1,5 @@
-// Folder Watch window. Owned by the main window, cerulean caption, client follows the light or dark palette.
+// Folder Watch window. Owned by the main window. Caption matches Settings: theme background, no cerulean fill.
+// A row is a folder or one file. File rows watch the parent directory and hide the subfolder checkbox.
 // Watching itself does not depend on this window staying open.
 
 use std::sync::Once;
@@ -12,16 +13,29 @@ use windows::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificL
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Shell::{DragQueryFileW, HDROP};
 
-use super::model::{format_civil, Row, Status, CHROME};
+use super::model::{format_civil, status_color, Row, Status, CHROME};
 use crate::imports::*;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Hover {
+    None,
+    Add,
+    File,
+    Active,
+    Run(u64),
+    Del(u64),
+    Row(u64),
+}
 
 struct WatchWin {
     hwnd: HWND,
     dpi: i32,
     font: HFONT,
     bold: HFONT,
+    small: HFONT,
     scroll: i32,
-    hot: bool,
+    drag: bool,
+    hover: Hover,
     banner: String,
 }
 
@@ -32,8 +46,10 @@ impl WatchWin {
             dpi: 96,
             font: HFONT::default(),
             bold: HFONT::default(),
+            small: HFONT::default(),
             scroll: 0,
-            hot: false,
+            drag: false,
+            hover: Hover::None,
             banner: String::new(),
         }
     }
@@ -45,18 +61,34 @@ thread_local! {
 
 struct Hit {
     id: u64,
+    row: RECT,
     sub: RECT,
     run: RECT,
     del: RECT,
 }
 
+struct Cols {
+    folder: i32,
+    sub: i32,
+    status: i32,
+    last: i32,
+    actions: i32,
+    right: i32,
+}
+
 struct Lay {
+    hint: RECT,
     add: RECT,
+    file: RECT,
     active: RECT,
     banner: RECT,
+    frame: RECT,
+    head: RECT,
+    list: RECT,
+    status: RECT,
+    cols: Cols,
     rows: Vec<Hit>,
-    empty: RECT,
-    view_top: i32,
+    row_h: i32,
     view_h: i32,
     content_h: i32,
 }
@@ -79,7 +111,7 @@ pub(crate) unsafe fn open(owner: HWND) {
         return;
     }
     let dpi = if owner.0.is_null() { 96 } else { GetDpiForWindow(owner).max(96) as i32 };
-    let (ww, hh) = (sc(dpi, 640), sc(dpi, 520));
+    let (ww, hh) = (sc(dpi, 760), sc(dpi, 440));
     let (x, y) = place(owner, ww, hh);
     let style = WS_OVERLAPPEDWINDOW | WS_VSCROLL | WS_CLIPCHILDREN | WS_VISIBLE;
     let Ok(h) = CreateWindowExW(WINDOW_EX_STYLE(0), w!("MaguroWatch"), w!("Maguro"), style, x, y, ww, hh, Some(owner), None, None, None) else { return };
@@ -92,6 +124,7 @@ pub(crate) unsafe fn open(owner: HWND) {
     rebuild_fonts();
     style_window(h);
     let _ = SetWindowTextW(h, &HSTRING::from(crate::tr(crate::Key::FolderWatch)));
+    crate::note_side(h);
     let dt: IDropTarget = WatchDrop { hwnd: h }.into();
     let _ = RegisterDragDrop(h, &dt);
     redraw();
@@ -153,26 +186,35 @@ unsafe fn style_window(h: HWND) {
     let dark = crate::DARK_ON.load(Ordering::Relaxed);
     let on = BOOL::from(dark);
     let _ = DwmSetWindowAttribute(h, DWMWINDOWATTRIBUTE(20), &on as *const _ as _, 4);
-    let caption = crate::cref(CHROME);
+    let caption = crate::cref(crate::pal().bg);
     let _ = DwmSetWindowAttribute(h, DWMWA_CAPTION_COLOR, &caption as *const _ as _, 4);
-    let text = crate::cref(0xFFFFFF);
-    let _ = DwmSetWindowAttribute(h, DWMWINDOWATTRIBUTE(36), &text as *const _ as _, 4);
+    let def = COLORREF(0xFFFF_FFFF);
+    let _ = DwmSetWindowAttribute(h, DWMWINDOWATTRIBUTE(36), &def as *const _ as _, 4);
+    let _ = DwmSetWindowAttribute(h, DWMWINDOWATTRIBUTE(34), &def as *const _ as _, 4);
+}
+
+fn face_name() -> String {
+    let custom = crate::app(|a| a.s.font_face.clone());
+    if custom.is_empty() { crate::ui_face().to_string() } else { custom }
 }
 
 fn rebuild_fonts() {
     let dpi = WATCH.with(|w| w.borrow().dpi.max(96));
-    let (face, weight) = crate::title_style();
-    let font = make_font(crate::ui_face(), 14, 400, dpi);
-    let bold = make_font(face, 14, weight.max(600), dpi);
+    let face = face_name();
+    let font = make_font(&face, 12, 400, dpi);
+    let small = make_font(&face, 11, 400, dpi);
+    let bold = make_font(&face, 12, 700, dpi);
     let old = WATCH.with(|w| {
         let mut u = w.borrow_mut();
-        let old = (u.font, u.bold);
+        let old = (u.font, u.bold, u.small);
         u.font = font;
         u.bold = bold;
+        u.small = small;
         old
     });
     drop_font(old.0);
     drop_font(old.1);
+    drop_font(old.2);
 }
 
 fn drop_font(font: HFONT) {
@@ -210,10 +252,9 @@ fn set_banner(key: Option<&crate::Key>) {
 unsafe fn add_paths(paths: &[String]) {
     let mut err = None;
     for path in paths {
-        if let Some(k) = super::add_folder(path) {
-            if err.is_none() {
-                err = Some(k);
-            }
+        let one = if is_dir(path) { super::add_folder(path) } else { super::add_file(path) };
+        if err.is_none() {
+            err = one;
         }
     }
     set_banner(err);
@@ -231,9 +272,10 @@ unsafe extern "system" fn watch_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             if msg == WM_MOUSEWHEEL {
                 let delta = (((wp.0 >> 16) & 0xffff) as u16 as i16 as i32) / 120;
                 let dpi = WATCH.with(|w| w.borrow().dpi);
+                let line = sc(dpi, 22).max(1) * 3;
                 WATCH.with(|w| {
                     let mut u = w.borrow_mut();
-                    u.scroll -= delta * sc(dpi, 48);
+                    u.scroll -= delta * line;
                 });
             }
             let _ = InvalidateRect(Some(h), None, false);
@@ -241,6 +283,16 @@ unsafe extern "system" fn watch_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         }
         WM_VSCROLL => {
             on_scroll(h, wp);
+            LRESULT(0)
+        }
+        WM_MOUSEMOVE => {
+            let (x, y) = crate::xy(lp);
+            on_move(h, x, y);
+            LRESULT(0)
+        }
+        WM_MOUSELEAVE => {
+            WATCH.with(|w| w.borrow_mut().hover = Hover::None);
+            let _ = InvalidateRect(Some(h), None, false);
             LRESULT(0)
         }
         WM_LBUTTONUP => {
@@ -263,23 +315,31 @@ unsafe extern "system" fn watch_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         WM_GETMINMAXINFO => {
             let dpi = GetDpiForWindow(h).max(96) as i32;
             let m = &mut *(lp.0 as *mut MINMAXINFO);
-            m.ptMinTrackSize.x = sc(dpi, 480);
-            m.ptMinTrackSize.y = sc(dpi, 320);
+            m.ptMinTrackSize.x = sc(dpi, 640);
+            m.ptMinTrackSize.y = sc(dpi, 360);
+            LRESULT(0)
+        }
+        crate::WM_FAV_ICON => {
+            crate::clear_icon_refresh();
+            let _ = InvalidateRect(Some(h), None, false);
             LRESULT(0)
         }
         WM_DESTROY => {
             if WATCH.with(|w| w.borrow().hwnd) == h {
+                crate::drop_side(h);
                 let _ = RevokeDragDrop(h);
-                let (font, bold) = WATCH.with(|w| {
+                let (font, bold, small) = WATCH.with(|w| {
                     let mut u = w.borrow_mut();
                     u.hwnd = HWND::default();
-                    let fonts = (u.font, u.bold);
+                    let fonts = (u.font, u.bold, u.small);
                     u.font = HFONT::default();
                     u.bold = HFONT::default();
+                    u.small = HFONT::default();
                     fonts
                 });
                 drop_font(font);
                 drop_font(bold);
+                drop_font(small);
             }
             LRESULT(0)
         }
@@ -290,8 +350,8 @@ unsafe extern "system" fn watch_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
 unsafe fn on_scroll(h: HWND, wp: WPARAM) {
     let code = SCROLLBAR_COMMAND((wp.0 & 0xffff) as i32);
     let dpi = WATCH.with(|w| w.borrow().dpi);
-    let line = sc(dpi, 48);
-    let page = sc(dpi, 200);
+    let line = sc(dpi, 22).max(1);
+    let page = line * 8;
     let thumb = if code == SB_THUMBTRACK || code == SB_THUMBPOSITION {
         let mut info = SCROLLINFO { cbSize: std::mem::size_of::<SCROLLINFO>() as u32, fMask: SIF_TRACKPOS, ..Default::default() };
         let _ = GetScrollInfo(h, SB_VERT, &mut info);
@@ -313,9 +373,57 @@ unsafe fn on_scroll(h: HWND, wp: WPARAM) {
             u.scroll = pos;
         } else if code == SB_TOP {
             u.scroll = 0;
+        } else if code == SB_BOTTOM {
+            u.scroll = i32::MAX / 4;
         }
     });
     let _ = InvalidateRect(Some(h), None, false);
+}
+
+unsafe fn on_move(h: HWND, x: i32, y: i32) {
+    let rows = super::snapshot();
+    let lay = layout(h, &rows);
+    let hover = hover_at(&lay, x, y);
+    let changed = WATCH.with(|w| {
+        let mut u = w.borrow_mut();
+        let changed = u.hover != hover;
+        u.hover = hover;
+        changed
+    });
+    if changed {
+        let _ = InvalidateRect(Some(h), None, false);
+    }
+    let mut track = TRACKMOUSEEVENT {
+        cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
+        dwFlags: TME_LEAVE,
+        hwndTrack: h,
+        dwHoverTime: 0,
+    };
+    let _ = TrackMouseEvent(&mut track);
+}
+
+fn hover_at(lay: &Lay, x: i32, y: i32) -> Hover {
+    if inside(lay.add, x, y) {
+        return Hover::Add;
+    }
+    if inside(lay.file, x, y) {
+        return Hover::File;
+    }
+    if inside(lay.active, x, y) {
+        return Hover::Active;
+    }
+    for hit in &lay.rows {
+        if inside(hit.run, x, y) {
+            return Hover::Run(hit.id);
+        }
+        if inside(hit.del, x, y) {
+            return Hover::Del(hit.id);
+        }
+        if inside(hit.row, x, y) {
+            return Hover::Row(hit.id);
+        }
+    }
+    Hover::None
 }
 
 unsafe fn on_click(h: HWND, x: i32, y: i32) {
@@ -324,6 +432,13 @@ unsafe fn on_click(h: HWND, x: i32, y: i32) {
     if inside(lay.add, x, y) {
         if let Some(path) = crate::pick_folder(h) {
             add_paths(&[path]);
+        }
+        return;
+    }
+    if inside(lay.file, x, y) {
+        let paths = crate::pick_files(h);
+        if !paths.is_empty() {
+            add_paths(&paths);
         }
         return;
     }
@@ -348,121 +463,228 @@ unsafe fn on_click(h: HWND, x: i32, y: i32) {
     }
 }
 
+unsafe fn measure(dc: HDC, font: HFONT, s: &str) -> i32 {
+    let old = SelectObject(dc, font.into());
+    let w: Vec<u16> = s.encode_utf16().collect();
+    let mut sz = SIZE::default();
+    let n = if w.is_empty() || !GetTextExtentPoint32W(dc, &w, &mut sz).as_bool() { 0 } else { sz.cx };
+    SelectObject(dc, old);
+    n
+}
+
 unsafe fn layout(h: HWND, rows: &[Row]) -> Lay {
     let mut rc = RECT::default();
     let _ = GetClientRect(h, &mut rc);
     let dpi = WATCH.with(|w| w.borrow().dpi.max(96));
-    let scroll = WATCH.with(|w| w.borrow().scroll);
-    let banner_on = WATCH.with(|w| !w.borrow().banner.is_empty());
+    let (font, small, scroll, banner_on) = WATCH.with(|w| {
+        let u = w.borrow();
+        (u.font, u.small, u.scroll, !u.banner.is_empty())
+    });
+    let dc = GetDC(Some(h));
+    let pad = sc(dpi, 8);
+    let gap = sc(dpi, 4);
     let w = rc.right - rc.left;
     let height = rc.bottom - rc.top;
-    let pad = sc(dpi, 16);
-    let gap = sc(dpi, 8);
-    let mut y = pad;
-    y += sc(dpi, 28);
-    let btn_h = sc(dpi, 32);
-    let btn_w = sc(dpi, 150);
-    let add = RECT { left: pad, top: y, right: pad + btn_w, bottom: y + btn_h };
-    let active = RECT { left: add.right + gap, top: y, right: (add.right + gap + btn_w).min(w - pad), bottom: y + btn_h };
-    y += btn_h + gap;
+    let hint = RECT { left: pad, top: sc(dpi, 4), right: w - pad, bottom: sc(dpi, 26) };
+    let btn_h = sc(dpi, 24);
+    let btn_y = hint.bottom + sc(dpi, 2);
+    let add_w = measure(dc, font, crate::tr(crate::Key::AddFolder)) + sc(dpi, 16);
+    let file_w = measure(dc, font, crate::tr(crate::Key::AddFile)) + sc(dpi, 16);
+    let active_w = measure(dc, font, crate::tr(crate::Key::AddActivePane)) + sc(dpi, 16);
+    let add = RECT { left: pad, top: btn_y, right: pad + add_w, bottom: btn_y + btn_h };
+    let file = RECT { left: add.right + gap, top: btn_y, right: add.right + gap + file_w, bottom: btn_y + btn_h };
+    let active = RECT { left: file.right + gap, top: btn_y, right: file.right + gap + active_w, bottom: btn_y + btn_h };
+    let mut y = btn_y + btn_h + gap;
     let banner = if banner_on {
-        let r = RECT { left: pad, top: y, right: w - pad, bottom: y + sc(dpi, 28) };
-        y += sc(dpi, 28) + gap;
+        let r = RECT { left: pad, top: y, right: w - pad, bottom: y + sc(dpi, 18) };
+        y += sc(dpi, 18) + gap;
         r
     } else {
         RECT::default()
     };
-    let view_top = y;
-    let view_h = (height - view_top).max(1);
-    let row_h = sc(dpi, 84);
+    let bar_h = sc(dpi, 22);
+    let frame = RECT { left: pad, top: y, right: (w - pad).max(pad + 1), bottom: (height - bar_h - sc(dpi, 4)).max(y) };
+    let head_h = sc(dpi, 22);
+    let head = RECT { left: frame.left + 1, top: frame.top + 1, right: frame.right - 1, bottom: (frame.top + 1 + head_h).min(frame.bottom) };
+    let list = RECT { left: head.left, top: head.bottom, right: head.right, bottom: (frame.bottom - 1).max(head.bottom) };
+    let status = RECT { left: 0, top: height - bar_h, right: w, bottom: height };
+    let (run_w, del_w) = action_widths(dc, small, dpi);
+    let _ = ReleaseDC(Some(h), dc);
+    let actions_w = run_w + gap + del_w + sc(dpi, 8);
+    let sub_w = sc(dpi, 84);
+    let status_w = sc(dpi, 112);
+    let inner_l = list.left + sc(dpi, 4);
+    let inner_r = list.right - sc(dpi, 4);
+    let usable = (inner_r - inner_l - actions_w - sub_w - status_w).max(sc(dpi, 80));
+    let folder_w = (usable * 58 / 100).max(sc(dpi, 48)).min(usable);
+    let cols = Cols {
+        folder: inner_l,
+        sub: inner_l + folder_w,
+        status: inner_l + folder_w + sub_w,
+        last: inner_l + folder_w + sub_w + status_w,
+        actions: inner_r - actions_w,
+        right: inner_r,
+    };
+    let row_h = sc(dpi, 22).max(1);
     let content_h = (rows.len() as i32) * row_h;
+    let view_h = (list.bottom - list.top).max(1);
     let max_scroll = (content_h - view_h).max(0);
     let scroll = scroll.clamp(0, max_scroll);
     WATCH.with(|w| w.borrow_mut().scroll = scroll);
+    let bh = (row_h - sc(dpi, 4)).max(1);
     let mut hits = Vec::new();
-    let mut ry = view_top - scroll;
-    let bw = sc(dpi, 84);
-    let bh = sc(dpi, 28);
-    for row in rows {
-        let right = w - pad;
-        let del = RECT { left: right - bw, top: ry + sc(dpi, 50), right, bottom: ry + sc(dpi, 50) + bh };
-        let run = RECT { left: del.left - gap - bw, top: del.top, right: del.left - gap, bottom: del.bottom };
-        let sub = RECT { left: pad, top: ry + sc(dpi, 30), right: (pad + sc(dpi, 220)).min(run.left - gap), bottom: ry + sc(dpi, 52) };
-        hits.push(Hit { id: row.id, sub, run, del });
-        ry += row_h;
+    for (i, row) in rows.iter().enumerate() {
+        let top = list.top - scroll + i as i32 * row_h;
+        let row_r = RECT { left: list.left, top, right: list.right, bottom: top + row_h };
+        let btn_top = top + (row_h - bh) / 2;
+        let run = RECT { left: cols.actions, top: btn_top, right: cols.actions + run_w, bottom: btn_top + bh };
+        let del = RECT { left: run.right + gap, top: btn_top, right: run.right + gap + del_w, bottom: btn_top + bh };
+        let sub = if row.file {
+            RECT::default()
+        } else {
+            RECT { left: cols.sub, top, right: cols.status, bottom: top + row_h }
+        };
+        hits.push(Hit { id: row.id, row: row_r, sub, run, del });
     }
-    let empty = RECT { left: pad, top: view_top, right: w - pad, bottom: height - pad };
-    Lay { add, active, banner, rows: hits, empty, view_top, view_h, content_h }
+    Lay { hint, add, file, active, banner, frame, head, list, status, cols, rows: hits, row_h, view_h, content_h }
+}
+
+unsafe fn action_widths(dc: HDC, font: HFONT, dpi: i32) -> (i32, i32) {
+    let run = measure(dc, font, crate::tr(crate::Key::WatchStop)).max(measure(dc, font, crate::tr(crate::Key::WatchResume))) + sc(dpi, 12);
+    let del = measure(dc, font, crate::tr(crate::Key::Delete)) + sc(dpi, 12);
+    (run.max(sc(dpi, 40)), del.max(sc(dpi, 36)))
 }
 
 unsafe fn paint(h: HWND, dc: HDC, rc: RECT) {
     let rows = super::snapshot();
     let lay = layout(h, &rows);
     sync_scroll(h, &lay);
-    let (font, bold, hot, banner) = WATCH.with(|w| {
+    let (font, bold, small, drag, hover, banner) = WATCH.with(|w| {
         let u = w.borrow();
-        (u.font, u.bold, u.hot, u.banner.clone())
+        (u.font, u.bold, u.small, u.drag, u.hover, u.banner.clone())
     });
     let dpi = WATCH.with(|w| w.borrow().dpi.max(96));
-    crate::fill(dc, rc, crate::pal().bg);
-    let pad = sc(dpi, 16);
-    let hint = RECT { left: pad, top: pad, right: rc.right - pad, bottom: pad + sc(dpi, 28) };
-    crate::text(dc, hint, crate::tr(crate::Key::FolderWatchHint), font, crate::pal().sub, DT_LEFT);
-    button(dc, lay.add, crate::tr(crate::Key::AddFolder), bold, true);
-    button(dc, lay.active, crate::tr(crate::Key::AddActivePane), bold, false);
+    let pal = crate::pal();
+    let dark = crate::DARK_ON.load(Ordering::Relaxed);
+    crate::fill(dc, rc, pal.bg);
+    crate::text(dc, lay.hint, crate::tr(crate::Key::FolderWatchHint), small, pal.sub, DT_LEFT);
+    tool_btn(dc, lay.add, crate::tr(crate::Key::AddFolder), bold, true, hover == Hover::Add, dpi);
+    tool_btn(dc, lay.file, crate::tr(crate::Key::AddFile), font, false, hover == Hover::File, dpi);
+    tool_btn(dc, lay.active, crate::tr(crate::Key::AddActivePane), font, false, hover == Hover::Active, dpi);
     if !banner.is_empty() {
-        crate::fill(dc, lay.banner, crate::pal().card);
-        crate::frame(dc, lay.banner, 1, 0xC45050);
-        let inner = RECT { left: lay.banner.left + sc(dpi, 8), right: lay.banner.right - sc(dpi, 8), ..lay.banner };
-        crate::text(dc, inner, &banner, font, 0xC45050, DT_LEFT);
+        let ink = if dark { 0xF07167 } else { 0x9F1C14 };
+        crate::text(dc, lay.banner, &banner, small, ink, DT_LEFT);
+    }
+    if lay.frame.bottom > lay.frame.top {
+        crate::fill(dc, lay.frame, pal.card);
+        crate::frame(dc, lay.frame, 1, pal.line);
+    }
+    if lay.head.bottom > lay.head.top {
+        crate::fill(dc, lay.head, pal.pill);
+        header_text(dc, lay.head, &lay.cols, small, pal.sub);
+        crate::fill(dc, RECT { top: lay.head.bottom - 1, bottom: lay.head.bottom, left: lay.head.left, right: lay.head.right }, pal.line);
+    }
+    let saved = SaveDC(dc);
+    if lay.list.bottom > lay.list.top && lay.list.right > lay.list.left {
+        IntersectClipRect(dc, lay.list.left, lay.list.top, lay.list.right, lay.list.bottom);
     }
     if rows.is_empty() {
-        crate::text(dc, lay.empty, crate::tr(crate::Key::WatchEmpty), font, crate::pal().sub, DT_CENTER);
+        crate::text(dc, lay.list, crate::tr(crate::Key::WatchEmpty), font, pal.sub, DT_CENTER);
     }
-    let row_h = sc(dpi, 84);
+    let slot = sc(dpi, 16);
     for (row, hit) in rows.iter().zip(&lay.rows) {
-        let top = hit.sub.top - sc(dpi, 30);
-        if top + row_h <= lay.view_top || top >= rc.bottom {
+        if hit.row.bottom <= lay.list.top || hit.row.top >= lay.list.bottom {
             continue;
         }
-        let card = RECT { left: pad, top, right: rc.right - pad, bottom: top + row_h - sc(dpi, 8) };
-        crate::fill(dc, card, crate::pal().card);
-        crate::frame(dc, card, 1, crate::pal().line);
-        let path_r = RECT { left: card.left + sc(dpi, 12), top: card.top + sc(dpi, 4), right: card.right - sc(dpi, 12), bottom: card.top + sc(dpi, 28) };
-        crate::text(dc, path_r, &row.path, bold, crate::pal().text, DT_LEFT);
-        checkbox(dc, hit.sub, row.subfolders, font, dpi);
-        let status = RECT { left: hit.sub.right + sc(dpi, 8), top: hit.sub.top, right: card.right - sc(dpi, 12), bottom: hit.sub.bottom };
-        crate::text(dc, status, crate::tr(row.status.key()), font, status_rgb(row.status), DT_RIGHT);
-        let last = RECT { left: card.left + sc(dpi, 12), top: hit.run.top, right: hit.run.left - sc(dpi, 8), bottom: hit.run.bottom };
-        crate::text(dc, last, &last_line(row), font, crate::pal().sub, DT_LEFT);
+        let mut bg = if row.paused { paused_bg(dark) } else { pal.card };
+        if hover == Hover::Row(row.id) {
+            bg = crate::blend(bg, pal.text, 0.04);
+        }
+        crate::fill(dc, hit.row, bg);
+        let ix = lay.cols.folder;
+        let iy = hit.row.top + (lay.row_h - slot).max(0) / 2;
+        let missing = row.status == Status::Missing;
+        if missing {
+            crate::mark_missing(&row.path);
+        } else {
+            crate::mark_present(&row.path);
+        }
+        if let Some((list, idx, dim)) = crate::shell_icon(&row.path, row.file) {
+            crate::draw_fav_icon(dc, list, idx, ix, iy, slot, dim || missing);
+        }
+        let path_r = RECT {
+            left: ix + slot + sc(dpi, 4),
+            top: hit.row.top,
+            right: (lay.cols.sub - sc(dpi, 4)).max(ix + slot),
+            bottom: hit.row.bottom,
+        };
+        crate::text(dc, path_r, &row.path, font, pal.text, DT_LEFT);
+        if !row.file {
+            checkbox(dc, hit.sub, row.subfolders, small, dpi);
+        }
+        let status_r = RECT { left: lay.cols.status + sc(dpi, 2), top: hit.row.top, right: lay.cols.last - sc(dpi, 4), bottom: hit.row.bottom };
+        crate::text(dc, status_r, status_label(row), small, status_color(row.status, dark), DT_LEFT);
+        let last_r = RECT { left: lay.cols.last, top: hit.row.top, right: lay.cols.actions - sc(dpi, 4), bottom: hit.row.bottom };
+        crate::text(dc, last_r, &last_line(row), small, pal.sub, DT_LEFT);
         let running = !row.paused;
         let run_label = if running { crate::tr(crate::Key::WatchStop) } else { crate::tr(crate::Key::WatchResume) };
-        button(dc, hit.run, run_label, font, !running);
-        button(dc, hit.del, crate::tr(crate::Key::Delete), font, false);
+        mini_btn(dc, hit.run, run_label, small, false, hover == Hover::Run(row.id), dpi, bg);
+        mini_btn(dc, hit.del, crate::tr(crate::Key::Delete), small, true, hover == Hover::Del(row.id), dpi, bg);
+        crate::fill(dc, RECT { top: hit.row.bottom - 1, bottom: hit.row.bottom, left: hit.row.left, right: hit.row.right }, pal.line);
     }
-    if hot {
-        crate::frame(dc, rc, sc(dpi, 3).max(2), CHROME);
+    if saved != 0 {
+        let _ = RestoreDC(dc, saved);
+    }
+    crate::fill(dc, RECT { bottom: lay.status.top + 1, ..lay.status }, pal.line);
+    let watching = rows.iter().filter(|r| r.status == Status::Watching).count();
+    let summary = crate::tf(crate::Key::WatchSummary, &[("n", &rows.len().to_string()), ("w", &watching.to_string())]);
+    let mid = lay.status.left + (lay.status.right - lay.status.left) / 2;
+    let left = RECT { left: lay.status.left + sc(dpi, 8), right: mid, ..lay.status };
+    let right = RECT { left: mid, right: lay.status.right - sc(dpi, 8), ..lay.status };
+    crate::text(dc, left, &summary, small, pal.sub, DT_LEFT);
+    crate::text(dc, right, crate::tr(crate::Key::WatchFoot), small, pal.sub, DT_RIGHT);
+    if drag {
+        crate::frame(dc, rc, sc(dpi, 2).max(2), CHROME);
     }
 }
 
-fn status_rgb(status: Status) -> u32 {
-    match status {
-        Status::Watching => CHROME,
-        Status::Paused => crate::pal().sub,
-        Status::Missing | Status::Failed => 0xC45050,
+fn paused_bg(dark: bool) -> u32 {
+    if dark { crate::blend(crate::pal().card, 0xA07820, 0.20) } else { 0xFBF6EA }
+}
+
+fn status_label(row: &Row) -> &'static str {
+    if row.file && row.status == Status::Missing {
+        crate::tr(crate::Key::WatchFileMissing)
+    } else {
+        crate::tr(row.status.key())
     }
+}
+
+unsafe fn header_text(dc: HDC, head: RECT, cols: &Cols, font: HFONT, ink: u32) {
+    let cell = |left, right| RECT { left, top: head.top, right, bottom: head.bottom };
+    crate::text(dc, cell(cols.folder, cols.sub), crate::tr(crate::Key::Folder), font, ink, DT_LEFT);
+    crate::text(dc, cell(cols.sub, cols.status), crate::tr(crate::Key::WatchSub), font, ink, DT_LEFT);
+    crate::text(dc, cell(cols.status, cols.last), crate::tr(crate::Key::Status), font, ink, DT_LEFT);
+    crate::text(dc, cell(cols.last, cols.actions), crate::tr(crate::Key::LastChange), font, ink, DT_LEFT);
+    crate::text(dc, cell(cols.actions, cols.right), crate::tr(crate::Key::WatchActions), font, ink, DT_LEFT);
 }
 
 fn last_line(row: &Row) -> String {
     let (Some(ms), Some(kind)) = (row.last_ms, row.last_kind) else {
+        if row.status == Status::Missing {
+            return "—".to_string();
+        }
         return crate::tr(crate::Key::NoChangeYet).to_string();
     };
     let when = civil_from_unix(ms);
-    let kind = crate::tr(kind.key());
-    if when.is_empty() {
-        return format!("{}  {kind}", crate::tr(crate::Key::LastChange));
+    let kind_s = crate::tr(kind.key());
+    let name = row.last_name.clone().unwrap_or_default();
+    match (when.is_empty(), name.is_empty()) {
+        (true, true) => kind_s.to_string(),
+        (true, false) => format!("{name} {kind_s}"),
+        (false, true) => format!("{when} · {kind_s}"),
+        (false, false) => format!("{when} · {name} {kind_s}"),
     }
-    format!("{}  {when}  {kind}", crate::tr(crate::Key::LastChange))
 }
 
 fn civil_from_unix(ms: i64) -> String {
@@ -484,32 +706,73 @@ fn civil_from_unix(ms: i64) -> String {
     }
 }
 
-unsafe fn button(dc: HDC, r: RECT, label: &str, font: HFONT, primary: bool) {
+unsafe fn tool_btn(dc: HDC, r: RECT, label: &str, font: HFONT, primary: bool, hot: bool, dpi: i32) {
     if r.right <= r.left {
         return;
     }
+    let pal = crate::pal();
+    let rad = sc(dpi, 2).max(1);
     if primary {
-        crate::fill(dc, r, CHROME);
-        crate::text(dc, r, label, font, crate::on_color(CHROME), DT_CENTER);
+        let fill = if hot { 0x0786BC } else { CHROME };
+        crate::aa_rfill(dc, r, rad, fill, Some(fill), pal.bg);
+        crate::text(dc, r, label, font, crate::on_color(fill), DT_CENTER);
     } else {
-        crate::fill(dc, r, crate::pal().card);
-        crate::frame(dc, r, 1, CHROME);
-        crate::text(dc, r, label, font, CHROME, DT_CENTER);
+        let fill = if hot { crate::blend(pal.card, pal.text, 0.06) } else { pal.card };
+        crate::aa_rfill(dc, r, rad, fill, Some(pal.line), pal.bg);
+        crate::text(dc, r, label, font, pal.text, DT_CENTER);
     }
 }
 
+unsafe fn mini_btn(dc: HDC, r: RECT, label: &str, font: HFONT, danger: bool, hot: bool, dpi: i32, ground: u32) {
+    if r.right <= r.left || r.bottom <= r.top {
+        return;
+    }
+    let pal = crate::pal();
+    let dark = crate::DARK_ON.load(Ordering::Relaxed);
+    let ink = if danger {
+        if dark { 0xF07167 } else { 0x9F1C14 }
+    } else {
+        pal.text
+    };
+    let border = if danger { crate::blend(pal.line, ink, 0.55) } else { pal.line };
+    let fill = if hot { crate::blend(pal.card, pal.text, 0.06) } else { pal.card };
+    crate::aa_rfill(dc, r, sc(dpi, 2).max(1), fill, Some(border), ground);
+    crate::text(dc, r, label, font, ink, DT_CENTER);
+}
+
 unsafe fn checkbox(dc: HDC, r: RECT, on: bool, font: HFONT, dpi: i32) {
-    let side = sc(dpi, 14);
+    if r.right <= r.left {
+        return;
+    }
+    let pal = crate::pal();
+    let side = sc(dpi, 13);
     let top = r.top + ((r.bottom - r.top) - side).max(0) / 2;
     let mark = RECT { left: r.left, top, right: r.left + side, bottom: top + side };
     if on {
-        crate::fill(dc, mark, CHROME);
+        crate::fill(dc, mark, pal.text);
+        let pen = CreatePen(PS_SOLID, 1, crate::cref(pal.card));
+        if !pen.is_invalid() {
+            let obj = HGDIOBJ(pen.0);
+            let old = SelectObject(dc, obj);
+            let x1 = mark.left + side / 5;
+            let y1 = mark.top + side / 2;
+            let x2 = mark.left + side * 2 / 5;
+            let y2 = mark.bottom - side / 4;
+            let x3 = mark.right - side / 5;
+            let y3 = mark.top + side / 4;
+            let _ = MoveToEx(dc, x1, y1, None);
+            let _ = LineTo(dc, x2, y2);
+            let _ = MoveToEx(dc, x2, y2, None);
+            let _ = LineTo(dc, x3, y3);
+            SelectObject(dc, old);
+            let _ = DeleteObject(obj);
+        }
     } else {
-        crate::fill(dc, mark, crate::pal().card);
-        crate::frame(dc, mark, 1, CHROME);
+        crate::fill(dc, mark, pal.card);
+        crate::frame(dc, mark, 1, pal.sub);
     }
-    let label = RECT { left: mark.right + sc(dpi, 6), ..r };
-    crate::text(dc, label, crate::tr(crate::Key::IncludeSubfolders), font, crate::pal().text, DT_LEFT);
+    let label = RECT { left: mark.right + sc(dpi, 4), ..r };
+    crate::text(dc, label, crate::tr(crate::Key::WatchSubShort), font, pal.text, DT_LEFT);
 }
 
 unsafe fn sync_scroll(h: HWND, lay: &Lay) {
@@ -535,24 +798,24 @@ struct WatchDrop {
 
 impl IDropTarget_Impl for WatchDrop_Impl {
     fn DragEnter(&self, d: Ref<IDataObject>, _: MODIFIERKEYS_FLAGS, _: &POINTL, effect: *mut DROPEFFECT) -> Result<()> {
-        let ok = unsafe { !dir_paths(&d).is_empty() };
+        let ok = unsafe { !hdrop_paths(&d).is_empty() };
         offer(effect, ok);
-        set_hot(self.hwnd, ok);
+        set_drag(self.hwnd, ok);
         Ok(())
     }
     fn DragOver(&self, _: MODIFIERKEYS_FLAGS, _: &POINTL, effect: *mut DROPEFFECT) -> Result<()> {
-        let hot = WATCH.with(|w| w.borrow().hot);
+        let hot = WATCH.with(|w| w.borrow().drag);
         offer(effect, hot);
         Ok(())
     }
     fn DragLeave(&self) -> Result<()> {
-        set_hot(self.hwnd, false);
+        set_drag(self.hwnd, false);
         Ok(())
     }
     fn Drop(&self, d: Ref<IDataObject>, _: MODIFIERKEYS_FLAGS, _: &POINTL, effect: *mut DROPEFFECT) -> Result<()> {
-        let paths = unsafe { dir_paths(&d) };
+        let paths = unsafe { hdrop_paths(&d) };
         offer(effect, !paths.is_empty());
-        set_hot(self.hwnd, false);
+        set_drag(self.hwnd, false);
         if !paths.is_empty() {
             unsafe { add_paths(&paths) };
         }
@@ -566,13 +829,9 @@ fn offer(effect: *mut DROPEFFECT, ok: bool) {
     }
 }
 
-fn set_hot(h: HWND, on: bool) {
-    WATCH.with(|w| w.borrow_mut().hot = on);
+fn set_drag(h: HWND, on: bool) {
+    WATCH.with(|w| w.borrow_mut().drag = on);
     unsafe { let _ = InvalidateRect(Some(h), None, false); }
-}
-
-unsafe fn dir_paths(d: &Ref<IDataObject>) -> Vec<String> {
-    hdrop_paths(d).into_iter().filter(|p| is_dir(p)).collect()
 }
 
 unsafe fn is_dir(path: &str) -> bool {

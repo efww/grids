@@ -793,6 +793,30 @@ pub(crate) unsafe fn pick_folder(owner: HWND) -> Option<String> {
     Some(pwstr(name))
 }
 
+/// Multi-select file picker. Cancel and a failed dialog both return an empty list.
+pub(crate) unsafe fn pick_files(owner: HWND) -> Vec<String> {
+    let Ok(dlg) = CoCreateInstance::<_, IFileOpenDialog>(&FileOpenDialog, None, CLSCTX_INPROC_SERVER) else { return Vec::new() };
+    let opts = dlg.GetOptions().unwrap_or_default();
+    if dlg.SetOptions(opts | FOS_ALLOWMULTISELECT | FOS_FILEMUSTEXIST | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST).is_err() {
+        return Vec::new();
+    }
+    if dlg.Show(Some(owner)).is_err() {
+        return Vec::new();
+    }
+    let Ok(arr) = dlg.GetResults() else { return Vec::new() };
+    let n = arr.GetCount().unwrap_or(0).min(10_000);
+    let mut out = Vec::new();
+    for i in 0..n {
+        let Ok(item) = arr.GetItemAt(i) else { continue };
+        let Ok(name) = item.GetDisplayName(SIGDN_FILESYSPATH) else { continue };
+        let path = pwstr(name);
+        if !path.is_empty() {
+            out.push(path);
+        }
+    }
+    out
+}
+
 #[allow(dead_code)] // sessions use the list window now
 pub(crate) unsafe fn pick_open(owner: HWND) -> Option<String> {
     file_dialog(owner, false)

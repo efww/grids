@@ -21,7 +21,9 @@ struct Pending {
     gen: u64,
     title: String,
     body: String,
+    detail: String,
     path: String,
+    file: bool,
 }
 
 fn pending() -> &'static Mutex<Option<Pending>> {
@@ -29,19 +31,21 @@ fn pending() -> &'static Mutex<Option<Pending>> {
     PENDING.get_or_init(|| Mutex::new(None))
 }
 
-pub(crate) fn show(path: &str, title: &str, body: &str) {
+pub(crate) fn show(path: &str, title: &str, body: &str, detail: &str, file: bool) {
     debug_assert_eq!(notify_route(false), NotifyRoute::Balloon);
     let gen = TOAST_GEN.fetch_add(1, Ordering::SeqCst) + 1;
     let path = path.to_string();
     let title = title.to_string();
     let body = body.to_string();
+    let detail = detail.to_string();
+    let balloon = if detail.is_empty() { body.clone() } else { format!("{body}\n{detail}") };
     std::thread::spawn(move || {
-        let ok = unsafe { try_balloon(gen, &title, &body, &path) };
+        let ok = unsafe { try_balloon(gen, &title, &balloon, &path) };
         if ok || TOAST_GEN.load(Ordering::SeqCst) != gen {
             return;
         }
         if let Ok(mut slot) = pending().lock() {
-            *slot = Some(Pending { gen, title, body, path });
+            *slot = Some(Pending { gen, title, body, detail, path, file });
         }
         let bits = MAIN.load(Ordering::SeqCst);
         if bits != 0 {
@@ -57,7 +61,7 @@ pub(crate) unsafe fn present_fallback() {
     if TOAST_GEN.load(Ordering::SeqCst) != p.gen {
         return;
     }
-    show_window(&p.title, &p.body, &p.path);
+    show_window(&p.title, &p.body, &p.detail, &p.path, p.file);
 }
 
 /// Shell balloon. `false` when the COM object is missing, so the caller draws its own.
@@ -310,10 +314,14 @@ struct ToastUi {
     hwnd: HWND,
     title: String,
     body: String,
+    detail: String,
     path: String,
+    file: bool,
     close: RECT,
+    open: RECT,
     font: HFONT,
     bold: HFONT,
+    small: HFONT,
 }
 
 thread_local! {
@@ -321,16 +329,20 @@ thread_local! {
         hwnd: HWND::default(),
         title: String::new(),
         body: String::new(),
+        detail: String::new(),
         path: String::new(),
+        file: false,
         close: RECT::default(),
+        open: RECT::default(),
         font: HFONT::default(),
         bold: HFONT::default(),
+        small: HFONT::default(),
     });
 }
 
 const TOAST_TIMER: usize = 1;
 
-unsafe fn show_window(title: &str, body: &str, path: &str) {
+unsafe fn show_window(title: &str, body: &str, detail: &str, path: &str, file: bool) {
     ensure_toast_class();
     let existing = TOAST.with(|t| t.borrow().hwnd);
     if !existing.0.is_null() && IsWindow(Some(existing)).as_bool() {
@@ -338,7 +350,9 @@ unsafe fn show_window(title: &str, body: &str, path: &str) {
             let mut ui = t.borrow_mut();
             ui.title = title.to_string();
             ui.body = body.to_string();
+            ui.detail = detail.to_string();
             ui.path = path.to_string();
+            ui.file = file;
         });
         let _ = SetTimer(Some(existing), TOAST_TIMER, 6000, None);
         let _ = InvalidateRect(Some(existing), None, false);
@@ -346,7 +360,7 @@ unsafe fn show_window(title: &str, body: &str, path: &str) {
         return;
     }
     let dpi = crate::app(|a| a.dpi.max(96));
-    let (ww, hh) = (360 * dpi / 96, 96 * dpi / 96);
+    let (ww, hh) = (320 * dpi / 96, 118 * dpi / 96);
     let (x, y) = toast_origin(ww, hh);
     let style = WS_POPUP | WS_VISIBLE | WS_CLIPCHILDREN;
     let ex = WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE;
@@ -356,8 +370,11 @@ unsafe fn show_window(title: &str, body: &str, path: &str) {
         ui.hwnd = h;
         ui.title = title.to_string();
         ui.body = body.to_string();
+        ui.detail = detail.to_string();
         ui.path = path.to_string();
+        ui.file = file;
         rebuild_toast_fonts(&mut ui, dpi);
+        crate::note_side(h);
     });
     let _ = SetTimer(Some(h), TOAST_TIMER, 6000, None);
 }
@@ -376,9 +393,17 @@ unsafe fn toast_origin(ww: i32, hh: i32) -> (i32, i32) {
 unsafe fn rebuild_toast_fonts(ui: &mut ToastUi, dpi: i32) {
     drop_font(&mut ui.font);
     drop_font(&mut ui.bold);
-    let (face, weight) = crate::title_style();
-    ui.bold = make_font(face, 15, weight, dpi);
-    ui.font = make_font(crate::ui_face(), 13, 400, dpi);
+    drop_font(&mut ui.small);
+    let face = toast_face();
+    let (title, weight) = crate::title_style();
+    ui.bold = make_font(title, 12, weight, dpi);
+    ui.font = make_font(&face, 12, 400, dpi);
+    ui.small = make_font(&face, 11, 400, dpi);
+}
+
+fn toast_face() -> String {
+    let custom = crate::app(|a| a.s.font_face.clone());
+    if custom.is_empty() { crate::ui_face().to_string() } else { custom }
 }
 
 fn drop_font(font: &mut HFONT) {
@@ -444,13 +469,20 @@ unsafe extern "system" fn toast_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             let _ = DestroyWindow(h);
             LRESULT(0)
         }
+        crate::WM_FAV_ICON => {
+            crate::clear_icon_refresh();
+            let _ = InvalidateRect(Some(h), None, false);
+            LRESULT(0)
+        }
         WM_DESTROY => {
+            crate::drop_side(h);
             TOAST.with(|t| {
                 let mut ui = t.borrow_mut();
                 if ui.hwnd == h {
                     ui.hwnd = HWND::default();
                     drop_font(&mut ui.font);
                     drop_font(&mut ui.bold);
+                    drop_font(&mut ui.small);
                 }
             });
             LRESULT(0)
@@ -460,22 +492,62 @@ unsafe extern "system" fn toast_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
 }
 
 unsafe fn paint_toast(dc: HDC, rc: RECT) {
-    let (title, body, font, bold) = TOAST.with(|t| {
+    let (title, body, detail, font, bold, small) = TOAST.with(|t| {
         let ui = t.borrow();
-        (ui.title.clone(), ui.body.clone(), ui.font, ui.bold)
+        (ui.title.clone(), ui.body.clone(), ui.detail.clone(), ui.font, ui.bold, ui.small)
     });
+    let dpi = crate::app(|a| a.dpi.max(96));
+    let s = |v: i32| v * dpi / 96;
     crate::fill(dc, rc, crate::pal().card);
-    let bar = (rc.right - rc.left).clamp(4, 8).min(6).max(4);
-    crate::fill(dc, RECT { right: rc.left + bar, ..rc }, CHROME);
-    crate::frame(dc, rc, 1, CHROME);
-    let pad = 12;
-    let close = RECT { left: rc.right - 28, top: rc.top + 4, right: rc.right - 6, bottom: rc.top + 26 };
-    TOAST.with(|t| t.borrow_mut().close = close);
-    crate::text(dc, close, "×", font, crate::pal().sub, DT_CENTER);
-    let text_r = RECT { left: rc.left + bar + pad, top: rc.top + 8, right: close.left - 4, bottom: rc.top + 32 };
-    crate::text(dc, text_r, &title, bold, crate::pal().text, DT_LEFT);
-    let body_r = RECT { left: text_r.left, top: text_r.bottom, right: rc.right - pad, bottom: rc.bottom - 8 };
+    crate::fill(dc, RECT { bottom: rc.top + s(3).max(2), ..rc }, CHROME);
+    crate::frame(dc, rc, 1, crate::pal().line);
+    let pad = s(12);
+    let icon = RECT { left: rc.left + pad, top: rc.top + s(12), right: rc.left + pad + s(28), bottom: rc.top + s(40) };
+    let wash = crate::blend(crate::pal().card, CHROME, 0.14);
+    crate::fill(dc, icon, wash);
+    crate::frame(dc, icon, 1, crate::blend(crate::pal().line, CHROME, 0.35));
+    let (path, file) = TOAST.with(|t| {
+        let ui = t.borrow();
+        (ui.path.clone(), ui.file)
+    });
+    if let Some((list, idx, dim)) = crate::shell_icon(&path, file) {
+        crate::draw_fav_icon(dc, list, idx, icon.left + s(6), icon.top + s(6), s(16), dim);
+    }
+    let text_l = icon.right + s(10);
+    let title_r = RECT { left: text_l, top: rc.top + s(10), right: rc.right - pad, bottom: rc.top + s(28) };
+    crate::text(dc, title_r, &title, bold, crate::pal().text, DT_LEFT);
+    let body_r = RECT { left: text_l, top: title_r.bottom, right: rc.right - pad, bottom: title_r.bottom + s(16) };
     crate::text(dc, body_r, &body, font, crate::pal().sub, DT_LEFT);
+    let path_r = RECT { left: text_l, top: body_r.bottom, right: rc.right - pad, bottom: body_r.bottom + s(16) };
+    crate::text(dc, path_r, &detail, small, crate::pal().text, DT_LEFT);
+    let foot_top = rc.bottom - s(32);
+    crate::fill(dc, RECT { top: foot_top, bottom: foot_top + 1, ..rc }, crate::pal().line);
+    let hint = RECT { left: rc.left + pad, top: foot_top, right: rc.right - s(150), bottom: rc.bottom };
+    crate::text(dc, hint, crate::tr(crate::Key::WatchToastHint), small, crate::pal().sub, DT_LEFT);
+    let btn_h = s(20);
+    let btn_top = foot_top + (s(32) - btn_h) / 2;
+    let open_w = s(52);
+    let close_w = s(52);
+    let open = RECT { left: rc.right - pad - open_w, top: btn_top, right: rc.right - pad, bottom: btn_top + btn_h };
+    let close = RECT { left: open.left - s(4) - close_w, top: btn_top, right: open.left - s(4), bottom: btn_top + btn_h };
+    TOAST.with(|t| {
+        let mut ui = t.borrow_mut();
+        ui.close = close;
+        ui.open = open;
+    });
+    toast_btn(dc, close, crate::tr(crate::Key::Close), small, false, dpi);
+    toast_btn(dc, open, crate::tr(crate::Key::Open), small, true, dpi);
+}
+
+unsafe fn toast_btn(dc: HDC, r: RECT, label: &str, font: HFONT, primary: bool, dpi: i32) {
+    let rad = (2 * dpi / 96).max(1);
+    if primary {
+        crate::aa_rfill(dc, r, rad, CHROME, Some(CHROME), crate::pal().card);
+        crate::text(dc, r, label, font, crate::on_color(CHROME), DT_CENTER);
+    } else {
+        crate::aa_rfill(dc, r, rad, crate::pal().card, Some(crate::pal().line), crate::pal().card);
+        crate::text(dc, r, label, font, crate::pal().text, DT_CENTER);
+    }
 }
 
 pub(crate) unsafe fn dismiss() {
