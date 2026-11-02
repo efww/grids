@@ -193,8 +193,18 @@ pub(crate) fn record(p: &Path, hash: &str) -> std::io::Result<()> {
     std::fs::File::create(record_path(p)).and_then(|mut f| std::io::Write::write_all(&mut f, hash.as_bytes()).and_then(|_| f.sync_all()))
 }
 
+/// Exactly what record() writes: 64 lowercase hex digits (a single trailing newline tolerated), nothing else.
+pub(crate) fn is_record(b: &[u8]) -> bool {
+    let h = b.strip_suffix(b"\n").unwrap_or(b);
+    h.len() == 64 && h.iter().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(c))
+}
+
+// Drops p's record, but only a file that is one: anything else with that name is someone else's and stays.
 fn forget(p: &Path) {
-    _ = std::fs::remove_file(record_path(p));
+    let r = record_path(p);
+    if std::fs::metadata(&r).is_ok_and(|m| m.len() <= 65) && std::fs::read(&r).is_ok_and(|b| is_record(&b)) {
+        _ = std::fs::remove_file(r);
+    }
 }
 
 /// grids.new.exe (written and recorded by fetch) takes the running exe's place, which becomes grids.old.exe (or the
@@ -672,6 +682,12 @@ mod tests {
 
     #[test]
     fn update_own_files() {
+        // records: only the updater's exact format
+        let h = "e6880a7a58d5e73844e31fa8ca45f431ee5f464a649edc6966e19b639095ff30";
+        assert!(is_record(h.as_bytes()) && is_record(format!("{h}\n").as_bytes()));
+        for bad in [h.to_uppercase(), format!("{h}\r\n"), format!("{h}\n\n"), format!(" {h}"), h[..63].to_string(), format!("{h}0"), "my notes about grids".into(), String::new()] {
+            assert!(!is_record(bad.as_bytes()), "{bad:?}");
+        }
         let f = |name: &'static str, hash: Option<&str>, record: Option<&str>, age| Leftover { name, hash: hash.map(String::from), record: record.map(String::from), age };
         let (new, old, old2) = (f(NEW_EXE, Some("aa"), Some("aa"), 5), f("grids.old.exe", Some("bb"), Some("bb"), 4), f("grids.old2.exe", Some("cc"), Some("cc"), 9));
         // the checked new exe first, whoever starts
@@ -747,6 +763,11 @@ mod tests {
         tidy_exes(&dir, &mine);
         assert_eq!((read(EXE), read(NEW_EXE)), (None, Some("a text file".into())));
         assert_eq!(read("grids.old.exe"), None); // the recorded old one was the updater's: tidied
+        // verifier B-X8: a user's text file named like a record, its exe absent: stays; a real orphan record goes
+        put("grids.old.exe.sha256", "my notes about grids");
+        put("grids.old2.exe.sha256", &sha256_hex(b"x").unwrap());
+        tidy_exes(&dir, &mine);
+        assert_eq!((read("grids.old.exe.sha256"), read("grids.old2.exe.sha256")), (Some("my notes about grids".into()), None));
         _ = std::fs::remove_dir_all(&dir);
     }
 
