@@ -297,7 +297,7 @@ pub(crate) unsafe fn layout_pane(h: HWND) {
 
 pub(crate) unsafe fn relayout() {
     sync_panes();
-    let Some((main, moves, label, shown, drive_vis, show_bar, show_side, tree_h, side_h)) = app(|a| {
+    let Some((main, moves, label, shown, drive_vis, show_bar, show_side, tree_h, side_h, show_preview, preview_h)) = app(|a| {
         a.gap_hot = None; // the splitter may be gone; the window is repainted below
         if a.main.0.is_null() {
             return None;
@@ -334,8 +334,13 @@ pub(crate) unsafe fn relayout() {
         }
         let show_side = a.s.tree_on;
         let (tree_h, side_h) = (a.tree_hwnd, a.side_hwnd);
+        let show_preview = a.s.preview_on && g.preview > 0;
+        let preview_h = a.preview_hwnd;
+        if !preview_h.0.is_null() && g.preview > 0 {
+            moves.push((preview_h, g.preview_rect()));
+        }
         moves.push((a.tabs_hwnd, RECT { left: 0, top: strip_top, right: g.w, bottom: strip_top + strip_h }));
-        let full = RECT { left: g.gx, top: g.top, right: g.w - g.pad, bottom: g.bot };
+        let full = RECT { left: g.gx, top: g.top, right: g.grid_right(), bottom: g.bot };
         let mut shown = Vec::new();
         for (i, p) in a.panes.iter().enumerate().take(a.s.panes()) {
             if let Some(p) = p {
@@ -343,7 +348,7 @@ pub(crate) unsafe fn relayout() {
                 shown.push((p.hwnd, a.zoom.is_none_or(|z| z == i)));
             }
         }
-        Some((a.main, moves, layout_label(&a.s.heights), shown, drive_vis, show_bar, show_side, tree_h, side_h))
+        Some((a.main, moves, layout_label(&a.s.heights), shown, drive_vis, show_bar, show_side, tree_h, side_h, show_preview, preview_h))
     }) else {
         return;
     };
@@ -363,6 +368,10 @@ pub(crate) unsafe fn relayout() {
     }
     if !side_h.0.is_null() {
         _ = ShowWindow(side_h, if show_side { SW_SHOW } else { SW_HIDE });
+    }
+    if !preview_h.0.is_null() && !show_preview {
+        _ = ShowWindow(preview_h, SW_HIDE);
+        preview_clear();
     }
     let strip = app(|a| a.tabs_hwnd);
     if !strip.0.is_null() {
@@ -387,6 +396,11 @@ pub(crate) unsafe fn relayout() {
     for (h, on) in &shown {
         _ = ShowWindow(*h, if *on { SW_SHOW } else { SW_HIDE });
     }
+    if !preview_h.0.is_null() && show_preview {
+        _ = ShowWindow(preview_h, SW_SHOW);
+        // Above the file panes, so a zoomed pane stops at the splitter instead of covering the preview.
+        _ = SetWindowPos(preview_h, Some(HWND_TOP), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    }
     start_reveal(main); // sidebar size may have changed: keep its selection in view
     if let Ok(b) = GetDlgItem(Some(main), ID_TB_LAYOUT) {
         if text_of(b) != label {
@@ -399,6 +413,9 @@ pub(crate) unsafe fn relayout() {
     _ = RedrawWindow(Some(main), None, None, RDW_UPDATENOW | RDW_ALLCHILDREN);
     // A tab or a layout that needs more room grows the window. A smaller one does not shrink it.
     ensure_window_fits();
+    if show_preview {
+        arm_preview();
+    }
 }
 
 // Splitter drag shows translucent guide bars where the boundaries will land; the panes move once, on release.
@@ -467,6 +484,14 @@ pub(crate) unsafe fn end_drag() {
     if matches!(kind, Hit::SideSplit) {
         note_save();
     }
+    if matches!(kind, Hit::Preview) {
+        publish_shared();
+        across_windows(|| {
+            relayout();
+            redraw_all();
+        });
+        note_save();
+    }
 }
 
 // Full repaint of everything once a drag/resize/layout change is over, so nothing stale survives.
@@ -498,6 +523,7 @@ pub(crate) unsafe fn set_active(i: usize) {
         }
         mark_drive();
         tabs_invalidate();
+        note_preview(i);
     }
 }
 
@@ -1050,6 +1076,7 @@ pub(crate) unsafe fn apply_theme_desk() {
     });
     if fresh {
         retint_peek();
+        retint_preview();
     }
     redraw_all();
     let (popups, help) = app(|a| {
@@ -1575,6 +1602,33 @@ pub(crate) unsafe fn toggle_tree() {
     });
     relayout();
     redraw_all();
+    if had {
+        focus_view(i);
+    }
+    save_session();
+    settings::redraw();
+}
+
+/// The preview pane follows the active pane. Hidden until Alt+P or the view menu. The width is kept.
+pub(crate) unsafe fn toggle_preview() {
+    if app(|a| a.drag.is_some()) {
+        return;
+    }
+    let f = GetFocus();
+    let (had, i) = app(|a| {
+        a.s.preview_on ^= true;
+        let ph = a.preview_hwnd;
+        let inside = !ph.0.is_null() && (ph == f || IsChild(ph, f).as_bool());
+        (inside, a.s.active)
+    });
+    publish_shared();
+    across_windows(|| {
+        relayout();
+        redraw_all();
+        if app(|a| a.s.preview_on) {
+            run_preview(true);
+        }
+    });
     if had {
         focus_view(i);
     }

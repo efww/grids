@@ -346,6 +346,7 @@ pub(crate) enum Key {
     NoSavedSessionsYet,
     NoSubfolders,
     NoThirdPartyMenuItems,
+    NoPreview,
     None,
     NotCopied,
     NotFound,
@@ -383,6 +384,7 @@ pub(crate) enum Key {
     OpeningEscCancel,
     OpeningMany,
     OpeningOne,
+    OpeningPreview,
     Overwrite,
     PagesN,
     Pane,
@@ -425,6 +427,8 @@ pub(crate) enum Key {
     PresetName,
     PressKey,
     Preview,
+    PreviewPane,
+    PreviewPaneDesc,
     PreviewWithSpace,
     PreviousFocus,
     PreviousFolder,
@@ -554,6 +558,7 @@ pub(crate) enum Key {
     ShowHiddenFilesCtrlH,
     ShowInFolder,
     ShowLeftPanel,
+    ShowPreviewPane,
     ShowStatusBar,
     ShowToolbar,
     SingleInstance,
@@ -726,7 +731,8 @@ pub(crate) enum Key {
     BasketMissing,
 }
 
-pub(crate) const KEY_COUNT: usize = 721;
+
+pub(crate) const KEY_COUNT: usize = 726;
 
 const _: () = assert!((Key::BasketMissing as usize) + 1 == KEY_COUNT);
 
@@ -1074,6 +1080,7 @@ pub(crate) const EN: [&str; KEY_COUNT] = [
     "No saved sessions yet.",
     "No subfolders",
     "No third-party menu items",
+    "No preview",
     "None",
     "Not copied:\n{list}",
     "Not found",
@@ -1111,6 +1118,7 @@ pub(crate) const EN: [&str; KEY_COUNT] = [
     "Opening…   Esc: cancel",
     "Opening {k} Explorer folders in panes {list}",
     "Opening {k} Explorer folder in pane {list}",
+    "Opening…",
     "Overwrite",
     "{total} pages",
     "Pane",
@@ -1153,6 +1161,8 @@ pub(crate) const EN: [&str; KEY_COUNT] = [
     "Preset name",
     "Press a key…",
     "Preview",
+    "Preview pane",
+    "The selected file in the active pane. Windows preview handlers draw it, as in Explorer. Otherwise a thumbnail, or a short note. Alt+P shows or hides the pane. Drag the splitter; the width is saved.",
     "Preview with Space",
     "Previous focus",
     "Previous folder",
@@ -1282,6 +1292,7 @@ pub(crate) const EN: [&str; KEY_COUNT] = [
     "Show hidden files\tCtrl+H",
     "Show in folder",
     "Show the left panel",
+    "Show the preview pane",
     "Show the status bar",
     "Show the toolbar",
     "Single instance",
@@ -1799,6 +1810,7 @@ pub(crate) const KEY_ID: [&str; KEY_COUNT] = [
     "no_saved_sessions_yet",
     "no_subfolders",
     "no_third_party_menu_items",
+    "no_preview",
     "none",
     "not_copied",
     "not_found",
@@ -1836,6 +1848,7 @@ pub(crate) const KEY_ID: [&str; KEY_COUNT] = [
     "opening_esc_cancel",
     "opening_many",
     "opening_one",
+    "opening_preview",
     "overwrite",
     "pages_n",
     "pane",
@@ -1878,6 +1891,8 @@ pub(crate) const KEY_ID: [&str; KEY_COUNT] = [
     "preset_name",
     "press_key",
     "preview",
+    "preview_pane",
+    "preview_pane_desc",
     "preview_with_space",
     "previous_focus",
     "previous_folder",
@@ -2007,6 +2022,7 @@ pub(crate) const KEY_ID: [&str; KEY_COUNT] = [
     "show_hidden_files_ctrl_h",
     "show_in_folder",
     "show_left_panel",
+    "show_preview_pane",
     "show_status_bar",
     "show_toolbar",
     "single_instance",

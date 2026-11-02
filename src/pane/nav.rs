@@ -3827,7 +3827,9 @@ impl ICommDlgBrowser_Impl for Host_Impl {
         // The status line reads the new selection. Do not SelectItem or EnsureVisible here:
         // that scrolls the list back to the focused row while the user is scrolling.
         if change == CDBOSC_SELCHANGE {
-            SEL_REV[self.0.load(Ordering::SeqCst)].fetch_add(1, Ordering::Relaxed); // same count, other items: the status line still updates
+            let slot = self.0.load(Ordering::SeqCst);
+            SEL_REV[slot].fetch_add(1, Ordering::Relaxed); // same count, other items: the status line still updates
+            unsafe { note_preview(slot) };
         }
         Ok(())
     }

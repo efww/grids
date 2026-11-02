@@ -236,6 +236,21 @@ fn main() -> Result<()> {
             ..Default::default()
         });
         RegisterClassW(&WNDCLASSW {
+            style: CS_HREDRAW | CS_VREDRAW,
+            lpfnWndProc: Some(preview_proc),
+            hInstance: hinst,
+            hCursor: arrow,
+            lpszClassName: w!("MaguroPreview"),
+            ..Default::default()
+        });
+        RegisterClassW(&WNDCLASSW {
+            lpfnWndProc: Some(preview_host_proc),
+            hInstance: hinst,
+            hCursor: arrow,
+            lpszClassName: w!("MaguroPreviewHost"),
+            ..Default::default()
+        });
+        RegisterClassW(&WNDCLASSW {
             style: CS_DBLCLKS,
             lpfnWndProc: Some(tabs_proc),
             hInstance: hinst,

@@ -89,6 +89,8 @@ const CMDS: &[Cmd] = &[
     cmd("nav.addr3", MOVE, crate::Key::AddressBar, 0x73, false, false, false, false, false),
     cmd("view.filter", VIEW, crate::Key::SearchThisFolder, 0x46, true, false, false, false, false),
     cmd("view.peek", VIEW, crate::Key::QuickLook, 0x72, false, false, false, false, false),
+    // Alt+P is free: no other default chord uses P, with or without modifiers.
+    cmd("view.preview", VIEW, crate::Key::PreviewPane, 0x50, false, false, true, false, false),
     cmd("focus.next", VIEW, crate::Key::NextFocus, 0x75, false, false, false, false, false),
     cmd("focus.prev", VIEW, crate::Key::PreviousFocus, 0x75, false, true, false, false, false),
     cmd("view.hidden", VIEW, crate::Key::ShowHiddenFiles, 0x48, true, false, false, false, false),
@@ -616,6 +618,7 @@ mod tests {
             ("focus.next", "F6"),
             ("focus.prev", "Shift+F6"),
             ("view.peek", "F3"),
+            ("view.preview", "Alt+P"),
             ("app.front", "Win+Shift+E"),
             ("win.new", "Ctrl+N"),
         ];
@@ -641,6 +644,10 @@ mod tests {
         assert_eq!(lookup(b'G' as u16, true, false, true, false), index("dialog.jump"));
         assert_eq!(chord_text(index("dialog.jump").unwrap()), "Ctrl+Alt+G");
         assert!(help_text().lines().any(|l| l == "Ctrl+Alt+G\tJump to a folder in a file dialog"));
+        assert_eq!(lookup(b'P' as u16, false, false, true, false), index("view.preview"));
+        assert_eq!(chord_text(index("view.preview").unwrap()), "Alt+P");
+        assert!(help_text().lines().any(|l| l == "Alt+P\tPreview pane"));
+        assert_ne!(lookup(b'P' as u16, true, false, false, false), index("view.preview"));
         assert_eq!(lookup(b'E' as u16, false, false, true, true), None);
         assert_eq!(lookup(b'E' as u16, false, false, true, false), None);
         assert_eq!(lookup(b'C' as u16, true, false, true, false), index("file.winmerge"));

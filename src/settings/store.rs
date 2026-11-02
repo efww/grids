@@ -301,6 +301,12 @@ struct SettingsFile {
     /// Space in a file list opens quick look. Missing means on. Omitted while on, so an older file stays unchanged.
     #[serde(default = "yes", skip_serializing_if = "is_on")]
     space_preview: bool,
+    /// Right-hand preview pane. Missing means hidden. Omitted while hidden.
+    #[serde(default, skip_serializing_if = "is_off")]
+    preview_pane: bool,
+    /// Preview width in DIP. 0 means the default until the splitter is dragged. Omitted while 0.
+    #[serde(default, skip_serializing_if = "is_zero_i32")]
+    preview_width: i32,
     /// Wheel in quick look steps to the next or previous file past the content end.
     /// Missing means off; it is on only when the user ticks it. Omitted while off.
     #[serde(default, skip_serializing_if = "is_wheel_off")]
@@ -442,6 +448,8 @@ impl SettingsFile {
             one_window: true,
             use_everything: true,
             space_preview: true,
+            preview_pane: false,
+            preview_width: 0,
             peek_wheel_nav: false,
             remember_folder_view: true,
             show_folder_sizes: true,
@@ -548,6 +556,8 @@ impl SettingsFile {
             one_window: s.one_window,
             use_everything: s.use_everything,
             space_preview: s.space_preview,
+            preview_pane: s.preview_on,
+            preview_width: s.preview_w.max(0),
             peek_wheel_nav: s.peek_wheel_nav,
             remember_folder_view: s.remember_views,
             show_folder_sizes: s.folder_sizes,
@@ -615,6 +625,8 @@ impl SettingsFile {
         self.extra.remove("remote_asked");
         self.extra.remove("winmerge_path");
         self.extra.remove("space_preview");
+        self.extra.remove("preview_pane");
+        self.extra.remove("preview_width");
         self.extra.remove("peek_wheel_nav");
         self.extra.remove("remember_folder_view");
         self.extra.remove("show_folder_sizes");
@@ -722,6 +734,8 @@ impl SettingsFile {
         s.one_window = self.one_window;
         s.use_everything = self.use_everything;
         s.space_preview = self.space_preview;
+        s.preview_on = self.preview_pane;
+        s.preview_w = if self.preview_width <= 0 { 0 } else { self.preview_width.clamp(160, 4000) };
         s.peek_wheel_nav = self.peek_wheel_nav;
         s.remember_views = self.remember_folder_view;
         s.folder_sizes = self.show_folder_sizes;
@@ -2059,6 +2073,44 @@ mod tests {
         file.merge_forward(&file.clone());
         let saved: Value = serde_json::from_str(&pretty(&file)).unwrap();
         assert_eq!(saved["space_preview"], false);
+        assert!(saved.get("extra").is_none());
+    }
+
+    #[test]
+    fn preview_pane_defaults_off_and_round_trips() {
+        assert!(!Session::default().preview_on);
+        assert_eq!(Session::default().preview_w, 0);
+        assert!(!adopt(r#"{"version":1}"#).unwrap().preview_on);
+        assert_eq!(adopt(r#"{"version":1}"#).unwrap().preview_w, 0);
+        assert!(!Session::parse("side=1\n").preview_on);
+        let mut s = Session::default();
+        s.preview_on = true;
+        s.preview_w = 320;
+        assert!(Session::parse(&s.to_ini()).preview_on);
+        assert_eq!(Session::parse(&s.to_ini()).preview_w, 320);
+        assert!(Session::parse("previewpane=1").preview_on);
+        assert_eq!(Session::parse("previeww=50").preview_w, 160);
+        assert_eq!(Session::parse("previeww=0").preview_w, 0);
+        let text = pretty(&SettingsFile::from_session(&s));
+        assert!(text.contains("\"preview_pane\": true"), "{text}");
+        assert!(text.contains("\"preview_width\": 320"), "{text}");
+        let back = adopt(&text).unwrap();
+        assert!(back.preview_on && back.preview_w == 320);
+        assert!(!pretty(&SettingsFile::from_session(&Session::default())).contains("preview_pane"));
+        assert!(!pretty(&SettingsFile::from_session(&Session::default())).contains("preview_width"));
+        let mut kept = Session::default();
+        kept.preview_on = true;
+        kept.preview_w = 300;
+        kept.take_layout(&Session { preview_on: false, preview_w: 900, ..Session::default() });
+        assert!(kept.preview_on);
+        assert_eq!(kept.preview_w, 300);
+        let mut file = SettingsFile::from_session(&s);
+        file.extra.insert("preview_pane".into(), serde_json::json!(false));
+        file.extra.insert("preview_width".into(), serde_json::json!(10));
+        file.merge_forward(&file.clone());
+        let saved: Value = serde_json::from_str(&pretty(&file)).unwrap();
+        assert_eq!(saved["preview_pane"], true);
+        assert_eq!(saved["preview_width"], 320);
         assert!(saved.get("extra").is_none());
     }
 

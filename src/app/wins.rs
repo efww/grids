@@ -344,6 +344,22 @@ pub(crate) unsafe fn open_window(mut s: Session) -> Result<HWND> {
     }
     let side = CreateWindowExW(WINDOW_EX_STYLE(0), w!("MaguroSide"), w!(""), WS_CHILD | WS_CLIPSIBLINGS | WS_VSCROLL, 0, 0, 0, 0, Some(main), None, Some(hinst), None).unwrap_or_default();
     app(|a| a.side_hwnd = side);
+    let preview = CreateWindowExW(
+        WINDOW_EX_STYLE(0),
+        w!("MaguroPreview"),
+        w!(""),
+        WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
+        0,
+        0,
+        0,
+        0,
+        Some(main),
+        None,
+        Some(hinst),
+        None,
+    )
+    .unwrap_or_default();
+    app(|a| a.preview_hwnd = preview);
     register_side_drop(side);
     prime_theme(app(|a| a.s.dark));
     apply_theme_desk();
@@ -385,6 +401,9 @@ pub(crate) unsafe fn open_window(mut s: Session) -> Result<HWND> {
     show_active_tab();
     relayout();
     focus_view(app(|a| a.s.active));
+    if app(|a| a.s.preview_on) {
+        note_preview(app(|a| a.s.active));
+    }
     app(|a| {
         a.tab_base = initial_tab_bases(&a.s);
         a.base = Some(a.s.clone());

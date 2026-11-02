@@ -1150,6 +1150,10 @@ fn flip(id: u8) {
             unsafe { crate::toggle_tree() };
             return;
         }
+        TG_PREVIEW => {
+            unsafe { crate::toggle_preview() };
+            return;
+        }
         TG_EDGE => app(|a| a.s.edge ^= true),
         TG_CONFIRM => app(|a| a.s.confirm ^= true),
         TG_FAST => app(|a| a.s.fast_copy ^= true),

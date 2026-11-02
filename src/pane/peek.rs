@@ -1392,7 +1392,7 @@ unsafe fn handler_stream(path: &str) -> Result<IStream> {
 }
 
 // Made where Explorer makes them (prevhost.exe, out of process), given the file as a stream when they take one.
-unsafe fn host_handler(h: HWND, clsid: &GUID, path: &str, area: RECT) -> Result<IPreviewHandler> {
+pub(crate) unsafe fn host_handler(h: HWND, clsid: &GUID, path: &str, area: RECT) -> Result<IPreviewHandler> {
     let ph: IPreviewHandler = CoCreateInstance(clsid, None, CLSCTX_LOCAL_SERVER).or_else(|_| CoCreateInstance(clsid, None, CLSCTX_INPROC_SERVER))?;
     let name = HSTRING::from(path);
     if let Ok(init) = ph.cast::<IInitializeWithStream>() {

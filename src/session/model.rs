@@ -288,6 +288,10 @@ pub(crate) struct Session {
     pub(crate) start_path: String,
     pub(crate) ext: bool,              // show file extensions (the Windows Explorer setting)
     pub(crate) tree_on: bool,          // left panel open
+    /// Right-hand preview of the active pane. Missing means hidden.
+    pub(crate) preview_on: bool,
+    /// Preview plate width in DIP. 0 means the default until the user drags the splitter.
+    pub(crate) preview_w: i32,
     pub(crate) fav_top: bool,          // favourites above the folder tree; false puts the tree on top
     pub(crate) side_split: f64,        // folder tree's share of the left panel; favourites take the rest
     pub(crate) pins_open: bool,        // Explorer pins group expanded; the rows are not saved
@@ -448,6 +452,8 @@ impl Default for Session {
             start_path: String::new(),
             ext: true,
             tree_on: true,
+            preview_on: false,
+            preview_w: 0,
             fav_top: true,
             side_split: 0.5,
             pins_open: true,
@@ -534,6 +540,8 @@ impl PartialEq for Session {
             && self.start_path == o.start_path
             && self.ext == o.ext
             && self.tree_on == o.tree_on
+            && self.preview_on == o.preview_on
+            && self.preview_w == o.preview_w
             && self.fav_top == o.fav_top
             && self.side_split == o.side_split
             && self.pins_open == o.pins_open
@@ -814,6 +822,11 @@ impl Session {
                 "startp" => s.start_path = v.trim().to_string(),
                 "ext" => s.ext = v.trim() != "0",
                 "tree" => s.tree_on = v.trim() != "0",
+                "previewpane" => s.preview_on = v.trim() == "1",
+                "previeww" => {
+                    let n = v.trim().parse::<i32>().unwrap_or(0);
+                    s.preview_w = if n <= 0 { 0 } else { n.clamp(160, 4000) };
+                }
                 // Omitted, or any value other than tree: favourites on top. The source grids.ini is never rewritten.
                 "sideorder" => s.fav_top = v.trim() != "tree",
                 "edge" => s.edge = v.trim() != "0",
@@ -930,6 +943,12 @@ impl Session {
             o += &format!("startp={}\n", self.start_path);
         }
         o += &format!("ext={}\ntree={}\nedge={}\n", self.ext as u8, self.tree_on as u8, self.edge as u8);
+        if self.preview_on {
+            o += "previewpane=1\n";
+        }
+        if self.preview_w > 0 {
+            o += &format!("previeww={}\n", self.preview_w);
+        }
         // Default (favourites on top) adds no line, so an imported grids.ini is not given a new key.
         if !self.fav_top {
             o += "sideorder=tree\n";

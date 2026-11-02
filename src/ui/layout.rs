@@ -125,8 +125,9 @@ pub(crate) fn side_min(dpi: i32) -> i32 {
 }
 
 /// Client size that fits the current tab: every pane at `PANE_MIN_W` × `PANE_MIN_H`,
-/// the left panel when it is open, the tab strip, the status line, and the icon group.
-pub(crate) fn client_min(heights: &[usize], dpi: i32, tree_on: bool, bar: bool, stat: bool) -> (i32, i32) {
+/// the left panel when it is open, the preview pane when it is open, the tab strip,
+/// the status line, and the icon group.
+pub(crate) fn client_min(heights: &[usize], dpi: i32, tree_on: bool, bar: bool, stat: bool, preview_on: bool) -> (i32, i32) {
     let s = |v: i32| v * dpi.max(1) / 96;
     let (pad, gap) = (s(8), s(8));
     let cols = heights.len().max(1) as i32;
@@ -134,7 +135,8 @@ pub(crate) fn client_min(heights: &[usize], dpi: i32, tree_on: bool, bar: bool, 
     let grid_w = cols * pane_min_w(dpi) + gap * (cols - 1).max(0);
     let grid_h = rows * pane_min_h(dpi) + gap * (rows - 1).max(0);
     let left = if tree_on { s(120) + gap } else { pad };
-    let width = (left + grid_w + pad).max(super::tabs::icon_group_min(dpi, bar));
+    let preview = if preview_on { gap + s(PREVIEW_DEF_DIP) } else { 0 };
+    let width = (left + grid_w + pad + preview).max(super::tabs::icon_group_min(dpi, bar));
     let side_h = if tree_on { side_min(dpi) * 2 + gap } else { 0 };
     let height = s(32) + grid_h.max(side_h) + if stat { s(24) } else { 0 };
     (width, height)
@@ -190,7 +192,7 @@ fn monitor_work(h: HWND) -> Option<RECT> {
 /// so a layout the monitor cannot hold still leaves the window on screen.
 pub(crate) unsafe fn min_track_size(h: HWND) -> (i32, i32) {
     let (cw, ch, dpi) = app(|a| {
-        let (w, ht) = client_min(&a.s.heights, a.dpi, a.s.tree_on, a.s.bar, a.s.stat);
+        let (w, ht) = client_min(&a.s.heights, a.dpi, a.s.tree_on, a.s.bar, a.s.stat, a.s.preview_on);
         (w, ht, a.dpi)
     });
     let (mut tw, mut th) = frame_around(cw, ch, dpi);
@@ -233,7 +235,7 @@ pub(crate) unsafe fn ensure_window_fits() {
     }
     let Some(work) = monitor_work(main) else { return };
     let (cw, ch, dpi) = app(|a| {
-        let (w, ht) = client_min(&a.s.heights, a.dpi, a.s.tree_on, a.s.bar, a.s.stat);
+        let (w, ht) = client_min(&a.s.heights, a.dpi, a.s.tree_on, a.s.bar, a.s.stat, a.s.preview_on);
         (w, ht, a.dpi)
     });
     let (min_w, min_h) = frame_around(cw, ch, dpi);
@@ -294,6 +296,7 @@ pub(crate) enum Hit {
     SideSplit,         // horizontal divider between the folder tree and favourites
     Col(usize),        // boundary after column k
     Row(usize, usize), // (column, boundary after row k in it)
+    Preview,           // vertical splitter left of the preview pane
 }
 
 // Main window: tab strip on top, status line at the bottom, plates (sidebar + grid) in between.
@@ -310,9 +313,36 @@ pub(crate) struct Geo {
     pub(crate) tree_h: i32, // folder-tree height inside the plate
     pub(crate) fav_top: bool, // favourites above the tree; false puts the tree on top
     pub(crate) gx: i32,     // grid left
+    pub(crate) preview: i32, // preview plate width in px; 0 hides it. Zoom keeps it, like the left panel.
     pub(crate) xs: Vec<(i32, i32)>,
     pub(crate) ys: Vec<Vec<(i32, i32)>>, // per column
     pub(crate) zoom: bool, // one pane fills the grid: no splitters
+}
+
+/// Width of the preview plate in px. `0` in `stored_dip` means the default until the user drags.
+/// A tight window keeps one pane's minimum and shrinks the plate to whatever room is left.
+pub(crate) const PREVIEW_MIN_DIP: i32 = 160;
+pub(crate) const PREVIEW_DEF_DIP: i32 = 280;
+const PREVIEW_MAX_DIP: i32 = 4000;
+
+pub(crate) fn preview_dip(px: i32, dpi: i32) -> i32 {
+    let dpi = dpi.max(1);
+    let dip = px.saturating_mul(96) / dpi;
+    dip.clamp(PREVIEW_MIN_DIP, PREVIEW_MAX_DIP)
+}
+
+pub(crate) fn preview_plate(on: bool, stored_dip: i32, dpi: i32, client_w: i32, grid_left: i32, gap: i32, pad: i32) -> i32 {
+    if !on {
+        return 0;
+    }
+    let dpi = dpi.max(1);
+    let want_dip = if stored_dip <= 0 { PREVIEW_DEF_DIP } else { stored_dip.clamp(PREVIEW_MIN_DIP, PREVIEW_MAX_DIP) };
+    let want = want_dip.saturating_mul(dpi) / 96;
+    let room = client_w - grid_left - gap - pad - pane_min_w(dpi);
+    if room <= 0 {
+        return 0;
+    }
+    want.min(room)
 }
 
 /// A splitter release stores the clamped panel width. While the panel is hidden, the kept width stays.
@@ -327,12 +357,14 @@ pub(crate) fn geo(a: &App) -> Geo {
     let (pad, gap) = (s(8), s(8));
     let side = if a.s.tree_on { a.s.side.clamp(s(120), (rc.right - gap - pad - s(240)).max(s(120))) } else { 0 };
     let gx = if a.s.tree_on { side + gap } else { pad };
+    let preview = preview_plate(a.s.preview_on, a.s.preview_w, a.dpi, rc.right, gx, gap, pad);
+    let grid_w = (rc.right - pad - gx - if preview > 0 { preview + gap } else { 0 }).max(0);
     let top = s(32); // tab strip. `bar` hides the icon group except the gear, not this row.
     let bot = if a.s.stat { (rc.bottom - s(24)).max(top) } else { rc.bottom };
     let plate = (bot - top).max(0);
     let tree_h = if side > 0 { split_heights(plate, a.s.side_split, gap, side_min(a.dpi)).0 } else { 0 };
     Geo {
-        xs: cells_min(gx, rc.right - pad - gx, &a.s.colr, gap, pane_min_w(a.dpi)),
+        xs: cells_min(gx, grid_w, &a.s.colr, gap, pane_min_w(a.dpi)),
         ys: a.s.rowr.iter().map(|r| cells_min(top, bot - top, r, gap, pane_min_h(a.dpi))).collect(),
         w: rc.right,
         h: rc.bottom,
@@ -344,11 +376,26 @@ pub(crate) fn geo(a: &App) -> Geo {
         tree_h,
         fav_top: a.s.fav_top,
         gx,
+        preview,
         zoom: a.zoom.is_some(),
     }
 }
 
 impl Geo {
+    /// Right edge of the file grid. The preview plate and its splitter sit past this.
+    pub(crate) fn grid_right(&self) -> i32 {
+        if self.preview > 0 {
+            self.w - self.pad - self.preview - self.gap
+        } else {
+            self.w - self.pad
+        }
+    }
+
+    pub(crate) fn preview_rect(&self) -> RECT {
+        let left = self.w - self.pad - self.preview;
+        RECT { left, top: self.top, right: self.w - self.pad, bottom: self.bot }
+    }
+
     /// Height of the upper half, above the divider. `tree_h` is always the folder tree.
     pub(crate) fn side_top_h(&self) -> i32 {
         if self.fav_top {
@@ -863,6 +910,10 @@ pub(crate) fn gap_line(g: &Geo, d: Hit, t: i32) -> Option<RECT> {
             let y = g.ys[c][k].1 + g.gap / 2;
             Some(RECT { left: x0, top: y - t / 2, right: x1, bottom: y - t / 2 + t })
         }
+        Hit::Preview if g.preview > 0 => {
+            let left = g.w - g.pad - g.preview;
+            Some(vbar(left - g.gap / 2))
+        }
         _ => None,
     }
 }
@@ -878,6 +929,13 @@ pub(crate) fn hit(g: &Geo, x: i32, y: i32) -> Option<Hit> {
     }
     if g.side > 0 && x >= g.side && x < g.gx {
         return Some(Hit::Side);
+    }
+    // The preview stays while a pane is zoomed, so its splitter is tested before that early return.
+    if g.preview > 0 {
+        let left = g.w - g.pad - g.preview;
+        if x >= left - g.gap && x < left {
+            return Some(Hit::Preview);
+        }
     }
     if x < g.gx || g.zoom {
         return None;
@@ -1137,6 +1195,7 @@ mod tests {
             tree_h: 200,
             fav_top: false,
             gx: 248,
+            preview: 0,
             zoom: false,
             xs: vec![(256, 620), (628, 992)],
             ys: vec![vec![(34, 300), (308, 576)], vec![(34, 576)]],
@@ -1261,10 +1320,11 @@ mod tests {
     fn client_min_is_the_current_layout_plus_chrome() {
         // 2×2, tree, toolbar, status, 96 dpi.
         // side 120 + gap 8 + two panes 280 + gap 8 + pad 8 = 424, taller than the icon row.
-        assert_eq!(client_min(&[2, 2], 96, true, true, true), (424, 304));
+        assert_eq!(client_min(&[2, 2], 96, true, true, true, false), (424, 304));
         // one pane, no tree, toolbar hidden, no status: the gear row is wider than the pane.
-        assert_eq!(client_min(&[1], 96, false, false, false), (160, 152));
-        let (w, h) = client_min(&[1, 1, 1], 192, false, true, true);
+        assert_eq!(client_min(&[1], 96, false, false, false, false), (160, 152));
+        let (w, h) = client_min(&[1, 1, 1], 192, false, true, true, false);
+        assert_eq!(client_min(&[2, 2], 96, true, true, true, true), (424 + 8 + 280, 304));
         assert_eq!((w, h), (904, 352));
         assert_eq!((pane_min_w(96), pane_min_h(96), pane_min_w(192), pane_min_h(144)), (140, 120, 280, 180));
     }
@@ -1282,6 +1342,51 @@ mod tests {
         assert_eq!(grow_into_work(r(100, 50, 400, 300), 4000, 3000, work), work);
         let left_mon = r(-1920, 0, 0, 1080);
         assert_eq!(grow_into_work(r(-100, 50, 300, 350), 500, 300, left_mon), r(-500, 50, 0, 350));
+    }
+
+    #[test]
+    fn preview_plate_uses_dip_and_keeps_a_pane() {
+        assert_eq!(preview_plate(false, 400, 96, 2000, 16, 8, 8), 0);
+        assert_eq!(preview_plate(true, 0, 96, 2000, 16, 8, 8), 280);
+        assert_eq!(preview_plate(true, 400, 96, 2000, 16, 8, 8), 400);
+        assert_eq!(preview_plate(true, 50, 96, 2000, 16, 8, 8), 160);
+        // 400 wide, grid at 8, gap 8, pad 8, pane min 140: room is 236, so 280 shrinks.
+        assert_eq!(preview_plate(true, 0, 96, 400, 8, 8, 8), 236);
+        assert_eq!(preview_plate(true, 200, 192, 2000, 16, 16, 16), 400);
+        assert_eq!(preview_dip(280, 96), 280);
+        assert_eq!(preview_dip(400, 192), 200);
+        assert_eq!(preview_dip(10, 96), 160);
+    }
+
+    #[test]
+    fn preview_splitter_is_the_gap_left_of_the_plate() {
+        let g = Geo {
+            w: 1000,
+            h: 800,
+            top: 66,
+            bot: 700,
+            pad: 8,
+            gap: 8,
+            side: 0,
+            tree_h: 0,
+            fav_top: false,
+            gx: 8,
+            preview: 280,
+            xs: vec![(8, 704)],
+            ys: vec![vec![(66, 700)]],
+            zoom: false,
+        };
+        // plate left = 1000 - 8 - 280 = 712. Gap is [704, 712).
+        assert_eq!(g.grid_right(), 704);
+        assert_eq!(hit(&g, 706, 400), Some(Hit::Preview));
+        assert_eq!(hit(&g, 720, 400), None);
+        assert_eq!(hit(&g, 700, 400), None);
+        let zoomed = Geo { zoom: true, ..g.clone() };
+        assert_eq!(hit(&zoomed, 706, 400), Some(Hit::Preview));
+        assert!(gap_line(&zoomed, Hit::Preview, 2).is_some());
+        let hidden = Geo { preview: 0, ..g };
+        assert_eq!(hit(&hidden, 706, 400), None);
+        assert_eq!(gap_line(&hidden, Hit::Preview, 2), None);
     }
 
     #[test]
@@ -1313,6 +1418,7 @@ mod tests {
             tree_h: 300,
             fav_top: false,
             gx: 248,
+            preview: 0,
             xs: vec![(248, 600), (608, 992)],
             ys: vec![vec![(66, 700)], vec![(66, 700)]],
             zoom: false,
@@ -1339,6 +1445,7 @@ mod tests {
             tree_h,
             fav_top,
             gx: 248,
+            preview: 0,
             xs: vec![(248, 600)],
             ys: vec![vec![(66, 700)]],
             zoom: false,

@@ -67,6 +67,7 @@ const TG_FSIZE: u8 = 22;
 const TG_FSIZE_NET: u8 = 23;
 const TG_FAST: u8 = 24;
 const TG_DIALOG: u8 = 25;
+const TG_PREVIEW: u8 = 26;
 
 const CB_SETMINVISIBLE: u32 = 0x1701;
 const EM_SETCUEBANNER: u32 = 0x1501;
@@ -235,6 +236,7 @@ const VIEW: &[Spec] = &[
     Spec { title: crate::Key::ShowLeftPanel, desc: crate::Key::FavouritesAndFolderTreeShareItDrag, live: true, ctl: Ctl::Toggle(TG_TREE) },
     Spec { title: crate::Key::LeftPanelOrder, desc: crate::Key::FavouritesOnTopOrFolderTreeOn, live: true, ctl: Ctl::SideOrder },
     Spec { title: crate::Key::EmphasiseActivePaneBorder, desc: crate::Key::Blank, live: true, ctl: Ctl::Toggle(TG_EDGE) },
+    Spec { title: crate::Key::ShowPreviewPane, desc: crate::Key::PreviewPaneDesc, live: true, ctl: Ctl::Toggle(TG_PREVIEW) },
     Spec { title: crate::Key::PreviewWithSpace, desc: crate::Key::SameAsF3InFileListSpace, live: true, ctl: Ctl::Toggle(TG_SPACE) },
     Spec { title: crate::Key::WheelMovesNextPreviousFile, desc: crate::Key::ScrollingPastEndOfContentMovesNext, live: true, ctl: Ctl::Toggle(TG_WHEEL) },
 ];
@@ -1007,7 +1009,7 @@ fn is_wm_card(spec: &Spec) -> bool {
 }
 
 fn is_preview_card(spec: &Spec) -> bool {
-    matches!(spec.ctl, Ctl::Toggle(TG_SPACE) | Ctl::Toggle(TG_WHEEL))
+    matches!(spec.ctl, Ctl::Toggle(TG_PREVIEW) | Ctl::Toggle(TG_SPACE) | Ctl::Toggle(TG_WHEEL))
 }
 
 fn toggle_on(id: u8) -> bool {
@@ -1021,6 +1023,7 @@ fn toggle_on(id: u8) -> bool {
         TG_STATUS => app(|a| a.s.stat),
         TG_EXT => app(|a| a.s.ext),
         TG_TREE => app(|a| a.s.tree_on),
+        TG_PREVIEW => app(|a| a.s.preview_on),
         TG_EDGE => app(|a| a.s.edge),
         TG_CONFIRM => app(|a| a.s.confirm),
         TG_AUTOSAVE => app(|a| a.s.autosave),

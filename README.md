@@ -172,6 +172,7 @@ Defaults; every one can be changed in Settings → Shortcuts.
 |  | Ctrl+\ | Layout picker |
 | **Preview** | Space / F3 | Preview |
 |  | Esc / Space / F3 | Close preview |
+|  | Alt+P | Show or hide the preview pane |
 | **File** | Ctrl+Shift+C | Copy full path |
 |  | Ctrl+Shift+R | Batch rename |
 |  | Ctrl+Alt+R | Recent files (Windows Recent, newest first) |
