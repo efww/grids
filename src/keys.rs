@@ -128,6 +128,8 @@ const CMDS: &[Cmd] = &[
     cmd("app.front", WIN, crate::Key::BringMaguroFront, 0x45, false, true, false, true, false),
     // Registered only while another app's Open or Save dialog is in front. See dialogjump.
     cmd("dialog.jump", WIN, crate::Key::JumpToAFolderInAFileDialog, 0x47, true, false, true, false, false),
+    // Registered for the whole time Maguro is running, same as app.front. See cliphot.
+    cmd("clip.open", WIN, crate::Key::OpenClipboardPath, 0x56, false, true, false, true, false),
     cmd("win.new", WIN, crate::Key::NewWindow, 0x4E, true, false, false, false, false),
     cmd("watch.open", WIN, crate::Key::FolderWatch, 0x57, true, true, false, false, false),
 ];
@@ -334,6 +336,11 @@ pub(crate) fn hot_chord() -> Option<Chord> {
 /// The chord that lists Maguro folders in another app's file dialog.
 pub(crate) fn dialog_chord() -> Option<Chord> {
     index("dialog.jump").and_then(|i| with(|s| s.binds.get(i).copied()))
+}
+
+/// The chord that opens a clipboard path in a new tab.
+pub(crate) fn clip_chord() -> Option<Chord> {
+    index("clip.open").and_then(|i| with(|s| s.binds.get(i).copied()))
 }
 
 /// What the menu click asks for. `reg(true)` registers and reports whether it is really on.
@@ -668,6 +675,16 @@ mod tests {
         assert_eq!(chord_text(index("view.preview").unwrap()), "Alt+P");
         assert!(help_text().lines().any(|l| l == "Alt+P\tPreview pane"));
         assert_ne!(lookup(b'P' as u16, true, false, false, false), index("view.preview"));
+        let clip = index("clip.open").unwrap();
+        assert_eq!(chord_text(clip), "Win+Shift+V");
+        assert_eq!(lookup(b'V' as u16, false, true, false, true), Some(clip));
+        assert!(help_text().lines().any(|l| l == "Win+Shift+V\tOpen clipboard path"));
+        let clip_chord = default_chord(clip).unwrap();
+        for (i, c) in CMDS.iter().enumerate() {
+            if i != clip {
+                assert!(!overlaps(c.chord(), clip_chord), "{} collides with clip.open", c.id);
+            }
+        }
         assert_eq!(lookup(b'E' as u16, false, false, true, true), None);
         assert_eq!(lookup(b'3' as u16, true, false, true, false), index("ws.load"));
         assert_eq!(lookup(b'3' as u16, true, true, true, false), index("ws.save"));

@@ -254,6 +254,8 @@ pub(crate) struct Session {
     pub(crate) hotkey: bool,           // global hotkey brings Maguro forward; the chord is in the keymap
     /// List Maguro folders in another app's Open or Save dialog. Missing means on.
     pub(crate) dialog_jump: bool,
+    /// Open a clipboard path in a new tab. Missing means on. The chord is in the keymap.
+    pub(crate) clip_hotkey: bool,
     /// Session file of the tab on screen. Mirrors `tabs[tab].session`.
     /// Older files stored only this, for the whole window; it is adopted onto the active tab.
     pub(crate) file: String,
@@ -427,6 +429,7 @@ impl Default for Session {
             pane_cur: vec![0; MAXP],
             hotkey: true,
             dialog_jump: true,
+            clip_hotkey: true,
             file: String::new(),
             favs: Vec::new(),
             tree: Vec::new(),
@@ -516,6 +519,7 @@ impl PartialEq for Session {
             && self.peek_doc == o.peek_doc
             && self.hotkey == o.hotkey
             && self.dialog_jump == o.dialog_jump
+            && self.clip_hotkey == o.clip_hotkey
             && self.file == o.file
             && self.favs == o.favs
             && self.tree == o.tree
@@ -850,6 +854,7 @@ impl Session {
                 "foldersizenet" => s.folder_sizes_network = v.trim() == "1",
                 "hotkey" => s.hotkey = v.trim() != "0",
                 "dialogjump" => s.dialog_jump = v.trim() != "0",
+                "cliphotkey" => s.clip_hotkey = v.trim() != "0",
                 "lang" => s.lang = Lang::from_ini(v),
                 "single" => s.single = v.trim() != "0",
                 "onewindow" => s.one_window = v.trim() != "0",
@@ -965,7 +970,7 @@ impl Session {
             o += &format!("bootf={}\n", self.boot_file);
         }
         o += &format!("autosave={}\ndot={}\nupcheck={}\n", self.autosave as u8, self.dot as u8, self.update_check as u8);
-        o += &format!("dblup={}\nhotkey={}\nlang={}\nsingle={}\nonewindow={}\neverything={}\nevasked={}\nremoteasked={}\nspacepreview={}\npeekwheelnav={}\nfolderview={}\nfoldersize={}\nfoldersizenet={}\ndialogjump={}\n", self.dblup as u8, self.hotkey as u8, self.lang.ini(), self.single as u8, self.one_window as u8, self.use_everything as u8, self.ev_asked as u8, self.remote_asked as u8, self.space_preview as u8, self.peek_wheel_nav as u8, self.remember_views as u8, self.folder_sizes as u8, self.folder_sizes_network as u8, self.dialog_jump as u8);
+        o += &format!("dblup={}\nhotkey={}\nlang={}\nsingle={}\nonewindow={}\neverything={}\nevasked={}\nremoteasked={}\nspacepreview={}\npeekwheelnav={}\nfolderview={}\nfoldersize={}\nfoldersizenet={}\ndialogjump={}\ncliphotkey={}\n", self.dblup as u8, self.hotkey as u8, self.lang.ini(), self.single as u8, self.one_window as u8, self.use_everything as u8, self.ev_asked as u8, self.remote_asked as u8, self.space_preview as u8, self.peek_wheel_nav as u8, self.remember_views as u8, self.folder_sizes as u8, self.folder_sizes_network as u8, self.dialog_jump as u8, self.clip_hotkey as u8);
         if !self.winmerge_path.trim().is_empty() {
             o += &format!("winmerge={}\n", self.winmerge_path.trim());
         }

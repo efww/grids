@@ -485,6 +485,7 @@ fn main_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
             crate::remote::WM_REMOTE => remote_arrived(),
             WM_HOTKEY if wp.0 == HOTKEY_ID as usize => hotkey_pressed(),
             WM_HOTKEY if wp.0 == crate::dialogjump::DIALOG_HOTKEY_ID as usize => crate::dialogjump::on_hotkey(),
+            WM_HOTKEY if wp.0 == crate::cliphot::CLIP_HOTKEY_ID as usize => crate::cliphot::on_hotkey(),
             WM_CLOSE => {
                 _ = KillTimer(Some(h), TIMER_SAVE);
                 _ = KillTimer(Some(h), TIMER_FVIEWS);
@@ -519,6 +520,7 @@ fn main_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
             }
             WM_DESTROY => {
                 release_hotkey_hwnd(h);
+                crate::cliphot::release(h);
                 crate::dialogjump::release(h);
                 _ = KillTimer(Some(h), TIMER_STATUS);
                 _ = KillTimer(Some(h), TIMER_SAVE);
@@ -539,6 +541,7 @@ fn main_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                 } else {
                     crate::watch::retarget(app(|a| a.main));
                     try_register_hotkey(app(|a| a.main));
+                    crate::cliphot::install(app(|a| a.main));
                     crate::dialogjump::install(app(|a| a.main));
                 }
             }
@@ -592,6 +595,7 @@ fn pane_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                     _ = KillTimer(Some(h), TIMER_NEWFILE);
                 }
             }
+            WM_TIMER if wp.0 == TIMER_CLIPSEL => crate::cliphot::on_select_timer(h),
             WM_TIMER if wp.0 == TIMER_NEWF => {
                 let job = PENDING_NEW.lock().ok().and_then(|mut p| {
                     let cur = p.as_mut()?;
@@ -954,8 +958,9 @@ pub(crate) unsafe fn apply_hotkey(notify: bool) {
             a.status_key.clear();
         });
     }
-    // A rebind can change the dialog chord too. ID 1 is left as it is.
+    // A rebind can change the dialog chord and the clipboard chord too. ID 1 is left as it is.
     crate::dialogjump::sync();
+    crate::cliphot::apply(notify);
 }
 
 pub(crate) unsafe fn release_hotkey_hwnd(h: HWND) {

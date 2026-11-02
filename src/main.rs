@@ -8,6 +8,8 @@ mod langkey;
 mod i18n;
 mod keys;
 mod dialogjump;
+mod clippath;
+mod cliphot;
 mod app;
 mod basket;
 mod ui;
@@ -392,6 +394,13 @@ mod tests {
         cur.take_layout(&Session::parse("dialogjump=0\n"));
         assert!(cur.dialog_jump); // a loaded layout does not change the dialog jump
         assert!(!layout_differs(&Session { dialog_jump: false, ..Session::default() }, &Session::default()));
+        assert!(Session::parse("side=300\n").clip_hotkey);
+        assert!(!Session::parse("cliphotkey=0\n").clip_hotkey);
+        assert!(Session::parse("cliphotkey=1\n").clip_hotkey);
+        assert!(!Session::parse(&Session { clip_hotkey: false, ..Session::default() }.to_ini()).clip_hotkey);
+        cur.take_layout(&Session::parse("cliphotkey=0\n"));
+        assert!(cur.clip_hotkey); // a loaded layout does not change the clipboard hotkey
+        assert!(!layout_differs(&Session { clip_hotkey: false, ..Session::default() }, &Session::default()));
     }
 
     #[test]

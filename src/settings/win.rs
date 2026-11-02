@@ -557,6 +557,11 @@ unsafe fn draw(dc: HDC, rc: RECT, g: &Geo, sn: &Snap) {
                 draw_fav_row(dc, row, *rect, sn, empty);
             }
             Item::Note(r, t) => crate::text(dc, *r, tx(*t), sn.small, crate::pal().sub, DT_LEFT),
+            Item::Alert(r) => {
+                if let Some(note) = crate::cliphot::registration_notice() {
+                    crate::text(dc, *r, &note, sn.small, crate::pal().text, DT_LEFT);
+                }
+            }
             Item::CtxNote(r) => {
                 let _ = crate::wrap_text(dc, *r, tx(ctx_note_key()), sn.small, crate::pal().sub, false);
             }
@@ -775,6 +780,16 @@ unsafe fn draw_card(dc: HDC, c: &CardItem, sn: &Snap, accent: u32) {
         let path = crate::store::settings_path().to_string_lossy().into_owned();
         let path_r = RECT { left: c.rect.left + sc(dpi, 16), top: desc_r.bottom, right: c.rect.right - sc(dpi, 16), bottom: c.rect.bottom - sc(dpi, 6) };
         crate::text(dc, path_r, &path, sn.small, crate::pal().text, DT_LEFT);
+    } else if c.spec.ctl == Ctl::Toggle(TG_CLIP) {
+        let line = sc(dpi, 16);
+        let desc_r = RECT { top: title_line.bottom, bottom: (title_line.bottom + line).min(text_r.bottom), ..text_r };
+        crate::text(dc, desc_r, tx(c.spec.desc), sn.small, crate::pal().sub, DT_LEFT);
+        if let Some(note) = crate::cliphot::registration_notice() {
+            let more = RECT { top: desc_r.bottom, bottom: text_r.bottom, ..text_r };
+            if more.bottom > more.top {
+                crate::text(dc, more, &note, sn.small, crate::pal().text, DT_LEFT);
+            }
+        }
     } else if !tx(c.spec.desc).is_empty() {
         crate::text(dc, RECT { top: title_line.bottom, ..text_r }, tx(c.spec.desc), sn.small, crate::pal().sub, DT_LEFT);
     }
@@ -1163,6 +1178,16 @@ fn flip(id: u8) {
                 crate::save_session();
                 crate::dialogjump::sync();
                 redraw();
+            }
+            return;
+        }
+        TG_CLIP => {
+            app(|a| a.s.clip_hotkey ^= true);
+            unsafe {
+                crate::publish_shared();
+                crate::save_session();
+                crate::cliphot::apply(true);
+                refresh();
             }
             return;
         }

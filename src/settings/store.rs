@@ -287,6 +287,9 @@ struct SettingsFile {
     /// Folders in another app's Open or Save dialog. Missing means on.
     #[serde(default = "yes", skip_serializing_if = "is_on")]
     dialog_jump: bool,
+    /// Open a clipboard path in a new tab. Missing means on.
+    #[serde(default = "yes", skip_serializing_if = "is_on")]
+    clip_hotkey: bool,
     /// UI language. Missing means `"auto"`: the Windows display language (Korean, Japanese, otherwise English).
     #[serde(default = "lang_auto")]
     lang: String,
@@ -453,6 +456,7 @@ impl SettingsFile {
             dblup: true,
             hotkey: true,
             dialog_jump: true,
+            clip_hotkey: true,
             lang: lang_auto(),
             single: true,
             one_window: true,
@@ -564,6 +568,7 @@ impl SettingsFile {
             dblup: s.dblup,
             hotkey: s.hotkey,
             dialog_jump: s.dialog_jump,
+            clip_hotkey: s.clip_hotkey,
             lang: s.lang.ini().into(),
             single: s.single,
             one_window: s.one_window,
@@ -637,6 +642,7 @@ impl SettingsFile {
         self.extra.remove("drive_buttons");
         self.extra.remove("use_everything");
         self.extra.remove("dialog_jump");
+        self.extra.remove("clip_hotkey");
         self.extra.remove("ev_asked");
         self.extra.remove("remote_asked");
         self.extra.remove("winmerge_path");
@@ -749,6 +755,7 @@ impl SettingsFile {
         s.dblup = self.dblup;
         s.hotkey = self.hotkey;
         s.dialog_jump = self.dialog_jump;
+        s.clip_hotkey = self.clip_hotkey;
         s.lang = Lang::from_ini(&self.lang);
         s.single = self.single;
         s.one_window = self.one_window;
@@ -2067,6 +2074,23 @@ mod tests {
         let mut kept = Session::default();
         kept.take_layout(&Session { dialog_jump: false, ..Session::default() });
         assert!(kept.dialog_jump);
+    }
+
+    #[test]
+    fn clip_hotkey_defaults_on_and_round_trips() {
+        assert!(Session::default().clip_hotkey);
+        assert!(adopt(r#"{"version":1}"#).unwrap().clip_hotkey);
+        let mut s = Session::default();
+        s.clip_hotkey = false;
+        assert!(!Session::parse(&s.to_ini()).clip_hotkey);
+        assert!(Session::parse("cliphotkey=1").clip_hotkey);
+        let text = pretty(&SettingsFile::from_session(&s));
+        assert!(text.contains("\"clip_hotkey\": false"), "{text}");
+        assert!(!adopt(&text).unwrap().clip_hotkey);
+        assert!(!pretty(&SettingsFile::from_session(&Session::default())).contains("clip_hotkey"));
+        let mut kept = Session::default();
+        kept.take_layout(&Session { clip_hotkey: false, ..Session::default() });
+        assert!(kept.clip_hotkey);
     }
 
     #[test]

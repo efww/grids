@@ -436,7 +436,7 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
     }
     if let Some(i) = crate::keys::lookup(vk, ctrl, shift, alt, win) {
         let id = crate::keys::id_of(i);
-        if matches!(id, "app.keys" | "view.peek" | "view.preview" | "app.front" | "dialog.jump" | "view.gather" | "view.recentfiles" | "file.mkdir" | "file.winmerge" | "file.reveal" | "file.basket" | "file.basket.add" | "ws.load" | "ws.save" | "watch.open") && m.lParam.0 & (1 << 30) != 0 {
+        if matches!(id, "app.keys" | "view.peek" | "view.preview" | "app.front" | "dialog.jump" | "clip.open" | "view.gather" | "view.recentfiles" | "file.mkdir" | "file.winmerge" | "file.reveal" | "file.basket" | "file.basket.add" | "ws.load" | "ws.save" | "watch.open") && m.lParam.0 & (1 << 30) != 0 {
             return true;
         }
         // Pane-tab chords stay out of the address bar (already returned) and out of every other focus,
@@ -637,6 +637,7 @@ unsafe fn dispatch(id: &str, vk: u16, a: usize, list: bool, shell: impl Fn() -> 
         // Eat the chord inside Maguro too, so it does not type the letter. The menu opens
         // only when another app's file dialog is actually in front.
         "dialog.jump" => crate::dialogjump::on_hotkey(),
+        "clip.open" => crate::cliphot::on_hotkey(),
         "win.new" => new_window(),
         "watch.open" => crate::watch::open(app(|x| x.main)),
         _ => return shell(),

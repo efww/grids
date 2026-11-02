@@ -68,6 +68,7 @@ const TG_FSIZE_NET: u8 = 23;
 const TG_FAST: u8 = 24;
 const TG_DIALOG: u8 = 25;
 const TG_PREVIEW: u8 = 26;
+const TG_CLIP: u8 = 27;
 
 const CB_SETMINVISIBLE: u32 = 0x1701;
 const EM_SETCUEBANNER: u32 = 0x1501;
@@ -204,6 +205,7 @@ const GEN: &[Spec] = &[
     Spec { title: crate::Key::SingleInstance, desc: crate::Key::SecondLaunchOpensNewWindowInThis, live: true, ctl: Ctl::Toggle(TG_SINGLE) },
     Spec { title: crate::Key::SingleWindowMode, desc: crate::Key::OneWindowAnotherLaunchBringsItForward, live: true, ctl: Ctl::Toggle(TG_ONE) },
     Spec { title: crate::Key::FoldersInOpenAndSaveDialogs, desc: crate::Key::WhileAnotherAppSOpenOrSaveDialogIsInFront, live: true, ctl: Ctl::Toggle(TG_DIALOG) },
+    Spec { title: crate::Key::OpenClipboardPath, desc: crate::Key::OpenClipboardPathHint, live: true, ctl: Ctl::Toggle(TG_CLIP) },
     Spec { title: crate::Key::DoubleClickEmptySpaceForParentFolder, desc: crate::Key::InFileListDoubleClickOnEmpty, live: true, ctl: Ctl::Toggle(TG_DBLUP) },
     Spec { title: crate::Key::Status, desc: crate::Key::InstalledRunningVersion, live: true, ctl: Ctl::EvStatus },
     Spec { title: crate::Key::UseEverythingForSearch, desc: crate::Key::OnByDefaultSubfolderSearchAsksEverything, live: true, ctl: Ctl::Toggle(TG_EV) },
@@ -492,6 +494,8 @@ enum Item {
     FavHead(RECT),
     FavRow { i: usize, rect: RECT, rename: RECT, btn: RECT },
     Note(RECT, crate::Key),
+    /// Registration failed for the clipboard hotkey. The text is read at paint time.
+    Alert(RECT),
     CtxNote(RECT),
     /// Classic | Windows 11. One list is visible. The active pill is filled in paint.
     CtxSeg { classic: RECT, win11: RECT },
@@ -554,6 +558,8 @@ fn card_h(spec: &Spec, dpi: i32) -> i32 {
         sc(dpi, 120)
     } else if spec.ctl == Ctl::Adv || spec.ctl == Ctl::EvStatus || spec.ctl == Ctl::EvAct || spec.ctl == Ctl::WmStatus {
         sc(dpi, 84)
+    } else if spec.ctl == Ctl::Toggle(TG_CLIP) && crate::cliphot::registration_notice().is_some() {
+        sc(dpi, 88)
     } else if tx(spec.desc).is_empty() {
         sc(dpi, 48)
     } else {
@@ -997,7 +1003,12 @@ fn key_items(g: &mut Geo, sn: &Snap, left: i32, right: i32, mut y: i32, rq: &str
     }
     y += sc(dpi, 8);
     g.items.push(Item::Note(RECT { left, top: y, right, bottom: y + sc(dpi, 40) }, KEY_NOTE));
-    y + sc(dpi, 40)
+    y += sc(dpi, 40);
+    if crate::cliphot::registration_notice().is_some() {
+        g.items.push(Item::Alert(RECT { left, top: y, right, bottom: y + sc(dpi, 36) }));
+        y += sc(dpi, 36);
+    }
+    y
 }
 
 fn is_ev_card(spec: &Spec) -> bool {
@@ -1037,6 +1048,7 @@ fn toggle_on(id: u8) -> bool {
         TG_FSIZE_NET => app(|a| a.s.folder_sizes_network),
         TG_FAST => app(|a| a.s.fast_copy),
         TG_DIALOG => app(|a| a.s.dialog_jump),
+        TG_CLIP => app(|a| a.s.clip_hotkey),
         TG_FOLDER => crate::folderapp::shown_on(),
         _ => false,
     }
@@ -1233,6 +1245,27 @@ mod tests {
         assert_eq!(page, 0);
         assert!(hit(&geo(client(), &shot(page, "既定のフォルダーアプリとして使用"))));
         assert!(hit(&geo(client(), &shot(0, "特殊フォルダー"))));
+    }
+
+    #[test]
+    fn clipboard_path_toggle_is_on_general_in_each_language() {
+        let _lock = ui_lock();
+        let _keep = lang(0);
+        let hit = |g: &Geo| g.items.iter().any(|it| matches!(it, Item::Card(c) if c.spec.ctl == Ctl::Toggle(TG_CLIP)));
+        let (anchor, page) = commit_search(2, 2, "Open clipboard path");
+        assert_eq!((anchor, page), (2, 0));
+        assert!(hit(&geo(client(), &shot(page, "Open clipboard path"))));
+        assert!(hit(&geo(client(), &shot(0, "clipboard path in a new tab"))));
+
+        crate::UI.store(1, Ordering::Relaxed);
+        let (_, page) = commit_search(0, 0, "클립보드 경로 열기");
+        assert_eq!(page, 0);
+        assert!(hit(&geo(client(), &shot(page, "클립보드 경로 열기"))));
+
+        crate::UI.store(2, Ordering::Relaxed);
+        let (_, page) = commit_search(0, 0, "クリップボードのパスを開く");
+        assert_eq!(page, 0);
+        assert!(hit(&geo(client(), &shot(page, "クリップボードのパスを開く"))));
     }
 
     #[test]

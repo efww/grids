@@ -574,23 +574,34 @@ pub(crate) unsafe fn switch_rel(d: i32) {
 }
 
 pub(crate) unsafe fn new_tab() {
+    new_tab_at(None);
+}
+
+/// A new window tab. `path` is pane 0's folder. `None` leaves every path empty, as `new_tab` does.
+pub(crate) unsafe fn new_tab_at(path: Option<&str>) {
     end_rename(true);
     remember_tabs();
     detach_live();
+    let first = path.unwrap_or("").to_string();
     app(|a| {
         fit_park(a);
         let live = std::mem::replace(&mut a.panes, no_panes());
         let tab = a.s.tab;
         a.park[tab] = live;
         lru_note(a, tab);
-        // Settings pane count, with even splits. Not the tab on screen. Paths stay empty.
+        // Settings pane count, with even splits. Not the tab on screen.
+        // Paths stay empty unless the caller named a folder for the first pane.
         let (heights, colr, rowr) = layout_for_new_tab(a.s.layout_new);
+        let mut paths = vec![String::new(); MAXP];
+        if !first.is_empty() {
+            paths[0] = first;
+        }
         let fresh = Session {
             heights,
             colr,
             rowr,
             active: 0,
-            paths: vec![String::new(); MAXP],
+            paths,
             views: vec![(0, 0); MAXP],
             cols: vec![String::new(); MAXP],
             pane_folders: vec![Vec::new(); MAXP],
