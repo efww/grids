@@ -204,17 +204,29 @@ pub(crate) unsafe fn relayout() {
         let mut shown = vec![(a.tree_hwnd, g.tree)];
         let mut x = g.pad;
         let tb = |id: i32| unsafe { GetDlgItem(Some(a.main), id) }.unwrap_or_default();
-        for (id, w) in [(ID_TB_LAYOUT, s(70)), (ID_TB_SAVE, s(32)), (ID_TB_LOAD, s(32)), (ID_TB_VIEW, s(32)), (ID_TB_FAV, s(32))] {
+        // the Everything magnifier only while Everything runs
+        let ev = unsafe { ev_shown() };
+        shown.push((tb(ID_TB_EV), ev));
+        let left = [(ID_TB_LAYOUT, s(70)), (ID_TB_SAVE, s(32)), (ID_TB_LOAD, s(32)), (ID_TB_VIEW, s(32)), (ID_TB_FAV, s(32)), (ID_TB_EV, s(32))];
+        for (id, w) in left.into_iter().filter(|&(id, _)| id != ID_TB_EV || ev) {
             moves.push((tb(id), RECT { left: x, top: s(5), right: x + w, bottom: s(5) + s(24) }));
             x += w + s(4);
         }
         let right = g.w - g.pad; // the theme toggle sits at the far right
         moves.push((tb(ID_TB_THEME), RECT { left: right - s(32), top: s(5), right, bottom: s(5) + s(24) }));
+        // a newer release: the blue Update button just left of it
+        let mut edge = right - s(32);
+        let up = update_shown();
+        if up {
+            moves.push((tb(ID_TB_UPDATE), RECT { left: edge - s(8) - s(78), top: s(5), right: edge - s(8), bottom: s(5) + s(24) }));
+            edge -= s(8) + s(78);
+        }
+        shown.push((tb(ID_TB_UPDATE), up));
         // drive buttons after them; in a narrow window the last letters hide rather than run into the theme toggle
         x += s(6);
         for &(_, _, h) in &a.drives {
             moves.push((h, RECT { left: x, top: s(5), right: x + s(32), bottom: s(5) + s(24) }));
-            shown.push((h, x + s(32) <= right - s(32) - s(12)));
+            shown.push((h, x + s(32) <= edge - s(12)));
             x += s(32) + s(2);
         }
         let full = RECT { left: g.gx, top: g.top, right: g.w - g.pad, bottom: g.bot };

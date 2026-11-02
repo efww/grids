@@ -31,6 +31,8 @@ pub(crate) struct Session {
     pub(crate) tabs: Vec<Vec<String>>, // per pane: its tabs' folders; the current one's entry is stale, paths[i] is the truth. <2 = no tabs
     pub(crate) tab: Vec<usize>,        // per pane: current tab
     pub(crate) rn_presets: Vec<String>, // batch rename presets (rename_rules::preset_text), app-wide
+    pub(crate) ev_here: bool,          // Everything search: only under the active pane's folder (off = whole PC), app-wide
+    pub(crate) updates: bool,          // look for a newer release now and then (off = no network at all), app-wide
 }
 
 impl Default for Session {
@@ -63,6 +65,8 @@ impl Default for Session {
             tabs: vec![Vec::new(); MAXP],
             tab: vec![0; MAXP],
             rn_presets: Vec::new(),
+            ev_here: false,
+            updates: true,
         }
     }
 }
@@ -150,6 +154,8 @@ impl Session {
                 "hotkey" => s.hotkey = v.trim() != "0",
                 "dialog_jump" => s.dlgjump = v.trim() != "0",
                 "tabs" => s.tabs_on = v.trim() == "1",
+                "ev_here" => s.ev_here = v.trim() == "1",
+                "update_check" => s.updates = v.trim() != "0",
                 "lang" => s.ko = v.trim() == "ko",
                 "session" => s.file = v.trim().to_string(),
                 "fav" if !v.trim().is_empty() => s.favs.push(v.trim().to_string()),
@@ -209,6 +215,7 @@ impl Session {
         o += &format!("dblup={}\ntree={}\nhotkey={}\n", self.dblup as u8, self.tree as u8, self.hotkey as u8);
         o += &format!("dialog_jump={}\n", self.dlgjump as u8);
         o += &format!("tabs={}\n", self.tabs_on as u8);
+        o += &format!("ev_here={}\nupdate_check={}\n", self.ev_here as u8, self.updates as u8);
         o += &format!("lang={}\n", if self.ko { "ko" } else { "en" });
         if !self.file.is_empty() {
             o += &format!("session={}\n", self.file);

@@ -17,6 +17,8 @@ pub(crate) const ID_TB_LOAD: i32 = 204;
 pub(crate) const ID_TB_THEME: i32 = 205;
 pub(crate) const ID_TB_FAV: i32 = 206;
 pub(crate) const ID_TB_VIEW: i32 = 203;
+pub(crate) const ID_TB_EV: i32 = 207; // orange magnifier: Everything search, shown while Everything runs
+pub(crate) const ID_TB_UPDATE: i32 = 208; // blue "Update", shown when a newer release is out
 pub(crate) const ID_DRIVE: i32 = 1500; // + 0..25: drive buttons A: … Z:
 // menu ids
 pub(crate) const ID_HIDDEN: usize = 1100;
@@ -32,6 +34,7 @@ pub(crate) const ID_HOTKEY: usize = 1109;
 pub(crate) const ID_FOLLOW: usize = 1110;
 pub(crate) const ID_TABS: usize = 1111;
 pub(crate) const ID_DLGJUMP: usize = 1140;
+pub(crate) const ID_UPDATES: usize = 1150; // view menu: check for updates
 pub(crate) const HOME: &str = "https://github.com/efww/grids";
 pub(crate) const ID_ACCENT: usize = 1400; // + preset index
 pub(crate) const ID_ACCENT_PICK: usize = 1410;
@@ -161,6 +164,7 @@ pub(crate) fn glyph(id: i32) -> &'static str {
         ID_TB_SAVE => "\u{E74E}",
         ID_TB_LOAD => "\u{E838}",
         ID_TB_FAV => "\u{E734}",
+        ID_TB_EV => ICON_SEARCH,
         ID_TB_THEME if DARK_ON.load(Ordering::Relaxed) => "\u{E706}", // sun: back to light
         ID_TB_THEME => "\u{E708}",                                     // moon: go dark
         _ => "\u{E890}",
@@ -197,6 +201,7 @@ Num−\tDeselect files by pattern\n\
 Num*\tInvert the selection\n\
 Ctrl+F\tFilter (*.pdf;*.txt or part of a name; folders always show)\n\
 Alt+↓ in the filter\tFile types: pictures, videos, documents ... (or click the filter's icon)\n\
+Ctrl+Shift+F\tSearch the whole PC with Everything, while it runs (or the orange magnifier): ↑/↓ choose, Enter shows the item in the active pane, Ctrl+Enter opens a folder, Alt+O only under this folder\n\
 Ctrl+T / Ctrl+W\tNew tab (same folder) / close tab, with tabs on (View menu)\n\
 Ctrl+K\tDuplicate the current tab\n\
 Ctrl+PgDn / Ctrl+PgUp\tNext / previous tab\n\
@@ -220,6 +225,7 @@ Save (Ctrl+S): overwrite the current session file; green dot = unsaved layout ch
 Load: pick a saved session by its layout preview\n\
 Drive buttons (C: D: …): open that drive in the active pane; its drive is underlined\n\
 Double-click a splitter: split evenly\n\
+Update button (blue, top right): a newer Grids is out; click to restart into it (settings, folders and sessions stay)\n\
 Right-click a pane header: colour label (saved with the session)\n\
 Tabs: click to switch, × or middle-click to close, + or double-click the empty strip for a new tab, right-click to duplicate or close\n\
 Arguments: grids.exe C:\\a D:\\b ... or grids.exe work.grids\n\
@@ -245,6 +251,7 @@ Num−\t패턴으로 파일 선택 해제\n\
 Num*\t선택 반전\n\
 Ctrl+F\t필터 (*.pdf;*.txt 또는 이름 일부, 폴더는 항상 표시)\n\
 필터 칸에서 Alt+↓\t파일 종류: 사진·동영상·문서 … (필터 칸 아이콘 클릭도 가능)\n\
+Ctrl+Shift+F\tEverything으로 PC 전체 검색, Everything이 실행 중일 때 (주황 돋보기도 가능): ↑/↓ 고르기, Enter는 지금 패널에서 그 항목 보기, Ctrl+Enter는 폴더 열기, Alt+O는 이 폴더 아래에서만\n\
 Ctrl+T / Ctrl+W\t새 탭(같은 폴더) / 탭 닫기, 탭을 켰을 때 (보기 메뉴)\n\
 Ctrl+K\t지금 탭 복제\n\
 Ctrl+PgDn / Ctrl+PgUp\t다음 / 이전 탭\n\
@@ -268,6 +275,7 @@ F2, Del, Ctrl+C/X/V, F5\t탐색기와 동일\n\n\
 불러오기: 저장한 세션을 배치 미리보기로 보고 한 번 클릭\n\
 드라이브 버튼 (C: D: …): 지금 패널에서 그 드라이브 열기, 지금 패널의 드라이브에 밑줄\n\
 스플리터 더블클릭: 균등 분할\n\
+업데이트 버튼 (파란색, 오른쪽 위): 새 Grids가 나옴, 누르면 재시작해 업데이트 (설정·폴더·세션 유지)\n\
 패널 머리줄 오른쪽 클릭: 패널 색 라벨 (세션에 저장)\n\
 탭: 클릭 = 전환, × 또는 가운데 클릭 = 닫기, + 또는 탭 줄 빈 곳 더블클릭 = 새 탭, 오른쪽 클릭 = 복제·닫기\n\
 실행 인자: grids.exe C:\\a D:\\b ... 또는 grids.exe 작업.grids\n\
