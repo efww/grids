@@ -144,7 +144,7 @@ fn main() -> Result<()> {
             lpfnWndProc: Some(main_proc),
             hInstance: hinst,
             hCursor: arrow,
-            hIcon: LoadIconW(Some(hinst), PCWSTR(1 as _)).unwrap_or_default(), // app.ico, group id 1
+            hIcon: LoadIconW(Some(hinst), PCWSTR(ICON_GROUP_LIGHT as _)).unwrap_or_default(), // app.ico, group 3
             lpszClassName: w!("MaguroMain"),
             ..Default::default()
         });

@@ -1186,7 +1186,7 @@ fn ensure_class(name: PCWSTR, proc: WNDPROC) {
             lpfnWndProc: proc,
             hInstance: hinst,
             hCursor: arrow,
-            hIcon: LoadIconW(Some(hinst), PCWSTR(1 as _)).unwrap_or_default(),
+            hIcon: LoadIconW(Some(hinst), PCWSTR(crate::ICON_GROUP_LIGHT as _)).unwrap_or_default(),
             lpszClassName: name,
             ..Default::default()
         });

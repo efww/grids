@@ -1021,13 +1021,15 @@ pub(crate) unsafe fn prime_theme(dark: bool) {
     }
 }
 
-/// Title-bar icon follows the theme. Group 1 is the light-bg exe icon. Group 2 is the dark-bg logo.
+/// Title-bar icon follows the theme. Light is group 3 (`app.ico`). Dark is group 2
+/// (`assets/maguro-dark-bg.ico`). Group 1 is the Explorer file icon and stays off this window.
 /// LoadImageW picks the real 16/32 (etc.) frames from the kit .ico instead of stretching one size.
+/// ICON_BIG and ICON_SMALL are the class big icon and the small title-bar / taskbar icon.
 pub(crate) unsafe fn apply_window_icon(hwnd: HWND) {
     if hwnd.0.is_null() {
         return;
     }
-    let id = if DARK_ON.load(Ordering::Relaxed) { 2usize } else { 1 };
+    let id = window_icon_group(DARK_ON.load(Ordering::Relaxed));
     let Ok(module) = GetModuleHandleW(None) else { return };
     let hinst: HINSTANCE = module.into();
     let dpi = GetDpiForWindow(hwnd);

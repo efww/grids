@@ -99,7 +99,7 @@ fn ensure_class() {
             lpfnWndProc: Some(settings_proc),
             hInstance: hinst,
             hCursor: arrow,
-            hIcon: LoadIconW(Some(hinst), PCWSTR(1 as _)).unwrap_or_default(),
+            hIcon: LoadIconW(Some(hinst), PCWSTR(crate::ICON_GROUP_LIGHT as _)).unwrap_or_default(),
             lpszClassName: w!("MaguroSettings"),
             ..Default::default()
         });
@@ -2063,9 +2063,10 @@ pub(crate) fn about_body(c: &AboutCopy) -> String {
     format!("{}\n{}\n{}\n{}\n{}", c.title, c.version, c.desc, c.license, c.repo)
 }
 
-/// Group 1 is the light-background icon. Group 2 is the dark-background icon.
+/// Light About fallback is `app.ico` (group 3). Dark is `assets/maguro-dark-bg.ico` (group 2).
+/// The painted logo is the theme PNG; this group is the DrawIconEx fallback and matches the title bar.
 pub(crate) fn about_icon_group(dark: bool) -> usize {
-    if dark { 2 } else { 1 }
+    crate::window_icon_group(dark)
 }
 
 pub(crate) struct AboutLay {
@@ -2276,7 +2277,7 @@ fn ensure_about_class() {
             lpfnWndProc: Some(about_proc),
             hInstance: hinst,
             hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
-            hIcon: LoadIconW(Some(hinst), PCWSTR(1 as _)).unwrap_or_default(),
+            hIcon: LoadIconW(Some(hinst), PCWSTR(crate::ICON_GROUP_LIGHT as _)).unwrap_or_default(),
             lpszClassName: w!("MaguroAbout"),
             ..Default::default()
         });
@@ -2616,8 +2617,15 @@ mod tests {
         assert!(!body.contains("https"));
         assert!(!body.contains("efww/grids"));
         assert!(!body.contains('?'));
-        assert_eq!(about_icon_group(false), 1);
-        assert_eq!(about_icon_group(true), 2);
+        assert_eq!(crate::ICON_GROUP_EXE, 1);
+        assert_eq!(crate::ICON_GROUP_DARK, 2);
+        assert_eq!(crate::ICON_GROUP_LIGHT, 3);
+        assert!(crate::ICON_GROUP_DARK > crate::ICON_GROUP_EXE);
+        assert!(crate::ICON_GROUP_LIGHT > crate::ICON_GROUP_EXE);
+        assert_eq!(about_icon_group(false), crate::ICON_GROUP_LIGHT);
+        assert_eq!(about_icon_group(true), crate::ICON_GROUP_DARK);
+        assert_eq!(crate::window_icon_group(false), about_icon_group(false));
+        assert_eq!(crate::window_icon_group(true), about_icon_group(true));
     }
 
     #[test]

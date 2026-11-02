@@ -117,3 +117,20 @@ pub(crate) const COPY_ID: usize = 0x504E_4752; // "PNGR": WM_COPYDATA from a sec
 // Move without copying old pixels: copied bits are what left ghost borders/buttons while resizing.
 pub(crate) const MOVE: SET_WINDOW_POS_FLAGS = SET_WINDOW_POS_FLAGS(SWP_NOZORDER.0 | SWP_NOACTIVATE.0 | SWP_NOCOPYBITS.0);
 
+// RT_GROUP_ICON ids written by build.rs. Explorer shows the lowest id, so group 1 is
+// assets/maguro-exe.ico (the exe file icon). The window class, title bar, taskbar, and
+// About dialog keep the previous kit: light app.ico is group 3, dark maguro-dark-bg.ico is group 2.
+/// Explorer file icon (`assets/maguro-exe.ico`). Windows reads this group from the exe.
+#[allow(dead_code)]
+pub(crate) const ICON_GROUP_EXE: usize = 1;
+pub(crate) const ICON_GROUP_DARK: usize = 2;
+pub(crate) const ICON_GROUP_LIGHT: usize = 3;
+
+// Explorer picks the lowest RT_GROUP_ICON, so the file icon stays below both in-app groups.
+const _: () = assert!(ICON_GROUP_EXE < ICON_GROUP_DARK && ICON_GROUP_EXE < ICON_GROUP_LIGHT);
+
+/// Light title bar and About fallback use `app.ico`. Dark uses `assets/maguro-dark-bg.ico`.
+pub(crate) fn window_icon_group(dark: bool) -> usize {
+    if dark { ICON_GROUP_DARK } else { ICON_GROUP_LIGHT }
+}
+

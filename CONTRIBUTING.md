@@ -8,7 +8,7 @@ Needs the Rust GNU toolchain (`x86_64-pc-windows-gnu`) and MSYS2's MinGW tools (
 build.cmd
 ```
 
-This builds `target\release\maguro.exe` and copies it to `build\maguro.exe`. The app icon is `app.ico`, from the Maguro icon kit.
+This builds `target\release\maguro.exe` and copies it to `build\maguro.exe`. Explorer shows `assets/maguro-exe.ico` (resource group 1). The title bar and About dialog keep light `app.ico` (group 3) and dark `assets/maguro-dark-bg.ico` (group 2).
 
 ## Release
 

@@ -1,9 +1,12 @@
-// Embeds app.manifest (common controls v6 + per-monitor DPI), app.ico (light background, group 1),
-// and assets/maguro-dark-bg.ico (dark background, group 2).
+// Embeds app.manifest (common controls v6 + per-monitor DPI) and three icon groups.
+// Group 1 is assets/maguro-exe.ico. Explorer shows the lowest-numbered RT_GROUP_ICON, so that
+// file is the maguro.exe icon. Group 2 is assets/maguro-dark-bg.ico. Group 3 is app.ico.
+// In-app windows load groups 2 and 3 (see ICON_GROUP_* in src/app/ids.rs).
 // Writes a binary .res by hand and lets windres only convert it to COFF, so no C preprocessor is needed.
 fn main() {
     emit_git_hash();
     println!("cargo:rerun-if-changed=app.manifest");
+    println!("cargo:rerun-if-changed=assets/maguro-exe.ico");
     println!("cargo:rerun-if-changed=app.ico");
     println!("cargo:rerun-if-changed=assets/maguro-dark-bg.ico");
     println!("cargo:rerun-if-changed=build.rs");
@@ -28,9 +31,12 @@ fn main() {
     let manifest = std::fs::read_to_string("app.manifest").unwrap().replace("@VERSION@", &format!("{}.{}.{}.{}", v[0], v[1], v[2], v[3]));
     add(24, 1, manifest.as_bytes()); // RT_MANIFEST, assembly version follows Cargo.toml
 
-    // Group 1: light-bg app.ico (exe and window class). Group 2: dark-bg logo for the themed title bar and About.
-    let next = embed_group(&mut add, &std::fs::read("app.ico").unwrap(), 1, 1);
-    embed_group(&mut add, &std::fs::read("assets/maguro-dark-bg.ico").unwrap(), 2, next);
+    // Group 1 is embedded first and has the lowest id, so Explorer uses it for the exe.
+    // RT_ICON ids stay unique across groups. Group ids match ICON_GROUP_* in src/app/ids.rs.
+    let mut icon_id = 1u16;
+    icon_id = embed_group(&mut add, &std::fs::read("assets/maguro-exe.ico").unwrap(), 1, icon_id);
+    icon_id = embed_group(&mut add, &std::fs::read("assets/maguro-dark-bg.ico").unwrap(), 2, icon_id);
+    embed_group(&mut add, &std::fs::read("app.ico").unwrap(), 3, icon_id);
     add(16, 1, &version_info()); // RT_VERSION
     std::fs::write(format!("{out}/app.res"), res).unwrap();
 

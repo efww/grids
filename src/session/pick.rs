@@ -1205,7 +1205,7 @@ fn ensure_class() {
             lpfnWndProc: Some(pick_proc),
             hInstance: hinst,
             hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
-            hIcon: LoadIconW(Some(hinst), PCWSTR(1 as _)).unwrap_or_default(),
+            hIcon: LoadIconW(Some(hinst), PCWSTR(ICON_GROUP_LIGHT as _)).unwrap_or_default(),
             lpszClassName: w!("MaguroSessionList"),
             ..Default::default()
         });

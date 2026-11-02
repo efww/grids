@@ -8,7 +8,7 @@ Rust GNU 툴체인(`x86_64-pc-windows-gnu`)과 MSYS2의 MinGW 도구(`C:\msys64\
 build.cmd
 ```
 
-`target\release\maguro.exe`를 빌드해 `build\maguro.exe`로 복사합니다. 앱 아이콘은 Maguro 아이콘 키트의 `app.ico`입니다.
+`target\release\maguro.exe`를 빌드해 `build\maguro.exe`로 복사합니다. 탐색기에 보이는 exe 아이콘은 `assets/maguro-exe.ico`(리소스 그룹 1)입니다. 제목 표시줄과 정보 창은 라이트 `app.ico`(그룹 3)와 다크 `assets/maguro-dark-bg.ico`(그룹 2)를 그대로 씁니다.
 
 ## 릴리스
 
