@@ -32,6 +32,7 @@ pub(crate) struct Session {
     pub(crate) tab: Vec<usize>,        // per pane: current tab
     pub(crate) rn_presets: Vec<String>, // batch rename presets (rename_rules::preset_text), app-wide
     pub(crate) ev_here: bool,          // Everything search: only under the active pane's folder (off = whole PC), app-wide
+    pub(crate) ev_cols: Option<[f64; 3]>, // Everything search: column borders dragged, as parts of the row width
     pub(crate) ev_sort: u32,           // Everything search: its sort code (1 name ascending ... 14 newest first), app-wide
     pub(crate) updates: bool,          // look for a newer release now and then (off = no network at all), app-wide
 }
@@ -68,6 +69,7 @@ impl Default for Session {
             rn_presets: Vec::new(),
             ev_here: false,
             ev_sort: 1,
+            ev_cols: None,
             updates: true,
         }
     }
@@ -158,6 +160,7 @@ impl Session {
                 "tabs" => s.tabs_on = v.trim() == "1",
                 "ev_here" => s.ev_here = v.trim() == "1",
                 "ev_sort" => s.ev_sort = ev_sort_ok(v.trim().parse().unwrap_or(1)),
+                "ev_cols" => s.ev_cols = ev_cols_parse(v),
                 "update_check" => s.updates = v.trim() != "0",
                 "lang" => s.ko = v.trim() == "ko",
                 "session" => s.file = v.trim().to_string(),
@@ -219,6 +222,9 @@ impl Session {
         o += &format!("dialog_jump={}\n", self.dlgjump as u8);
         o += &format!("tabs={}\n", self.tabs_on as u8);
         o += &format!("ev_here={}\nev_sort={}\nupdate_check={}\n", self.ev_here as u8, self.ev_sort, self.updates as u8);
+        if let Some(c) = self.ev_cols {
+            o += &format!("ev_cols={:.4},{:.4},{:.4}\n", c[0], c[1], c[2]);
+        }
         o += &format!("lang={}\n", if self.ko { "ko" } else { "en" });
         if !self.file.is_empty() {
             o += &format!("session={}\n", self.file);

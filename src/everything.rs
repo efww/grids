@@ -1,6 +1,10 @@
 use crate::*;
 use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL};
 use windows::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime};
+use windows::Win32::UI::Controls::{
+    TOOLTIPS_CLASSW, TTF_ABSOLUTE, TTF_TRACK, TTF_TRANSPARENT, TTM_ADDTOOLW, TTM_SETMAXTIPWIDTH, TTM_TRACKACTIVATE, TTM_TRACKPOSITION,
+    TTM_UPDATETIPTEXTW, TTTOOLINFOW,
+};
 
 // ---------- Everything search: the orange magnifier in the top toolbar, Ctrl+Shift+F ----------
 // Talks to a running Everything (voidtools, 1.4.1 or later) over its WM_COPYDATA IPC: no DLL, nothing installed
@@ -63,6 +67,9 @@ pub(crate) struct EvState {
     hot: Option<EvSpot>,
     rows: usize, // rows on screen while open
     w: i32,      // popup width while open, narrower on a small screen (ev_width)
+    drag: Option<usize>, // a column border being dragged
+    tip: HWND,           // the row tooltip (tracking, shown at once)
+    tip_row: Option<usize>,
     closed: Option<Instant>,
     last: String, // text kept for the next time it opens (runtime only)
     pick: Option<EvPick>,
@@ -237,7 +244,57 @@ pub(crate) fn ev_width(avail: i32, dpi: i32) -> i32 {
     (860 * dpi / 96).min(avail).max(420 * dpi / 96)
 }
 
+/// grids.ini's "0.42,0.7,0.84": three borders, in order, inside the row. Anything else: the default widths.
+pub(crate) fn ev_cols_parse(v: &str) -> Option<[f64; 3]> {
+    let p: Vec<f64> = v.split(',').map(|x| x.trim().parse::<f64>()).collect::<std::result::Result<_, _>>().ok()?;
+    let c: [f64; 3] = p.try_into().ok()?;
+    (c.iter().all(|x| x.is_finite()) && 0.0 < c[0] && c[0] < c[1] && c[1] < c[2] && c[2] < 1.0).then_some(c)
+}
+
+const EV_COL_MIN: i32 = 40; // narrowest column at 96 dpi
+
+/// The three column borders, as px from the row's left over a row `span` px wide: dragged ones (parts of the
+/// span) or the defaults (date 126+, size 80+, name 42% of the rest). Every column stays at least EV_COL_MIN wide.
+pub(crate) fn ev_borders(span: i32, dpi: i32, cols: Option<[f64; 3]>) -> [i32; 3] {
+    let s = |v: i32| v * dpi / 96;
+    let b = match cols {
+        Some(c) => c.map(|f| (f * span as f64).round() as i32),
+        None => {
+            let b3 = span - s(126).max(span * 16 / 100);
+            let b2 = b3 - s(80).max(span * 10 / 100);
+            [b2 * 42 / 100, b2, b3]
+        }
+    };
+    let m = s(EV_COL_MIN);
+    let b0 = b[0].min(span - 3 * m).max(m);
+    let b1 = b[1].min(span - 2 * m).max(b0 + m);
+    [b0, b1, b[2].min(span - m).max(b1 + m)]
+}
+
+/// Border `k` dragged to `x` px from the row's left: the new borders as parts of the span, the neighbours kept.
+pub(crate) fn ev_drag_cols(cur: [i32; 3], k: usize, x: i32, span: i32, dpi: i32) -> [f64; 3] {
+    let m = EV_COL_MIN * dpi / 96;
+    let mut b = cur;
+    let lo = if k == 0 { m } else { b[k - 1] + m };
+    let hi = if k == 2 { span - m } else { b[k + 1] - m };
+    b[k] = x.min(hi).max(lo);
+    b.map(|v| v as f64 / span.max(1) as f64)
+}
+
+/// The border under the pointer in the header row: within 4 px of it.
+pub(crate) fn ev_border_at(g: &EvGeo, x: i32, y: i32, dpi: i32) -> Option<usize> {
+    let h = g.head[0];
+    if y < h.top || y >= h.bottom {
+        return None;
+    }
+    (0..3).find(|&k| (x - g.head[k + 1].left).abs() <= 4 * dpi / 96)
+}
+
 pub(crate) fn ev_geo(fh: i32, dpi: i32, n: usize, w: i32) -> EvGeo {
+    ev_geo_cols(fh, dpi, n, w, None)
+}
+
+pub(crate) fn ev_geo_cols(fh: i32, dpi: i32, n: usize, w: i32, cols: Option<[f64; 3]>) -> EvGeo {
     let s = |v: i32| v * dpi / 96;
     let (pad, rh) = (s(6), s(EV_RH));
     let field = RECT { left: pad, top: pad, right: w - pad, bottom: pad + s(32) };
@@ -251,9 +308,7 @@ pub(crate) fn ev_geo(fh: i32, dpi: i32, n: usize, w: i32) -> EvGeo {
     let count = RECT { left: scope.right, right: line.right - s(8), ..line };
     let ht = line.bottom + s(4);
     let (x0, xr) = (pad, w - pad - s(6));
-    let x3 = xr - s(126).max((xr - x0) * 16 / 100);
-    let x2 = x3 - s(80).max((xr - x0) * 10 / 100);
-    let x1 = x0 + (x2 - x0) * 42 / 100;
+    let [x1, x2, x3] = ev_borders(xr - x0, dpi, cols).map(|b| x0 + b);
     let col = |l: i32, r: i32| RECT { left: l, top: ht, right: r, bottom: ht + s(26) };
     let head = [col(x0, x1), col(x1, x2), col(x2, x3), col(x3, xr)];
     let top = ht + s(26) + s(2);
@@ -315,7 +370,7 @@ pub(crate) unsafe fn ev_watch() {
 
 unsafe fn geo_now() -> EvGeo {
     let (n, w) = ev(|e| (e.rows, e.w));
-    app(|a| ev_geo(a.fh, a.dpi, n, w))
+    app(|a| ev_geo_cols(a.fh, a.dpi, n, w, a.s.ev_cols))
 }
 
 pub(crate) unsafe fn open_ev() {
@@ -358,11 +413,20 @@ pub(crate) unsafe fn open_ev() {
     _ = DwmSetWindowAttribute(h, DWMWA_WINDOW_CORNER_PREFERENCE, &square as *const _ as _, 4);
     // Everything may run elevated: let its replies through
     _ = ChangeWindowMessageFilterEx(h, WM_COPYDATA, MSGFLT_ALLOW, None);
+    // the row tooltip: full name, folder, size and date, shown as soon as the pointer is on a row
+    let tip_style = WS_POPUP | WINDOW_STYLE(0x01 | 0x02); // TTS_ALWAYSTIP | TTS_NOPREFIX
+    let tip = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, None, tip_style, 0, 0, 0, 0, Some(h), None, None, None).unwrap_or_default();
+    if !tip.0.is_null() {
+        let ti = tip_tool(h, w!(""));
+        SendMessageW(tip, TTM_ADDTOOLW, None, Some(LPARAM(&ti as *const _ as isize)));
+        SendMessageW(tip, TTM_SETMAXTIPWIDTH, None, Some(LPARAM((g.w * 9 / 10) as isize)));
+    }
     let e = g.edit;
     let edit = child(h, w!("EDIT"), w!(""), ES_AUTOHSCROLL as u32, WINDOW_EX_STYLE(0), 1, font);
     _ = MoveWindow(edit, e.left, e.top, e.right - e.left, e.bottom - e.top, false);
     ev(|e| {
         (e.h, e.edit, e.prev, e.hits, e.total, e.sel, e.top, e.hot) = (h, edit, prev, Vec::new(), 0, None, 0, None);
+        (e.tip, e.tip_row, e.drag) = (tip, None, None);
         (e.waiting, e.failed) = (false, false);
     });
     // the last search comes back selected, its results with it (EN_CHANGE asks again)
@@ -421,7 +485,70 @@ unsafe fn ev_send() {
     _ = InvalidateRect(Some(h), None, false);
 }
 
+fn tip_tool(h: HWND, text: PCWSTR) -> TTTOOLINFOW {
+    TTTOOLINFOW {
+        cbSize: size_of::<TTTOOLINFOW>() as u32,
+        uFlags: TTF_TRACK | TTF_ABSOLUTE | TTF_TRANSPARENT,
+        hwnd: h,
+        uId: 1,
+        lpszText: PWSTR(text.0 as *mut u16),
+        ..Default::default()
+    }
+}
+
+/// What the row tooltip says: the whole name, its folder, then size and date when known.
+pub(crate) fn ev_tip_text(hit: &EvHit, date: &str) -> String {
+    let mut t = format!("{}\n{}", hit.name, root(&hit.dir));
+    let size = hit.size.map(|b| match b {
+        0..=1023 => human(b),
+        _ => format!("{} ({} B)", human(b), group_digits(b)),
+    });
+    let facts: Vec<String> = size.into_iter().chain((!date.is_empty()).then(|| date.to_string())).collect();
+    if !facts.is_empty() {
+        t += &format!("\n{}", facts.join("  ·  "));
+    }
+    t
+}
+
+// Shows the tooltip for list row `k` (None hides it), just under that row on screen, at the pointer's x.
+unsafe fn ev_tip(k: Option<usize>, row: RECT, x: i32) {
+    let (h, tip, was) = ev(|e| (e.h, e.tip, e.tip_row));
+    if tip.0.is_null() || was == k {
+        return;
+    }
+    ev(|e| e.tip_row = k);
+    let hit = k.and_then(|k| ev(|e| e.hits.get(k).cloned()));
+    let Some(hit) = hit else {
+        let ti = tip_tool(h, w!(""));
+        SendMessageW(tip, TTM_TRACKACTIVATE, Some(WPARAM(0)), Some(LPARAM(&ti as *const _ as isize)));
+        return;
+    };
+    let text = HSTRING::from(ev_tip_text(&hit, &hit.modified.map(ev_date).unwrap_or_default()));
+    let ti = tip_tool(h, PCWSTR(text.as_ptr()));
+    SendMessageW(tip, TTM_UPDATETIPTEXTW, None, Some(LPARAM(&ti as *const _ as isize)));
+    let dpi = app(|a| a.dpi);
+    let mut p = POINT { x: x + 12 * dpi / 96, y: row.bottom + 2 * dpi / 96 };
+    _ = ClientToScreen(h, &mut p);
+    let at = (p.x as u32 & 0xffff) | ((p.y as u32 & 0xffff) << 16);
+    SendMessageW(tip, TTM_TRACKPOSITION, None, Some(LPARAM(at as isize)));
+    SendMessageW(tip, TTM_TRACKACTIVATE, Some(WPARAM(1)), Some(LPARAM(&ti as *const _ as isize)));
+}
+
+unsafe fn ev_tip_hide() {
+    ev_tip(None, RECT::default(), 0);
+}
+
+// The border under the pointer right now (for the cursor).
+unsafe fn border_under(h: HWND) -> Option<usize> {
+    let mut p = POINT::default();
+    _ = GetCursorPos(&mut p);
+    _ = ScreenToClient(h, &mut p);
+    let dpi = app(|a| a.dpi);
+    ev_border_at(&geo_now(), p.x, p.y, dpi)
+}
+
 unsafe fn ev_move(d: i32) {
+    ev_tip_hide();
     let h = ev(|e| {
         e.sel = ev_step(e.sel, e.hits.len(), d);
         if let Some(k) = e.sel {
@@ -689,9 +816,29 @@ pub(crate) extern "system" fn ev_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                 }
                 return LRESULT(1);
             }
+            WM_SETCURSOR if (lp.0 & 0xffff) as u32 == HTCLIENT && (ev(|e| e.drag.is_some()) || border_under(h).is_some()) => {
+                SetCursor(LoadCursorW(None, IDC_SIZEWE).ok());
+                return LRESULT(1);
+            }
+            WM_MOUSEMOVE if ev(|e| e.drag.is_some()) => {
+                let (x, _) = xy(lp);
+                let k = ev(|e| e.drag).unwrap_or(0);
+                let g = geo_now();
+                let dpi = app(|a| a.dpi);
+                let (x0, span) = (g.head[0].left, g.head[3].right - g.head[0].left);
+                let cur = [g.head[1].left - x0, g.head[2].left - x0, g.head[3].left - x0];
+                let cols = ev_drag_cols(cur, k, x - x0, span, dpi);
+                app(|a| a.s.ev_cols = Some(cols));
+                _ = InvalidateRect(Some(h), None, false);
+            }
             WM_MOUSEMOVE => {
                 let (x, y) = xy(lp);
-                let spot = ev_hit(&geo_now(), x, y);
+                let g = geo_now();
+                let spot = ev_hit(&g, x, y);
+                match spot {
+                    Some(EvSpot::Row(j)) if ev(|e| e.top + j < e.hits.len()) => ev_tip(Some(ev(|e| e.top) + j), g.rows[j], x),
+                    _ => ev_tip_hide(),
+                }
                 let n = ev(|e| e.hits.len().saturating_sub(e.top));
                 let spot = spot.filter(|s| !matches!(s, EvSpot::Row(j) if *j >= n));
                 if ev(|e| std::mem::replace(&mut e.hot, spot)) != spot {
@@ -701,11 +848,31 @@ pub(crate) extern "system" fn ev_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                 }
             }
             WM_MOUSELEAVE => {
+                ev_tip_hide();
                 if ev(|e| e.hot.take()).is_some() {
                     _ = InvalidateRect(Some(h), None, false);
                 }
             }
-            WM_LBUTTONDOWN => {
+            // a column border: drag to resize, double-click for the default widths
+            WM_LBUTTONDOWN | WM_LBUTTONDBLCLK if ev_border_at(&geo_now(), xy(lp).0, xy(lp).1, app(|a| a.dpi)).is_some() => {
+                let (x, y) = xy(lp);
+                let k = ev_border_at(&geo_now(), x, y, app(|a| a.dpi));
+                ev_tip_hide();
+                if msg == WM_LBUTTONDBLCLK {
+                    app(|a| a.s.ev_cols = None);
+                    _ = InvalidateRect(Some(h), None, false);
+                } else {
+                    ev(|e| e.drag = k);
+                    SetCapture(h);
+                }
+            }
+            WM_LBUTTONUP => {
+                if ev(|e| e.drag.take()).is_some() {
+                    _ = ReleaseCapture();
+                }
+            }
+            WM_CAPTURECHANGED => ev(|e| e.drag = None),
+            WM_LBUTTONDOWN | WM_LBUTTONDBLCLK => {
                 let (x, y) = xy(lp);
                 match ev_hit(&geo_now(), x, y) {
                     Some(EvSpot::Scope) => ev_toggle_scope(),
@@ -720,6 +887,7 @@ pub(crate) extern "system" fn ev_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                 }
             }
             WM_MOUSEWHEEL => {
+                ev_tip_hide();
                 let d = -((wp.0 >> 16) as i16 as i32) / 120 * 3;
                 ev(|e| e.top = (e.top as i32 + d).clamp(0, e.hits.len().saturating_sub(e.rows) as i32) as usize);
                 _ = InvalidateRect(Some(h), None, false);
@@ -727,6 +895,7 @@ pub(crate) extern "system" fn ev_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
             WM_ACTIVATE if (wp.0 & 0xffff) as u32 == WA_INACTIVE => _ = PostMessageW(Some(h), WM_CLOSE, WPARAM(0), LPARAM(0)),
             WM_DESTROY => ev(|e| {
                 (e.h, e.edit, e.hot) = (HWND::default(), HWND::default(), None);
+                (e.tip, e.tip_row, e.drag) = (HWND::default(), None, None);
                 e.gen = e.gen.wrapping_add(1); // a reply still on its way finds nobody waiting
                 e.closed = Some(Instant::now());
             }),
@@ -868,6 +1037,36 @@ mod tests {
         assert_eq!((ev_sort_col(14), ev_sort_col(3), ev_sort_col(0), ev_sort_col(9)), ((3, true), (1, false), (0, false), (0, false)));
         assert_eq!([0, 2, 5, 7, 13, 15].map(ev_sort_ok), [1, 2, 5, 1, 13, 1]);
         assert_eq!(Session::parse("ev_sort=14\n").ev_sort, 14);
+        // column borders: defaults match the plain layout; dragged ones are kept as parts of the width, every column
+        // at least 40 px; bad ini values mean the defaults
+        let d = ev_borders(842, 96, None);
+        assert_eq!(ev_geo(16, 96, 1, 860).head[1].left, 6 + d[0]);
+        let dragged = ev_drag_cols(d, 0, 500, 842, 96);
+        assert_eq!(ev_borders(842, 96, Some(dragged)), [500, d[1], d[2]]);
+        assert_eq!(ev_drag_cols(d, 0, 9999, 842, 96)[0], (d[1] - 40) as f64 / 842.0); // stops before the next border
+        assert_eq!(ev_drag_cols(d, 2, 9999, 842, 96)[2], (842 - 40) as f64 / 842.0);
+        assert_eq!(ev_drag_cols(d, 0, -50, 842, 96)[0], 40.0 / 842.0);
+        let b = ev_borders(616, 96, Some([0.5, 0.6, 0.98]));
+        assert!(b[0] >= 40 && b[1] - b[0] >= 40 && b[2] - b[1] >= 40 && 616 - b[2] >= 40);
+        let g2 = ev_geo_cols(16, 96, 1, 860, Some(dragged));
+        assert_eq!(ev_border_at(&g2, g2.head[1].left + 3, g2.head[1].top + 5, 96), Some(0));
+        assert_eq!(ev_border_at(&g2, g2.head[3].left - 4, g2.head[3].bottom - 1, 96), Some(2));
+        assert_eq!(ev_border_at(&g2, g2.head[1].left + 20, g2.head[1].top + 5, 96), None);
+        assert_eq!(ev_border_at(&g2, g2.head[1].left, g2.rows[0].top + 5, 96), None); // only in the title row
+        assert_eq!(ev_cols_parse("0.42, 0.7,0.84"), Some([0.42, 0.7, 0.84]));
+        for bad in ["", "0.5,0.4,0.8", "0.1,0.2", "0,0.5,0.8", "0.1,0.5,1", "a,b,c", "0.1,0.2,0.3,0.4", "NaN,0.5,0.8"] {
+            assert_eq!(ev_cols_parse(bad), None, "{bad}");
+        }
+        let s2 = Session { ev_cols: Some([0.3, 0.65, 0.8]), ..Session::default() };
+        assert_eq!(Session::parse(&s2.to_ini()).ev_cols, Some([0.3, 0.65, 0.8]));
+        assert!(!Session::default().to_ini().contains("ev_cols"));
+        // the tooltip: whole name, folder, size with exact bytes, date
+        let mut t = EvHit { name: "아주 긴 보고서 이름.pdf".into(), dir: r"D:\문서".into(), folder: false, size: Some(1_234_567), modified: None, icon: None };
+        assert_eq!(ev_tip_text(&t, "2026-11-03 09:00"), "아주 긴 보고서 이름.pdf\nD:\\문서\n1.2 MB (1,234,567 B)  ·  2026-11-03 09:00");
+        t.size = Some(10);
+        assert_eq!(ev_tip_text(&t, ""), "아주 긴 보고서 이름.pdf\nD:\\문서\n10 B");
+        t.size = None;
+        assert_eq!(ev_tip_text(&EvHit { dir: "C:".into(), ..t }, ""), "아주 긴 보고서 이름.pdf\nC:\\");
         assert_eq!(Session::parse("ev_sort=9\n").ev_sort, 1);
         assert_eq!(Session::parse(&Session { ev_sort: 6, ..Session::default() }.to_ini()).ev_sort, 6);
         let mut s = Session::parse("ev_here=1\n");

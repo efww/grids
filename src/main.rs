@@ -240,7 +240,7 @@ fn main() -> Result<()> {
             ..Default::default()
         });
         RegisterClassW(&WNDCLASSW {
-            style: CS_DROPSHADOW,
+            style: CS_DROPSHADOW | CS_DBLCLKS, // double-click a column border: default widths
             lpfnWndProc: Some(ev_proc),
             hInstance: hinst,
             hCursor: arrow,
