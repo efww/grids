@@ -1103,7 +1103,14 @@ mod tests {
         let text = pretty(&SettingsFile::from_session(&parsed));
         let back = adopt(&text).unwrap();
         assert_eq!(back, parsed);
-        assert_eq!(adopt("{}").unwrap(), Session::default());
+        // Empty JSON is an older file: two panes side by side. A fresh Session is one pane.
+        // Every other field still matches once that layout difference is set aside.
+        let mut empty = adopt("{}").unwrap();
+        assert_eq!((empty.layout_new, empty.heights.clone()), (0, vec![1, 1]));
+        empty.layout_new = Session::default().layout_new;
+        empty.set_heights(Session::default().heights.clone());
+        empty.anchor();
+        assert_eq!(empty, Session::default());
 
         let mut file = SettingsFile::from_session(&parsed);
         file.version = 2;
@@ -1283,6 +1290,34 @@ mod tests {
         let kept: Value = serde_json::from_str(&sync_text(&Session::default())).unwrap();
         assert_eq!(kept.get("layout_new"), Some(&serde_json::json!(3)), "{kept}");
         assert_eq!(kept["future"]["keep"], true);
+    }
+
+    #[test]
+    fn fresh_config_is_one_pane_and_a_saved_grid_stays() {
+        let root = scratch("fresh-panes");
+        let exe = root.join("exe");
+        let cfg = root.join("cfg");
+        let old = root.join("old");
+        std::fs::create_dir_all(&exe).unwrap();
+        let fresh = load_at(&exe, &cfg, &old);
+        assert_eq!((fresh.layout_new, fresh.heights.clone(), fresh.panes()), (3, vec![1], 1));
+        assert!(!exe.join("grids.ini").exists());
+        assert!(!old.join("grids.ini").exists());
+        assert!(!cfg.join("grids.ini").exists());
+
+        let mut saved = Session::default();
+        saved.set_heights(vec![2, 2]);
+        saved.paths[0] = r"C:\keep".into();
+        saved.layout_new = 3;
+        saved.anchor();
+        std::fs::write(cfg.join(SETTINGS_FILE), sync_text(&saved)).unwrap();
+        let back = load_at(&exe, &cfg, &old);
+        assert_eq!(back.heights, vec![2, 2]);
+        assert_eq!(back.paths[0], r"C:\keep");
+        assert_eq!(back.layout_new, 3);
+        assert_eq!(back.panes(), 4);
+        assert!(!exe.join("grids.ini").exists());
+        assert!(!cfg.join("grids.ini").exists());
     }
 
     #[test]

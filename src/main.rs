@@ -693,12 +693,13 @@ mod tests {
         assert_eq!(wiped.tabs.len(), 3);
         apply_boot(&mut wiped);
         assert_eq!((wiped.boot, wiped.tabs.len(), wiped.tabs[0].name.as_str()), (2, 1, "1"));
-        assert_eq!((wiped.heights.clone(), wiped.active), (vec![1, 1], 0));
-        s.layout_new = 3;
-        let mut one = store::import_text(&store::sync_text(&s)).unwrap();
-        apply_boot(&mut one);
-        assert_eq!((one.layout_new, one.heights.clone(), one.active), (3, vec![1], 0));
-        assert!(one.active < one.panes());
+        // This session never changed layout_new, so the fresh default (one pane) is what opens.
+        assert_eq!((wiped.layout_new, wiped.heights.clone(), wiped.active), (3, vec![1], 0));
+        s.layout_new = 0;
+        let mut side = store::import_text(&store::sync_text(&s)).unwrap();
+        apply_boot(&mut side);
+        assert_eq!((side.layout_new, side.heights.clone(), side.active), (0, vec![1, 1], 0));
+        assert!(side.active < side.panes());
     }
 
     #[test]

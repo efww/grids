@@ -141,9 +141,8 @@ pub(crate) fn session_from_window(v: &Value, base: &Session) -> Session {
     s.tabs.clear();
     s.tab = 0;
     s.win = None;
-    s.heights = vec![2, 2];
-    s.colr = even(2);
-    s.rowr = vec![even(2); 2];
+    // No saved tabs: the settings pane count. A snapshot that has tabs replaces this below.
+    s.set_heights(s.layout_heights());
     s.active = 0;
     s.paths = vec![String::new(); MAXP];
     s.views = vec![(0, 0); MAXP];

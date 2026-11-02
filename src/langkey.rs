@@ -1107,7 +1107,7 @@ pub(crate) const EN: [&str; KEY_COUNT] = [
     "Maguro {new} is available. You have {cur}.\n\nThe SHA-256 file (maguro.exe.sha256) is missing from the release, or it could not be downloaded. Maguro did not install the update and did not keep a temporary file.",
     "Maguro settings",
     "Maguro update",
-    "Panes in a new window, and on a first start. A new tab copies the current tab.",
+    "Panes in a new tab, a new window, and on a first start.",
     "Panes & view",
     "Parent folder",
     "Parent folder  (Alt+↑)",

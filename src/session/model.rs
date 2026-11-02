@@ -575,9 +575,8 @@ pub(crate) fn even(n: usize) -> Vec<f64> {
 }
 
 /// Panes per column for the settings default (`layout_new`).
-/// A new window, the first start, and startup's "default layout" use this with even splits.
-/// A new window tab copies the tab on screen instead (`layout_for_new_tab`).
-/// 0 side by side, 1 top and bottom, 2 is 2×2, 3 one pane. Above 3 is one pane.
+/// A new tab, a new window, the first start, and startup's "default layout" use this with even splits.
+/// 0 side by side, 1 top and bottom, 2 is 2×2, 3 one pane. Above 3 is one pane. The fresh default is 3.
 pub(crate) fn layout_heights_for(layout_new: u8) -> Vec<usize> {
     match layout_new.min(3) {
         1 => vec![2],
@@ -587,10 +586,13 @@ pub(crate) fn layout_heights_for(layout_new: u8) -> Vec<usize> {
     }
 }
 
-/// Pane counts and split ratios a new window tab takes from the tab on screen.
-/// Not the settings default, and not the one pane a second instance opens for a path.
-pub(crate) fn layout_for_new_tab(heights: &[usize], colr: &[f64], rowr: &[Vec<f64>]) -> (Vec<usize>, Vec<f64>, Vec<Vec<f64>>) {
-    (heights.to_vec(), colr.to_vec(), rowr.to_vec())
+/// Pane counts and even splits a new window tab takes from the settings default (`layout_new`).
+/// Not the tab on screen. A path handed over by another launch is still one pane (`fresh_tab_session`).
+pub(crate) fn layout_for_new_tab(layout_new: u8) -> (Vec<usize>, Vec<f64>, Vec<Vec<f64>>) {
+    let heights = layout_heights_for(layout_new);
+    let colr = even(heights.len());
+    let rowr = heights.iter().map(|&n| even(n)).collect();
+    (heights, colr, rowr)
 }
 
 pub(crate) fn nums<T: std::str::FromStr>(v: &str) -> Vec<T> {
@@ -696,7 +698,7 @@ impl Session {
         self.heights.iter().sum()
     }
 
-    /// Panes per column for a new window (the settings default). A new window tab uses `layout_for_new_tab`.
+    /// Panes per column for a new tab or a new window (the settings default).
     pub(crate) fn layout_heights(&self) -> Vec<usize> {
         layout_heights_for(self.layout_new)
     }
@@ -1617,7 +1619,8 @@ pub(crate) fn tab_from_value(v: &Value) -> Option<Tab> {
     let locked = obj.get("locked").and_then(|n| n.as_bool()).unwrap_or(false);
     let session = obj.get("session").and_then(|n| n.as_str()).unwrap_or("").trim().to_string();
     let color = obj.get("color").and_then(|c| c.as_str()).and_then(parse_tab_color);
-    let mut heights = vec![2, 2];
+    // No saved columns: one pane, the fresh default. A file that stored columns keeps those.
+    let mut heights = vec![1];
     let mut colr = Vec::new();
     let mut rowr: Vec<Vec<f64>> = Vec::new();
     let mut active = 0usize;
@@ -2322,30 +2325,77 @@ mod crumb_tests {
     }
 
     #[test]
-    fn new_window_tab_copies_the_active_layout() {
-        // Dragged ratios and an uneven grid. The settings default is an even 1×1, not this.
+    fn new_tab_uses_the_settings_pane_count_not_the_tab_on_screen() {
+        // Dragged ratios and an uneven grid. A new tab must not copy any of this.
         let heights = vec![1usize, 3];
         let colr = vec![0.25, 0.75];
         let rowr = vec![vec![1.0], vec![0.2, 0.5, 0.3]];
-        assert_eq!(super::layout_for_new_tab(&heights, &colr, &rowr), (heights.clone(), colr.clone(), rowr.clone()));
-        assert_ne!(heights, super::layout_heights_for(0));
-        assert_ne!(colr, super::even(heights.len()));
-        // Every arrangement a window tab can show, including ratios that are not even.
-        for heights in [vec![1], vec![2], vec![1, 1], vec![2, 2], vec![4, 1, 2]] {
-            let colr: Vec<f64> = (1..=heights.len()).map(|i| i as f64).collect();
-            let rowr: Vec<Vec<f64>> = heights.iter().map(|&n| (1..=n).map(|k| k as f64).collect()).collect();
-            assert_eq!(super::layout_for_new_tab(&heights, &colr, &rowr), (heights, colr, rowr));
+        let fresh = super::layout_for_new_tab(3);
+        assert_eq!(fresh.0, vec![1]);
+        assert_eq!(fresh.1, super::even(1));
+        assert_eq!(fresh.2, vec![super::even(1)]);
+        assert_ne!((fresh.0.clone(), fresh.1.clone(), fresh.2.clone()), (heights, colr, rowr));
+        // Each saved value, with even splits. 0 is two side by side, 3 is the fresh default of one.
+        let want = [(0u8, vec![1usize, 1]), (1, vec![2]), (2, vec![2, 2]), (3, vec![1])];
+        for (n, h) in want {
+            let (got, colr, rowr) = super::layout_for_new_tab(n);
+            assert_eq!(got, h);
+            assert_eq!(colr, super::even(h.len()));
+            for (rows, &count) in rowr.iter().zip(&h) {
+                assert_eq!(rows, &super::even(count));
+            }
         }
+        assert_eq!(super::layout_for_new_tab(9).0, vec![1]);
         // A new window still opens the settings default, with even splits.
         let mut win = Session::default();
+        assert_eq!((win.layout_new, win.heights.clone()), (3, vec![1]));
         win.layout_new = 2;
         win.set_heights(win.layout_heights());
         assert_eq!((win.heights.clone(), win.colr.clone()), (vec![2, 2], super::even(2)));
-        // A path from a second instance stays one pane, which is not this copy.
+        // A path from a second instance stays one pane, which is not a copy of the screen.
         let mut handed = Session::default();
         handed.set_heights(vec![1]);
         assert_eq!(handed.heights, vec![1]);
-        assert_ne!(super::layout_for_new_tab(&vec![1, 3], &colr, &rowr).0, handed.heights);
+    }
+
+    #[test]
+    fn missing_layout_is_one_pane_and_a_saved_grid_stays() {
+        let bare = serde_json::json!({"name": "1", "locked": false});
+        assert_eq!(super::tab_from_value(&bare).unwrap().heights, vec![1]);
+        let four = serde_json::json!({
+            "name": "Work",
+            "layout": {"columns": [2, 2], "active": 3},
+            "panes": [{"index": 0, "path": "C:\\a"}, {"index": 3, "path": "D:\\d"}]
+        });
+        let t = super::tab_from_value(&four).unwrap();
+        assert_eq!((t.heights.clone(), t.active, t.paths[0].as_str(), t.paths[3].as_str()), (vec![2, 2], 3, r"C:\a", r"D:\d"));
+
+        let base = Session::default();
+        assert_eq!(base.panes(), 1);
+        let empty = crate::session_from_window(&serde_json::json!({}), &base);
+        assert_eq!(empty.heights, vec![1]);
+        assert_eq!(empty.panes(), 1);
+        let saved = serde_json::json!({
+            "tabs": [{
+                "name": "Work",
+                "active": true,
+                "layout": {"columns": [2, 2], "active": 1},
+                "panes": [{"index": 1, "path": "D:\\keep"}]
+            }]
+        });
+        let back = crate::session_from_window(&saved, &base);
+        assert_eq!(back.heights, vec![2, 2]);
+        assert_eq!(back.paths[1], r"D:\keep");
+        assert_eq!(back.layout_new, base.layout_new);
+
+        let mut stored = Session::default();
+        stored.set_heights(vec![2, 2]);
+        stored.paths[2] = r"E:\saved".into();
+        stored.anchor();
+        let round = Session::parse(&stored.to_ini());
+        assert_eq!(round.heights, vec![2, 2]);
+        assert_eq!(round.paths[2], r"E:\saved");
+        assert_eq!(round.layout_new, stored.layout_new);
     }
 
     #[test]

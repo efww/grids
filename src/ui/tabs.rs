@@ -583,8 +583,8 @@ pub(crate) unsafe fn new_tab() {
         let tab = a.s.tab;
         a.park[tab] = live;
         lru_note(a, tab);
-        // Same arrangement and split ratios as the tab on screen. Paths stay empty, as before.
-        let (heights, colr, rowr) = layout_for_new_tab(&a.s.heights, &a.s.colr, &a.s.rowr);
+        // Settings pane count, with even splits. Not the tab on screen. Paths stay empty.
+        let (heights, colr, rowr) = layout_for_new_tab(a.s.layout_new);
         let fresh = Session {
             heights,
             colr,
