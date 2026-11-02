@@ -1,6 +1,6 @@
 # Grids
 
-A fast, lightweight multi-pane file manager for Windows. Up to 16 Explorer panes in one window, a folder tree on the left, and layouts you change with one drag. One small exe (under 1 MB), nothing to install.
+A fast, lightweight multi-pane file manager for Windows. Up to 16 Explorer panes in one window, a folder tree on the left, and layouts you change with one drag. One small exe (about 1 MB), nothing to install.
 
 [한국어](README.ko.md)
 
