@@ -12,14 +12,20 @@ use windows::Win32::UI::Controls::{TaskDialogIndirect, TASKDIALOGCONFIG, TASKDIA
 // Anything going wrong changes nothing and offers the release page instead.
 //
 // Testing: GRIDS_UPDATE_FEED=<url> points the check at another "latest release" JSON (e.g. a local
-// `python -m http.server` serving a fake v9.9.9 release); the first check then comes after 3 s instead of 60.
+// `python -m http.server` serving a fake v9.9.9 release); the first check then comes after 3 s instead of 60, and
+// plain http to 127.0.0.1 / localhost is allowed. Without it only https to GitHub's release hosts is ever used
+// (url_ok): the SHA256SUMS come from the same release, so the transport and the host are what vouch for it.
 
 const FEED: &str = "https://api.github.com/repos/efww/grids/releases/latest";
 pub(crate) const WM_UPDATE: u32 = WM_APP + 3210; // wParam: 0 a release was found, 1 the new exe is ready, 2 that failed
 pub(crate) const UPDATE_BLUE: u32 = 0x0A6CD6; // white text reads at 5:1 on it, on both themes' toolbars
 const EXE_MAX: usize = 64 << 20;
-const NEW_EXE: &str = "grids.new.exe";
-const OLD_EXE: &str = "grids.old.exe";
+const EXE: &str = "grids.exe";
+const NEW_EXE: &str = "grids.new.exe"; // only ever a complete, checked exe: written as grids.new.tmp, then renamed
+const NEW_TMP: &str = "grids.new.tmp";
+// where the replaced exe goes; the next free one when an earlier one is still locked (a quick second update)
+const OLD_EXES: [&str; 5] = ["grids.old.exe", "grids.old2.exe", "grids.old3.exe", "grids.old4.exe", "grids.old5.exe"];
+const GITHUB_HOSTS: [&str; 3] = ["github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com"];
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct UpRelease {
@@ -41,6 +47,7 @@ pub(crate) enum UpFail {
     Checksum,
     Damaged,
     NoWrite,
+    Swap,
 }
 
 impl UpFail {
@@ -50,6 +57,7 @@ impl UpFail {
             UpFail::Checksum => tr("the checksum did not match", "체크섬이 맞지 않음"),
             UpFail::Damaged => tr("the package has no usable grids.exe", "패키지에 쓸 수 있는 grids.exe가 없음"),
             UpFail::NoWrite => tr("Grids' folder can't be written to", "Grids 폴더에 쓸 수 없음"),
+            UpFail::Swap => tr("the running grids.exe couldn't be replaced, try again after restarting Grids", "실행 중인 grids.exe를 바꿀 수 없음, Grids를 다시 시작한 뒤 해 보세요"),
         }
     }
 }
@@ -108,9 +116,20 @@ pub(crate) fn json_strs(json: &str, key: &str) -> Vec<String> {
     out
 }
 
+/// A URL the updater may fetch: https to one of GitHub's release hosts (no port, no user part). With a test feed
+/// (`test`) also http(s) to this machine.
+pub(crate) fn url_ok(url: &str, test: bool) -> bool {
+    let Some((scheme, rest)) = url.split_once("://") else { return false };
+    let host = rest.split(['/', '?', '#']).next().unwrap_or("").to_ascii_lowercase();
+    let https = scheme.eq_ignore_ascii_case("https");
+    let local = ["127.0.0.1", "localhost"].contains(&host.split(':').next().unwrap_or(""));
+    !host.contains('@') && ((https && GITHUB_HOSTS.contains(&host.as_str())) || (test && local && (https || scheme.eq_ignore_ascii_case("http"))))
+}
+
 /// The release in GitHub's latest-release JSON, when it is newer than `cur`, final, and carries both
-/// grids-v<ver>-x64.zip and SHA256SUMS.txt (asset names are the last part of their download URLs).
-pub(crate) fn pick_release(json: &str, cur: &str) -> Option<UpRelease> {
+/// grids-v<ver>-x64.zip and SHA256SUMS.txt (asset names are the last part of their download URLs) at URLs url_ok
+/// takes; anything else is no update.
+pub(crate) fn pick_release(json: &str, cur: &str, test: bool) -> Option<UpRelease> {
     let flag = |k: &str| json_at(json, k, 0).is_some_and(|(_, r)| r.starts_with("true"));
     if flag("prerelease") || flag("draft") {
         return None;
@@ -122,7 +141,8 @@ pub(crate) fn pick_release(json: &str, cur: &str) -> Option<UpRelease> {
     let ver = tag.trim_start_matches(['v', 'V']).to_string();
     let urls = json_strs(json, "browser_download_url");
     let find = |name: &str| urls.iter().find(|u| u.rsplit('/').next().is_some_and(|n| n.eq_ignore_ascii_case(name))).cloned();
-    Some(UpRelease { zip: find(&zip_name(&ver))?, sums: find("SHA256SUMS.txt")?, ver })
+    let r = UpRelease { zip: find(&zip_name(&ver))?, sums: find("SHA256SUMS.txt")?, ver };
+    (url_ok(&r.zip, test) && url_ok(&r.sums, test)).then_some(r)
 }
 
 pub(crate) fn zip_name(ver: &str) -> String {
@@ -160,11 +180,19 @@ pub(crate) fn unpack(zip: &[u8], sums: &str, ver: &str) -> std::result::Result<V
     }
 }
 
-/// grids.new.exe (already written) takes the running exe's place, which becomes grids.old.exe. On failure the
-/// running exe is back where it was and the new one is gone.
+/// grids.new.exe (already written) takes the running exe's place, which becomes grids.old.exe (or the next free
+/// grids.oldN.exe while an earlier one is still locked). If the second rename fails the first is undone; on any
+/// failure the running exe is back where it was and the new one is gone.
+/// A crash or power cut exactly between the two renames leaves grids.old.exe + grids.new.exe and no grids.exe:
+/// no rename pair can close that window. The next start of either file puts grids.exe back (repair_exe); until
+/// then there is no grids.exe to double-click, only those two.
 pub(crate) fn swap_exe(exe: &Path) -> std::io::Result<()> {
-    let (new, old) = (exe.with_file_name(NEW_EXE), exe.with_file_name(OLD_EXE));
-    _ = std::fs::remove_file(&old);
+    let new = exe.with_file_name(NEW_EXE);
+    let free = OLD_EXES.iter().map(|n| exe.with_file_name(n)).find(|o| !o.exists() || std::fs::remove_file(o).is_ok());
+    let Some(old) = free else {
+        _ = std::fs::remove_file(&new);
+        return Err(std::io::ErrorKind::ResourceBusy.into());
+    };
     let r = std::fs::rename(exe, &old).and_then(|_| {
         std::fs::rename(&new, exe).inspect_err(|_| {
             _ = std::fs::rename(&old, exe);
@@ -174,6 +202,36 @@ pub(crate) fn swap_exe(exe: &Path) -> std::io::Result<()> {
         _ = std::fs::remove_file(&new);
     }
     r
+}
+
+// grids.old*.exe / grids.new.exe: names only the updater gives.
+fn managed(p: &Path) -> bool {
+    p.file_name().and_then(|n| n.to_str()).is_some_and(|n| OLD_EXES.iter().chain(&[NEW_EXE]).any(|m| m.eq_ignore_ascii_case(n)))
+}
+
+/// At every start, whatever this exe (`me`) is called: an update cut off between its two renames left no grids.exe.
+/// The new exe (complete by construction) goes back in its place, else the newest old one. Only when there is a new
+/// exe or this is one of those files: a renamed grids (no grids.exe on purpose) is left alone. What it moved, if any.
+pub(crate) fn repair_exe(dir: &Path, me: &Path) -> Option<PathBuf> {
+    let exe = dir.join(EXE);
+    if exe.exists() || !(dir.join(NEW_EXE).exists() || managed(me)) {
+        return None;
+    }
+    let mtime = |p: &PathBuf| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+    let olds = OLD_EXES.iter().map(|n| dir.join(n)).filter(|p| p.exists());
+    let from = Some(dir.join(NEW_EXE)).filter(|p| p.exists()).or_else(|| olds.max_by_key(mtime))?;
+    std::fs::rename(&from, &exe).ok().map(|_| from)
+}
+
+/// Leftovers once grids.exe is in place: replaced exes, an unfinished download. Never the running exe. True when
+/// none is left (one still locked by a process on its way out: try again later).
+pub(crate) fn tidy_exes(dir: &Path, me: &Path) -> bool {
+    if managed(me) && !dir.join(EXE).exists() {
+        return true; // nothing else to start from: keep them
+    }
+    let names = OLD_EXES.iter().chain(&[NEW_EXE, NEW_TMP]);
+    let left = names.map(|n| dir.join(n)).filter(|p| p.exists() && !p.as_path().eq(me));
+    left.filter(|p| std::fs::remove_file(p).is_err()).count() == 0
 }
 
 // ---------- network (the thread's side) ----------
@@ -188,8 +246,13 @@ fn net(h: *mut core::ffi::c_void) -> Option<Net> {
     (!h.is_null()).then_some(Net(h))
 }
 
-/// GET over WinHTTP (system proxy, redirects followed): the body of a 200 answer, at most `max` bytes.
+/// GET over WinHTTP (system proxy; redirects followed, never from https down to http): the body of a 200 answer,
+/// at most `max` bytes. Always TLS, except plain http to this machine with a test feed.
 fn http_get(url: &str, max: usize, receive_s: i32) -> Option<Vec<u8>> {
+    let https = url.get(..8).is_some_and(|s| s.eq_ignore_ascii_case("https://"));
+    if !https && !url_ok(url, test_feed()) {
+        return None;
+    }
     unsafe {
         let agent = HSTRING::from(format!("Grids/{}", env!("CARGO_PKG_VERSION")));
         let s = net(WinHttpOpen(&agent, WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, PCWSTR::null(), PCWSTR::null(), 0))?;
@@ -207,7 +270,7 @@ fn http_get(url: &str, max: usize, receive_s: i32) -> Option<Vec<u8>> {
         let host = part(uc.lpszHostName, uc.dwHostNameLength);
         let path = part(uc.lpszUrlPath, uc.dwUrlPathLength) + &part(uc.lpszExtraInfo, uc.dwExtraInfoLength);
         let c = net(WinHttpConnect(s.0, &HSTRING::from(host), uc.nPort, 0))?;
-        let secure = if url.starts_with("https:") { WINHTTP_FLAG_SECURE } else { WINHTTP_OPEN_REQUEST_FLAGS(0) };
+        let secure = if https { WINHTTP_FLAG_SECURE } else { WINHTTP_OPEN_REQUEST_FLAGS(0) };
         let r = net(WinHttpOpenRequest(c.0, w!("GET"), &HSTRING::from(path), PCWSTR::null(), PCWSTR::null(), std::ptr::null(), secure))?;
         let accept: Vec<u16> = "Accept: application/vnd.github+json, */*".encode_utf16().collect();
         _ = WinHttpAddRequestHeaders(r.0, &accept, WINHTTP_ADDREQ_FLAG_ADD);
@@ -234,20 +297,25 @@ fn http_get(url: &str, max: usize, receive_s: i32) -> Option<Vec<u8>> {
     }
 }
 
+fn test_feed() -> bool {
+    std::env::var_os("GRIDS_UPDATE_FEED").is_some()
+}
+
 fn check() -> Option<UpRelease> {
     let feed = std::env::var("GRIDS_UPDATE_FEED").unwrap_or_else(|_| FEED.into());
     let json = http_get(&feed, 1 << 20, 15)?;
-    pick_release(&String::from_utf8_lossy(&json), env!("CARGO_PKG_VERSION"))
+    pick_release(&String::from_utf8_lossy(&json), env!("CARGO_PKG_VERSION"), test_feed())
 }
 
 fn fetch(r: &UpRelease, exe: &Path) -> std::result::Result<(), UpFail> {
     let zip = http_get(&r.zip, EXE_MAX, 60).ok_or(UpFail::Download)?;
     let sums = http_get(&r.sums, 64 << 10, 15).ok_or(UpFail::Download)?;
     let data = unpack(&zip, &String::from_utf8_lossy(&sums), &r.ver)?;
-    let new = exe.with_file_name(NEW_EXE);
-    let wrote = std::fs::File::create(&new).and_then(|mut f| std::io::Write::write_all(&mut f, &data).and_then(|_| f.sync_all()));
-    wrote.map_err(|_| {
-        _ = std::fs::remove_file(&new);
+    // complete on disk before it gets the name repair_exe trusts
+    let tmp = exe.with_file_name(NEW_TMP);
+    let wrote = std::fs::File::create(&tmp).and_then(|mut f| std::io::Write::write_all(&mut f, &data).and_then(|_| f.sync_all()));
+    wrote.and_then(|_| std::fs::rename(&tmp, exe.with_file_name(NEW_EXE))).map_err(|_| {
+        _ = std::fs::remove_file(&tmp);
         UpFail::NoWrite
     })
 }
@@ -260,17 +328,20 @@ pub(crate) unsafe fn start_updates(main: HWND) {
     _ = ShowWindow(b, SW_HIDE);
     add_tip(b, "");
     UPDATES_ON.store(app(|a| a.s.updates), Ordering::Relaxed);
-    let fast = std::env::var_os("GRIDS_UPDATE_FEED").is_some();
+    let me = std::env::current_exe().unwrap_or_default();
+    let dir = me.parent().map(Path::to_path_buf).unwrap_or_default();
+    if let Some(from) = repair_exe(&dir, &me) {
+        set_note(format!("{} ({})", tr("grids.exe was missing after an update: put back", "업데이트 뒤 없던 grids.exe를 되살림"), from.display()));
+    }
+    let fast = test_feed();
     let main = main.0 as isize;
     std::thread::spawn(move || {
         // left by the last update; the old process may still be on its way out
-        if let Ok(old) = std::env::current_exe().map(|e| e.with_file_name(OLD_EXE)) {
-            for _ in 0..40 {
-                if !old.exists() || std::fs::remove_file(&old).is_ok() {
-                    break;
-                }
-                std::thread::sleep(Duration::from_millis(500));
+        for _ in 0..40 {
+            if tidy_exes(&dir, &me) {
+                break;
             }
+            std::thread::sleep(Duration::from_millis(500));
         }
         let mut wait = Duration::from_secs(if fast { 3 } else { 60 });
         loop {
@@ -346,25 +417,7 @@ pub(crate) unsafe fn update_click() {
         true => format!("Grids를 재시작해 v{}로 업데이트합니다. 설정, 열린 폴더, 세션은 그대로 유지됩니다.", r.ver),
         false => format!("Grids will restart to update to v{}. Your settings, open folders and sessions are kept.", r.ver),
     });
-    let (restart, later) = (HSTRING::from(tr("Restart", "재시작")), HSTRING::from(tr("Later", "나중에")));
-    let buttons = [
-        TASKDIALOG_BUTTON { nButtonID: IDOK.0, pszButtonText: PCWSTR(restart.as_ptr()) },
-        TASKDIALOG_BUTTON { nButtonID: IDCANCEL.0, pszButtonText: PCWSTR(later.as_ptr()) },
-    ];
-    let cfg = TASKDIALOGCONFIG {
-        cbSize: size_of::<TASKDIALOGCONFIG>() as u32,
-        hwndParent: main,
-        dwFlags: TDF_ALLOW_DIALOG_CANCELLATION | TDF_POSITION_RELATIVE_TO_WINDOW,
-        pszWindowTitle: w!("Grids"),
-        pszMainInstruction: PCWSTR(title.as_ptr()),
-        pszContent: PCWSTR(body.as_ptr()),
-        cButtons: buttons.len() as u32,
-        pButtons: buttons.as_ptr(),
-        nDefaultButton: IDOK.0,
-        ..Default::default()
-    };
-    let mut pressed = 0;
-    if TaskDialogIndirect(&cfg, Some(&mut pressed), None, None).is_err() || pressed != IDOK.0 {
+    if !ask(main, &title, &body, tr("Restart", "재시작"), tr("Later", "나중에")) {
         return;
     }
     let Ok(exe) = std::env::current_exe() else { return update_failed(UpFail::NoWrite) };
@@ -380,15 +433,40 @@ pub(crate) unsafe fn update_click() {
     });
 }
 
+// A question with its two answers in the UI language (MessageBox's Yes / No follow Windows'). True: the first.
+unsafe fn ask(owner: HWND, title: &HSTRING, body: &HSTRING, yes: &str, no: &str) -> bool {
+    let (yes, no) = (HSTRING::from(yes), HSTRING::from(no));
+    let buttons = [
+        TASKDIALOG_BUTTON { nButtonID: IDOK.0, pszButtonText: PCWSTR(yes.as_ptr()) },
+        TASKDIALOG_BUTTON { nButtonID: IDCANCEL.0, pszButtonText: PCWSTR(no.as_ptr()) },
+    ];
+    let cfg = TASKDIALOGCONFIG {
+        cbSize: size_of::<TASKDIALOGCONFIG>() as u32,
+        hwndParent: owner,
+        dwFlags: TDF_ALLOW_DIALOG_CANCELLATION | TDF_POSITION_RELATIVE_TO_WINDOW,
+        pszWindowTitle: w!("Grids"),
+        pszMainInstruction: PCWSTR(title.as_ptr()),
+        pszContent: PCWSTR(body.as_ptr()),
+        cButtons: buttons.len() as u32,
+        pButtons: buttons.as_ptr(),
+        nDefaultButton: IDOK.0,
+        ..Default::default()
+    };
+    let mut pressed = 0;
+    TaskDialogIndirect(&cfg, Some(&mut pressed), None, None).is_ok() && pressed == IDOK.0
+}
+
 unsafe fn update_failed(f: UpFail) {
     BUSY.store(false, Ordering::Relaxed);
     app(|a| a.note = None);
     let ver = FOUND.lock().ok().and_then(|x| x.as_ref().map(|r| r.ver.clone())).unwrap_or_default();
-    let text = match KO.load(Ordering::Relaxed) {
-        true => format!("Grids를 업데이트하지 못했습니다 ({}). 바뀐 것은 없습니다.\n\n릴리스 페이지를 열어 직접 내려받을까요?", f.text()),
-        false => format!("Grids could not update itself ({}). Nothing was changed.\n\nOpen the release page to download it yourself?", f.text()),
-    };
-    if MessageBoxW(Some(app(|a| a.main)), &HSTRING::from(text), w!("Grids"), MB_YESNO | MB_ICONWARNING) == IDYES {
+    let title = HSTRING::from(tr("Grids could not update itself", "Grids를 업데이트하지 못했습니다"));
+    let body = HSTRING::from(match KO.load(Ordering::Relaxed) {
+        true => format!("{}. 바뀐 것은 없습니다.\n\n릴리스 페이지에서 직접 내려받을 수 있습니다.", f.text()),
+        false => format!("Reason: {}. Nothing was changed.\n\nYou can download it yourself from the release page.", f.text()),
+    });
+    let (open, close) = (tr("Open release page", "릴리스 페이지 열기"), tr("Close", "닫기"));
+    if ask(app(|a| a.main), &title, &body, open, close) {
         let url = format!("{HOME}/releases/tag/v{ver}");
         ShellExecuteW(None, w!("open"), &HSTRING::from(url), PCWSTR::null(), PCWSTR::null(), SW_SHOWNORMAL);
     }
@@ -404,7 +482,7 @@ pub(crate) unsafe fn update_msg(main: HWND, what: usize) {
         1 => {
             let Ok(exe) = std::env::current_exe() else { return update_failed(UpFail::NoWrite) };
             if swap_exe(&exe).is_err() {
-                return update_failed(UpFail::NoWrite);
+                return update_failed(UpFail::Swap);
             }
             // closing saves grids.ini and the views as always; the new exe starts once this one is gone
             _ = RESTART.set(exe);
@@ -445,15 +523,15 @@ mod tests {
             format!(r#"{{"html_url": "x", "tag_name": "{tag}", "draft": false, "prerelease": {pre}, "assets": [{}]}}"#, assets.join(", "))
         };
         let ok = json("v0.7.0", "false", &["grids-v0.7.0-x64.zip", "SHA256SUMS.txt"]);
-        let r = pick_release(&ok, "0.6.5").unwrap();
+        let r = pick_release(&ok, "0.6.5", false).unwrap();
         assert_eq!(r.ver, "0.7.0");
         assert_eq!(r.zip, "https://github.com/efww/grids/releases/download/v0.7.0/grids-v0.7.0-x64.zip");
         assert_eq!(r.sums, "https://github.com/efww/grids/releases/download/v0.7.0/SHA256SUMS.txt");
-        assert_eq!(pick_release(&ok, "0.7.0"), None); // not newer
-        assert_eq!(pick_release(&json("v0.7.0", "true", &["grids-v0.7.0-x64.zip", "SHA256SUMS.txt"]), "0.6.5"), None);
-        assert_eq!(pick_release(&json("v0.7.0", "false", &["grids-v0.7.0-x64.zip"]), "0.6.5"), None); // no sums
-        assert_eq!(pick_release(&json("v0.7.0", "false", &["grids-v0.6.9-x64.zip", "SHA256SUMS.txt"]), "0.6.5"), None);
-        assert_eq!(pick_release("{\"message\": \"API rate limit exceeded\"}", "0.6.5"), None);
+        assert_eq!(pick_release(&ok, "0.7.0", false), None); // not newer
+        assert_eq!(pick_release(&json("v0.7.0", "true", &["grids-v0.7.0-x64.zip", "SHA256SUMS.txt"]), "0.6.5", false), None);
+        assert_eq!(pick_release(&json("v0.7.0", "false", &["grids-v0.7.0-x64.zip"]), "0.6.5", false), None); // no sums
+        assert_eq!(pick_release(&json("v0.7.0", "false", &["grids-v0.6.9-x64.zip", "SHA256SUMS.txt"]), "0.6.5", false), None);
+        assert_eq!(pick_release("{\"message\": \"API rate limit exceeded\"}", "0.6.5", false), None);
         assert_eq!(json_strs(r#"{"a": "x\"y\\z", "a" : "2"}"#, "a"), ["x\"y\\z", "2"]);
     }
 
@@ -504,20 +582,84 @@ mod tests {
 
     #[test]
     fn update_swap() {
+        use std::os::windows::fs::OpenOptionsExt;
         let dir = std::env::temp_dir().join(format!("grids-update-{}", std::process::id()));
         _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let exe = dir.join("grids.exe");
+        let (exe, me) = (dir.join(EXE), dir.join("grids.exe"));
         let read = |n: &str| std::fs::read_to_string(dir.join(n)).ok();
-        std::fs::write(&exe, "old").unwrap();
-        std::fs::write(dir.join(NEW_EXE), "new").unwrap();
-        std::fs::write(dir.join(OLD_EXE), "older").unwrap();
+        let put = |n: &str, t: &str| std::fs::write(dir.join(n), t).unwrap();
+        put(EXE, "old");
+        put(NEW_EXE, "new");
+        put("grids.old.exe", "older");
         swap_exe(&exe).unwrap();
-        assert_eq!((read("grids.exe"), read(OLD_EXE), read(NEW_EXE)), (Some("new".into()), Some("old".into()), None));
+        assert_eq!((read(EXE), read("grids.old.exe"), read(NEW_EXE)), (Some("new".into()), Some("old".into()), None));
+        // a second update while the first replaced exe is still locked: the next free name
+        let lock = std::fs::OpenOptions::new().read(true).share_mode(0).open(dir.join("grids.old.exe")).unwrap();
+        put(NEW_EXE, "newer");
+        swap_exe(&exe).unwrap();
+        assert_eq!((read(EXE), read("grids.old2.exe")), (Some("newer".into()), Some("new".into())));
+        drop(lock);
+        // tidy: every leftover goes once grids.exe is there
+        put(NEW_TMP, "half");
+        assert!(tidy_exes(&dir, &me));
+        assert_eq!((read("grids.old.exe"), read("grids.old2.exe"), read(NEW_TMP), read(EXE)), (None, None, None, Some("newer".into())));
         // nothing downloaded: the running exe stays where it is
-        std::fs::remove_file(dir.join(OLD_EXE)).unwrap();
         assert!(swap_exe(&exe).is_err());
-        assert_eq!((read("grids.exe"), read(OLD_EXE)), (Some("new".into()), None));
+        assert_eq!((read(EXE), read("grids.old.exe")), (Some("newer".into()), None));
+
+        // cut off between the two renames: grids.exe gone, old + new there. Any start puts the new one back
+        std::fs::rename(&exe, dir.join("grids.old.exe")).unwrap();
+        put(NEW_EXE, "next");
+        assert_eq!(repair_exe(&dir, &dir.join("grids.old.exe")), Some(dir.join(NEW_EXE)));
+        assert_eq!((read(EXE), read(NEW_EXE), read("grids.old.exe")), (Some("next".into()), None, Some("newer".into())));
+        assert_eq!(repair_exe(&dir, &me), None); // grids.exe is there
+        // only old ones, started from one of them: the newest goes back
+        std::fs::remove_file(&exe).unwrap();
+        put("grids.old3.exe", "newest");
+        let later = std::time::SystemTime::now() + Duration::from_secs(60);
+        std::fs::File::options().write(true).open(dir.join("grids.old3.exe")).unwrap().set_modified(later).unwrap();
+        assert_eq!(repair_exe(&dir, &dir.join("grids.old.exe")), Some(dir.join("grids.old3.exe")));
+        assert_eq!(read(EXE), Some("newest".into()));
+        // a renamed grids with an old one lying around: no grids.exe is made up, the leftover goes
+        std::fs::remove_file(&exe).unwrap();
+        let mine = dir.join("mygrids.exe");
+        put("mygrids.exe", "mine");
+        assert_eq!(repair_exe(&dir, &mine), None);
+        assert!(tidy_exes(&dir, &mine) && read("grids.old.exe").is_none() && read(EXE).is_none());
         _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn update_urls() {
+        for u in [
+            "https://github.com/efww/grids/releases/download/v1.0.0/SHA256SUMS.txt",
+            "https://objects.githubusercontent.com/x/y",
+            "HTTPS://release-assets.githubusercontent.com/z",
+        ] {
+            assert!(url_ok(u, false) && url_ok(u, true), "{u}");
+        }
+        for u in [
+            "http://github.com/efww/grids/releases/download/v1.0.0/x.zip", // no TLS
+            "https://evil.example/grids-v9.9.9-x64.zip",
+            "https://github.com.evil.example/x",
+            "https://github.com@evil.example/x",
+            "https://github.com:8443/x",
+            "http://127.0.0.1:8765/good/x.zip", // local only with a test feed
+            "ftp://github.com/x",
+            "github.com/x",
+        ] {
+            assert!(!url_ok(u, false), "{u}");
+        }
+        assert!(url_ok("http://127.0.0.1:8765/good/x.zip", true) && url_ok("http://localhost/x", true));
+        assert!(!url_ok("http://example.com/x", true) && !url_ok("http://127.0.0.1@evil.example/x", true));
+        // a release whose assets live elsewhere is no update at all
+        let rel = |zip: &str, sums: &str| format!(r#"{{"tag_name": "v9.9.9", "prerelease": false, "assets": [{{"browser_download_url": "{zip}/grids-v9.9.9-x64.zip"}}, {{"browser_download_url": "{sums}/SHA256SUMS.txt"}}]}}"#);
+        let gh = "https://github.com/efww/grids/releases/download/v9.9.9";
+        assert!(pick_release(&rel(gh, gh), "0.6.5", false).is_some());
+        assert_eq!(pick_release(&rel("http://github.com/efww", gh), "0.6.5", false), None);
+        assert_eq!(pick_release(&rel(gh, "https://evil.example"), "0.6.5", false), None);
+        assert_eq!(pick_release(&rel("http://127.0.0.1:8765/good", "http://127.0.0.1:8765/good"), "0.6.5", false), None);
+        assert!(pick_release(&rel("http://127.0.0.1:8765/good", "http://127.0.0.1:8765/good"), "0.6.5", true).is_some());
     }
 }
