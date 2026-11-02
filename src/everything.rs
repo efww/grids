@@ -1,5 +1,6 @@
 use crate::*;
 use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL};
+use windows::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime};
 
 // ---------- Everything search: the orange magnifier in the top toolbar, Ctrl+Shift+F ----------
 // Talks to a running Everything (voidtools, 1.4.1 or later) over its WM_COPYDATA IPC: no DLL, nothing installed
@@ -7,13 +8,23 @@ use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBU
 // reply window; each query carries its own reply id, so a late answer to an older query is simply dropped.
 
 const QUERY2: usize = 18; // EVERYTHING_IPC_COPYDATA_QUERY2W
-const REQ_NAME_PATH: u32 = 0x1 | 0x2; // EVERYTHING_IPC_QUERY2_REQUEST_NAME | _PATH
-const SORT_NAME: u32 = 1;
+// EVERYTHING_IPC_QUERY2_REQUEST_*: the columns asked for. A reply carries them per item in this bit order.
+const REQ_NAME: u32 = 0x1;
+const REQ_PATH: u32 = 0x2;
+const REQ_FULL: u32 = 0x4;
+const REQ_EXT: u32 = 0x8;
+const REQ_SIZE: u32 = 0x10;
+const REQ_CREATED: u32 = 0x20;
+const REQ_MODIFIED: u32 = 0x40;
+const REQ_ASK: u32 = REQ_NAME | REQ_PATH | REQ_SIZE | REQ_MODIFIED;
+// EVERYTHING_IPC_SORT_*_ASCENDING for the header's columns (name, path, size, date modified); +1 is descending
+const SORT_ASC: [u32; 4] = [1, 3, 5, 13];
 const ITEM_FOLDER: u32 = 1;
 pub(crate) const EV_MAX: u32 = 200; // rows asked for; the count line says how many there are in all
 const REPLY_BASE: u32 = 0x4752_4500; // + the query number
 pub(crate) const EV_ORANGE: u32 = 0xEC7A1C;
-pub(crate) const EV_ROWS: usize = 10; // rows on screen, fewer on a short screen (ev_rows_fit)
+pub(crate) const EV_ROWS: usize = 16; // rows on screen, fewer on a short screen (ev_rows_fit)
+const EV_RH: i32 = 26; // row height at 96 dpi
 const TIMER_EV_QUERY: usize = 3201; // on the popup: a short pause in typing before asking
 pub(crate) const TIMER_EV_SELECT: usize = 3202; // on the main window: select the result once its folder shows
 
@@ -24,6 +35,8 @@ pub(crate) struct EvHit {
     pub(crate) name: String,
     pub(crate) dir: String, // folder it is in, as Everything gives it ("C:" for a drive's root)
     pub(crate) folder: bool,
+    pub(crate) size: Option<u64>,     // bytes; None when Everything doesn't know (folders, mostly)
+    pub(crate) modified: Option<u64>, // FILETIME (UTC)
     pub(crate) icon: Option<i32>, // system image list index, looked up when first drawn
 }
 
@@ -65,10 +78,31 @@ fn ev<R>(f: impl FnOnce(&mut EvState) -> R) -> R {
 
 // ---------- pure parts (tested) ----------
 
+/// A sort code from grids.ini or anywhere: one of the header's eight, else name ascending.
+pub(crate) fn ev_sort_ok(code: u32) -> u32 {
+    if SORT_ASC.iter().any(|&a| code == a || code == a + 1) { code } else { 1 }
+}
+
+/// The header column a sort code belongs to, and whether it is descending.
+pub(crate) fn ev_sort_col(code: u32) -> (usize, bool) {
+    let code = ev_sort_ok(code);
+    let c = SORT_ASC.iter().position(|&a| code == a || code == a + 1).unwrap_or(0);
+    (c, code != SORT_ASC[c])
+}
+
+/// A click on header column `col`: the same column turns around; another one starts A→Z for name and path, and
+/// biggest / newest first for size and date (what one usually wants from them).
+pub(crate) fn ev_sort_click(cur: u32, col: usize) -> u32 {
+    let (c, desc) = ev_sort_col(cur);
+    let col = col.min(3);
+    let desc = if c == col { !desc } else { col >= 2 };
+    SORT_ASC[col] + desc as u32
+}
+
 /// EVERYTHING_IPC_QUERY2 followed by the search text: reply window, reply id, flags, offset, max, columns, sort.
-pub(crate) fn ev_query(reply: u32, id: u32, text: &str) -> Vec<u8> {
+pub(crate) fn ev_query(reply: u32, id: u32, text: &str, sort: u32) -> Vec<u8> {
     let mut b = Vec::with_capacity(28 + 2 * text.len() + 2);
-    for v in [reply, id, 0, 0, EV_MAX, REQ_NAME_PATH, SORT_NAME] {
+    for v in [reply, id, 0, 0, EV_MAX, REQ_ASK, ev_sort_ok(sort)] {
         b.extend(v.to_le_bytes());
     }
     for u in text.encode_utf16().chain([0]) {
@@ -77,13 +111,18 @@ pub(crate) fn ev_query(reply: u32, id: u32, text: &str) -> Vec<u8> {
     b
 }
 
-/// EVERYTHING_IPC_LIST2 with name and path: (rows, total matches). None for anything else.
+/// EVERYTHING_IPC_LIST2 with at least name and path (size and date modified when it sends them): (rows, total
+/// matches). None for anything else.
 pub(crate) fn ev_parse(b: &[u8]) -> Option<(Vec<EvHit>, u32)> {
     let d = |at: usize| b.get(at..at + 4).map(|x| u32::from_le_bytes([x[0], x[1], x[2], x[3]]));
+    let q = |at: usize| Some(d(at)? as u64 | (d(at + 4)? as u64) << 32);
     let (total, num, flags) = (d(0)?, d(4)? as usize, d(12)?);
-    if flags != REQ_NAME_PATH {
+    let known = REQ_NAME | REQ_PATH | REQ_FULL | REQ_EXT | REQ_SIZE | REQ_CREATED | REQ_MODIFIED;
+    if flags & (REQ_NAME | REQ_PATH) != REQ_NAME | REQ_PATH || flags & !known != 0 {
         return None;
     }
+    // -1 (or 0 for a date) is how Everything says it doesn't know
+    let known_u64 = |v: u64, zero_ok: bool| (v != u64::MAX && (zero_ok || v != 0)).then_some(v);
     // a counted string: length in UTF-16 units, the units, then a NUL; the next column follows
     let s = |at: usize| -> Option<(String, usize)> {
         let n = d(at)? as usize;
@@ -95,8 +134,25 @@ pub(crate) fn ev_parse(b: &[u8]) -> Option<(Vec<EvHit>, u32)> {
     for k in 0..num.min(EV_MAX as usize) {
         let (f, off) = (d(20 + k * 8)?, d(24 + k * 8)? as usize);
         let (name, next) = s(off)?;
-        let (dir, _) = s(next)?;
-        out.push(EvHit { name, dir, folder: f & ITEM_FOLDER != 0, icon: None });
+        let (dir, mut at) = s(next)?;
+        for skip in [REQ_FULL, REQ_EXT] {
+            if flags & skip != 0 {
+                at = s(at)?.1;
+            }
+        }
+        let (mut size, mut modified) = (None, None);
+        for (bit, slot) in [(REQ_SIZE, 1), (REQ_CREATED, 0), (REQ_MODIFIED, 2)] {
+            if flags & bit != 0 {
+                let v = q(at)?;
+                at += 8;
+                match slot {
+                    1 => size = known_u64(v, true),
+                    2 => modified = known_u64(v, false),
+                    _ => {}
+                }
+            }
+        }
+        out.push(EvHit { name, dir, folder: f & ITEM_FOLDER != 0, size, modified, icon: None });
     }
     Some((out, total))
 }
@@ -170,13 +226,14 @@ pub(crate) struct EvGeo {
     pub(crate) scope: RECT, // the toggle: box and label, all clickable
     pub(crate) check: RECT,
     pub(crate) count: RECT,
+    pub(crate) head: [RECT; 4], // column titles: name, path, size, date modified; the rows use the same x ranges
     pub(crate) list: RECT,
     pub(crate) rows: Vec<RECT>,
 }
 
 pub(crate) fn ev_geo(fh: i32, dpi: i32, n: usize) -> EvGeo {
     let s = |v: i32| v * dpi / 96;
-    let (pad, w, rh) = (s(6), s(560), s(40));
+    let (pad, w, rh) = (s(6), s(860), s(EV_RH));
     let field = RECT { left: pad, top: pad, right: w - pad, bottom: pad + s(32) };
     let glass = RECT { right: field.left + s(30), ..field };
     let et = (field.top + field.bottom - fh) / 2;
@@ -186,27 +243,38 @@ pub(crate) fn ev_geo(fh: i32, dpi: i32, n: usize) -> EvGeo {
     let check = RECT { left: line.left + s(8), top: mid - s(8), right: line.left + s(24), bottom: mid + s(8) };
     let scope = RECT { right: line.left + s(270), ..line };
     let count = RECT { left: scope.right, right: line.right - s(8), ..line };
-    let top = line.bottom + s(4);
+    let ht = line.bottom + s(4);
+    let (x0, xr) = (pad, w - pad - s(6));
+    let x3 = xr - s(136);
+    let x2 = x3 - s(88);
+    let x1 = x0 + (x2 - x0) * 42 / 100;
+    let col = |l: i32, r: i32| RECT { left: l, top: ht, right: r, bottom: ht + s(26) };
+    let head = [col(x0, x1), col(x1, x2), col(x2, x3), col(x3, xr)];
+    let top = ht + s(26) + s(2);
     let rows = (0..n as i32).map(|k| RECT { left: pad, top: top + k * rh, right: w - pad, bottom: top + (k + 1) * rh }).collect();
     let list = RECT { left: pad, top, right: w - pad, bottom: top + n as i32 * rh };
-    EvGeo { w, h: list.bottom + pad, field, glass, edit, scope, check, count, list, rows }
+    EvGeo { w, h: list.bottom + pad, field, glass, edit, scope, check, count, head, list, rows }
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub(crate) enum EvSpot {
     Scope,
-    Row(usize), // index on screen, not in the list
+    Head(usize), // column title: 0 name, 1 path, 2 size, 3 date modified
+    Row(usize),  // index on screen, not in the list
 }
 
 /// Rows that fit in `avail` px of height: the full list, else fewer, never under 3.
 pub(crate) fn ev_rows_fit(avail: i32, fh: i32, dpi: i32) -> usize {
     let head = ev_geo(fh, dpi, 0).h;
-    ((avail - head) / (40 * dpi / 96)).clamp(3, EV_ROWS as i32) as usize
+    ((avail - head) / (EV_RH * dpi / 96)).clamp(3, EV_ROWS as i32) as usize
 }
 
 pub(crate) fn ev_hit(g: &EvGeo, x: i32, y: i32) -> Option<EvSpot> {
     if inside(g.scope, x, y) {
         return Some(EvSpot::Scope);
+    }
+    if let Some(c) = g.head.iter().position(|r| inside(*r, x, y)) {
+        return Some(EvSpot::Head(c));
     }
     g.rows.iter().position(|r| inside(*r, x, y)).map(EvSpot::Row)
 }
@@ -332,7 +400,8 @@ unsafe fn ev_send() {
         REPLY_BASE.wrapping_add(e.gen)
     });
     if let Some(text) = text {
-        let q = ev_query(h.0 as usize as u32, id, &text); // a 32-bit HWND: window handles fit, Everything widens it back
+        let sort = app(|a| a.s.ev_sort);
+        let q = ev_query(h.0 as usize as u32, id, &text, sort); // a 32-bit HWND: window handles fit, Everything widens it back
         let cd = CopyData { dw: QUERY2, cb: q.len() as u32, lp: q.as_ptr() as _ };
         let sent = ipc.is_some_and(|w| {
             let lp = LPARAM(&cd as *const CopyData as isize);
@@ -358,6 +427,12 @@ unsafe fn ev_move(d: i32) {
 
 unsafe fn ev_toggle_scope() {
     app(|a| a.s.ev_here ^= true);
+    ev_send();
+}
+
+// A column title clicked: Everything sorts all the matches (not only the rows shown) and sends the first ones again.
+unsafe fn ev_sort_by(col: usize) {
+    app(|a| a.s.ev_sort = ev_sort_click(a.s.ev_sort, col));
     ev_send();
 }
 
@@ -455,9 +530,23 @@ unsafe fn type_icon(name: &str, folder: bool) -> i32 {
     fi.iIcon
 }
 
+/// A FILETIME (UTC) as local "2026-11-03 14:05", the way the status bar and the preview write dates.
+fn ev_date(ft: u64) -> String {
+    let ft = FILETIME { dwLowDateTime: ft as u32, dwHighDateTime: (ft >> 32) as u32 };
+    let (mut utc, mut st) = (SYSTEMTIME::default(), SYSTEMTIME::default());
+    unsafe {
+        if FileTimeToSystemTime(&ft, &mut utc).is_err() || SystemTimeToTzSpecificLocalTime(None, &utc, &mut st).is_err() {
+            return String::new();
+        }
+    }
+    format!("{:04}-{:02}-{:02} {:02}:{:02}", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute)
+}
+
 unsafe fn paint_ev(h: HWND) {
     let g = geo_now();
-    let (dpi, font, small, icon_font, accent, here) = app(|a| (a.dpi, a.font, a.small_font, a.icon_font, a.s.accent_now(), a.s.ev_here));
+    let (dpi, font, small, icon_font, accent, here, sort) =
+        app(|a| (a.dpi, a.font, a.small_font, a.icon_font, a.s.accent_now(), a.s.ev_here, a.s.ev_sort));
+    let (sort_col, sort_desc) = ev_sort_col(sort);
     // icons for the rows about to show, once each
     let (top, n, shown) = ev(|e| (e.top, e.hits.len(), e.rows));
     for k in top..(top + shown).min(n) {
@@ -509,9 +598,24 @@ unsafe fn paint_ev(h: HWND) {
             },
         };
         text(dc, g.count, &count, small, pal().sub, DT_RIGHT);
-        fill(dc, RECT { top: g.list.top - s(3), bottom: g.list.top - s(2), ..g.list }, pal().line);
+        // column titles: click to sort, again to turn around; the sorted one is in text colour with its arrow
+        let titles = [tr("Name", "이름"), tr("Path", "경로"), tr("Size", "크기"), tr("Date modified", "수정한 날짜")];
+        for (c, (r, t)) in g.head.iter().zip(titles).enumerate() {
+            if hot == Some(EvSpot::Head(c)) {
+                fill(dc, *r, pal().pill);
+            }
+            if c > 0 {
+                fill(dc, RECT { left: r.left, right: r.left + 1, top: r.top + s(5), bottom: r.bottom - s(5) }, pal().line);
+            }
+            let on = c == sort_col;
+            let label = if on { format!("{t} {}", if sort_desc { "\u{25BE}" } else { "\u{25B4}" }) } else { t.to_string() };
+            let ink = if on || hot == Some(EvSpot::Head(c)) { pal().text } else { pal().sub };
+            let tr_ = RECT { left: r.left + s(8), right: r.right - s(8), ..*r };
+            text(dc, tr_, &label, small, ink, if c == 2 { DT_RIGHT } else { DT_LEFT });
+        }
+        fill(dc, RECT { top: g.list.top - s(2), bottom: g.list.top - s(1), ..g.list }, pal().line);
         if !typed {
-            let hint = tr("Type a name · Everything's own syntax works too (ext:pdf, size:>1mb, dm:today)", "이름을 입력 · Everything 문법도 됨 (ext:pdf, size:>1mb, dm:today)");
+            let hint = tr("Type a name · Everything's own syntax works too (ext:pdf, size:>1mb, dm:today) · click a column title to sort", "이름을 입력 · Everything 문법도 됨 (ext:pdf, size:>1mb, dm:today) · 열 제목을 누르면 정렬");
             text(dc, RECT { bottom: g.list.top + s(80), ..g.list }, hint, font, pal().sub, DT_CENTER);
         }
         for (j, (hit, row)) in rows.iter().zip(&g.rows).enumerate() {
@@ -523,16 +627,22 @@ unsafe fn paint_ev(h: HWND) {
             } else if hot == Some(EvSpot::Row(j)) {
                 fill(dc, *row, pal().pill);
             }
-            let icon = RECT { left: row.left + s(8), top: row.top + (row.bottom - row.top - s(16)) / 2, right: row.left + s(24), bottom: 0 };
+            let icon = RECT { left: g.head[0].left + s(8), top: row.top + (row.bottom - row.top - s(16)) / 2, right: g.head[0].left + s(24), bottom: 0 };
             if let (Some(il), Some(ix)) = (&ilist, hit.icon.filter(|&x| x >= 0)) {
                 if let Ok(hi) = il.GetIcon(ix, ILD_NORMAL.0) {
                     _ = DrawIconEx(dc, icon.left, icon.top, hi, s(16), s(16), 0, None, DI_NORMAL);
                     _ = DestroyIcon(hi);
                 }
             }
-            let line = |t: i32, hgt: i32| RECT { left: icon.right + s(10), right: row.right - s(10), top: t, bottom: t + hgt };
-            text(dc, line(row.top + s(3), s(19)), &hit.name, font, ink, DT_LEFT);
-            text(dc, line(row.top + s(21), s(16)), &root(&hit.dir), small, sub, DT_LEFT | DT_PATH_ELLIPSIS);
+            let cell = |c: usize| RECT { left: g.head[c].left + s(8), right: g.head[c].right - s(8), top: row.top, bottom: row.bottom };
+            text(dc, RECT { left: icon.right + s(8), ..cell(0) }, &hit.name, font, ink, DT_LEFT);
+            text(dc, cell(1), &root(&hit.dir), small, sub, DT_LEFT | DT_PATH_ELLIPSIS);
+            if let Some(b) = hit.size {
+                text(dc, cell(2), &human(b), small, sub, DT_RIGHT);
+            }
+            if let Some(t) = hit.modified {
+                text(dc, cell(3), &ev_date(t), small, sub, DT_LEFT);
+            }
         }
         // where the rows on screen sit in the whole list
         if n > shown {
@@ -592,6 +702,7 @@ pub(crate) extern "system" fn ev_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                 let (x, y) = xy(lp);
                 match ev_hit(&geo_now(), x, y) {
                     Some(EvSpot::Scope) => ev_toggle_scope(),
+                    Some(EvSpot::Head(c)) => ev_sort_by(c),
                     Some(EvSpot::Row(j)) => {
                         let k = ev(|e| e.top + j);
                         if k < ev(|e| e.hits.len()) {
@@ -631,19 +742,31 @@ mod tests {
         v
     }
 
-    // LIST2 the way Everything sends it: header, item table, then each item's name and path
+    // LIST2 the way Everything sends it: header, item table, then each item's columns in bit order
     fn list2(total: u32, items: &[(u32, &str, &str)], flags: u32) -> Vec<u8> {
         let mut b = Vec::new();
-        for v in [total, items.len() as u32, 0, flags, SORT_NAME] {
+        for v in [total, items.len() as u32, 0, flags, 1] {
             b.extend(v.to_le_bytes());
         }
         let mut data = Vec::new();
         let base = 20 + 8 * items.len();
-        for (f, name, dir) in items {
+        for (k, (f, name, dir)) in items.iter().enumerate() {
             b.extend(f.to_le_bytes());
             b.extend(((base + data.len()) as u32).to_le_bytes());
             data.extend(counted(name));
             data.extend(counted(dir));
+            if flags & REQ_EXT != 0 {
+                data.extend(counted("x"));
+            }
+            if flags & REQ_SIZE != 0 {
+                data.extend((if *f & ITEM_FOLDER != 0 { u64::MAX } else { 1000 + k as u64 }).to_le_bytes());
+            }
+            if flags & REQ_CREATED != 0 {
+                data.extend(7u64.to_le_bytes());
+            }
+            if flags & REQ_MODIFIED != 0 {
+                data.extend((133_000_000_000_000_000u64 + k as u64).to_le_bytes());
+            }
         }
         b.extend(data);
         b
@@ -651,9 +774,10 @@ mod tests {
 
     #[test]
     fn everything_ipc() {
-        let q = ev_query(0x1234, REPLY_BASE + 7, "보고서 ext:pdf");
+        let q = ev_query(0x1234, REPLY_BASE + 7, "보고서 ext:pdf", 14);
         let words: Vec<u32> = q[..28].chunks(4).map(|c| u32::from_le_bytes(c.try_into().unwrap())).collect();
-        assert_eq!(words, [0x1234, REPLY_BASE + 7, 0, 0, EV_MAX, 3, 1]);
+        assert_eq!(words, [0x1234, REPLY_BASE + 7, 0, 0, EV_MAX, 0x53, 14]);
+        assert_eq!(ev_query(1, 2, "a", 99)[24..28], 1u32.to_le_bytes()); // a bad sort code asks by name
         let text: Vec<u16> = q[28..].chunks(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
         assert_eq!(text, "보고서 ext:pdf".encode_utf16().chain([0]).collect::<Vec<_>>());
 
@@ -663,8 +787,18 @@ mod tests {
         assert_eq!(hits.len(), 2);
         assert_eq!((hits[0].name.as_str(), hits[0].dir.as_str(), hits[0].folder), ("Work", r"C:\Users\me", true));
         assert_eq!((hits[1].name.as_str(), hits[1].dir.as_str(), hits[1].folder), ("회의록.hwp", r"D:\문서", false));
+        assert_eq!((hits[0].size, hits[0].modified, hits[1].size), (None, None, None));
+        // with size and date modified; unknown size (-1) stays empty; extra columns are skipped over
+        for flags in [REQ_ASK, REQ_ASK | REQ_EXT | REQ_CREATED] {
+            let (h, _) = ev_parse(&list2(2, &[(ITEM_FOLDER, "Work", "C:"), (0, "a.pdf", r"C:\Work")], flags)).unwrap();
+            assert_eq!((h[0].size, h[0].modified), (None, Some(133_000_000_000_000_000)));
+            assert_eq!((h[1].name.as_str(), h[1].size, h[1].modified), ("a.pdf", Some(1001), Some(133_000_000_000_000_001)));
+        }
+        assert!(ev_parse(&list2(1, &[(0, "a", "C:")], REQ_ASK | 0x100)).is_none()); // a column it can't read
         // other columns, a cut-off reply, an empty one
         assert!(ev_parse(&list2(1, &[(0, "a", "C:")], 1)).is_none());
+        let full = list2(2, &[(0, "a", "C:"), (0, "b", "C:")], REQ_ASK);
+        assert!(ev_parse(&full[..full.len() - 3]).is_none());
         assert!(ev_parse(&b[..b.len() - 6]).is_none());
         assert!(ev_parse(&b[..10]).is_none());
         assert_eq!(ev_parse(&list2(0, &[], 3)), Some((vec![], 0)));
@@ -679,7 +813,7 @@ mod tests {
         assert_eq!(ev_text("x", Some(r"\\nas\share\a")).as_deref(), Some(r#""\\nas\share\a\" x"#));
         assert_eq!(ev_text("x", Some(THIS_PC)).as_deref(), Some("x")); // nothing to limit to
 
-        let hit = |name: &str, dir: &str, folder| EvHit { name: name.into(), dir: dir.into(), folder, icon: None };
+        let hit = |name: &str, dir: &str, folder| EvHit { name: name.into(), dir: dir.into(), folder, size: None, modified: None, icon: None };
         let file = hit("a.txt", r"C:\Work", false);
         assert_eq!(ev_target(&file, false), (r"C:\Work".to_string(), Some("a.txt".to_string())));
         assert_eq!(ev_target(&file, true), (r"C:\Work".to_string(), Some("a.txt".to_string()))); // Ctrl doesn't open files
@@ -702,12 +836,28 @@ mod tests {
         let g = ev_geo(16, 96, EV_ROWS);
         assert_eq!(g.rows.len(), EV_ROWS);
         // a short screen gets fewer rows, never under 3
-        assert_eq!((ev_rows_fit(2000, 16, 96), ev_rows_fit(g.h, 16, 96), ev_rows_fit(g.h - 80, 16, 96), ev_rows_fit(50, 16, 96)), (10, 10, 8, 3));
+        assert_eq!((ev_rows_fit(2000, 16, 96), ev_rows_fit(g.h, 16, 96), ev_rows_fit(g.h - 80, 16, 96), ev_rows_fit(50, 16, 96)), (16, 16, 12, 3));
         assert!(g.edit.left >= g.glass.right && g.edit.right <= g.field.right && g.edit.bottom <= g.field.bottom);
         assert!(g.scope.bottom <= g.list.top && g.count.left >= g.scope.right && g.list.bottom < g.h);
         assert_eq!(ev_hit(&g, g.check.left + 2, g.check.top + 2), Some(EvSpot::Scope));
         assert_eq!(ev_hit(&g, g.rows[3].left + 40, g.rows[3].top + 2), Some(EvSpot::Row(3)));
         assert_eq!(ev_hit(&g, g.field.left + 40, g.field.top + 4), None);
+        // the column titles sit between the toggle line and the rows, side by side, as wide as the list
+        assert!(g.head[0].top >= g.scope.bottom && g.head[0].bottom <= g.list.top);
+        assert!(g.head.windows(2).all(|p| p[0].right == p[1].left && p[0].left < p[0].right) && g.head[3].right <= g.list.right);
+        for c in 0..4 {
+            assert_eq!(ev_hit(&g, g.head[c].left + 4, g.head[c].top + 4), Some(EvSpot::Head(c)));
+        }
+        // sorting: name A→Z at first; a new column starts A→Z (name, path) or biggest/newest first (size, date);
+        // the same column again turns around; codes from the ini are checked
+        assert_eq!(Session::default().ev_sort, 1);
+        assert_eq!([0, 1, 2, 3].map(|c| ev_sort_click(1, c)), [2, 3, 6, 14]);
+        assert_eq!((ev_sort_click(14, 3), ev_sort_click(13, 3), ev_sort_click(6, 2), ev_sort_click(14, 0)), (13, 14, 5, 1));
+        assert_eq!((ev_sort_col(14), ev_sort_col(3), ev_sort_col(0), ev_sort_col(9)), ((3, true), (1, false), (0, false), (0, false)));
+        assert_eq!([0, 2, 5, 7, 13, 15].map(ev_sort_ok), [1, 2, 5, 1, 13, 1]);
+        assert_eq!(Session::parse("ev_sort=14\n").ev_sort, 14);
+        assert_eq!(Session::parse("ev_sort=9\n").ev_sort, 1);
+        assert_eq!(Session::parse(&Session { ev_sort: 6, ..Session::default() }.to_ini()).ev_sort, 6);
         let mut s = Session::parse("ev_here=1\n");
         assert!(s.ev_here && !Session::default().ev_here);
         s.ev_here = false;
