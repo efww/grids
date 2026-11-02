@@ -675,6 +675,10 @@ fn copy_shared(dst: &mut Session, src: &Session) {
     dst.ctx_on = src.ctx_on.clone();
     dst.ctx_quiet = src.ctx_quiet.clone();
     dst.blocked_shell_extensions = src.blocked_shell_extensions.clone();
+    dst.excel_tidy_a1 = src.excel_tidy_a1;
+    dst.excel_tidy_zoom = src.excel_tidy_zoom;
+    dst.excel_tidy_first = src.excel_tidy_first;
+    dst.excel_tidy_backup = src.excel_tidy_backup;
 }
 
 /// Copy process-wide preferences from the current window onto the others.

@@ -42,6 +42,26 @@ fn is_on(v: &bool) -> bool {
 fn is_off(v: &bool) -> bool {
     !*v
 }
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct ExcelTidyJson {
+    #[serde(default = "yes")]
+    selection: bool,
+    #[serde(default = "yes")]
+    zoom: bool,
+    #[serde(default = "yes")]
+    first_sheet: bool,
+    #[serde(default = "yes")]
+    backup: bool,
+}
+
+fn excel_tidy_default() -> ExcelTidyJson {
+    ExcelTidyJson { selection: true, zoom: true, first_sheet: true, backup: true }
+}
+
+fn excel_tidy_is_default(v: &ExcelTidyJson) -> bool {
+    v.selection && v.zoom && v.first_sheet && v.backup
+}
 fn is_zero_i32(v: &i32) -> bool {
     *v == 0
 }
@@ -356,6 +376,10 @@ struct SettingsFile {
     /// Not written to the registry and not written into grids.ini.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     blocked_shell_extensions: Vec<String>,
+    /// Last Excel tidy checkboxes. Omitted while every box is on, which is the default.
+    /// Not written into grids.ini.
+    #[serde(default = "excel_tidy_default", skip_serializing_if = "excel_tidy_is_default")]
+    excel_tidy: ExcelTidyJson,
     #[serde(default, flatten)]
     extra: Map<String, Value>,
 }
@@ -439,6 +463,7 @@ impl SettingsFile {
             ctx_win11_pack_migrated: false,
             ctx_win11_view: false,
             blocked_shell_extensions: Vec::new(),
+            excel_tidy: excel_tidy_default(),
             extra: Map::new(),
         }
     }
@@ -543,6 +568,12 @@ impl SettingsFile {
             ctx_win11_pack_migrated: s.ctx_win11_pack_migrated,
             ctx_win11_view: s.ctx_win11_view,
             blocked_shell_extensions: clean_blocked(&s.blocked_shell_extensions),
+            excel_tidy: ExcelTidyJson {
+                selection: s.excel_tidy_a1,
+                zoom: s.excel_tidy_zoom,
+                first_sheet: s.excel_tidy_first,
+                backup: s.excel_tidy_backup,
+            },
             extra: Map::new(),
         }
     }
@@ -594,6 +625,7 @@ impl SettingsFile {
         self.extra.remove("ctx_win11_pack_migrated");
         self.extra.remove("ctx_win11_view");
         self.extra.remove("blocked_shell_extensions");
+        self.extra.remove("excel_tidy");
         // Older builds stored a pane-tab on/off switch. Tabs are always on; the key is dropped.
         self.extra.remove("pane_tabs");
     }
@@ -708,6 +740,10 @@ impl SettingsFile {
         s.ctx_win11_pack_migrated = true;
         s.ctx_win11_view = self.ctx_win11_view;
         s.blocked_shell_extensions = clean_blocked(&self.blocked_shell_extensions);
+        s.excel_tidy_a1 = self.excel_tidy.selection;
+        s.excel_tidy_zoom = self.excel_tidy.zoom;
+        s.excel_tidy_first = self.excel_tidy.first_sheet;
+        s.excel_tidy_backup = self.excel_tidy.backup;
         crate::shell::ctxmenu::reconcile_winmerge(&mut s.ctx_off, &mut s.ctx_on);
         s.file = self.session.clone();
         let parsed_tree = crate::tree_from_values(&self.favorites_tree);
@@ -2312,6 +2348,28 @@ mod tests {
         assert_eq!(adopt(r#"{"view_new":8}"#).unwrap().default_view(), (8, 32));
         assert_eq!(adopt(r#"{"view_new":9,"view_icon":48}"#).unwrap().default_view(), (4, 16));
         assert!(!pretty(&SettingsFile::from_session(&Session::default())).contains("view_icon"));
+    }
+
+    #[test]
+    fn excel_tidy_choices_default_on_and_round_trip_in_json_only() {
+        let fresh = adopt("{}").unwrap();
+        assert!(fresh.excel_tidy_a1 && fresh.excel_tidy_zoom && fresh.excel_tidy_first && fresh.excel_tidy_backup);
+        assert!(!sync_text(&fresh).contains("excel_tidy"));
+        let mut s = fresh;
+        s.excel_tidy_zoom = false;
+        s.excel_tidy_backup = false;
+        let text = sync_text(&s);
+        assert!(text.contains("\"excel_tidy\""), "{text}");
+        assert!(text.contains("\"zoom\": false"), "{text}");
+        assert!(text.contains("\"backup\": false"), "{text}");
+        let back = adopt(&text).unwrap();
+        assert!(back.excel_tidy_a1 && back.excel_tidy_first);
+        assert!(!back.excel_tidy_zoom && !back.excel_tidy_backup);
+        let partial = adopt(r#"{"excel_tidy":{"backup":false}}"#).unwrap();
+        assert!(partial.excel_tidy_a1 && partial.excel_tidy_zoom && partial.excel_tidy_first);
+        assert!(!partial.excel_tidy_backup);
+        assert!(!s.to_ini().contains("excel_tidy"));
+        assert!(Session::parse(&s.to_ini()).excel_tidy_backup);
     }
 }
 

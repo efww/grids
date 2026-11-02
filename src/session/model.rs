@@ -331,6 +331,12 @@ pub(crate) struct Session {
     /// DLL file names that must not load inside this process. Empty means nothing extra is blocked.
     /// maguro.json only. The registry is not written, and a .grids file does not carry this.
     pub(crate) blocked_shell_extensions: Vec<String>,
+    /// Last "Tidy to A1 · 100%" checkboxes. Missing from maguro.json means all on.
+    /// A .grids file does not carry these.
+    pub(crate) excel_tidy_a1: bool,
+    pub(crate) excel_tidy_zoom: bool,
+    pub(crate) excel_tidy_first: bool,
+    pub(crate) excel_tidy_backup: bool,
 }
 
 /// Explorer's View menu, in its order. `(FOLDERVIEWMODE, icon size, label)`.
@@ -465,6 +471,10 @@ impl Default for Session {
             ctx_win11_pack_migrated: true,
             ctx_win11_view: false,
             blocked_shell_extensions: Vec::new(),
+            excel_tidy_a1: true,
+            excel_tidy_zoom: true,
+            excel_tidy_first: true,
+            excel_tidy_backup: true,
         };
         // A first-ever start: layout_new 3 is one pane. Saved maguro.json without layout_new stays 0 (two panes).
         s.set_heights(s.layout_heights());
@@ -546,6 +556,10 @@ impl PartialEq for Session {
             && self.ctx_win11_pack_migrated == o.ctx_win11_pack_migrated
             && self.ctx_win11_view == o.ctx_win11_view
             && self.blocked_shell_extensions == o.blocked_shell_extensions
+            && self.excel_tidy_a1 == o.excel_tidy_a1
+            && self.excel_tidy_zoom == o.excel_tidy_zoom
+            && self.excel_tidy_first == o.excel_tidy_first
+            && self.excel_tidy_backup == o.excel_tidy_backup
     }
 }
 

@@ -18,6 +18,7 @@ mod folderview;
 mod everything;
 mod rename;
 mod winmerge;
+mod excel;
 mod folderapp;
 mod crash;
 mod winpath;

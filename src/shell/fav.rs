@@ -589,7 +589,7 @@ unsafe fn pair_top(menu: HMENU, fav: u32) -> u32 {
     let mut top = fav;
     while top > 0 {
         let id = GetMenuItemID(menu, (top - 1) as i32) as u32;
-        if id == ID_CTX_BATCH || id == ID_CTX_WHO {
+        if id == ID_CTX_BATCH || id == ID_CTX_WHO || id == crate::excel::ID_CTX_EXCEL {
             top -= 1;
         } else {
             break;
@@ -1034,6 +1034,7 @@ unsafe fn popup_ctx(owner: HWND, cm: IContextMenu, paths: &[String], items: &[(S
         }
     }
     insert_who(menu);
+    crate::excel::insert_menu(menu, items);
     // Next to Favourites (or above Properties on a background click). Only commands that fit this click.
     if !paths.is_empty() {
         let at = menu_index(menu, ID_CTX_FAV as usize).map(|i| i + 1).unwrap_or(0);
@@ -1082,6 +1083,8 @@ unsafe fn popup_ctx(owner: HWND, cm: IContextMenu, paths: &[String], items: &[(S
     } else if cmd == ID_CTX_FAST as i32 {
         let dest = fast_paste_dest(pane, background, items);
         super::fileop::try_fast_paste(pane, Some(dest));
+    } else if cmd == crate::excel::ID_CTX_EXCEL as i32 {
+        crate::excel::run(owner, items);
     } else if cmd == ID_CTX_EXCEL as i32 {
         super::excelro::open_readonly(owner);
     } else if cmd == ID_CTX_BATCH as i32 {
