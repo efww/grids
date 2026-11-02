@@ -276,6 +276,20 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
         }
         return true;
     }
+    // The file basket is its own window. Its keys stay here, including the toggle and add chords.
+    if crate::basket::captures(m.hwnd) {
+        if let Some(i) = crate::keys::lookup(vk, ctrl, shift, alt, win) {
+            let id = crate::keys::id_of(i);
+            if matches!(id, "file.basket" | "file.basket.add") {
+                if m.lParam.0 & (1 << 30) != 0 {
+                    return true;
+                }
+                return dispatch(id, vk, active_pane(), false, || false);
+            }
+        }
+        let _ = crate::basket::on_key(vk, ctrl, shift);
+        return true;
+    }
     // Plain Alt+↑/↓ in the favourites panel or its list reorders that row.
     // It must not send the pane behind it to the parent folder.
     if fav_step(vk, ctrl, alt, shift).is_some() {
@@ -353,7 +367,10 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
         if id == "app.keys" && m.lParam.0 & (1 << 30) != 0 {
             return true; // holding Ctrl+/ toggles once
         }
-        if matches!(id, "focus.next" | "focus.prev" | "app.keys") {
+        if matches!(id, "file.basket" | "file.basket.add") && m.lParam.0 & (1 << 30) != 0 {
+            return true;
+        }
+        if matches!(id, "focus.next" | "focus.prev" | "app.keys" | "file.basket" | "file.basket.add") {
             return dispatch(id, vk, a, list, shell);
         }
     }
@@ -419,7 +436,7 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
     }
     if let Some(i) = crate::keys::lookup(vk, ctrl, shift, alt, win) {
         let id = crate::keys::id_of(i);
-        if matches!(id, "app.keys" | "view.peek" | "app.front" | "dialog.jump" | "view.gather" | "view.recentfiles" | "file.mkdir" | "file.winmerge" | "file.reveal") && m.lParam.0 & (1 << 30) != 0 {
+        if matches!(id, "app.keys" | "view.peek" | "app.front" | "dialog.jump" | "view.gather" | "view.recentfiles" | "file.mkdir" | "file.winmerge" | "file.reveal" | "file.basket" | "file.basket.add") && m.lParam.0 & (1 << 30) != 0 {
             return true;
         }
         // Pane-tab chords stay out of the address bar (already returned) and out of every other focus,
@@ -579,6 +596,8 @@ unsafe fn dispatch(id: &str, vk: u16, a: usize, list: bool, shell: impl Fn() -> 
         "file.mkdir" if list => explorer_new_folder(a),
         "file.mkdir" => return shell(),
         "file.winmerge" => crate::winmerge::run_folders(app(|x| x.main), None),
+        "file.basket" => crate::basket::toggle(),
+        "file.basket.add" => crate::basket::add_active_selection(),
         "file.reveal" => {
             if !crate::pane::recent::locked(a) {
                 return shell();
@@ -748,7 +767,7 @@ unsafe fn side_popup(h: HWND) -> bool {
     if h.0.is_null() {
         return false;
     }
-    if settings::captures(h) || crate::rename::captures(h) || fav_manager_captures(h) {
+    if settings::captures(h) || crate::rename::captures(h) || fav_manager_captures(h) || crate::basket::captures(h) {
         return true;
     }
     let (peek, load, grid, keys, help, fav, match_hwnd) = app(|a| {

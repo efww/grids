@@ -31,6 +31,7 @@ pub(crate) const ID_PANEL: usize = 1116; // left panel (folder tree and favourit
 pub(crate) const ID_EXT: usize = 1117; // show file extensions (Windows setting)
 pub(crate) const ID_FOLLOW: usize = 1118; // follow Windows light / dark
 pub(crate) const ID_THEME: usize = 1122; // view menu: switch to the other of light / dark
+pub(crate) const ID_BASKET: usize = 1125; // gear: file basket tool window
 pub(crate) const ID_HOTKEY: usize = 1119; // global hotkey, checked only while it is registered
 pub(crate) const ID_GATHER: usize = 1120; // folders from open Explorer windows and tabs
 pub(crate) const ID_RECENT: usize = 1121; // gear: open the Windows Recent folder in this pane

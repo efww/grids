@@ -331,6 +331,9 @@ pub(crate) struct Session {
     /// DLL file names that must not load inside this process. Empty means nothing extra is blocked.
     /// maguro.json only. The registry is not written, and a .grids file does not carry this.
     pub(crate) blocked_shell_extensions: Vec<String>,
+    /// Paths kept in the file basket. maguro.json only. A .grids file does not carry this.
+    /// Remove and Clear edit this list. They do not delete the files.
+    pub(crate) file_basket: Vec<String>,
     /// Last "Tidy to A1 · 100%" checkboxes. Missing from maguro.json means all on.
     /// A .grids file does not carry these.
     pub(crate) excel_tidy_a1: bool,
@@ -471,6 +474,7 @@ impl Default for Session {
             ctx_win11_pack_migrated: true,
             ctx_win11_view: false,
             blocked_shell_extensions: Vec::new(),
+            file_basket: Vec::new(),
             excel_tidy_a1: true,
             excel_tidy_zoom: true,
             excel_tidy_first: true,
@@ -556,6 +560,7 @@ impl PartialEq for Session {
             && self.ctx_win11_pack_migrated == o.ctx_win11_pack_migrated
             && self.ctx_win11_view == o.ctx_win11_view
             && self.blocked_shell_extensions == o.blocked_shell_extensions
+            && self.file_basket == o.file_basket
             && self.excel_tidy_a1 == o.excel_tidy_a1
             && self.excel_tidy_zoom == o.excel_tidy_zoom
             && self.excel_tidy_first == o.excel_tidy_first
