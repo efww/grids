@@ -67,6 +67,7 @@ mod keyboard;
 mod tabs;
 mod window_ui;
 mod everything;
+mod update;
 
 use ui_defs::*;
 // explicit, so it wins over the same name glob-imported from windows (a glob clash would turn match patterns into bindings)
@@ -95,6 +96,7 @@ use keyboard::*;
 use tabs::*;
 use window_ui::*;
 use everything::*;
+use update::*;
 
 fn main() -> Result<()> {
     unsafe {
@@ -277,6 +279,7 @@ fn main() -> Result<()> {
         apply_theme();
         apply_font();
         refresh_drives(); // laid out by the relayout below
+        start_updates(main); // its button, hidden until a newer release turns up
         // keep the whole window on the work area, whatever screen it was saved on
         let mut mi = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
         match win {
@@ -350,6 +353,7 @@ fn main() -> Result<()> {
             }
             _ = job.join();
         }
+        restart_updated(); // an update was just put in place: the new exe takes over
     }
     Ok(())
 }

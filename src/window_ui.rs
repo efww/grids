@@ -147,6 +147,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 return DefWindowProcW(h, msg, wp, lp);
             }
             WM_THEME_SYNC => theme_sync(),
+            WM_UPDATE => update_msg(h, wp.0),
             // mid-drag or mid-resize, end_drag / WM_EXITSIZEMOVE pick it up instead
             WM_DRIVES => {
                 if !app(|a| a.drag.is_some() || a.sizing) && refresh_drives() {
@@ -225,6 +226,8 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 id if id == ID_TB_LOAD as usize => open_load(),
                 id if id == ID_TB_FAV as usize => open_favs(),
                 id if id == ID_TB_EV as usize => open_ev(),
+                id if id == ID_TB_UPDATE as usize => update_click(),
+                ID_UPDATES => toggle_updates(),
                 id if id == ID_TB_THEME as usize => {
                     app(|a| (a.s.dark, a.s.follow) = (!a.s.dark, false)); // picked by hand: stop following Windows
                     retheme();
@@ -282,6 +285,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 check(ID_DBLUP, dblup);
                 check(ID_TABS, TABS_ON.load(Ordering::Relaxed));
                 check(ID_HOTKEY, hot);
+                check(ID_UPDATES, app(|a| a.s.updates));
                 check(ID_LANG, KO.load(Ordering::Relaxed));
                 for (k, (_, c)) in pal().accents.iter().enumerate() {
                     check(ID_ACCENT + k, *c == accent);
@@ -679,6 +683,7 @@ pub(crate) unsafe fn set_language(ko: bool) {
         tip_text(h, &drive_tip(c, kind), TTM_UPDATETIPTEXTW);
     }
     refresh_save_button();
+    update_tip();
     app(|a| a.status_key.clear());
     apply_theme();
 }
@@ -707,6 +712,7 @@ pub(crate) unsafe fn make_menus() -> Result<HMENU> {
     AppendMenuW(view, MF_SEPARATOR, 0, PCWSTR::null())?;
     item(view, MF_STRING, ID_KEYS, tr("Keyboard shortcuts\tCtrl+/", "단축키\tCtrl+/"))?;
     item(view, MF_STRING, ID_HELP, tr("Help (online)\tF1", "도움말 (온라인)\tF1"))?;
+    item(view, MF_STRING, ID_UPDATES, tr("Check for updates", "업데이트 확인"))?;
     item(view, MF_STRING, ID_ABOUT, tr("About Grids", "Grids 정보"))?;
     Ok(view)
 }

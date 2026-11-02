@@ -111,6 +111,9 @@ pub(crate) unsafe fn draw_button(d: &DRAWITEMSTRUCT) {
         return text(dc, rc, glyph(id), icon_font, fg, DT_CENTER);
     }
     let s = |v: i32| v * dpi / 96;
+    if id == ID_TB_UPDATE {
+        return draw_update(dc, rc, hot, pressed, font);
+    }
     if id == ID_TB_LAYOUT {
         // the one label in the chrome: the current grid
         let icon = RECT { left: rc.left + s(4), right: rc.left + s(22), ..rc };

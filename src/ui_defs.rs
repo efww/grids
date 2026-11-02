@@ -18,6 +18,7 @@ pub(crate) const ID_TB_THEME: i32 = 205;
 pub(crate) const ID_TB_FAV: i32 = 206;
 pub(crate) const ID_TB_VIEW: i32 = 203;
 pub(crate) const ID_TB_EV: i32 = 207; // orange magnifier: Everything search, shown while Everything runs
+pub(crate) const ID_TB_UPDATE: i32 = 208; // blue "Update", shown when a newer release is out
 pub(crate) const ID_DRIVE: i32 = 1500; // + 0..25: drive buttons A: … Z:
 // menu ids
 pub(crate) const ID_HIDDEN: usize = 1100;
@@ -32,6 +33,7 @@ pub(crate) const ID_EXT: usize = 1108;
 pub(crate) const ID_HOTKEY: usize = 1109;
 pub(crate) const ID_FOLLOW: usize = 1110;
 pub(crate) const ID_TABS: usize = 1111;
+pub(crate) const ID_UPDATES: usize = 1150; // view menu: check for updates
 pub(crate) const HOME: &str = "https://github.com/efww/grids";
 pub(crate) const ID_ACCENT: usize = 1400; // + preset index
 pub(crate) const ID_ACCENT_PICK: usize = 1410;
