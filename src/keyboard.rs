@@ -256,6 +256,9 @@ pub(crate) unsafe fn pre_translate(m: &MSG) -> bool {
 pub(crate) unsafe fn new_folder(i: usize) {
     let Some(sv) = view_of::<IShellView>(i) else { return };
     let Ok(cm) = sv.GetItemObject::<IContextMenu>(SVGIO_BACKGROUND) else { return };
+    // the view as the menu's site: the shell's "New folder" asks its site to select the new folder and start
+    // its rename; without one it only creates the folder
+    _ = IUnknown_SetSite(&cm, &sv);
     let Ok(menu) = CreatePopupMenu() else { return };
     if cm.QueryContextMenu(menu, 0, 1, 0x7fff, CMF_NORMAL).is_ok() {
         let ci = CMINVOKECOMMANDINFO {
