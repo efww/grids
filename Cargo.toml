@@ -46,6 +46,10 @@ features = [
     "Win32_UI_WindowsAndMessaging",
 ]
 
+# batch rename's regular expressions: the small pure-Rust one, no Unicode tables
+[dependencies.regex-lite]
+version = "0.1"
+
 [dependencies.windows-core]
 version = "0.62"
 
