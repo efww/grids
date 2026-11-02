@@ -25,8 +25,8 @@
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/hero_dark.ko.png">
-    <img alt="Maguro — 라이트 테마" src="docs/images/hero_light.ko.png">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images-v3/hero_dark.ko.png">
+    <img alt="Maguro — 라이트 테마" src="docs/images-v3/hero_light.ko.png">
   </picture>
 </p>
 
@@ -38,27 +38,27 @@
 
 패널 하나로 시작한 뒤 내장 격자(최대 4×4)를 고를 수 있습니다. 경계를 끌어 크기를 바꿉니다. 이름 있는 세션에는 레이아웃·폴더·열·색 라벨이 들어가고, 세션을 열면 지금 탭 옆에 창 탭이 추가됩니다.
 
-<p align="center"><img width="760" alt="다중 패널 레이아웃" src="docs/images/layout.ko.png"></p>
+<p align="center"><img width="760" alt="다중 패널 레이아웃" src="docs/images-v3/layout.ko.png"></p>
 
 <table>
 <tr>
-<td><img alt="1 패널" src="docs/images/layout_1.png"></td>
-<td><img alt="가로 2" src="docs/images/layout_2h.png"></td>
-<td><img alt="세로 2" src="docs/images/layout_2v.png"></td>
+<td><img alt="1 패널" src="docs/images-v3/layout_1.png"></td>
+<td><img alt="가로 2" src="docs/images-v3/layout_2h.png"></td>
+<td><img alt="세로 2" src="docs/images-v3/layout_2v.png"></td>
 </tr>
 <tr>
-<td><img alt="3 패널" src="docs/images/layout_3.png"></td>
-<td><img alt="세로 쌓기 3" src="docs/images/layout_3_stack.png"></td>
-<td><img alt="3열" src="docs/images/layout_3col.png"></td>
+<td><img alt="3 패널" src="docs/images-v3/layout_3.png"></td>
+<td><img alt="세로 쌓기 3" src="docs/images-v3/layout_3_stack.png"></td>
+<td><img alt="3열" src="docs/images-v3/layout_3col.png"></td>
 </tr>
 <tr>
-<td><img alt="4 패널" src="docs/images/layout_4.png"></td>
-<td><img alt="세로형 4" src="docs/images/layout_4_tall.png"></td>
-<td><img alt="5 패널" src="docs/images/layout_5.png"></td>
+<td><img alt="4 패널" src="docs/images-v3/layout_4.png"></td>
+<td><img alt="세로형 4" src="docs/images-v3/layout_4_tall.png"></td>
+<td><img alt="5 패널" src="docs/images-v3/layout_5.png"></td>
 </tr>
 <tr>
-<td><img alt="1+1+2" src="docs/images/layout_preset_112.png"></td>
-<td><img alt="3+1" src="docs/images/layout_preset_31.png"></td>
+<td><img alt="1+1+2" src="docs/images-v3/layout_preset_112.png"></td>
+<td><img alt="3+1" src="docs/images-v3/layout_preset_31.png"></td>
 <td></td>
 </tr>
 </table>
@@ -67,7 +67,7 @@
 
 창 전체의 크롬 스타일 탭에 더해, 각 패널 안에도 탭이 있습니다. 탭 이름은 활성 폴더에서 오고, 툴팁에 전체 경로가 보입니다. 탭 복제, 새 창으로 이동, 세션 저장도 됩니다.
 
-<p align="center"><img width="760" alt="창 탭과 패널 탭" src="docs/images/tabs.ko.png"></p>
+<p align="center"><img width="760" alt="창 탭과 패널 탭" src="docs/images-v3/tabs.ko.png"></p>
 
 ### 3. 탭 이름 고정·잠금·색
 
@@ -78,16 +78,16 @@
 패널 번호 배지를 잡아 다른 패널에 놓으면 자리가 바뀝니다. **Ctrl**을 누른 채 끌면 바꾸지 않고 그 패널을 복제합니다.
 
 <p align="center">
-  <img width="360" alt="끌기 전" src="docs/images/panedrag_before.png">
-  <img width="360" alt="자리 바꾼 뒤" src="docs/images/panedrag_after.png">
+  <img width="360" alt="끌기 전" src="docs/images-v3/panedrag_before.png">
+  <img width="360" alt="자리 바꾼 뒤" src="docs/images-v3/panedrag_after.png">
 </p>
-<p align="center"><img width="560" alt="Ctrl+끌기로 패널 복제" src="docs/images/panedrag_dup.png"></p>
+<p align="center"><img width="560" alt="Ctrl+끌기로 패널 복제" src="docs/images-v3/panedrag_dup.png"></p>
 
 ### 5. 패널별 색
 
 패널마다 강조색을 줄 수 있습니다. 소스와 목적지를 헷갈리기 쉬운 다중 패널에서 특히 유용합니다.
 
-<p align="center"><img width="760" alt="패널별 색" src="docs/images/pane_colors.ko.png"></p>
+<p align="center"><img width="760" alt="패널별 색" src="docs/images-v3/pane_colors.ko.png"></p>
 
 ### 6. 속도를 위한 설계
 
@@ -95,40 +95,65 @@
 
 **Everything 연동 패널 검색.** 패널에서 Ctrl+F로 입력하는 대로 걸러집니다. 하위 폴더를 켜면 [voidtools Everything](https://www.voidtools.com/)에 물어 바로 결과를 받고, Everything이 없으면 디스크를 직접 걷습니다.
 
-<p align="center"><img width="760" alt="Everything 연동 패널 검색" src="docs/images/search.ko.png"></p>
+<p align="center"><img width="760" alt="Everything 연동 패널 검색" src="docs/images-v3/search.ko.png"></p>
 
 ### 7. 즐겨찾기 — 폴더와 파일, 그룹으로
 
 사이드바는 위·아래 절반입니다. 위는 즐겨찾기, 아래는 폴더 트리. 즐겨찾기에는 탐색기 빠른 액세스 고정과 직접 만든 그룹(폴더·파일 모두, 끌어 정렬)이 들어갑니다. Ctrl+B는 빠른 즐겨찾기 목록을 엽니다. 패널에 파일·폴더를 놓으면 즐겨찾기에 추가됩니다.
 
-<p align="center"><img width="760" alt="그룹으로 나눈 즐겨찾기" src="docs/images/favorites.ko.png"></p>
+<p align="center"><img width="760" alt="그룹으로 나눈 즐겨찾기" src="docs/images-v3/favorites.ko.png"></p>
 
 ### 8. 빠른 미리보기
 
-Space 또는 F3으로 그림, PDF, Office, HTML, Markdown, 코드, CSV, ZIP, HWP/HWPX(한컴) 등을 미리봅니다. Ctrl+휠로 확대(10–800%), 끌어서 이동, 휠로 스크롤, ←/→로 파일 이동.
+Space 또는 F3으로 그림, PDF, Office, HTML, Markdown, 코드, CSV, ZIP, HWP/HWPX(한컴) 등을 미리봅니다. Ctrl+휠로 확대(10–800%), 끌어서 이동, 휠로 스크롤, ←/→로 파일 이동. 피크에서 **F2**로 이름을 바꾸고 **Del**로 미리보 중인 파일을 지울 수 있습니다.
 
 <p align="center">
-  <img width="480" alt="패널 미리보기" src="docs/images/preview.ko.png">
-  <img width="240" alt="피크 미리보기" src="docs/images/preview_peek.ko.png">
+  <img width="480" alt="패널 미리보기" src="docs/images-v3/preview.ko.png">
+  <img width="240" alt="피크 미리보기" src="docs/images-v3/preview_peek.ko.png">
 </p>
 
 ### 9. 구성 가능한 우클릭 메뉴
 
 설정 → 우클릭 메뉴 항목에서 Maguro 고유 명령의 표시/숨김을 고를 수 있습니다. 메뉴를 짧게 유지해도, 전부 되살려도 됩니다.
 
-<p align="center"><img width="560" alt="우클릭 메뉴 설정" src="docs/images/settings_ctxmenu.ko.png"></p>
+<p align="center"><img width="560" alt="우클릭 메뉴 설정" src="docs/images-v3/settings_ctxmenu.ko.png"></p>
 
 ### 10. 이름 미리보기가 있는 일괄 이름 바꾸기
 
 파일을 고른 뒤 Ctrl+Shift+R. 찾기/바꾸기, 번호 매기기, 확장자, 프리셋을 바꿀 때마다 확정 전 새 이름이 목록으로 갱신됩니다.
 
-<p align="center"><img width="560" alt="이름 미리보기 일괄 바꾸기" src="docs/images/rename.ko.png"></p>
+<p align="center"><img width="560" alt="이름 미리보기 일괄 바꾸기" src="docs/images-v3/rename.ko.png"></p>
 
 ### 11. 서버 연결
 
 즐겨찾기 패널(또는 그룹)을 우클릭 → **서버 연결 추가…**. SMB·WebDAV는 일반 Windows 폴더로 열립니다. SFTP·FTP는 rclone과 WinFsp로 마운트한 뒤 미리보기·우클릭 메뉴·빠른 복사까지 다른 폴더처럼 씁니다. 비밀번호는 Windows 자격 증명 관리자에만 두고 `maguro.json`에는 쓰지 않습니다.
 
-<p align="center"><img width="420" alt="값이 채워진 서버 연결 대화상자" src="docs/images/servers.ko.png"></p>
+<p align="center"><img width="420" alt="값이 채워진 서버 연결 대화상자" src="docs/images-v3/servers.ko.png"></p>
+
+
+### 12. Excel 읽기 모드 열기 · A1·100% 정리
+
+`.xlsx` / `.xlsm`을 우클릭 → **읽기 모드로 열기**로 잠그지 않고 Excel을 엽니다. **A1·100%로 정리**는 선택을 A1로, 확대를 100%로 맞추고, 필요하면 첫 시트를 고르며 `.bak.xlsx` 백업도 남길 수 있습니다.
+
+<p align="center"><img width="420" alt="Excel을 A1·100%로 정리" src="docs/images-v3/feature_excel_readonly_tidy.ko.png"></p>
+
+### 13. 파일 바구니
+
+Ctrl+Shift+B로 항상 위 작은 바구니를 엽니다. 파일을 놓거나 Ctrl+Alt+B로 활성 패널 선택을 담고, 나중에 아무 패널로 복사·이동합니다. 경로는 세션이 아니라 `maguro.json`에만 남습니다. 원본이 없어도 목록에 남고, 직접 지울 때까지 표시됩니다.
+
+<p align="center"><img width="420" alt="설정 스타일 컴팩트 행의 파일 바구니" src="docs/images-v3/feature_basket.ko.png"></p>
+
+### 14. 폴더 감시
+
+Ctrl+Shift+W로 폴더 감시를 엽니다. 폴더·활성 패널뿐 아니라 **개별 파일**도 추가할 수 있습니다. 행 체크박스는 설정과 같은 틱입니다. Maguro가 실행 중일 때만 변경을 알려 줍니다. 감시 중이던 파일이 사라지면 「파일을 찾을 수 없음」으로 표시됩니다.
+
+<p align="center"><img width="560" alt="폴더와 파일 행이 있는 폴더 감시" src="docs/images-v3/feature_folder_watch.ko.png"></p>
+
+### 15. 클립보드 경로 열기 (Win+Shift+V)
+
+Maguro가 켜져 있으면 **Win+Shift+V**로 클립보드의 폴더·파일 경로를 새 탭으로 엽니다. 다른 창이 앞에 있어도 동작합니다.
+
+<p align="center"><img width="760" alt="클립보드 경로를 새 탭으로 연 모습" src="docs/images-v3/feature_win_shift_v.ko.png"></p>
 
 ### 테마와 강조색
 
@@ -136,15 +161,15 @@ Windows를 따르는 라이트/다크, 테마마다 강조색 여섯(기본 세�
 
 <table>
 <tr>
-<td><img alt="설정" src="docs/images/settings.ko.png"></td>
-<td><img alt="도움말" src="docs/images/help.ko.png"></td>
+<td><img alt="설정" src="docs/images-v3/settings.ko.png"></td>
+<td><img alt="도움말" src="docs/images-v3/help.ko.png"></td>
 </tr>
 <tr>
-<td colspan="2"><img alt="다크 테마" src="docs/images/hero_dark.ko.png"></td>
+<td colspan="2"><img alt="다크 테마" src="docs/images-v3/hero_dark.ko.png"></td>
 </tr>
 </table>
 
-📦 **작은 단일 exe.** 설치할 것이 없습니다.
+📦 **작은 단일 exe.** 설치할 것이 없습니다. 탐색기에 보이는 아이콘은 Maguro 전체면 타일입니다.
 
 ## 설치
 
@@ -174,6 +199,10 @@ Windows를 따르는 라이트/다크, 테마마다 강조색 여섯(기본 세�
 |  | Esc / Space / F3 | 미리보기 닫기 |
 |  | Alt+P | 미리보기 창 표시/숨기기 |
 | **파일** | Ctrl+Shift+C | 전체 경로 복사 |
+|  | Ctrl+Shift+B | 파일 바구니 |
+|  | Ctrl+Alt+B | 선택을 바구니에 담기 |
+|  | Ctrl+Shift+W | 폴더 감시 |
+|  | Win+Shift+V | 클립보드 경로를 새 탭으로 열기 |
 |  | Ctrl+Shift+R | 일괄 이름 바꾸기 |
 |  | Ctrl+Alt+R | 최근 파일 (Windows 최근 항목, 최신순) |
 |  | Ctrl+Enter | 선택한 최근 파일을 폴더에서 표시 |
