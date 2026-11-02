@@ -3061,6 +3061,7 @@ unsafe fn on_nav_impl(i: usize, pidl: *const ITEMIDLIST) {
     if crate::folderview::is_dirty() {
         note_folder_views();
     }
+    super::recent::on_arrived(i, &parse);
 }
 
 #[implement(IExplorerBrowserEvents)]
@@ -3119,6 +3120,8 @@ impl IExplorerBrowserEvents_Impl for Events_Impl {
             if local_path_gone(&path) {
                 return Err(Error::from(HRESULT::from_win32(ERROR_CANCELLED.0)));
             }
+            // Before the view enumerates, so IncludeObject can hide missing Recent links.
+            super::recent::note_folder(i, &path);
             rec_event(i, Nav::Pending, pidl);
             save_view(i);
             // The folder we are leaving has had its view writes. The next complete starts from zero,
@@ -3168,6 +3171,9 @@ impl IExplorerBrowserEvents_Impl for Events_Impl {
         let i = self.0.load(Ordering::SeqCst);
         clear_theme_keep(i);
         unsafe {
+            let cur = app(|a| a.s.paths.get(i).cloned().unwrap_or_default());
+            super::recent::note_folder(i, &cur);
+            super::recent::nav_failed(i);
             flush_nav_pending(i);
             rec_event(i, Nav::Failed, pidl);
             let cur = app(|a| a.s.paths.get(i).cloned().unwrap_or_default());
@@ -3827,12 +3833,24 @@ impl ICommDlgBrowser_Impl for Host_Impl {
     }
     fn IncludeObject(&self, sv: Ref<IShellView>, pidl: *const ITEMIDLIST) -> Result<()> {
         // The view hwnd map is process-wide. filter_of() is only the window this thread last bound.
+        let slot = self.0.load(Ordering::SeqCst);
         let spec = unsafe {
-            match sv.ok().ok().and_then(|v| v.GetWindow().ok()) {
+            match sv.as_ref().and_then(|v| v.GetWindow().ok()) {
                 Some(h) => filter_for_view(h).unwrap_or_default(),
-                None => filter_of(self.0.load(Ordering::SeqCst)),
+                None => filter_of(slot),
             }
         };
+        unsafe {
+            if super::recent::showing(slot) {
+                if let Some(view) = sv.as_ref() {
+                    if let Ok(sf) = view.cast::<IFolderView>().and_then(|fv| fv.GetFolder::<IShellFolder>()) {
+                        if super::recent::hide_missing(slot, &sf, pidl) {
+                            return Err(S_FALSE.into());
+                        }
+                    }
+                }
+            }
+        }
         if spec.is_empty() {
             return Ok(());
         }

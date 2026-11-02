@@ -162,6 +162,7 @@ unsafe fn addr_edit_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM, _a1: u
 }
 
 pub(crate) unsafe fn destroy_pane(i: usize) {
+    super::recent::clear_pane(i);
     pane_left(i);
     NAV_GEN.fetch_add(1, Ordering::SeqCst);
     if let Some(sv) = view_of::<IShellView>(i) {
@@ -1489,6 +1490,7 @@ pub(crate) unsafe fn swap_panes(i: usize, j: usize) {
     }) else {
         return;
     };
+    super::recent::note_swap(i, j);
     {
         // Filters and slots together, so a view thread sees both before or both after.
         let mut f = FILTERS.lock().unwrap_or_else(|e| e.into_inner());

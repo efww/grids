@@ -174,6 +174,8 @@ Defaults; every one can be changed in Settings → Shortcuts.
 |  | Esc / Space / F3 | Close preview |
 | **File** | Ctrl+Shift+C | Copy full path |
 |  | Ctrl+Shift+R | Batch rename |
+|  | Ctrl+Alt+R | Recent files (Windows Recent, newest first) |
+|  | Ctrl+Enter | Show the selected recent file in its folder |
 |  | Num+ or Ctrl+Shift+A / Num− / Num* | Select / deselect / invert by pattern |
 |  | Ctrl+Alt+N | New text file |
 |  | Ctrl+Shift+N, F7 | New folder |

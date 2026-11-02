@@ -174,6 +174,8 @@ Windows に従うライト／ダーク、テーマごとにアクセント色が
 |  | Esc / Space / F3 | プレビューを閉じる |
 | **ファイル** | Ctrl+Shift+C | フルパスをコピー |
 |  | Ctrl+Shift+R | 一括リネーム |
+|  | Ctrl+Alt+R | 最近使ったファイル（Windows の最近使った項目、新しい順） |
+|  | Ctrl+Enter | 選択した最近のファイルをフォルダーに表示 |
 |  | Num+ または Ctrl+Shift+A / Num− / Num* | パターンで選択／解除／反転 |
 |  | Ctrl+Alt+N | 新しいテキストファイル |
 |  | Ctrl+Shift+N, F7 | 新しいフォルダ |

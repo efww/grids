@@ -443,6 +443,7 @@ pub(crate) enum Key {
     QuickLook,
     RcloneOrWinfspIsNotInstalled,
     ReadmeMd,
+    RecentFiles,
     RecentFolders,
     RecycleBin,
     Refresh,
@@ -551,6 +552,7 @@ pub(crate) enum Key {
     ShowFolderSizes,
     ShowHiddenFiles,
     ShowHiddenFilesCtrlH,
+    ShowInFolder,
     ShowLeftPanel,
     ShowStatusBar,
     ShowToolbar,
@@ -706,7 +708,7 @@ pub(crate) enum Key {
     CtxWin11Note,
 }
 
-pub(crate) const KEY_COUNT: usize = 701;
+pub(crate) const KEY_COUNT: usize = 703;
 
 const _: () = assert!((Key::CtxWin11Note as usize) + 1 == KEY_COUNT);
 
@@ -1151,6 +1153,7 @@ pub(crate) const EN: [&str; KEY_COUNT] = [
     "Quick look",
     "rclone or WinFsp is not installed.",
     "README.md",
+    "Recent files",
     "Recent folders",
     "Recycle Bin",
     "Refresh",
@@ -1259,6 +1262,7 @@ pub(crate) const EN: [&str; KEY_COUNT] = [
     "Show folder sizes",
     "Show hidden files",
     "Show hidden files\tCtrl+H",
+    "Show in folder",
     "Show the left panel",
     "Show the status bar",
     "Show the toolbar",
@@ -1856,6 +1860,7 @@ pub(crate) const KEY_ID: [&str; KEY_COUNT] = [
     "quick_look",
     "rclone_or_winfsp_is_not_installed",
     "readme_md",
+    "recent_files",
     "recent_folders",
     "recycle_bin",
     "refresh",
@@ -1964,6 +1969,7 @@ pub(crate) const KEY_ID: [&str; KEY_COUNT] = [
     "show_folder_sizes",
     "show_hidden_files",
     "show_hidden_files_ctrl_h",
+    "show_in_folder",
     "show_left_panel",
     "show_status_bar",
     "show_toolbar",

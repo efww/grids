@@ -178,6 +178,9 @@ unsafe fn paste_clipboard(a: usize, dest: Option<String>, force: bool) -> bool {
         };
         (folder, x.main)
     });
+    if crate::pane::recent::path_is_recent(&dst) {
+        return false;
+    }
     if !is_fs(&dst) || OpenClipboard(Some(main)).is_err() {
         return false;
     }
@@ -636,6 +639,10 @@ unsafe fn copy_once(srcs: &[String], dst: &str, rename: bool, mv: bool) -> super
 }
 
 pub(crate) unsafe fn delete_selection(i: usize, shift: bool) {
+    if crate::pane::recent::locked(i) {
+        _ = MessageBeep(MB_ICONWARNING);
+        return;
+    }
     let arr = view_of::<IFolderView2>(i).and_then(|fv| fv.GetSelection(false).ok());
     let count = arr.as_ref().and_then(|a| a.GetCount().ok()).unwrap_or(0);
     let Ok(paths) = collect_all(count, |k| unsafe { arr.as_ref()?.GetItemAt(k).ok()?.GetDisplayName(SIGDN_FILESYSPATH).ok().map(|p| pwstr(p)) }) else {

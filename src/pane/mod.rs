@@ -1,4 +1,5 @@
 mod docparse;
+pub(crate) mod recent;
 mod imgjob;
 mod jpeg;
 mod find;

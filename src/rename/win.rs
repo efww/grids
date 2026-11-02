@@ -154,6 +154,10 @@ pub(crate) unsafe fn open_active() {
 
 /// Open batch rename for the selection in pane `i` (not whatever `active` happens to be).
 pub(crate) unsafe fn open_pane(i: usize) {
+    if crate::pane::recent::locked(i) {
+        let _ = MessageBeep(MB_ICONWARNING);
+        return;
+    }
     open_items(collect_pane(i));
 }
 

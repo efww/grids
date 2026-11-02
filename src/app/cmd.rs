@@ -39,6 +39,10 @@ pub(crate) static PENDING_FILE: Mutex<Option<PendingFile>> = Mutex::new(None);
 
 // Ctrl+Alt+N: an empty text file in the active pane, then the shell's own rename (F2) once it shows up.
 pub(crate) unsafe fn new_file(i: usize) {
+    if crate::pane::recent::locked(i) {
+        _ = MessageBeep(MB_ICONWARNING);
+        return;
+    }
     let dir = app(|a| a.s.paths.get(i).cloned().unwrap_or_default());
     if !is_fs(&dir) {
         _ = MessageBeep(MB_ICONWARNING);
@@ -415,7 +419,7 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
     }
     if let Some(i) = crate::keys::lookup(vk, ctrl, shift, alt, win) {
         let id = crate::keys::id_of(i);
-        if matches!(id, "app.keys" | "view.peek" | "app.front" | "dialog.jump" | "view.gather" | "file.mkdir" | "file.winmerge") && m.lParam.0 & (1 << 30) != 0 {
+        if matches!(id, "app.keys" | "view.peek" | "app.front" | "dialog.jump" | "view.gather" | "view.recentfiles" | "file.mkdir" | "file.winmerge" | "file.reveal") && m.lParam.0 & (1 << 30) != 0 {
             return true;
         }
         // Pane-tab chords stay out of the address bar (already returned) and out of every other focus,
@@ -427,6 +431,13 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
             }
         }
         return dispatch(id, vk, a, list, shell);
+    }
+    // Recent files is read-only. These keys would delete, rename, cut, or paste a shortcut.
+    if list && crate::pane::recent::locked(a) && crate::pane::recent::blocks_key(vk, ctrl, alt, shift) {
+        if m.lParam.0 & (1 << 30) == 0 {
+            _ = MessageBeep(MB_ICONWARNING);
+        }
+        return true;
     }
     // Not an app shortcut. Del and Ctrl+V still belong to the file list
     // unless the user has bound that chord above. F5 was handled above.
@@ -538,6 +549,7 @@ unsafe fn dispatch(id: &str, vk: u16, a: usize, list: bool, shell: impl Fn() -> 
         "view.hidden" => toggle_hidden(),
         "view.panel" => toggle_tree(),
         "view.gather" => gather_explorer(),
+        "view.recentfiles" => crate::pane::recent::open_recent(a),
         "view.zoom" => toggle_zoom(),
         "file.sel" | "file.sel2" if list => {
             app(|a| a.held = Some(vk));
@@ -567,6 +579,12 @@ unsafe fn dispatch(id: &str, vk: u16, a: usize, list: bool, shell: impl Fn() -> 
         "file.mkdir" if list => explorer_new_folder(a),
         "file.mkdir" => return shell(),
         "file.winmerge" => crate::winmerge::run_folders(app(|x| x.main), None),
+        "file.reveal" => {
+            if !crate::pane::recent::locked(a) {
+                return shell();
+            }
+            crate::pane::recent::show_selection(a);
+        }
         "pane.tab.new" => {
             new_pane_tab(a);
             focus_view(a);
