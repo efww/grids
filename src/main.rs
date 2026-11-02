@@ -1109,7 +1109,7 @@ mod tests {
         let req = |p: &str| Some(PeekReq { path: p.into(), w: 10, h: 10, hwnd: 0, plain: false });
         let pix = || Peeked { body: Body::Pic(Pix { w: 1, h: 1, bgra: vec![0; 4] }), icon: -1, meta: Vec::new() };
         let card = || Peeked { body: Body::Card { icon: None, rows: Vec::new() }, icon: -1, meta: Vec::new() };
-        let mut j = PeekJob { gen: 0, req: None, done: None };
+        let mut j = PeekJob { gen: 0, req: None, done: None, zoom: None, zseq: 0, sharp: Vec::new() };
         j.want(req("a"));
         let a = j.gen;
         j.want(req("b")); // arrow pressed before a's picture came
@@ -1119,6 +1119,18 @@ mod tests {
         j.want(None); // closed
         assert!(j.gen != b && j.req.is_none() && j.done.is_none());
         assert!(!j.publish(b, pix()) && j.done.is_none());
+        // a zoom's sharper pictures belong to the item they were made for
+        j.want(req("c"));
+        let z = Sharp { gen: j.gen, pdf: false, pages: vec![0], w: 20, h: 20 };
+        j.want_sharp(Some(z.clone()));
+        let seq = j.zseq;
+        assert_eq!(j.zoom, Some((seq, z)));
+        j.sharp.push((0, Pix { w: 1, h: 1, bgra: vec![0; 4] }));
+        j.want_sharp(None); // back to fit
+        assert!(j.zseq != seq && j.zoom.is_none() && j.sharp.is_empty());
+        j.sharp.push((0, Pix { w: 1, h: 1, bgra: vec![0; 4] }));
+        j.want(req("d"));
+        assert!(j.zoom.is_none() && j.sharp.is_empty());
     }
 
     #[test]
@@ -1988,6 +2000,70 @@ mod tests {
         assert_eq!(peek_hit(&g, 500, 400), Hot::None); // content: no action
         assert_eq!(group_digits(30360942), "30,360,942");
         assert_eq!(group_digits(999), "999");
+    }
+
+    #[test]
+    fn peek_names() {
+        for ok in ["photo.jpg", "a", ".gitignore", "cone.txt", "COM10", "LPT10", "사진 1.png", "a..b"] {
+            assert_eq!(name_problem(ok), None, "{ok}");
+        }
+        for bad in ["", "   ", "a/b", "a\\b", "what?", "x:y", "a*", "<a>", "a|b", "\"q\"", "tab\there", "end.", "CON", "nul.txt", "Com1.jpg", "lpt9", "con.txt.bak"] {
+            assert!(name_problem(bad).is_some(), "{bad}");
+        }
+        assert!(name_problem(&"a".repeat(256)).is_some() && name_problem(&"a".repeat(255)).is_none());
+        // F2 selects the stem: not the extension, all of a folder or a dot file
+        assert_eq!(stem_len("photo.final.jpg", false), 11);
+        assert_eq!(stem_len("photo.final.jpg", true), 15);
+        assert_eq!(stem_len(".gitignore", false), 10);
+        assert_eq!(stem_len("README", false), 6);
+        assert_eq!(stem_len("사진😀.png", false), 4); // UTF-16 units, as the edit counts them
+    }
+
+    #[test]
+    fn peek_zoom() {
+        assert_eq!(zoom_k(0), 1.0);
+        assert!((zoom_k(ZOOM_MAX) - 9.31).abs() < 0.01 && (zoom_k(ZOOM_MIN) - 0.41).abs() < 0.01);
+        // the point under the cursor stays put: 200 px into a 1000 px picture, zoomed twice as big
+        assert_eq!(zoom_scroll(200, 0, 1000, 2000, 1000, true), 200);
+        assert_eq!(zoom_scroll(0, 0, 1000, 2000, 1000, true), 0);
+        assert_eq!(zoom_scroll(1000, 0, 1000, 2000, 1000, true), 1000);
+        assert_eq!(zoom_scroll(500, 300, 2000, 1000, 1000, true), 0); // back to fitting: no scroll
+        // a centred 600 px picture in a 1000 px stage: its middle (500) stays in the middle
+        assert_eq!(zoom_scroll(500, 0, 600, 1200, 1000, true), 100);
+        // pages start at the top, not centred
+        assert_eq!(zoom_scroll(100, 0, 600, 1200, 1000, false), 100);
+        assert_eq!(origin(10, 1000, 600, 0, true), 210);
+        assert_eq!(origin(10, 1000, 600, 0, false), 10);
+        assert_eq!(origin(10, 1000, 3000, 700, true), -690);
+        // thumbs: proportional, never below the minimum, at the ends of the track at the ends
+        assert_eq!(thumb(0, 100, 500, 1000, 0, 10), (0, 50));
+        assert_eq!(thumb(0, 100, 500, 1000, 500, 10), (50, 100));
+        assert_eq!(thumb(0, 100, 10, 100_000, 0, 10), (0, 10));
+        assert_eq!(thumb_scroll(0, 100, 500, 1000, 25, 10), 250);
+        assert_eq!(thumb_scroll(0, 100, 500, 1000, 90, 10), 500);
+        assert_eq!(thumb_scroll(0, 100, 500, 1000, -5, 10), 0);
+        // bars only along the way it scrolls, inside the stage, not crossing each other
+        let st = RECT { left: 56, top: 48, right: 1064, bottom: 786 };
+        assert_eq!(zoom_bars(st, (500, 500), 96), [None, None]);
+        let [v, h] = zoom_bars(st, (2000, 2000), 96);
+        let (v, h) = (v.unwrap(), h.unwrap());
+        assert!(v.right <= st.right && v.left > st.right - 20 && h.bottom <= st.bottom && h.top > st.bottom - 20);
+        assert!(v.bottom <= h.top && h.right <= v.left);
+        let [v, h] = zoom_bars(st, (2000, 500), 96); // sideways only: the bar runs the full width
+        assert!(v.is_none() && h.is_some_and(|b| b.right == st.right - 3) && zoom_bars(st, (500, 2000), 96)[1].is_none());
+        // drawing zoomed: only the visible part of the picture is copied
+        let to = RECT { left: -1000, top: -500, right: 3000, bottom: 1500 }; // 400x200 shown 10x
+        let ([x0, y0, x1, y1], at) = visible_part(to, RECT { left: 0, top: 0, right: 1000, bottom: 600 }, 400, 200).unwrap();
+        assert_eq!((x0, y0, x1, y1), (100, 50, 200, 110));
+        assert_eq!(at, RECT { left: 0, top: 0, right: 1000, bottom: 600 });
+        assert_eq!(visible_part(to, RECT { left: 3000, top: 0, right: 3100, bottom: 10 }, 400, 200), None);
+        let fit = RECT { left: 10, top: 10, right: 410, bottom: 210 };
+        assert_eq!(visible_part(fit, RECT { left: 0, top: 0, right: 999, bottom: 999 }, 400, 200).unwrap().0, [0, 0, 400, 200]);
+        // sharper pictures: only when zoomed in enough, and no bigger than the cap
+        assert_eq!(sharp_size(800, 600, 1000, 700, 1.0), None);
+        assert_eq!(sharp_size(800, 600, 1000, 700, 2.0), Some((2000, 1400)));
+        let (w, h) = sharp_size(800, 600, 800, 600, 50.0).unwrap();
+        assert!(w * h <= 16_100_000 && w > 800 * 4);
     }
 
     #[test]
