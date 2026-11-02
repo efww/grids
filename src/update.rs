@@ -21,8 +21,7 @@ pub(crate) const WM_UPDATE: u32 = WM_APP + 3210; // wParam: 0 a release was foun
 pub(crate) const UPDATE_BLUE: u32 = 0x0A6CD6; // white text reads at 5:1 on it, on both themes' toolbars
 const EXE_MAX: usize = 64 << 20;
 const EXE: &str = "grids.exe";
-const NEW_EXE: &str = "grids.new.exe"; // only ever a complete, checked exe: written as grids.new.tmp, then renamed
-const NEW_TMP: &str = "grids.new.tmp";
+const NEW_EXE: &str = "grids.new.exe";
 // where the replaced exe goes; the next free one when an earlier one is still locked (a quick second update)
 const OLD_EXES: [&str; 5] = ["grids.old.exe", "grids.old2.exe", "grids.old3.exe", "grids.old4.exe", "grids.old5.exe"];
 const GITHUB_HOSTS: [&str; 3] = ["github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com"];
@@ -180,58 +179,139 @@ pub(crate) fn unpack(zip: &[u8], sums: &str, ver: &str) -> std::result::Result<V
     }
 }
 
-/// grids.new.exe (already written) takes the running exe's place, which becomes grids.old.exe (or the next free
-/// grids.oldN.exe while an earlier one is still locked). If the second rename fails the first is undone; on any
-/// failure the running exe is back where it was and the new one is gone.
-/// A crash or power cut exactly between the two renames leaves grids.old.exe + grids.new.exe and no grids.exe:
-/// no rename pair can close that window. The next start of either file puts grids.exe back (repair_exe); until
-/// then there is no grids.exe to double-click, only those two.
+// The updater's own files are known by a record, not by their names: next to each grids.new.exe / grids.old*.exe it
+// writes, a <name>.sha256 with the file's SHA-256. Repair and tidy only ever move or delete a file whose SHA-256
+// matches its record; a stray file that merely has one of these names is left alone.
+
+pub(crate) fn record_path(p: &Path) -> PathBuf {
+    let mut s = p.as_os_str().to_owned();
+    s.push(".sha256");
+    PathBuf::from(s)
+}
+
+pub(crate) fn record(p: &Path, hash: &str) -> std::io::Result<()> {
+    std::fs::File::create(record_path(p)).and_then(|mut f| std::io::Write::write_all(&mut f, hash.as_bytes()).and_then(|_| f.sync_all()))
+}
+
+fn forget(p: &Path) {
+    _ = std::fs::remove_file(record_path(p));
+}
+
+/// grids.new.exe (written and recorded by fetch) takes the running exe's place, which becomes grids.old.exe (or the
+/// next free grids.oldN.exe while an earlier one is still locked), recorded first. If the second rename fails the
+/// first is undone; on any failure the running exe is back where it was and the new one is gone.
+/// A crash or power cut exactly between the two renames leaves grids.old.exe + grids.new.exe (both recorded) and no
+/// grids.exe: no rename pair can close that window. The next start of either file puts grids.exe back (repair_exe);
+/// until then there is no grids.exe to double-click, only those two.
 pub(crate) fn swap_exe(exe: &Path) -> std::io::Result<()> {
     let new = exe.with_file_name(NEW_EXE);
-    let free = OLD_EXES.iter().map(|n| exe.with_file_name(n)).find(|o| !o.exists() || std::fs::remove_file(o).is_ok());
-    let Some(old) = free else {
+    let drop_new = || {
         _ = std::fs::remove_file(&new);
+        forget(&new);
+    };
+    let free = OLD_EXES.iter().map(|n| exe.with_file_name(n)).find(|o| !o.exists() || std::fs::remove_file(o).is_ok());
+    let hash = std::fs::read(exe).ok().and_then(|b| sha256_hex(&b));
+    let (Some(old), Some(hash)) = (free, hash) else {
+        drop_new();
         return Err(std::io::ErrorKind::ResourceBusy.into());
     };
-    let r = std::fs::rename(exe, &old).and_then(|_| {
+    let r = record(&old, &hash).and_then(|_| std::fs::rename(exe, &old)).and_then(|_| {
         std::fs::rename(&new, exe).inspect_err(|_| {
             _ = std::fs::rename(&old, exe);
         })
     });
-    if r.is_err() {
-        _ = std::fs::remove_file(&new);
+    match &r {
+        Ok(_) => forget(&new), // it is grids.exe now
+        Err(_) => {
+            forget(&old);
+            drop_new();
+        }
     }
     r
 }
 
-// grids.old*.exe / grids.new.exe: names only the updater gives.
-fn managed(p: &Path) -> bool {
-    p.file_name().and_then(|n| n.to_str()).is_some_and(|n| OLD_EXES.iter().chain(&[NEW_EXE]).any(|m| m.eq_ignore_ascii_case(n)))
+/// An updater-named file found on disk: its SHA-256 (only worked out when there is a record) and the record.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Leftover {
+    pub(crate) name: &'static str,
+    pub(crate) hash: Option<String>,
+    pub(crate) record: Option<String>,
+    pub(crate) age: u64, // modified, seconds since 1970
+}
+
+impl Leftover {
+    fn own(&self) -> bool {
+        self.hash.is_some() && self.hash == self.record
+    }
+}
+
+/// grids.exe is missing: which file goes back in its place. The updater's checked new exe; else, only when this
+/// process runs under one of the updater's names (`me`; a renamed copy is None and gets nothing made up), the newest
+/// checked old exe, or this running exe itself.
+pub(crate) fn repair_pick(found: &[Leftover], me: Option<&str>) -> Option<&'static str> {
+    if let Some(f) = found.iter().find(|f| f.name == NEW_EXE && f.own()) {
+        return Some(f.name);
+    }
+    let me = me?;
+    let olds = found.iter().filter(|f| f.name != NEW_EXE && (f.own() || f.name.eq_ignore_ascii_case(me)));
+    olds.max_by_key(|f| f.age).map(|f| f.name)
+}
+
+/// What can go once grids.exe is in place (or this is a renamed copy): the updater's own files, never the running
+/// one. While this runs under an updater name with no grids.exe, everything stays (nothing else to start from).
+pub(crate) fn tidy_pick(found: &[Leftover], me: Option<&str>, exe_there: bool) -> Vec<&'static str> {
+    if me.is_some() && !exe_there {
+        return Vec::new();
+    }
+    found.iter().filter(|f| f.own() && !me.is_some_and(|m| m.eq_ignore_ascii_case(f.name))).map(|f| f.name).collect()
+}
+
+fn survey(dir: &Path) -> Vec<Leftover> {
+    let one = |name: &'static str| {
+        let p = dir.join(name);
+        let meta = std::fs::metadata(&p).ok()?;
+        let record = std::fs::read_to_string(record_path(&p)).ok().map(|r| r.trim().to_ascii_lowercase());
+        let hash = record.as_ref().and_then(|_| std::fs::read(&p).ok()).and_then(|b| sha256_hex(&b));
+        let age = meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs());
+        Some(Leftover { name, hash, record, age })
+    };
+    OLD_EXES.iter().chain(&[NEW_EXE]).filter_map(|n| one(n)).collect()
+}
+
+// This exe's name when it is one of the updater's.
+fn my_name(me: &Path) -> Option<&'static str> {
+    let n = me.file_name()?.to_str()?;
+    OLD_EXES.iter().chain(&[NEW_EXE]).find(|m| m.eq_ignore_ascii_case(n)).copied()
 }
 
 /// At every start, whatever this exe (`me`) is called: an update cut off between its two renames left no grids.exe.
-/// The new exe (complete by construction) goes back in its place, else the newest old one. Only when there is a new
-/// exe or this is one of those files: a renamed grids (no grids.exe on purpose) is left alone. What it moved, if any.
+/// What was moved into its place, if anything (repair_pick decides).
 pub(crate) fn repair_exe(dir: &Path, me: &Path) -> Option<PathBuf> {
     let exe = dir.join(EXE);
-    if exe.exists() || !(dir.join(NEW_EXE).exists() || managed(me)) {
+    if exe.exists() {
         return None;
     }
-    let mtime = |p: &PathBuf| std::fs::metadata(p).and_then(|m| m.modified()).ok();
-    let olds = OLD_EXES.iter().map(|n| dir.join(n)).filter(|p| p.exists());
-    let from = Some(dir.join(NEW_EXE)).filter(|p| p.exists()).or_else(|| olds.max_by_key(mtime))?;
-    std::fs::rename(&from, &exe).ok().map(|_| from)
+    let from = dir.join(repair_pick(&survey(dir), my_name(me))?);
+    std::fs::rename(&from, &exe).ok()?;
+    forget(&from);
+    Some(from)
 }
 
-/// Leftovers once grids.exe is in place: replaced exes, an unfinished download. Never the running exe. True when
-/// none is left (one still locked by a process on its way out: try again later).
+/// The updater's leftovers (tidy_pick decides), and records whose file is gone. True when none is left (one still
+/// locked by a process on its way out: try again later).
 pub(crate) fn tidy_exes(dir: &Path, me: &Path) -> bool {
-    if managed(me) && !dir.join(EXE).exists() {
-        return true; // nothing else to start from: keep them
+    let found = survey(dir);
+    // recorded but unreadable: still locked by a process on its way out, can't be checked yet
+    let busy = found.iter().any(|f| f.record.is_some() && f.hash.is_none());
+    let gone = tidy_pick(&found, my_name(me), dir.join(EXE).exists());
+    let left = gone.into_iter().map(|n| dir.join(n)).filter(|p| std::fs::remove_file(p).is_err()).count();
+    for n in OLD_EXES.iter().chain(&[NEW_EXE]) {
+        let p = dir.join(n);
+        if !p.exists() {
+            forget(&p);
+        }
     }
-    let names = OLD_EXES.iter().chain(&[NEW_EXE, NEW_TMP]);
-    let left = names.map(|n| dir.join(n)).filter(|p| p.exists() && !p.as_path().eq(me));
-    left.filter(|p| std::fs::remove_file(p).is_err()).count() == 0
+    left == 0 && !busy
 }
 
 // ---------- network (the thread's side) ----------
@@ -311,11 +391,13 @@ fn fetch(r: &UpRelease, exe: &Path) -> std::result::Result<(), UpFail> {
     let zip = http_get(&r.zip, EXE_MAX, 60).ok_or(UpFail::Download)?;
     let sums = http_get(&r.sums, 64 << 10, 15).ok_or(UpFail::Download)?;
     let data = unpack(&zip, &String::from_utf8_lossy(&sums), &r.ver)?;
-    // complete on disk before it gets the name repair_exe trusts
-    let tmp = exe.with_file_name(NEW_TMP);
-    let wrote = std::fs::File::create(&tmp).and_then(|mut f| std::io::Write::write_all(&mut f, &data).and_then(|_| f.sync_all()));
-    wrote.and_then(|_| std::fs::rename(&tmp, exe.with_file_name(NEW_EXE))).map_err(|_| {
-        _ = std::fs::remove_file(&tmp);
+    // the record first: a write cut short then never matches it, so repair won't take a half exe
+    let new = exe.with_file_name(NEW_EXE);
+    let hash = sha256_hex(&data).ok_or(UpFail::Damaged)?;
+    let wrote = record(&new, &hash).and_then(|_| std::fs::File::create(&new)).and_then(|mut f| std::io::Write::write_all(&mut f, &data).and_then(|_| f.sync_all()));
+    wrote.map_err(|_| {
+        _ = std::fs::remove_file(&new);
+        forget(&new);
         UpFail::NoWrite
     })
 }
@@ -336,21 +418,29 @@ pub(crate) unsafe fn start_updates(main: HWND) {
     let fast = test_feed();
     let main = main.0 as isize;
     std::thread::spawn(move || {
-        // left by the last update; the old process may still be on its way out
-        for _ in 0..40 {
-            if tidy_exes(&dir, &me) {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(500));
-        }
-        let mut wait = Duration::from_secs(if fast { 3 } else { 60 });
+        // leftovers of the last update are tidied every half second between checks (the old process may still be
+        // on its way out), up to 20 s; the first check doesn't wait for that
+        let mut tidy = 40;
+        let mut next = Instant::now() + Duration::from_secs(if fast { 3 } else { 60 });
         loop {
-            if let Ok(g) = WAKE.0.lock() {
-                if let Ok((mut g, _)) = WAKE.1.wait_timeout_while(g, wait, |woke| !*woke) {
-                    *g = false;
+            if tidy > 0 {
+                tidy = if tidy_exes(&dir, &me) { 0 } else { tidy - 1 };
+            }
+            let now = Instant::now();
+            if now < next {
+                let wait = if tidy > 0 { (next - now).min(Duration::from_millis(500)) } else { next - now };
+                if let Ok(g) = WAKE.0.lock() {
+                    if let Ok((mut g, _)) = WAKE.1.wait_timeout_while(g, wait, |woke| !*woke) {
+                        if std::mem::take(&mut *g) {
+                            next = Instant::now(); // just turned on: look now
+                        }
+                    }
+                }
+                if Instant::now() < next {
+                    continue;
                 }
             }
-            wait = Duration::from_secs(6 * 3600);
+            next = Instant::now() + Duration::from_secs(6 * 3600);
             if !UPDATES_ON.load(Ordering::Relaxed) {
                 continue;
             }
@@ -581,6 +671,32 @@ mod tests {
     }
 
     #[test]
+    fn update_own_files() {
+        let f = |name: &'static str, hash: Option<&str>, record: Option<&str>, age| Leftover { name, hash: hash.map(String::from), record: record.map(String::from), age };
+        let (new, old, old2) = (f(NEW_EXE, Some("aa"), Some("aa"), 5), f("grids.old.exe", Some("bb"), Some("bb"), 4), f("grids.old2.exe", Some("cc"), Some("cc"), 9));
+        // the checked new exe first, whoever starts
+        assert_eq!(repair_pick(&[old.clone(), new.clone()], Some("grids.old.exe")), Some(NEW_EXE));
+        assert_eq!(repair_pick(&[old.clone(), new.clone()], None), Some(NEW_EXE));
+        // a stray grids.new.exe (no record, or not what was recorded) is never taken (verifier C4)
+        let stray = f(NEW_EXE, None, None, 7);
+        let cut = f(NEW_EXE, Some("ab"), Some("aa"), 7); // write cut short
+        assert_eq!(repair_pick(&[stray.clone()], None), None);
+        assert_eq!(repair_pick(&[cut.clone(), old.clone()], None), None);
+        // old ones only when running under an updater name: the newest checked one, or the running exe itself
+        assert_eq!(repair_pick(&[stray.clone(), old.clone(), old2.clone()], Some("grids.old.exe")), Some("grids.old2.exe"));
+        assert_eq!(repair_pick(&[f("grids.old.exe", None, None, 1)], Some("grids.old.exe")), Some("grids.old.exe"));
+        assert_eq!(repair_pick(&[f("grids.old.exe", None, None, 1), f("grids.old3.exe", None, None, 9)], Some("grids.old.exe")), Some("grids.old.exe"));
+        assert_eq!(repair_pick(&[old.clone()], None), None); // a renamed copy gets no grids.exe made up
+
+        // tidy: own files only, never the running one, nothing while it is the only way back
+        let all = [new.clone(), old.clone(), old2.clone(), stray.clone(), f("grids.old4.exe", Some("dd"), Some("ee"), 1)];
+        assert_eq!(tidy_pick(&all[1..], None, false), ["grids.old.exe", "grids.old2.exe"]);
+        assert_eq!(tidy_pick(&all, None, true), [NEW_EXE, "grids.old.exe", "grids.old2.exe"]);
+        assert_eq!(tidy_pick(&all, Some("grids.old.exe"), true), [NEW_EXE, "grids.old2.exe"]);
+        assert!(tidy_pick(&all, Some("grids.old.exe"), false).is_empty());
+    }
+
+    #[test]
     fn update_swap() {
         use std::os::windows::fs::OpenOptionsExt;
         let dir = std::env::temp_dir().join(format!("grids-update-{}", std::process::id()));
@@ -589,44 +705,48 @@ mod tests {
         let (exe, me) = (dir.join(EXE), dir.join("grids.exe"));
         let read = |n: &str| std::fs::read_to_string(dir.join(n)).ok();
         let put = |n: &str, t: &str| std::fs::write(dir.join(n), t).unwrap();
+        // as fetch leaves it: the exe and its record
+        let fetched = |t: &str| {
+            put(NEW_EXE, t);
+            record(&dir.join(NEW_EXE), &sha256_hex(t.as_bytes()).unwrap()).unwrap();
+        };
         put(EXE, "old");
-        put(NEW_EXE, "new");
+        fetched("new");
         put("grids.old.exe", "older");
         swap_exe(&exe).unwrap();
         assert_eq!((read(EXE), read("grids.old.exe"), read(NEW_EXE)), (Some("new".into()), Some("old".into()), None));
+        assert_eq!(read("grids.old.exe.sha256"), sha256_hex(b"old"));
         // a second update while the first replaced exe is still locked: the next free name
         let lock = std::fs::OpenOptions::new().read(true).share_mode(0).open(dir.join("grids.old.exe")).unwrap();
-        put(NEW_EXE, "newer");
+        fetched("newer");
         swap_exe(&exe).unwrap();
         assert_eq!((read(EXE), read("grids.old2.exe")), (Some("newer".into()), Some("new".into())));
+        assert!(!tidy_exes(&dir, &me)); // the locked one waits
         drop(lock);
-        // tidy: every leftover goes once grids.exe is there
-        put(NEW_TMP, "half");
+        put("grids.old5.exe", "someone else's"); // no record: stays
         assert!(tidy_exes(&dir, &me));
-        assert_eq!((read("grids.old.exe"), read("grids.old2.exe"), read(NEW_TMP), read(EXE)), (None, None, None, Some("newer".into())));
+        assert_eq!((read("grids.old.exe"), read("grids.old2.exe"), read("grids.old5.exe")), (None, None, Some("someone else's".into())));
+        assert!(read("grids.old.exe.sha256").is_none() && read("grids.old2.exe.sha256").is_none());
         // nothing downloaded: the running exe stays where it is
         assert!(swap_exe(&exe).is_err());
         assert_eq!((read(EXE), read("grids.old.exe")), (Some("newer".into()), None));
 
-        // cut off between the two renames: grids.exe gone, old + new there. Any start puts the new one back
+        // cut off between the two renames: any start puts the recorded new one back
+        record(&dir.join("grids.old.exe"), &sha256_hex(b"newer").unwrap()).unwrap();
         std::fs::rename(&exe, dir.join("grids.old.exe")).unwrap();
-        put(NEW_EXE, "next");
+        fetched("next");
         assert_eq!(repair_exe(&dir, &dir.join("grids.old.exe")), Some(dir.join(NEW_EXE)));
         assert_eq!((read(EXE), read(NEW_EXE), read("grids.old.exe")), (Some("next".into()), None, Some("newer".into())));
         assert_eq!(repair_exe(&dir, &me), None); // grids.exe is there
-        // only old ones, started from one of them: the newest goes back
+        // verifier C4: a renamed copy beside a stray grids.new.exe, no grids.exe: nothing moves, nothing goes
         std::fs::remove_file(&exe).unwrap();
-        put("grids.old3.exe", "newest");
-        let later = std::time::SystemTime::now() + Duration::from_secs(60);
-        std::fs::File::options().write(true).open(dir.join("grids.old3.exe")).unwrap().set_modified(later).unwrap();
-        assert_eq!(repair_exe(&dir, &dir.join("grids.old.exe")), Some(dir.join("grids.old3.exe")));
-        assert_eq!(read(EXE), Some("newest".into()));
-        // a renamed grids with an old one lying around: no grids.exe is made up, the leftover goes
-        std::fs::remove_file(&exe).unwrap();
-        let mine = dir.join("mygrids.exe");
         put("mygrids.exe", "mine");
+        put(NEW_EXE, "a text file");
+        let mine = dir.join("mygrids.exe");
         assert_eq!(repair_exe(&dir, &mine), None);
-        assert!(tidy_exes(&dir, &mine) && read("grids.old.exe").is_none() && read(EXE).is_none());
+        tidy_exes(&dir, &mine);
+        assert_eq!((read(EXE), read(NEW_EXE)), (None, Some("a text file".into())));
+        assert_eq!(read("grids.old.exe"), None); // the recorded old one was the updater's: tidied
         _ = std::fs::remove_dir_all(&dir);
     }
 
