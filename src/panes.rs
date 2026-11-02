@@ -672,6 +672,7 @@ pub(crate) unsafe fn theme_chrome() {
         tip_theme(HWND(SendMessageW(tv, TVM_GETTOOLTIPS, None, None).0 as _));
     }
     set_accent(accent);
+    rename_theme();
 }
 
 pub(crate) unsafe fn pick_accent() {
