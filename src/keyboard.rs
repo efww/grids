@@ -4,9 +4,8 @@ use crate::*;
 
 pub(crate) unsafe fn key(m: &MSG) -> bool {
     // the preview takes its own keys; pane shortcuts must not act behind it
-    let peek = app(|a| a.peek);
-    if !peek.0.is_null() && m.hwnd == peek {
-        return false;
+    if let Some(used) = peek_key(m) {
+        return used;
     }
     let down = |k: VIRTUAL_KEY| GetKeyState(k.0 as i32) < 0;
     let (ctrl, shift, alt) = (down(VK_CONTROL), down(VK_SHIFT), down(VK_MENU));
