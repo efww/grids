@@ -63,6 +63,8 @@ mod peek;
 mod keys_window;
 mod paste;
 mod select_pattern;
+mod rename_rules;
+mod rename;
 mod keyboard;
 mod tabs;
 mod window_ui;
@@ -92,6 +94,7 @@ use peek::*;
 use keys_window::*;
 use paste::*;
 use select_pattern::*;
+use rename::*;
 use keyboard::*;
 use tabs::*;
 use window_ui::*;
@@ -222,6 +225,14 @@ fn main() -> Result<()> {
             hInstance: hinst,
             hCursor: arrow,
             lpszClassName: w!("GridsPeekHost"),
+            ..Default::default()
+        });
+        RegisterClassW(&WNDCLASSW {
+            lpfnWndProc: Some(rename_proc),
+            hInstance: hinst,
+            hCursor: arrow,
+            hIcon: LoadIconW(Some(hinst), PCWSTR(1 as _)).unwrap_or_default(),
+            lpszClassName: w!("GridsRename"),
             ..Default::default()
         });
         KO.store(s.ko, Ordering::Relaxed);

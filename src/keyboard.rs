@@ -93,6 +93,11 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
         VK_M if ctrl && shift && !alt => toggle_zoom(),
         VK_E if ctrl && shift && !alt => toggle_tree(),
         VK_O if ctrl && shift && !alt => gather_explorer(),
+        VK_R if ctrl && shift && !alt => {
+            if m.lParam.0 & (1 << 30) == 0 {
+                open_rename(a);
+            }
+        }
         VK_F1 => open_help(),
         VK_RETURN if addr => go_edit(a),
         VK_RETURN if filt => {
@@ -221,6 +226,10 @@ pub(crate) unsafe fn pre_translate(m: &MSG) -> bool {
                     _ => return false,
                 }
                 return true;
+            }
+            // the batch rename window: its own keys, then dialog keys (Tab ...); pane shortcuts stay out of it
+            if let Some(used) = rename_key(m) {
+                return used;
             }
             let tree = m.message == WM_KEYDOWN && in_tree();
             // cleared while key() runs, so the selection sync it triggers isn't taken for user input

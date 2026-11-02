@@ -30,6 +30,7 @@ pub(crate) struct Session {
     pub(crate) tabs_on: bool,          // tab strips shown (View menu), app-wide; the tabs themselves are kept while off
     pub(crate) tabs: Vec<Vec<String>>, // per pane: its tabs' folders; the current one's entry is stale, paths[i] is the truth. <2 = no tabs
     pub(crate) tab: Vec<usize>,        // per pane: current tab
+    pub(crate) rn_presets: Vec<String>, // batch rename presets (rename_rules::preset_text), app-wide
 }
 
 impl Default for Session {
@@ -61,6 +62,7 @@ impl Default for Session {
             tabs_on: false,
             tabs: vec![Vec::new(); MAXP],
             tab: vec![0; MAXP],
+            rn_presets: Vec::new(),
         }
     }
 }
@@ -151,6 +153,7 @@ impl Session {
                 "lang" => s.ko = v.trim() == "ko",
                 "session" => s.file = v.trim().to_string(),
                 "fav" if !v.trim().is_empty() => s.favs.push(v.trim().to_string()),
+                "rename_preset" if !v.trim().is_empty() => s.rn_presets.push(v.trim().to_string()),
                 // older Grids skip it (no p/v/c/t slot key); anything but a full permutation is ignored
                 "order" => {
                     let o: Vec<u8> = nums(v);
@@ -219,6 +222,9 @@ impl Session {
         for r in &self.recent {
             o += &format!("recent={r}\n");
         }
+        for p in &self.rn_presets {
+            o += &format!("rename_preset={p}\n");
+        }
         for i in 0..MAXP {
             if !self.paths[i].is_empty() {
                 o += &format!("p{i}={}\n", self.paths[i]);
@@ -246,7 +252,7 @@ impl Session {
 
     /// What goes into a named session file: no window position, no pointer to itself, no favourites or recent folders.
     pub(crate) fn snapshot(&self) -> String {
-        Session { win: None, file: String::new(), favs: Vec::new(), recent: Vec::new(), order: Vec::new(), ..self.clone() }.to_ini()
+        Session { win: None, file: String::new(), favs: Vec::new(), recent: Vec::new(), order: Vec::new(), rn_presets: Vec::new(), ..self.clone() }.to_ini()
     }
 
     /// Takes grid + folders from a named session; window position and sidebar width stay as they are.
