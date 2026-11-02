@@ -935,7 +935,7 @@ pub(crate) unsafe fn strip_disabled(menu: HMENU, cm: &IContextMenu, targets: u8)
             continue;
         }
         let id = GetMenuItemID(menu, i as i32);
-        // Maguro's own commands (batch rename, favourites, WinMerge) use ids at 0x8000 and above.
+        // Maguro's own commands (batch rename, favourites, WinMerge, Excel read-only) use ids at 0x8000 and above.
         if maguro_menu_id(id) {
             continue;
         }
@@ -4283,8 +4283,10 @@ mod tests {
         assert!(!item_dropped("properties", "プロパティ", &[], &inserted));
         assert!(!item_dropped("open", "開く(O)", &["open".into()], &inserted));
         // Maguro's own WinMerge commands sit at 0x8020 and are not shell rows.
+        // Excel read-only is 0x8005, with the other app rows, and is not a shell row either.
         assert!(maguro_menu_id(0x8020));
         assert!(maguro_menu_id(0x8021));
+        assert!(maguro_menu_id(crate::ID_CTX_EXCEL));
         assert!(!maguro_menu_id(1));
         assert!(!maguro_menu_id(u32::MAX));
     }

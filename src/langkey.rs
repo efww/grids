@@ -700,10 +700,13 @@ pub(crate) enum Key {
     SwitchToProgram,
     CloseProgram,
     CloseProgramAsk,
+    OpenReadOnly,
+    ExcelIsNotInstalled,
+    ExcelDidNotStart,
     CtxWin11Note,
 }
 
-pub(crate) const KEY_COUNT: usize = 698;
+pub(crate) const KEY_COUNT: usize = 701;
 
 const _: () = assert!((Key::CtxWin11Note as usize) + 1 == KEY_COUNT);
 
@@ -1405,6 +1408,9 @@ pub(crate) const EN: [&str; KEY_COUNT] = [
     "Switch to program",
     "Close program",
     "Ask {app} to close?\n\nMaguro will ask it to close. It will not be forced to quit.",
+    "Open read-only",
+    "Excel is not installed, so the selected files can't be opened read-only.",
+    "Excel did not start.",
     "Windows 11 apps start off. Turn on only what you need. Items already shown are not added again. Enabled ones sit with Open. Properties stays last.",
 
 ];
@@ -2107,6 +2113,9 @@ pub(crate) const KEY_ID: [&str; KEY_COUNT] = [
     "switch_to_program",
     "close_program",
     "close_program_ask",
+    "open_read_only",
+    "excel_is_not_installed",
+    "excel_did_not_start",
     "ctx_win11_note",
 
 ];

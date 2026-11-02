@@ -341,7 +341,7 @@ pub(crate) unsafe fn cmd_verb(cm: &IContextMenu, offset: usize) -> String {
     String::from_utf16_lossy(&buf[..end])
 }
 
-/// One GetCommandString pass for observe / properties / fav_anchor / fast_paste / WM_INITMENUPOPUP.
+/// One GetCommandString pass for observe / properties / fav_anchor / fast paste / Excel read-only / WM_INITMENUPOPUP.
 #[derive(Clone, Default)]
 struct VerbIndex {
     by_id: std::collections::HashMap<u32, String>,
@@ -478,6 +478,50 @@ unsafe fn insert_fast_paste(menu: HMENU, cm: &IContextMenu) {
     let _ = InsertMenuW(menu, at, MF_STRING | MF_BYPOSITION, ID_CTX_FAST as usize, &HSTRING::from(tr(crate::Key::FastPaste)));
 }
 
+/// Directly under the top shell Open row. A csv file selected with an xlsx file
+/// often has no shared Open verb, so the row goes at the top instead.
+/// Hidden unless every selected file is an Excel workbook or CSV.
+unsafe fn insert_excel_idx(menu: HMENU, verbs: &VerbIndex) {
+    if let Some(i) = menu_index(menu, ID_CTX_EXCEL as usize) {
+        let _ = DeleteMenu(menu, i, MF_BYPOSITION);
+    }
+    if !super::excelro::armed() {
+        return;
+    }
+    let at = verbs.find_pos_after(menu, "open").unwrap_or(0);
+    let _ = InsertMenuW(menu, at, MF_STRING | MF_BYPOSITION, ID_CTX_EXCEL as usize, &HSTRING::from(tr(crate::Key::OpenReadOnly)));
+}
+
+/// Same row when the verb index was not kept. Shell ids stop below the app range.
+unsafe fn insert_excel(menu: HMENU, cm: &IContextMenu) {
+    if let Some(i) = menu_index(menu, ID_CTX_EXCEL as usize) {
+        let _ = DeleteMenu(menu, i, MF_BYPOSITION);
+    }
+    if !super::excelro::armed() {
+        return;
+    }
+    let n = GetMenuItemCount(Some(menu));
+    if n <= 0 {
+        return;
+    }
+    let mut at = None;
+    for i in 0..n as u32 {
+        if menu_sep(menu, i) {
+            continue;
+        }
+        let id = GetMenuItemID(menu, i as i32);
+        if id == u32::MAX || id < 1 || id >= ID_CTX_FAV {
+            continue;
+        }
+        if cmd_verb(cm, (id - 1) as usize).trim().eq_ignore_ascii_case("open") {
+            at = Some(i + 1);
+            break;
+        }
+    }
+    let at = at.unwrap_or(0);
+    let _ = InsertMenuW(menu, at, MF_STRING | MF_BYPOSITION, ID_CTX_EXCEL as usize, &HSTRING::from(tr(crate::Key::OpenReadOnly)));
+}
+
 fn fast_paste_dest(pane: usize, background: bool, items: &[(String, bool)]) -> String {
     if !background && items.len() == 1 && !items[0].1 && is_fs(&items[0].0) {
         return items[0].0.clone();
@@ -584,6 +628,7 @@ pub(crate) const ID_CTX_PROPS: u32 = 0x8001; // folder Properties, added when th
 pub(crate) const ID_CTX_BATCH: u32 = 0x8002; // batch rename, also outside the shell id range
 pub(crate) const ID_CTX_FAST: u32 = 0x8003; // Fast paste, also outside the shell id range
 pub(crate) const ID_CTX_WHO: u32 = 0x8004; // who is using this file, also outside the shell id range
+pub(crate) const ID_CTX_EXCEL: u32 = 0x8005; // open Excel read-only, also outside the shell id range
 
 pub(crate) struct MenuBridge {
     pub(crate) cm3: Option<IContextMenu3>,
@@ -868,6 +913,13 @@ impl Drop for ClearWho {
     }
 }
 
+struct ClearExcel;
+impl Drop for ClearExcel {
+    fn drop(&mut self) {
+        super::excelro::clear();
+    }
+}
+
 /// One filesystem file. Folders and a background click have no single file to ask about.
 fn who_path(items: &[(String, bool)], background: bool) -> Option<String> {
     if background || items.len() != 1 {
@@ -892,6 +944,8 @@ unsafe fn insert_who(menu: HMENU) {
 }
 
 unsafe fn popup_ctx(owner: HWND, cm: IContextMenu, paths: &[String], items: &[(String, bool)], background: bool, pane_selection: bool, props_folder: &str, pt: POINT, pane: usize, t_pre: std::time::Instant) -> bool {
+    super::excelro::arm(background, items);
+    let _clear_excel = ClearExcel;
     let _pack_ids = ClearPackIds;
     let _clear_who = ClearWho;
     WHO_PATH.with(|p| *p.borrow_mut() = who_path(items, background));
@@ -975,6 +1029,7 @@ unsafe fn popup_ctx(owner: HWND, cm: IContextMenu, paths: &[String], items: &[(S
     finish_shell_menu(menu, Some(&cm), background);
     tidy_fav_item(menu, ID_CTX_FAV as usize);
     insert_fast_paste_idx(menu, &verbs);
+    insert_excel_idx(menu, &verbs);
     super::ctxmenu::dump_menu_items(if background { "background" } else if items.first().is_some_and(|(_, f)| !*f) { "folder" } else { "file" }, menu);
     super::ctxmenu::log_phase("total-pre", t_pre);
     MENU_BRIDGE.with(|b| {
@@ -991,6 +1046,8 @@ unsafe fn popup_ctx(owner: HWND, cm: IContextMenu, paths: &[String], items: &[(S
     } else if cmd == ID_CTX_FAST as i32 {
         let dest = fast_paste_dest(pane, background, items);
         super::fileop::try_fast_paste(pane, Some(dest));
+    } else if cmd == ID_CTX_EXCEL as i32 {
+        super::excelro::open_readonly(owner);
     } else if cmd == ID_CTX_BATCH as i32 {
         // The pane's own menu can re-read the selection in view order. Search results pass their paths.
         if pane_selection {
@@ -1078,8 +1135,10 @@ unsafe fn ctx_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM, _a1: usize, 
             tidy_fav_item(popup, ID_CTX_FAV as usize);
             if let Some(verbs) = VERB_INDEX.with(|v| v.borrow().clone()) {
                 insert_fast_paste_idx(popup, &verbs);
+                insert_excel_idx(popup, &verbs);
             } else if let Some(cm) = open_cm() {
                 insert_fast_paste(popup, &cm);
+                insert_excel(popup, &cm);
             }
         }
         if let Some(lr) = lr {
