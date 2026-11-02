@@ -1301,6 +1301,179 @@ pub(crate) unsafe fn delete_peek(shift: bool) {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum PeekEnter {
+    Open,
+    OpenWith,
+}
+
+/// Enter opens the previewed file. Shift+Enter is Open With. Ctrl and Alt stay unused.
+fn peek_enter(shift: bool, ctrl: bool, alt: bool) -> Option<PeekEnter> {
+    if ctrl || alt {
+        None
+    } else if shift {
+        Some(PeekEnter::OpenWith)
+    } else {
+        Some(PeekEnter::Open)
+    }
+}
+
+/// Path of the file the preview is showing (`peek_job`), not the pane selection.
+fn shown_path() -> Option<String> {
+    peek_job().req.as_ref().map(|r| r.path.clone()).filter(|p| !p.is_empty())
+}
+
+unsafe fn shell_open(path: &str) -> bool {
+    let file = HSTRING::from(path);
+    let r = ShellExecuteW(None, w!("open"), &file, PCWSTR::null(), PCWSTR::null(), SW_SHOWNORMAL);
+    r.0 as isize > 32
+}
+
+unsafe fn refocus_peek(h: HWND) {
+    HOLD_PEEK.store(false, Ordering::SeqCst);
+    if !h.0.is_null() && IsWindow(Some(h)).as_bool() {
+        _ = SetActiveWindow(h);
+        _ = SetFocus(Some(h));
+    }
+}
+
+/// Close peek without pulling the file list forward. The app just launched should stay in front.
+unsafe fn close_peek_after_open(h: HWND) {
+    let i = app(|a| a.peek_pane);
+    let from_find = FROM_FIND.load(Ordering::SeqCst);
+    HOLD_PEEK.store(false, Ordering::SeqCst);
+    if IsWindow(Some(h)).as_bool() {
+        _ = DestroyWindow(h);
+    }
+    // WM_DESTROY arms the find-hide timer because focus left the result list.
+    // Opening the file should leave those rows up, the same as a double-click there.
+    if from_find {
+        let pane = app(|a| a.panes.get(i).and_then(|p| p.as_ref()).map(|p| p.hwnd)).unwrap_or_default();
+        if !pane.0.is_null() {
+            _ = KillTimer(Some(pane), TIMER_FIND);
+        }
+    }
+}
+
+/// Open the file the preview is showing with its default app (`ShellExecute` "open"), then close peek.
+pub(crate) unsafe fn open_peek_default() {
+    let h = app(|a| a.peek);
+    if h.0.is_null() {
+        return;
+    }
+    let Some(path) = shown_path() else {
+        _ = MessageBeep(MB_ICONWARNING);
+        refocus_peek(h);
+        return;
+    };
+    // The launched app deactivates peek. HOLD_PEEK keeps WA_INACTIVE from destroying it mid-call.
+    HOLD_PEEK.store(true, Ordering::SeqCst);
+    let ok = shell_open(&path);
+    if !ok {
+        refocus_peek(h);
+        _ = MessageBeep(MB_ICONWARNING);
+        return;
+    }
+    close_peek_after_open(h);
+}
+
+fn open_with_cancelled(err: &Error) -> bool {
+    err.code() == HRESULT::from_win32(ERROR_CANCELLED.0)
+}
+
+/// Open With for the previewed file.
+/// Close peek first so a topmost peek cannot bury the chooser, then `SHOpenWithDialog`
+/// on the UI thread with the main window as owner. Fallback: `rundll32 OpenAs_RunDLL`.
+pub(crate) unsafe fn open_peek_with() {
+    let h = app(|a| a.peek);
+    if h.0.is_null() {
+        return;
+    }
+    let Some(path) = shown_path() else {
+        _ = MessageBeep(MB_ICONWARNING);
+        refocus_peek(h);
+        return;
+    };
+    let owner = app(|a| a.main);
+    // Peek is topmost; leaving it up puts the chooser behind it and looks like a no-op.
+    close_peek_after_open(h);
+    let file = HSTRING::from(&path);
+    let info = OPENASINFO {
+        pcszFile: PCWSTR(file.as_ptr()),
+        pcszClass: PCWSTR::null(),
+        oaifInFlags: OAIF_ALLOW_REGISTRATION | OAIF_EXEC,
+    };
+    match SHOpenWithDialog((!owner.0.is_null()).then_some(owner), &info) {
+        Ok(()) => {}
+        Err(e) if open_with_cancelled(&e) => {}
+        Err(_) => {
+            let params = HSTRING::from(format!("shell32.dll,OpenAs_RunDLL {path}"));
+            let r = ShellExecuteW(
+                None,
+                w!("open"),
+                w!("rundll32.exe"),
+                &params,
+                PCWSTR::null(),
+                SW_SHOWNORMAL,
+            );
+            if r.0 as isize <= 32 {
+                _ = MessageBeep(MB_ICONWARNING);
+            }
+        }
+    }
+}
+
+const PEEK_CMD_OPEN: usize = 1;
+const PEEK_CMD_OPEN_WITH: usize = 2;
+
+/// Right-click, Shift+F10, or the menu key: Open and Open with for the previewed file.
+unsafe fn peek_context(h: HWND, lp: LPARAM) {
+    if h.0.is_null() || !IsWindow(Some(h)).as_bool() {
+        return;
+    }
+    if shown_path().is_none() {
+        _ = MessageBeep(MB_ICONWARNING);
+        return;
+    }
+    let Ok(menu) = CreatePopupMenu() else { return };
+    let open = format!("{}\tEnter", tr(crate::Key::Open));
+    let with = format!("{}\tShift+Enter", tr(crate::Key::OpenWith));
+    _ = AppendMenuW(menu, MF_STRING, PEEK_CMD_OPEN, &HSTRING::from(open));
+    _ = AppendMenuW(menu, MF_STRING, PEEK_CMD_OPEN_WITH, &HSTRING::from(with));
+    let pt = peek_menu_point(h, lp);
+    // The menu can deactivate peek. HOLD_PEEK keeps WA_INACTIVE from destroying it.
+    HOLD_PEEK.store(true, Ordering::SeqCst);
+    let pick = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_LEFTALIGN | TPM_TOPALIGN, pt.x, pt.y, None, h, None).0 as usize;
+    _ = PostMessageW(Some(h), WM_NULL, WPARAM(0), LPARAM(0));
+    _ = DestroyMenu(menu);
+    if !IsWindow(Some(h)).as_bool() {
+        HOLD_PEEK.store(false, Ordering::SeqCst);
+        return;
+    }
+    // The command sets HOLD_PEEK itself around its own dialog. Drop it first so a
+    // missing path cannot leave the preview stuck open across later focus changes.
+    HOLD_PEEK.store(false, Ordering::SeqCst);
+    match pick {
+        PEEK_CMD_OPEN => open_peek_default(),
+        PEEK_CMD_OPEN_WITH => open_peek_with(),
+        _ => refocus_peek(h),
+    }
+}
+
+fn peek_menu_point(h: HWND, lp: LPARAM) -> POINT {
+    if lp.0 != -1 {
+        return POINT { x: (lp.0 & 0xffff) as i16 as i32, y: ((lp.0 >> 16) & 0xffff) as i16 as i32 };
+    }
+    let mut rc = RECT::default();
+    if unsafe { GetWindowRect(h, &mut rc) }.is_ok() {
+        POINT { x: (rc.left + rc.right) / 2, y: (rc.top + rc.bottom) / 2 }
+    } else {
+        let mut pt = POINT::default();
+        _ = unsafe { GetCursorPos(&mut pt) };
+        pt
+    }
+}
+
 // ---------- Windows preview handlers (Office, Outlook, HTML, fonts, PDF readers) ----------
 
 // The handler wanted now (its preview generation), 0 = none. A host thread whose generation is no longer
@@ -3370,11 +3543,17 @@ fn peek_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
             WM_MOUSEWHEEL => wheel_peek(h, (wp.0 >> 16) as i16 as i32),
             // tilting the wheel: previous / next file, like the arrows
             WM_MOUSEHWHEEL => step_by_wheel(-((wp.0 >> 16) as i16 as i32)),
+            // Open / Open with for the file on screen. A hosted handler may eat a click on the plate;
+            // the title, the keys, and Shift+F10 still reach this window.
+            WM_CONTEXTMENU => peek_context(h, lp),
             WM_KEYDOWN => {
                 let k = VIRTUAL_KEY(wp.0 as u16);
                 let repeat = lp.0 & (1 << 30) != 0;
-                let ctrl = GetKeyState(VK_CONTROL.0 as i32) < 0;
-                let shift = GetKeyState(VK_SHIFT.0 as i32) < 0;
+                // Async: injected Shift/Ctrl reach GetAsyncKeyState before this thread
+                // has processed their WM_KEYDOWN (GetKeyState alone misses Shift+Enter).
+                let ctrl = GetAsyncKeyState(VK_CONTROL.0 as i32) < 0;
+                let shift = GetAsyncKeyState(VK_SHIFT.0 as i32) < 0;
+                let alt = GetAsyncKeyState(VK_MENU.0 as i32) < 0;
                 if ctrl && matches!(k, VK_0 | VK_NUMPAD0) {
                     set_zoom(h, 1.0, None);
                 } else {
@@ -3383,6 +3562,11 @@ fn peek_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                         VK_ESCAPE | VK_SPACE | VK_F3 if !repeat => close_peek(h),
                         VK_DELETE if !repeat && !ctrl => delete_peek(shift),
                         VK_F2 if !repeat && !ctrl => rename_peek(),
+                        VK_RETURN if !repeat => match peek_enter(shift, ctrl, alt) {
+                            Some(PeekEnter::Open) => open_peek_default(),
+                            Some(PeekEnter::OpenWith) => open_peek_with(),
+                            None => {}
+                        },
                         VK_LEFT | VK_RIGHT => step_peek(k == VK_LEFT),
                         VK_UP | VK_DOWN => arrow_scroll(h, k == VK_DOWN, repeat),
                         VK_NEXT => scroll_peek(h, page(), 0),
@@ -3441,6 +3625,24 @@ fn peek_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn peek_enter_opens_the_file_on_screen() {
+        assert_eq!(peek_enter(false, false, false), Some(PeekEnter::Open));
+        assert_eq!(peek_enter(true, false, false), Some(PeekEnter::OpenWith));
+        assert_eq!(peek_enter(false, true, false), None);
+        assert_eq!(peek_enter(true, true, false), None);
+        assert_eq!(peek_enter(false, false, true), None);
+        assert_eq!(peek_enter(true, false, true), None);
+    }
+
+    #[test]
+    fn open_with_cancel_keeps_peek() {
+        let cancel = Error::from(HRESULT::from_win32(ERROR_CANCELLED.0));
+        assert!(open_with_cancelled(&cancel));
+        let missing = Error::from(HRESULT::from_win32(ERROR_FILE_NOT_FOUND.0));
+        assert!(!open_with_cancelled(&missing));
+    }
 
     #[test]
     fn peek_newest_only() {
