@@ -260,6 +260,13 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                         }
                     });
                 }
+                ID_DLGJUMP => {
+                    let on = app(|a| {
+                        a.s.dlgjump ^= true;
+                        a.s.dlgjump
+                    });
+                    dialog_jump::enable(on);
+                }
                 ID_LANG => set_language(!KO.load(Ordering::Relaxed)),
                 ID_HELP => open_help(),
                 ID_ABOUT => about(h),
@@ -270,7 +277,8 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 _ => {}
             },
             WM_INITMENUPOPUP => {
-                let (menu, dblup, tree, accent, hot, follow) = app(|a| (a.view_menu, a.s.dblup, a.s.tree, a.s.accent_now(), a.hot_on, a.s.follow));
+                let (menu, dblup, tree, accent, hot, follow, jump) =
+                    app(|a| (a.view_menu, a.s.dblup, a.s.tree, a.s.accent_now(), a.hot_on, a.s.follow, a.s.dlgjump));
                 let check = |id: usize, on: bool| CheckMenuItem(menu, id as u32, (MF_BYCOMMAND | if on { MF_CHECKED } else { MF_UNCHECKED }).0);
                 check(ID_TREE, tree);
                 check(ID_FOLLOW, follow);
@@ -279,6 +287,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 check(ID_DBLUP, dblup);
                 check(ID_TABS, TABS_ON.load(Ordering::Relaxed));
                 check(ID_HOTKEY, hot);
+                check(ID_DLGJUMP, jump);
                 check(ID_LANG, KO.load(Ordering::Relaxed));
                 for (k, (_, c)) in pal().accents.iter().enumerate() {
                     check(ID_ACCENT + k, *c == accent);
@@ -313,8 +322,11 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             // Windows restart / sign-out: no WM_CLOSE comes. WM_QUERYENDSESSION stays with DefWindowProcW (never blocks).
             WM_ENDSESSION if wp.0 != 0 => save_session(),
             WM_HOTKEY if wp.0 == HOTKEY_ID as usize => hotkey_pressed(h),
+            WM_HOTKEY if wp.0 == dialog_jump::DLG_HOTKEY_ID as usize => dialog_jump::on_hotkey(),
+            WM_TIMER if wp.0 == dialog_jump::TIMER_DLG_RETRY || wp.0 == dialog_jump::TIMER_DLG_RESTORE => dialog_jump::on_timer(wp.0),
             WM_DESTROY => {
                 _ = KillTimer(Some(h), TIMER_STATUS);
+                dialog_jump::shutdown();
                 if app(|a| a.hot_on) {
                     set_hotkey(h, false);
                 }
@@ -690,6 +702,8 @@ pub(crate) unsafe fn make_menus() -> Result<HMENU> {
     item(view, MF_STRING, ID_EXT, tr("Show file name extensions", "파일 확장명 표시"))?;
     item(view, MF_STRING, ID_DBLUP, tr("Double-click empty space: parent folder", "빈 곳 더블클릭: 위 폴더로"))?;
     item(view, MF_STRING, ID_HOTKEY, tr("Bring Grids to front from anywhere\tWin+Alt+E", "어디서나 Grids 불러오기\tWin+Alt+E"))?;
+    let jump = tr("Jump to Grids folders from file dialogs\tCtrl+Alt+G", "파일 대화 상자에서 Grids 폴더로 이동\tCtrl+Alt+G");
+    item(view, MF_STRING, ID_DLGJUMP, jump)?;
     item(view, MF_STRING, ID_FOLLOW, tr("Follow Windows light/dark", "Windows 라이트·다크 따르기"))?;
     let colors = CreatePopupMenu()?;
     for (k, (name, _)) in LIGHT.accents.iter().enumerate() {
