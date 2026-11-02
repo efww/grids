@@ -436,7 +436,7 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
     }
     if let Some(i) = crate::keys::lookup(vk, ctrl, shift, alt, win) {
         let id = crate::keys::id_of(i);
-        if matches!(id, "app.keys" | "view.peek" | "view.preview" | "app.front" | "dialog.jump" | "view.gather" | "view.recentfiles" | "file.mkdir" | "file.winmerge" | "file.reveal" | "file.basket" | "file.basket.add") && m.lParam.0 & (1 << 30) != 0 {
+        if matches!(id, "app.keys" | "view.peek" | "view.preview" | "app.front" | "dialog.jump" | "view.gather" | "view.recentfiles" | "file.mkdir" | "file.winmerge" | "file.reveal" | "file.basket" | "file.basket.add" | "ws.load" | "ws.save") && m.lParam.0 & (1 << 30) != 0 {
             return true;
         }
         // Pane-tab chords stay out of the address bar (already returned) and out of every other focus,
@@ -619,6 +619,16 @@ unsafe fn dispatch(id: &str, vk: u16, a: usize, list: bool, shell: impl Fn() -> 
         "pane.tab.next" => step_pane_tab(a, 1),
         "pane.tab.prev" => step_pane_tab(a, -1),
         "sess.save" => save_current(),
+        "ws.load" => {
+            if let Some(n) = workspace_digit(vk) {
+                load_workspace(n);
+            }
+        }
+        "ws.save" => {
+            if let Some(n) = workspace_digit(vk) {
+                save_workspace(n);
+            }
+        }
         "fav.list" => open_favs(),
         "app.settings" => settings::open(app(|x| x.main)),
         "app.help" => open_help(),

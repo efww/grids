@@ -51,6 +51,7 @@ const MOVE: crate::Key = crate::Key::Move;
 const VIEW: crate::Key = crate::Key::View;
 const FILE: crate::Key = crate::Key::File;
 const SESS: crate::Key = crate::Key::Session;
+const WS: crate::Key = crate::Key::Workspaces;
 const FAV: crate::Key = crate::Key::Favourites;
 const HELP: crate::Key = crate::Key::Help;
 const WIN: crate::Key = crate::Key::Window;
@@ -116,6 +117,10 @@ const CMDS: &[Cmd] = &[
     // Show in folder, only while the pane is showing Recent files. Elsewhere the key is forwarded.
     cmd("file.reveal", FILE, crate::Key::ShowInFolder, 0x0D, true, false, false, false, false),
     cmd("sess.save", SESS, crate::Key::SaveThisTab, 0x53, true, false, false, false, false),
+    // Ctrl+1..9 stays Go to pane. These add Alt, and Alt+Shift. Not registered as global hotkeys
+    // (those are Win+Shift+E, and Ctrl+Alt+G while a file dialog is in front).
+    cmd("ws.load", WS, crate::Key::LoadWorkspace, 0x31, true, false, true, false, true),
+    cmd("ws.save", WS, crate::Key::SaveWorkspace, 0x31, true, true, true, false, true),
     cmd("fav.list", FAV, crate::Key::Favourites, 0x42, true, false, false, false, false),
     cmd("app.settings", HELP, crate::Key::Settings2, 0xBC, true, false, false, false, false),
     cmd("app.help", HELP, crate::Key::ShortcutHelp, 0x70, false, false, false, false, false),
@@ -387,6 +392,20 @@ pub(crate) fn bindings_json() -> Map<String, Value> {
     })
 }
 
+/// One key of a 1–9 range, as it should appear on a menu. A chord that is not a range is shown as-is.
+pub(crate) fn range_chord(i: usize, digit: u8) -> String {
+    with(|s| {
+        let Some(c) = s.binds.get(i).copied() else { return String::new() };
+        if !c.digits || !(1..=9).contains(&digit) {
+            return format_chord(&c);
+        }
+        let mut one = c;
+        one.digits = false;
+        one.vk = 0x30 + digit as u16;
+        format_one(&one)
+    })
+}
+
 pub(crate) fn format_chord(c: &Chord) -> String {
     if c.digits {
         let mut one = *c;
@@ -649,6 +668,8 @@ mod tests {
         assert!(help_text().lines().any(|l| l == "Alt+P\tPreview pane"));
         assert_ne!(lookup(b'P' as u16, true, false, false, false), index("view.preview"));
         assert_eq!(lookup(b'E' as u16, false, false, true, true), None);
+        assert_eq!(lookup(b'3' as u16, true, false, true, false), index("ws.load"));
+        assert_eq!(lookup(b'3' as u16, true, true, true, false), index("ws.save"));
         assert_eq!(lookup(b'E' as u16, false, false, true, false), None);
         assert_eq!(lookup(b'C' as u16, true, false, true, false), index("file.winmerge"));
         assert_eq!(lookup(b'C' as u16, true, true, false, false), index("file.path"));
@@ -686,6 +707,35 @@ mod tests {
                 assert!(!overlaps(c.chord(), chord), "{} collides with tab.dup", c.id);
             }
         }
+    }
+
+    #[test]
+    fn workspace_chords_do_not_clash_with_defaults_or_global_hotkeys() {
+        fresh();
+        let load = index("ws.load").unwrap();
+        let save = index("ws.save").unwrap();
+        assert_eq!(chord_text(load), "Ctrl+Alt+1 … Ctrl+Alt+9");
+        assert_eq!(chord_text(save), "Ctrl+Alt+Shift+1 … Ctrl+Alt+Shift+9");
+        let load_c = default_chord(load).unwrap();
+        let save_c = default_chord(save).unwrap();
+        for (i, c) in CMDS.iter().enumerate() {
+            if i != load {
+                assert!(!overlaps(c.chord(), load_c), "{} overlaps load workspace", c.id);
+            }
+            if i != save {
+                assert!(!overlaps(c.chord(), save_c), "{} overlaps save workspace", c.id);
+            }
+        }
+        let hot = hot_chord().unwrap();
+        let dialog = dialog_chord().unwrap();
+        assert!(!overlaps(hot, load_c) && !overlaps(hot, save_c));
+        assert!(!overlaps(dialog, load_c) && !overlaps(dialog, save_c));
+        assert_eq!(format_chord(&hot), "Win+Shift+E");
+        assert_eq!(format_chord(&dialog), "Ctrl+Alt+G");
+        assert_eq!(range_chord(load, 4), "Ctrl+Alt+4");
+        assert_eq!(range_chord(save, 4), "Ctrl+Alt+Shift+4");
+        // Go to pane keeps the chord without Alt.
+        assert_eq!(lookup(b'4' as u16, true, false, false, false), index("pane.goto"));
     }
 
     #[test]

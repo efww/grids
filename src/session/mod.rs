@@ -4,6 +4,7 @@ mod load;
 mod model;
 mod pick;
 mod split;
+pub(crate) mod workspace;
 
 pub(crate) use favtree::*;
 // `split` also exports `retarget_path` (saved-session path maps). Call this name from outside.
@@ -13,3 +14,4 @@ pub(crate) use load::*;
 pub(crate) use model::*;
 pub(crate) use pick::*;
 pub(crate) use split::*;
+pub(crate) use workspace::*;

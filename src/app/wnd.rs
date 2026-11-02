@@ -239,6 +239,7 @@ fn main_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                 id if id == ID_TB_LOAD as usize => open_session_list(),
                 ID_SESS_SAVE => save_current(),
                 ID_SESS_OPEN => open_session_list(),
+                id if workspace_command(id) => {}
                 id if id == ID_TB_FAV as usize => open_fav_manager(h),
                 id if id == ID_TB_SET as usize => popup_menu(app(|a| a.view_menu), ID_TB_SET),
                 id if (ID_DRIVE as usize..ID_DRIVE as usize + 26).contains(&id) => {
@@ -322,6 +323,7 @@ fn main_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                 // Submenus (language, colours, WinMerge panes) also send this. Rebuilding then destroys the one that just opened.
                 if HMENU(wp.0 as _) == menu {
                     crate::winmerge::sync_gear(menu);
+                    sync_workspace_menu(menu);
                 }
                 let check = |id: usize, on: bool| CheckMenuItem(menu, id as u32, (MF_BYCOMMAND | if on { MF_CHECKED } else { MF_UNCHECKED }).0);
                 check(ID_HIDDEN, hidden());
@@ -1091,6 +1093,8 @@ pub(crate) unsafe fn make_menus() -> Result<HMENU> {
     let save_chord = crate::keys::index("sess.save").map(crate::keys::chord_text).unwrap_or_default();
     item(view, MF_STRING, ID_SESS_SAVE, &format!("{}\t{}", tr(crate::Key::SaveThisTab), save_chord))?;
     item(view, MF_STRING, ID_SESS_OPEN, tr(crate::Key::OpenSession2))?;
+    let workspaces = workspace_menu()?;
+    item(view, MF_POPUP, workspaces.0 as usize, tr(crate::Key::Workspaces))?;
     AppendMenuW(view, MF_SEPARATOR, 0, PCWSTR::null())?;
     item(view, MF_STRING, ID_HIDDEN, tr(crate::Key::ShowHiddenFilesCtrlH))?;
     item(view, MF_STRING, ID_PANEL, tr(crate::Key::LeftPanelCtrlShiftE))?;

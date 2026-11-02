@@ -39,6 +39,12 @@ pub(crate) const ID_RECENT: usize = 1121; // gear: open the Windows Recent folde
 pub(crate) const ID_REVEAL: usize = 1123; // gear: show the selected recent file in its folder
 pub(crate) const ID_SESS_SAVE: usize = 1130; // gear: save the current tab
 pub(crate) const ID_SESS_OPEN: usize = 1131; // gear: open a saved tab as a new tab
+/// Gear → Workspaces. Each range is slot 0..8 (keys 1..9).
+pub(crate) const ID_WS_SAVE: usize = 1900;
+pub(crate) const ID_WS_LOAD: usize = 1910;
+pub(crate) const ID_WS_RENAME: usize = 1920;
+pub(crate) const ID_WS_CLEAR: usize = 1930;
+pub(crate) const ID_WS_CONFIRM: usize = 1940;
 pub(crate) const WM_THEME_SYNC: u32 = WM_APP + 47;
 pub(crate) const WM_THEME_PANE: u32 = WM_APP + 63; // rebuild one shell view for the theme that just changed
 pub(crate) const WM_THEME_SCROLL: u32 = WM_APP + 64; // scroll and select-all, after that view has rows
