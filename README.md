@@ -1,6 +1,6 @@
 # Grids
 
-A fast, lightweight multi-pane file manager for Windows. Up to 16 Explorer panes in one window, a folder tree on the left, and layouts you change with one drag. One small exe (about 450 KB), nothing to install.
+A fast, lightweight multi-pane file manager for Windows. Up to 16 Explorer panes in one window, a folder tree on the left, and layouts you change with one drag. One small exe (under 1 MB), nothing to install.
 
 [한국어](README.ko.md)
 
@@ -33,6 +33,12 @@ Every pane is a real Windows Explorer view, so right-click menus, drag and drop,
 - **Single instance**: running `grids.exe C:\a D:\b` or opening a `.grids` session file reuses the open window.
 - **Portable**: settings live in `grids.ini` next to the exe, named sessions in the `sessions` folder beside it. Changes are saved automatically as you make them, so after a Windows restart, sign-out or crash Grids reopens the last state it managed to save.
 - **English or Korean** (View menu). The Explorer parts inside each pane, such as column names and right-click menus, follow your Windows display language.
+- **Batch rename (Ctrl+Shift+R)**: rename the selected items, or every file in the folder, with a stack of rules (replace with optional regex, insert, remove, numbering, date, case, trim spaces). A live preview marks invalid names, duplicates and existing files. The rename is all or nothing, safe for swaps, and can be undone. Rule sets can be saved as presets in grids.ini.
+- **More in the quick preview**: Del / Shift+Del sends the file shown to the Recycle Bin / deletes it (Windows asks as in Explorer) and moves on to the next; F2 renames it in place; Ctrl+wheel or Ctrl+= / - / 0 zooms pictures and PDF pages (drag or scrollbars to move around).
+- **Small shell helpers**: Shift+F7 makes a new text file ready to rename; the ⇄ menu tells which program is using the selected files (switch to it or ask it to close) and, with [WinMerge](https://winmerge.org) installed, compares 2 selected items or this folder with another pane's.
+- **Jump from file dialogs**: in another app's Open/Save dialog press Ctrl+Alt+G to pick one of Grids' open folders; the dialog goes there and keeps the file name you typed (View menu, on by default; the key is only taken while such a dialog is in front).
+- **Everything search** (Ctrl+Shift+F or the orange magnifier, shown while [Everything](https://www.voidtools.com) runs): results as you type, Enter shows the item selected in the active pane, Ctrl+Enter opens a folder, Alt+O searches only under the current folder.
+- **Updates**: when a newer release is out, a blue Update button appears at the top right; one click downloads it from GitHub, checks its SHA-256 and restarts Grids into it with your folders and settings. View > Check for updates turns this (and all network use) off.
 
 | Layout picker | Sessions | Favourites |
 | --- | --- | --- |
@@ -82,6 +88,13 @@ The exe is not code-signed, so Windows SmartScreen may warn the first time: choo
 | Num+ / Ctrl+Shift+A | Select files by pattern (`*.jpg;*.png` or part of a name; Shift+Enter deselects) |
 | Num− | Deselect files by pattern |
 | Num* | Invert the selection |
+| Ctrl+Shift+R | Batch rename (in the window: Ctrl+Enter rename, Esc close; rule list: Space on/off, Ins add, Del remove, Alt+↑/↓ move) |
+| Shift+F7 | New text file |
+| Ctrl+Shift+F | Search with Everything (↑/↓, Enter: show in the active pane, Ctrl+Enter: open a folder, Alt+O: only under this folder) |
+| Ctrl+Alt+G | In another app's Open / Save dialog: jump to a folder open in Grids |
+| Del / Shift+Del (preview) | Recycle / delete the file shown, go to the next |
+| F2 (preview) | Rename the file shown |
+| Ctrl+wheel, Ctrl+= / Ctrl+- / Ctrl+0 (preview) | Zoom in / out / fit |
 | F2, Del, Ctrl+C / X / V, F5 | Same as Explorer |
 
 Double-clicking empty space in a pane goes up a folder (can be turned off in the view menu).
@@ -110,6 +123,8 @@ This builds `target\release\grids.exe` and copies it to `grids.exe` in the proje
 Inspired by [Q-Dir](https://www.softwareok.com/?seite=Freeware/Q-Dir). Grids is an independent project, not affiliated with Q-Dir or its author.
 
 Thanks to Jun ([@Samek86](https://github.com/Samek86)): the fix for F3, Space and F7 doing nothing in the file list on some PCs and the screen-reader pane names after a layout change come from Jun's fork, [Samek86/grids](https://github.com/Samek86/grids).
+
+Batch rename, the preview's Del / F2 / zoom, Shift+F7 new text file, "which program is using this?", WinMerge compare, the file dialog jump, Everything search and the in-app update were ported from Jun's fork [Samek86/maguro](https://github.com/Samek86/maguro) (MIT) and re-implemented for Grids, with Jun credited as co-author on those commits.
 
 ## License
 
