@@ -13,6 +13,7 @@ name = "grids"
 version = "0.6.5"
 dependencies = [
  "miniz_oxide",
+ "regex-lite",
  "windows",
  "windows-core",
 ]
@@ -43,6 +44,12 @@ checksum = "1fbf4db142a473a8d80c26bbf18454ed458bf8d26c8219c331daecfdbd079001"
 dependencies = [
  "proc-macro2",
 ]
+
+[[package]]
+name = "regex-lite"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cab834c73d247e67f4fae452806d17d3c7501756d98c8808d7c9c7aa7d18f973"
 
 [[package]]
 name = "syn"

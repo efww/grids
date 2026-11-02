@@ -19,6 +19,7 @@ pub(crate) struct Session {
     pub(crate) dblup: bool,            // double-click on empty space goes to the parent folder
     pub(crate) tree: bool,             // folder tree shown (side keeps its width while hidden)
     pub(crate) hotkey: bool,           // Win+Alt+E brings Grids to the front, app-wide (not part of a layout)
+    pub(crate) dlgjump: bool,          // Ctrl+Alt+G in other apps' file dialogs lists Grids' folders (dialog_jump.rs)
     pub(crate) file: String,          // named session (.grids) the layout was last loaded from / saved to
     pub(crate) favs: Vec<String>,      // favourite folders (parsing names), app-wide
     pub(crate) recent: Vec<String>,    // recently visited folders from every pane, newest first, app-wide
@@ -29,6 +30,9 @@ pub(crate) struct Session {
     pub(crate) tabs_on: bool,          // tab strips shown (View menu), app-wide; the tabs themselves are kept while off
     pub(crate) tabs: Vec<Vec<String>>, // per pane: its tabs' folders; the current one's entry is stale, paths[i] is the truth. <2 = no tabs
     pub(crate) tab: Vec<usize>,        // per pane: current tab
+    pub(crate) rn_presets: Vec<String>, // batch rename presets (rename_rules::preset_text), app-wide
+    pub(crate) ev_here: bool,          // Everything search: only under the active pane's folder (off = whole PC), app-wide
+    pub(crate) updates: bool,          // look for a newer release now and then (off = no network at all), app-wide
 }
 
 impl Default for Session {
@@ -49,6 +53,7 @@ impl Default for Session {
             dblup: true,
             tree: true,
             hotkey: true,
+            dlgjump: true,
             file: String::new(),
             favs: Vec::new(),
             recent: Vec::new(),
@@ -59,6 +64,9 @@ impl Default for Session {
             tabs_on: false,
             tabs: vec![Vec::new(); MAXP],
             tab: vec![0; MAXP],
+            rn_presets: Vec::new(),
+            ev_here: false,
+            updates: true,
         }
     }
 }
@@ -144,10 +152,14 @@ impl Session {
                 "dblup" => s.dblup = v.trim() != "0",
                 "tree" => s.tree = v.trim() != "0",
                 "hotkey" => s.hotkey = v.trim() != "0",
+                "dialog_jump" => s.dlgjump = v.trim() != "0",
                 "tabs" => s.tabs_on = v.trim() == "1",
+                "ev_here" => s.ev_here = v.trim() == "1",
+                "update_check" => s.updates = v.trim() != "0",
                 "lang" => s.ko = v.trim() == "ko",
                 "session" => s.file = v.trim().to_string(),
                 "fav" if !v.trim().is_empty() => s.favs.push(v.trim().to_string()),
+                "rename_preset" if !v.trim().is_empty() => s.rn_presets.push(v.trim().to_string()),
                 // older Grids skip it (no p/v/c/t slot key); anything but a full permutation is ignored
                 "order" => {
                     let o: Vec<u8> = nums(v);
@@ -201,7 +213,9 @@ impl Session {
         o += &format!("accent={:06X}\naccent_dark={:06X}\ndark={}\n", self.accent, self.accent_dark, self.dark as u8);
         o += &format!("follow_theme={}\n", self.follow as u8);
         o += &format!("dblup={}\ntree={}\nhotkey={}\n", self.dblup as u8, self.tree as u8, self.hotkey as u8);
+        o += &format!("dialog_jump={}\n", self.dlgjump as u8);
         o += &format!("tabs={}\n", self.tabs_on as u8);
+        o += &format!("ev_here={}\nupdate_check={}\n", self.ev_here as u8, self.updates as u8);
         o += &format!("lang={}\n", if self.ko { "ko" } else { "en" });
         if !self.file.is_empty() {
             o += &format!("session={}\n", self.file);
@@ -214,6 +228,9 @@ impl Session {
         }
         for r in &self.recent {
             o += &format!("recent={r}\n");
+        }
+        for p in &self.rn_presets {
+            o += &format!("rename_preset={p}\n");
         }
         for i in 0..MAXP {
             if !self.paths[i].is_empty() {
@@ -242,7 +259,7 @@ impl Session {
 
     /// What goes into a named session file: no window position, no pointer to itself, no favourites or recent folders.
     pub(crate) fn snapshot(&self) -> String {
-        Session { win: None, file: String::new(), favs: Vec::new(), recent: Vec::new(), order: Vec::new(), ..self.clone() }.to_ini()
+        Session { win: None, file: String::new(), favs: Vec::new(), recent: Vec::new(), order: Vec::new(), rn_presets: Vec::new(), ..self.clone() }.to_ini()
     }
 
     /// Takes grid + folders from a named session; window position and sidebar width stay as they are.

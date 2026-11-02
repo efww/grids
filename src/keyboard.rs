@@ -4,9 +4,12 @@ use crate::*;
 
 pub(crate) unsafe fn key(m: &MSG) -> bool {
     // the preview takes its own keys; pane shortcuts must not act behind it
-    let peek = app(|a| a.peek);
-    if !peek.0.is_null() && m.hwnd == peek {
-        return false;
+    if let Some(used) = peek_key(m) {
+        return used;
+    }
+    // the Everything search box takes its list keys; the rest is typing
+    if let Some(used) = ev_key(m) {
+        return used;
     }
     let down = |k: VIRTUAL_KEY| GetKeyState(k.0 as i32) < 0;
     let (ctrl, shift, alt) = (down(VK_CONTROL), down(VK_SHIFT), down(VK_MENU));
@@ -81,6 +84,7 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
         VK_L if ctrl => return focus_ctl(a, ID_EDIT),
         VK_D if alt => return focus_ctl(a, ID_EDIT),
         VK_F4 if !alt => return focus_ctl(a, ID_EDIT),
+        VK_F if ctrl && shift && !alt => open_ev(),
         VK_F if ctrl => return focus_ctl(a, ID_FILTER),
         VK_H if ctrl => toggle_hidden(),
         VK_S if ctrl => save_current(),
@@ -94,6 +98,11 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
         VK_M if ctrl && shift && !alt => toggle_zoom(),
         VK_E if ctrl && shift && !alt => toggle_tree(),
         VK_O if ctrl && shift && !alt => gather_explorer(),
+        VK_R if ctrl && shift && !alt => {
+            if m.lParam.0 & (1 << 30) == 0 {
+                open_rename(a);
+            }
+        }
         VK_F1 => open_help(),
         VK_RETURN if addr => go_edit(a),
         VK_RETURN if filt => {
@@ -152,6 +161,11 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
         VK_F7 if !ctrl && !shift && !alt && list() => {
             if m.lParam.0 & (1 << 30) == 0 {
                 new_folder(a);
+            }
+        }
+        VK_F7 if !ctrl && shift && !alt && list() => {
+            if m.lParam.0 & (1 << 30) == 0 {
+                new_text_file(a);
             }
         }
         VK_V if ctrl && !shift && !alt && list() => {
@@ -217,6 +231,10 @@ pub(crate) unsafe fn pre_translate(m: &MSG) -> bool {
                     _ => return false,
                 }
                 return true;
+            }
+            // the batch rename window: its own keys, then dialog keys (Tab ...); pane shortcuts stay out of it
+            if let Some(used) = rename_key(m) {
+                return used;
             }
             let tree = m.message == WM_KEYDOWN && in_tree();
             // cleared while key() runs, so the selection sync it triggers isn't taken for user input

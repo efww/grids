@@ -17,6 +17,8 @@ pub(crate) const ID_TB_LOAD: i32 = 204;
 pub(crate) const ID_TB_THEME: i32 = 205;
 pub(crate) const ID_TB_FAV: i32 = 206;
 pub(crate) const ID_TB_VIEW: i32 = 203;
+pub(crate) const ID_TB_EV: i32 = 207; // orange magnifier: Everything search, shown while Everything runs
+pub(crate) const ID_TB_UPDATE: i32 = 208; // blue "Update", shown when a newer release is out
 pub(crate) const ID_DRIVE: i32 = 1500; // + 0..25: drive buttons A: … Z:
 // menu ids
 pub(crate) const ID_HIDDEN: usize = 1100;
@@ -31,6 +33,8 @@ pub(crate) const ID_EXT: usize = 1108;
 pub(crate) const ID_HOTKEY: usize = 1109;
 pub(crate) const ID_FOLLOW: usize = 1110;
 pub(crate) const ID_TABS: usize = 1111;
+pub(crate) const ID_DLGJUMP: usize = 1140;
+pub(crate) const ID_UPDATES: usize = 1150; // view menu: check for updates
 pub(crate) const HOME: &str = "https://github.com/efww/grids";
 pub(crate) const ID_ACCENT: usize = 1400; // + preset index
 pub(crate) const ID_ACCENT_PICK: usize = 1410;
@@ -160,6 +164,7 @@ pub(crate) fn glyph(id: i32) -> &'static str {
         ID_TB_SAVE => "\u{E74E}",
         ID_TB_LOAD => "\u{E838}",
         ID_TB_FAV => "\u{E734}",
+        ID_TB_EV => ICON_SEARCH,
         ID_TB_THEME if DARK_ON.load(Ordering::Relaxed) => "\u{E706}", // sun: back to light
         ID_TB_THEME => "\u{E708}",                                     // moon: go dark
         _ => "\u{E890}",
@@ -190,30 +195,37 @@ Ctrl+Shift+M\tMaximize / restore the active pane (or double-click its header)\n\
 Ctrl+Shift+E\tHide / show the folder tree (its width is kept)\n\
 Ctrl+Shift+O\tOpen the folders of Explorer windows and tabs in panes (panes already showing one stay put)\n\
 Ctrl+Shift+C\tCopy the full path of the selected items (or of the current folder)\n\
+Ctrl+Shift+R\tBatch rename the selected items (none selected: every file in the folder): rules such as replace, numbering, date, case; live preview, Undo, presets. In the window: Ctrl+Enter renames, Esc closes; in the rule list Space switches a rule on/off, Ins adds, Del removes, Alt+↑/↓ moves it\n\
 Num+ / Ctrl+Shift+A\tSelect files by pattern (*.jpg;*.png or part of a name; Shift+Enter deselects)\n\
 Num−\tDeselect files by pattern\n\
 Num*\tInvert the selection\n\
 Ctrl+F\tFilter (*.pdf;*.txt or part of a name; folders always show)\n\
 Alt+↓ in the filter\tFile types: pictures, videos, documents ... (or click the filter's icon)\n\
+Ctrl+Shift+F\tSearch the whole PC with Everything, while it runs (or the orange magnifier): ↑/↓ choose, Enter shows the item in the active pane, Ctrl+Enter opens a folder, Alt+O only under this folder\n\
 Ctrl+T / Ctrl+W\tNew tab (same folder) / close tab, with tabs on (View menu)\n\
 Ctrl+K\tDuplicate the current tab\n\
 Ctrl+PgDn / Ctrl+PgUp\tNext / previous tab\n\
 F7\tNew folder\n\
+Shift+F7\tNew text file (named, selected and ready to rename)\n\
 F6 / Shift+F6\tMove between file list, address bar, filter and folder tree\n\
 Enter / Esc\tApply / cancel the address or filter\n\
 Ctrl+H\tShow hidden files\n\
 F3, Space\tQuick preview of the focused file: pictures, text and code, Markdown, CSV tables, Office / PDF / HTML / mail (files up to 10 MB), HWP / HWPX, ZIP contents, folders; anything else as a card of facts (arrows or the wheel: previous / next file without closing; on long text the wheel scrolls first and moves on past the end; PgUp / PgDn: scroll; Esc: close, also while it is still opening)\n\
+Del / Shift+Del, F2\tIn the preview: the file shown to the Recycle Bin / deleted for good (Windows asks as in Explorer; the preview moves on to the next file), or renamed in its header (Enter / Esc)\n\
+Ctrl+wheel, Ctrl+= / Ctrl+- / Ctrl+0\tIn the preview: zoom a picture or PDF in / out (the wheel zooms on the cursor) / back to fit; zoomed in, drag it or its scrollbars to move around\n\
 Ctrl+V\tWith a copied picture (screenshot, browser image): save it here as a PNG file\n\
 F1\tHelp (opens the README on GitHub)\n\
 Win+Alt+E\tBring Grids to front from any app (again: minimize)\n\
+Ctrl+Alt+G\tIn another app's Open / Save dialog: jump to a folder open in Grids\n\
 F2, Del, Ctrl+C/X/V, F5\tSame as Explorer\n\n\
 Address bar: click a folder in the path to go there; click a › to list the folders inside; click the current folder or empty space, or press Ctrl+L, to type a path\n\
 Layout button: click for an even grid, press and drag for rows per column (arrow keys + Enter work too)\n\
-⇄ button: open the selected folder (or the current one) in another pane, with this pane's columns; or copy / move the selected files to another pane's folder (up to 10,000)\n\
+⇄ button: open the selected folder (or the current one) in another pane, with this pane's columns; or copy / move the selected files to another pane's folder (up to 10,000); which program is using the selected files; Compare with WinMerge (2 selected items, or this folder with another pane's) when WinMerge is installed\n\
 Save (Ctrl+S): overwrite the current session file; green dot = unsaved layout changes (not folder moves)\n\
 Load: pick a saved session by its layout preview\n\
 Drive buttons (C: D: …): open that drive in the active pane; its drive is underlined\n\
 Double-click a splitter: split evenly\n\
+Update button (blue, top right): a newer Grids is out; click to restart into it (settings, folders and sessions stay)\n\
 Right-click a pane header: colour label (saved with the session)\n\
 Tabs: click to switch, × or middle-click to close, + or double-click the empty strip for a new tab, right-click to duplicate or close\n\
 Arguments: grids.exe C:\\a D:\\b ... or grids.exe work.grids\n\
@@ -233,30 +245,37 @@ Ctrl+Shift+M\t선택한 패널 크게 보기 / 복원 (머리줄 더블클릭도
 Ctrl+Shift+E\t폴더 트리 숨기기 / 보이기 (폭은 그대로 유지)\n\
 Ctrl+Shift+O\t탐색기 창·탭의 폴더를 패널로 가져오기 (이미 그 폴더를 연 패널은 그대로)\n\
 Ctrl+Shift+C\t선택한 항목(없으면 현재 폴더)의 전체 경로 복사\n\
+Ctrl+Shift+R\t선택한 항목(선택 없으면 폴더의 모든 파일) 일괄 이름 바꾸기: 바꾸기·번호·날짜·대소문자 같은 규칙, 실시간 미리보기, 되돌리기, 프리셋. 창 안에서 Ctrl+Enter 바꾸기, Esc 닫기, 규칙 목록에서 Space 켜기/끄기, Ins 추가, Del 빼기, Alt+↑/↓ 순서 바꾸기\n\
 Num+ / Ctrl+Shift+A\t패턴으로 파일 선택 (*.jpg;*.png 또는 이름 일부, Shift+Enter는 선택 해제)\n\
 Num−\t패턴으로 파일 선택 해제\n\
 Num*\t선택 반전\n\
 Ctrl+F\t필터 (*.pdf;*.txt 또는 이름 일부, 폴더는 항상 표시)\n\
 필터 칸에서 Alt+↓\t파일 종류: 사진·동영상·문서 … (필터 칸 아이콘 클릭도 가능)\n\
+Ctrl+Shift+F\tEverything으로 PC 전체 검색, Everything이 실행 중일 때 (주황 돋보기도 가능): ↑/↓ 고르기, Enter는 지금 패널에서 그 항목 보기, Ctrl+Enter는 폴더 열기, Alt+O는 이 폴더 아래에서만\n\
 Ctrl+T / Ctrl+W\t새 탭(같은 폴더) / 탭 닫기, 탭을 켰을 때 (보기 메뉴)\n\
 Ctrl+K\t지금 탭 복제\n\
 Ctrl+PgDn / Ctrl+PgUp\t다음 / 이전 탭\n\
 F7\t새 폴더\n\
+Shift+F7\t새 텍스트 파일 (이름 짓기 바로 시작)\n\
 F6 / Shift+F6\t파일 목록·주소창·필터·폴더 트리 사이 이동\n\
 Enter / Esc\t주소창·필터 적용 / 취소\n\
 Ctrl+H\t숨김 파일 표시\n\
 F3, Space\t포커스한 파일 빠른 미리보기: 사진, 텍스트·코드, 마크다운, CSV 표, Office·PDF·HTML·메일(10 MB까지), HWP·HWPX, ZIP 목록, 폴더. 나머지는 정보 카드 (방향키·휠: 닫지 않고 이전·다음 파일, 긴 텍스트에서는 휠이 먼저 스크롤하고 끝에서 넘어감, PgUp/PgDn: 스크롤, Esc: 닫기, 여는 중에도 바로)\n\
+Del / Shift+Del, F2\t미리보기에서: 보고 있는 파일을 휴지통으로 / 완전히 삭제 (탐색기처럼 Windows가 확인, 미리보기는 다음 파일로), 또는 머리줄에서 이름 바꾸기 (Enter / Esc)\n\
+Ctrl+휠, Ctrl+= / Ctrl+- / Ctrl+0\t미리보기에서: 사진·PDF 확대 / 축소 (휠은 커서 위치 기준) / 화면에 맞춤, 확대한 상태에서는 끌거나 스크롤바로 이동\n\
 Ctrl+V\t복사한 그림(스크린샷, 브라우저 이미지)이 있으면 이 폴더에 PNG 파일로 저장\n\
 F1\t도움말 (GitHub README 열기)\n\
 Win+Alt+E\t어디서나 Grids 앞으로 (다시 누르면 최소화)\n\
+Ctrl+Alt+G\t다른 앱의 열기·저장 대화 상자에서: Grids에 열린 폴더로 이동\n\
 F2, Del, Ctrl+C/X/V, F5\t탐색기와 동일\n\n\
 주소 칸: 경로의 폴더를 누르면 그리로 이동, › 를 누르면 그 안의 폴더 목록, 현재 폴더·빈 곳을 누르거나 Ctrl+L이면 경로 입력\n\
 레이아웃 버튼: 클릭 = 균등 배치, 누른 채 끌기 = 열마다 칸 수 (방향키+Enter도 가능)\n\
-⇄ 버튼: 선택한 폴더(없으면 현재 폴더)를 다른 패널에서 열기, 열 순서·폭·정렬도 함께. 또는 선택한 파일을 다른 패널 폴더로 복사·이동 (최대 10,000개)\n\
+⇄ 버튼: 선택한 폴더(없으면 현재 폴더)를 다른 패널에서 열기, 열 순서·폭·정렬도 함께. 또는 선택한 파일을 다른 패널 폴더로 복사·이동 (최대 10,000개). 선택한 파일을 쓰고 있는 프로그램 확인. WinMerge가 있으면 WinMerge로 비교 (선택한 2개, 또는 이 폴더와 다른 패널 폴더)\n\
 저장 (Ctrl+S): 지금 세션 파일에 바로 덮어쓰기, 초록 점 = 저장 안 된 배치 변경(폴더 이동은 제외)\n\
 불러오기: 저장한 세션을 배치 미리보기로 보고 한 번 클릭\n\
 드라이브 버튼 (C: D: …): 지금 패널에서 그 드라이브 열기, 지금 패널의 드라이브에 밑줄\n\
 스플리터 더블클릭: 균등 분할\n\
+업데이트 버튼 (파란색, 오른쪽 위): 새 Grids가 나옴, 누르면 재시작해 업데이트 (설정·폴더·세션 유지)\n\
 패널 머리줄 오른쪽 클릭: 패널 색 라벨 (세션에 저장)\n\
 탭: 클릭 = 전환, × 또는 가운데 클릭 = 닫기, + 또는 탭 줄 빈 곳 더블클릭 = 새 탭, 오른쪽 클릭 = 복제·닫기\n\
 실행 인자: grids.exe C:\\a D:\\b ... 또는 grids.exe 작업.grids\n\

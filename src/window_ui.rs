@@ -147,6 +147,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 return DefWindowProcW(h, msg, wp, lp);
             }
             WM_THEME_SYNC => theme_sync(),
+            WM_UPDATE => update_msg(h, wp.0),
             // mid-drag or mid-resize, end_drag / WM_EXITSIZEMOVE pick it up instead
             WM_DRIVES => {
                 if !app(|a| a.drag.is_some() || a.sizing) && refresh_drives() {
@@ -154,7 +155,9 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                     redraw_all();
                 }
             }
+            WM_TIMER if wp.0 == TIMER_EV_SELECT => ev_pick_tick(h),
             WM_TIMER if wp.0 == TIMER_STATUS => {
+                ev_watch(); // Everything started or quit: its button comes or goes
                 update_status();
                 check_dirty();
                 autosave();
@@ -222,6 +225,9 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 id if id == ID_TB_SAVE as usize => save_current(),
                 id if id == ID_TB_LOAD as usize => open_load(),
                 id if id == ID_TB_FAV as usize => open_favs(),
+                id if id == ID_TB_EV as usize => open_ev(),
+                id if id == ID_TB_UPDATE as usize => update_click(),
+                ID_UPDATES => toggle_updates(),
                 id if id == ID_TB_THEME as usize => {
                     app(|a| (a.s.dark, a.s.follow) = (!a.s.dark, false)); // picked by hand: stop following Windows
                     retheme();
@@ -260,6 +266,13 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                         }
                     });
                 }
+                ID_DLGJUMP => {
+                    let on = app(|a| {
+                        a.s.dlgjump ^= true;
+                        a.s.dlgjump
+                    });
+                    dialog_jump::enable(on);
+                }
                 ID_LANG => set_language(!KO.load(Ordering::Relaxed)),
                 ID_HELP => open_help(),
                 ID_ABOUT => about(h),
@@ -270,7 +283,8 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 _ => {}
             },
             WM_INITMENUPOPUP => {
-                let (menu, dblup, tree, accent, hot, follow) = app(|a| (a.view_menu, a.s.dblup, a.s.tree, a.s.accent_now(), a.hot_on, a.s.follow));
+                let (menu, dblup, tree, accent, hot, follow, jump) =
+                    app(|a| (a.view_menu, a.s.dblup, a.s.tree, a.s.accent_now(), a.hot_on, a.s.follow, a.s.dlgjump));
                 let check = |id: usize, on: bool| CheckMenuItem(menu, id as u32, (MF_BYCOMMAND | if on { MF_CHECKED } else { MF_UNCHECKED }).0);
                 check(ID_TREE, tree);
                 check(ID_FOLLOW, follow);
@@ -279,6 +293,8 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 check(ID_DBLUP, dblup);
                 check(ID_TABS, TABS_ON.load(Ordering::Relaxed));
                 check(ID_HOTKEY, hot);
+                check(ID_DLGJUMP, jump);
+                check(ID_UPDATES, app(|a| a.s.updates));
                 check(ID_LANG, KO.load(Ordering::Relaxed));
                 for (k, (_, c)) in pal().accents.iter().enumerate() {
                     check(ID_ACCENT + k, *c == accent);
@@ -313,8 +329,11 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             // Windows restart / sign-out: no WM_CLOSE comes. WM_QUERYENDSESSION stays with DefWindowProcW (never blocks).
             WM_ENDSESSION if wp.0 != 0 => save_session(),
             WM_HOTKEY if wp.0 == HOTKEY_ID as usize => hotkey_pressed(h),
+            WM_HOTKEY if wp.0 == dialog_jump::DLG_HOTKEY_ID as usize => dialog_jump::on_hotkey(),
+            WM_TIMER if wp.0 == dialog_jump::TIMER_DLG_RETRY || wp.0 == dialog_jump::TIMER_DLG_RESTORE => dialog_jump::on_timer(wp.0),
             WM_DESTROY => {
                 _ = KillTimer(Some(h), TIMER_STATUS);
+                dialog_jump::shutdown();
                 if app(|a| a.hot_on) {
                     set_hotkey(h, false);
                 }
@@ -568,7 +587,7 @@ pub(crate) unsafe fn about(owner: HWND) {
 }
 
 // Toolbar buttons: id, accessible name, tooltip.
-pub(crate) fn toolbar_tips() -> [(i32, &'static str, &'static str); 6] {
+pub(crate) fn toolbar_tips() -> [(i32, &'static str, &'static str); 7] {
     [
         (ID_TB_LAYOUT, "", tr("Layout: click = even grid, drag = rows per column", "레이아웃: 클릭 = 균등, 끌기 = 열마다 칸 수")),
         (ID_TB_SAVE, tr("Save session", "세션 저장"), ""), // tooltip set by refresh_save_button
@@ -576,6 +595,7 @@ pub(crate) fn toolbar_tips() -> [(i32, &'static str, &'static str); 6] {
         (ID_TB_VIEW, tr("View", "보기"), tr("View: hidden files · extensions · colours · language · help", "보기: 숨김 파일 · 확장명 · 선택 색 · 언어 · 도움말")),
         (ID_TB_FAV, tr("Favourites", "즐겨찾기"), tr("Favourite folders (Ctrl+B; open in the active pane)", "즐겨찾기 폴더 (Ctrl+B, 선택한 패널에서 열기)")),
         (ID_TB_THEME, tr("Theme", "테마"), tr("Light / dark theme", "라이트 / 다크 테마")),
+        (ID_TB_EV, tr("Search with Everything", "Everything으로 검색"), tr("Search with Everything (Ctrl+Shift+F)", "Everything으로 검색 (Ctrl+Shift+F)")),
     ]
 }
 
@@ -675,6 +695,7 @@ pub(crate) unsafe fn set_language(ko: bool) {
         tip_text(h, &drive_tip(c, kind), TTM_UPDATETIPTEXTW);
     }
     refresh_save_button();
+    update_tip();
     app(|a| a.status_key.clear());
     apply_theme();
 }
@@ -690,6 +711,8 @@ pub(crate) unsafe fn make_menus() -> Result<HMENU> {
     item(view, MF_STRING, ID_EXT, tr("Show file name extensions", "파일 확장명 표시"))?;
     item(view, MF_STRING, ID_DBLUP, tr("Double-click empty space: parent folder", "빈 곳 더블클릭: 위 폴더로"))?;
     item(view, MF_STRING, ID_HOTKEY, tr("Bring Grids to front from anywhere\tWin+Alt+E", "어디서나 Grids 불러오기\tWin+Alt+E"))?;
+    let jump = tr("Jump to Grids folders from file dialogs\tCtrl+Alt+G", "파일 대화 상자에서 Grids 폴더로 이동\tCtrl+Alt+G");
+    item(view, MF_STRING, ID_DLGJUMP, jump)?;
     item(view, MF_STRING, ID_FOLLOW, tr("Follow Windows light/dark", "Windows 라이트·다크 따르기"))?;
     let colors = CreatePopupMenu()?;
     for (k, (name, _)) in LIGHT.accents.iter().enumerate() {
@@ -703,6 +726,7 @@ pub(crate) unsafe fn make_menus() -> Result<HMENU> {
     AppendMenuW(view, MF_SEPARATOR, 0, PCWSTR::null())?;
     item(view, MF_STRING, ID_KEYS, tr("Keyboard shortcuts\tCtrl+/", "단축키\tCtrl+/"))?;
     item(view, MF_STRING, ID_HELP, tr("Help (online)\tF1", "도움말 (온라인)\tF1"))?;
+    item(view, MF_STRING, ID_UPDATES, tr("Check for updates", "업데이트 확인"))?;
     item(view, MF_STRING, ID_ABOUT, tr("About Grids", "Grids 정보"))?;
     Ok(view)
 }

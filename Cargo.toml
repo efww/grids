@@ -19,7 +19,9 @@ features = [
     "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",
     "Win32_Graphics_Imaging",
+    "Win32_Networking_WinHttp",
     "Win32_Security",
+    "Win32_Security_Cryptography",
     "Win32_Storage_EnhancedStorage",
     "Win32_Storage_FileSystem",
     "Win32_System_Com",
@@ -30,6 +32,7 @@ features = [
     "Win32_System_Memory",
     "Win32_System_Ole",
     "Win32_System_Registry",
+    "Win32_System_RestartManager",
     "Win32_System_SystemInformation",
     "Win32_System_SystemServices",
     "Win32_System_Threading",
@@ -45,6 +48,10 @@ features = [
     "Win32_UI_Shell_PropertiesSystem",
     "Win32_UI_WindowsAndMessaging",
 ]
+
+# batch rename's regular expressions: the small pure-Rust one, no Unicode tables
+[dependencies.regex-lite]
+version = "0.1"
 
 [dependencies.windows-core]
 version = "0.62"
