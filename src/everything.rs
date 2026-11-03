@@ -414,7 +414,7 @@ pub(crate) unsafe fn open_ev() {
     // Everything may run elevated: let its replies through
     _ = ChangeWindowMessageFilterEx(h, WM_COPYDATA, MSGFLT_ALLOW, None);
     // the row tooltip: full name, folder, size and date, shown as soon as the pointer is on a row
-    let tip_style = WS_POPUP | WINDOW_STYLE(0x01 | 0x02); // TTS_ALWAYSTIP | TTS_NOPREFIX
+    let tip_style = WS_POPUP | WINDOW_STYLE(0x01 | 0x02 | 0x10 | 0x20); // TTS_ALWAYSTIP | TTS_NOPREFIX | TTS_NOANIMATE | TTS_NOFADE: at once
     let tip = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, None, tip_style, 0, 0, 0, 0, Some(h), None, None, None).unwrap_or_default();
     if !tip.0.is_null() {
         let ti = tip_tool(h, w!(""));
