@@ -1,7 +1,8 @@
-// Separate window for the selected items. Painted like Settings (theme, accent, DPI);
-// edits and buttons are real child controls on that paint.
+// Separate window for the selected items. Painted like Settings: flat caption
+// (theme background, no gradient), card plates, and the shared draw_tick checkbox.
 // Rules sit on the left and the preview on the right. A single-line edit is only
 // as tall as its font cell and is centred in a frame that matches the combo beside it.
+// Labels go through `text`, so they use the glyph-centred line from the UI font.
 
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -41,11 +42,23 @@ const DLG_MIN_H_DIP: i32 = 520;
 /// Neither column shrinks below this. Width past the two minimums is split evenly.
 const COL_MIN_DIP: i32 = 420;
 const COL_GAP_DIP: i32 = 12;
-/// Combo, button and edit-frame height on a rule card.
+/// Combo, button and edit-frame height on a rule card and in the toolbar.
 const FIELD_H_DIP: i32 = 26;
-/// Replace and regex checks share the text row at this host width and above.
-/// A narrower card puts the checks on their own row so the two edits stay readable.
-const CHECK_WRAP_DIP: i32 = 640;
+/// Space inside a rule card, and the gap before the next card.
+const CARD_PAD_DIP: i32 = 10;
+const CARD_GAP_DIP: i32 = 8;
+const ROW_GAP_DIP: i32 = 8;
+/// Shared draw_tick box. The kind combo matches the mockup's 150 DIP.
+const TICK_DIP: i32 = 16;
+const KIND_W_DIP: i32 = 150;
+const MINI_W_DIP: i32 = 28;
+/// Cerulean brand (#0A9BD6 / #0786BC). Changed text on the dark theme is #7FD4F5.
+/// Mint (#2EC4A6) is not part of this window.
+const CERULEAN: u32 = 0x0A9BD6;
+const CERULEAN_DEEP: u32 = 0x0786BC;
+const MARK_INK_DARK: u32 = 0x7FD4F5;
+const ROW_HOVER_LIGHT: u32 = 0xF7F5F1;
+const ROW_HOVER_DARK: u32 = 0x2A2C30;
 
 const F_KIND: i32 = 0;
 const F_A: i32 = 1;
@@ -69,8 +82,6 @@ const CB_GETCURSEL: u32 = 0x0147;
 const CBN_SELCHANGE: u32 = 1;
 const EN_CHANGE: u32 = 0x0300;
 const BN_CLICKED: u32 = 0;
-const BM_GETCHECK: u32 = 0x00F0;
-const BM_SETCHECK: u32 = 0x00F1;
 const EM_SETCUEBANNER: u32 = 0x1501;
 const EM_SETMARGINS: u32 = 0x00D3;
 
@@ -87,9 +98,11 @@ struct St {
     host: HWND,
     dpi: i32,
     font: HFONT,
-    /// Same face and size as `font`, weight 700, for the accent Rename button.
+    /// Same face and size as `font`, weight 700, for the accent Rename button and column titles.
     bold: HFONT,
     small: HFONT,
+    /// Segoe MDL2 check glyph used by `draw_tick`.
+    icon: HFONT,
     rules: Vec<Rule>,
     enabled: Vec<bool>,
     items: Vec<BatchItem>,
@@ -119,6 +132,7 @@ impl Default for St {
             font: HFONT::default(),
             bold: HFONT::default(),
             small: HFONT::default(),
+            icon: HFONT::default(),
             rules: vec![Rule::Replace { find: String::new(), replace: String::new(), case_sensitive: false, include_ext: false }],
             enabled: vec![true],
             items: Vec::new(),
@@ -402,7 +416,7 @@ unsafe fn rename_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESUL
         }
         WM_PAINT => paint(h),
         WM_ERASEBKGND => return LRESULT(1),
-        WM_CTLCOLOREDIT | WM_CTLCOLORLISTBOX | WM_CTLCOLORSTATIC | WM_CTLCOLORBTN => return ctl_color(wp),
+        WM_CTLCOLOREDIT | WM_CTLCOLORLISTBOX | WM_CTLCOLORSTATIC | WM_CTLCOLORBTN => return ctl_color(wp, lp),
         WM_DRAWITEM => {
             draw_btn(&*(lp.0 as *const DRAWITEMSTRUCT));
             return LRESULT(1);
@@ -439,7 +453,7 @@ unsafe fn host_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT 
             on_command(hwnd(), (wp.0 & 0xffff) as i32, ((wp.0 >> 16) & 0xffff) as u32);
             return LRESULT(0);
         }
-        WM_CTLCOLOREDIT | WM_CTLCOLORLISTBOX | WM_CTLCOLORSTATIC | WM_CTLCOLORBTN => return ctl_color(wp),
+        WM_CTLCOLOREDIT | WM_CTLCOLORLISTBOX | WM_CTLCOLORSTATIC | WM_CTLCOLORBTN => return ctl_color(wp, lp),
         WM_MOUSEWHEEL => {
             on_wheel(((wp.0 >> 16) as i16 as i32) / 120);
             return LRESULT(0);
@@ -458,12 +472,16 @@ unsafe fn host_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT 
     DefWindowProcW(h, msg, wp, lp)
 }
 
-unsafe fn ctl_color(wp: WPARAM) -> LRESULT {
+unsafe fn ctl_color(wp: WPARAM, lp: LPARAM) -> LRESULT {
     let dc = HDC(wp.0 as _);
+    let ctl = HWND(lp.0 as _);
+    let off = control_rule(ctl).is_some_and(|i| !rule_is_on(i));
+    let bg = plate(!off);
+    let fg = if off { crate::blend(bg, crate::pal().text, 0.55) } else { crate::pal().text };
     SetBkMode(dc, TRANSPARENT);
-    SetBkColor(dc, crate::cref(crate::pal().card));
-    SetTextColor(dc, crate::cref(crate::pal().text));
-    SetDCBrushColor(dc, crate::cref(crate::pal().card));
+    SetBkColor(dc, crate::cref(bg));
+    SetTextColor(dc, crate::cref(fg));
+    SetDCBrushColor(dc, crate::cref(bg));
     LRESULT(GetStockObject(DC_BRUSH).0 as isize)
 }
 
@@ -548,7 +566,8 @@ unsafe fn make_rule_controls(host: HWND, i: usize, font: HFONT) {
         c
     };
     let check = |f, label: &str| {
-        let c = child(host, w!("BUTTON"), label, 0x3 | tab, id(i, f), font);
+        // Owner-draw so the box is the shared draw_tick, not a native checkbox.
+        let c = child(host, w!("BUTTON"), label, 0xB | tab, id(i, f), font);
         theme_btn(c);
         c
     };
@@ -642,26 +661,17 @@ unsafe fn write_rule(i: usize, rule: &Rule) {
         let c = ctl(host, id(i, f));
         let _ = SetWindowTextW(c, &HSTRING::from(text));
     };
-    let set_check = |f, on: bool| {
-        let _ = SendMessageW(ctl(host, id(i, f)), BM_SETCHECK, Some(WPARAM(usize::from(on))), None);
-    };
     select_combo(host, i, F_KIND, kind_index(rule));
-    let on = ST.with(|s| s.borrow().enabled.get(i).copied().unwrap_or(true));
-    set_check(F_ON, on);
     match rule {
-        Rule::Replace { find, replace, case_sensitive, include_ext } => {
+        Rule::Replace { find, replace, .. } => {
             set_edit(F_A, find);
             set_edit(F_B, replace);
-            set_check(F_CASE, *case_sensitive);
-            set_check(F_EXT, *include_ext);
             cue(ctl(host, id(i, F_A)), tx(crate::Key::Find));
             cue(ctl(host, id(i, F_B)), tx(crate::Key::ReplaceWith));
         }
-        Rule::Regex { pattern, replace, case_sensitive, include_ext } => {
+        Rule::Regex { pattern, replace, .. } => {
             set_edit(F_A, pattern);
             set_edit(F_B, replace);
-            set_check(F_CASE, *case_sensitive);
-            set_check(F_EXT, *include_ext);
             cue(ctl(host, id(i, F_A)), tx(crate::Key::Pattern));
             cue(ctl(host, id(i, F_B)), tx(crate::Key::Replace1));
         }
@@ -673,9 +683,8 @@ unsafe fn write_rule(i: usize, rule: &Rule) {
             set_edit(F_A, text);
             cue(ctl(host, id(i, F_A)), tx(crate::Key::Suffix));
         }
-        Rule::Case { mode, include_ext } => {
+        Rule::Case { mode, .. } => {
             select_combo(host, i, F_MODE, mode_index(*mode));
-            set_check(F_EXT, *include_ext);
         }
         Rule::Extension { ext } => {
             set_edit(F_A, ext);
@@ -762,7 +771,7 @@ unsafe fn read_rule(i: usize) -> Option<Rule> {
         return ST.with(|s| s.borrow().rules.get(i).cloned());
     }
     let text = |f| crate::text_of(ctl(host, id(i, f)));
-    let on = |f| SendMessageW(ctl(host, id(i, f)), BM_GETCHECK, None, None).0 == 1;
+    let on = |f| stored_flag(i, f);
     let sel = |f| SendMessageW(ctl(host, id(i, f)), CB_GETCURSEL, None, None).0;
     Some(match kind {
         1 => Rule::Prefix { text: text(F_A) },
@@ -907,7 +916,10 @@ unsafe fn on_command(_h: HWND, id: i32, code: u32) {
                     layout(hwnd());
                 }
                 F_A | F_B | F_C | F_AT if code == EN_CHANGE => sync_rule(i),
-                F_CASE | F_EXT if code == BN_CLICKED => sync_rule(i),
+                F_CASE | F_EXT if code == BN_CLICKED => {
+                    flip_flag(i, f);
+                    sync_rule(i);
+                }
                 F_ON if code == BN_CLICKED => toggle_rule(i),
                 _ => {}
             }
@@ -961,7 +973,7 @@ unsafe fn add_rule() {
     rebuild_rule_controls();
     let dpi = ST.with(|s| s.borrow().dpi);
     let rules = ST.with(|s| s.borrow().rules.clone());
-    let content = rules_span(&rules, dpi, rules_host_w());
+    let content = rules_span(&rules, dpi);
     let view = host_height();
     let max = (content - view).max(0);
     ST.with(|s| s.borrow_mut().rule_scroll = max);
@@ -988,17 +1000,59 @@ unsafe fn remove_rule(i: usize) {
     recompute();
 }
 
-unsafe fn rule_enabled(i: usize) -> bool {
-    let host = ST.with(|s| s.borrow().host);
-    let c = ctl(host, id(i, F_ON));
-    if c.0.is_null() {
-        return ST.with(|s| s.borrow().enabled.get(i).copied().unwrap_or(true));
+fn rule_is_on(i: usize) -> bool {
+    ST.with(|s| s.borrow().enabled.get(i).copied().unwrap_or(true))
+}
+
+fn rule_enabled(i: usize) -> bool {
+    rule_is_on(i)
+}
+
+/// Case and extension flags live on the rule. The owner-draw tick paints that state.
+fn stored_flag(i: usize, field: i32) -> bool {
+    if field == F_ON {
+        return rule_is_on(i);
     }
-    SendMessageW(c, BM_GETCHECK, None, None).0 == 1
+    ST.with(|s| {
+        let st = s.borrow();
+        match st.rules.get(i) {
+            Some(Rule::Replace { case_sensitive, include_ext, .. } | Rule::Regex { case_sensitive, include_ext, .. }) => {
+                if field == F_CASE { *case_sensitive } else { *include_ext }
+            }
+            Some(Rule::Case { include_ext, .. }) => field == F_EXT && *include_ext,
+            _ => false,
+        }
+    })
+}
+
+fn flip_flag(i: usize, field: i32) {
+    ST.with(|s| {
+        let mut st = s.borrow_mut();
+        let Some(rule) = st.rules.get_mut(i) else { return };
+        match field {
+            F_CASE => match rule {
+                Rule::Replace { case_sensitive, .. } | Rule::Regex { case_sensitive, .. } => *case_sensitive = !*case_sensitive,
+                _ => {}
+            },
+            F_EXT => match rule {
+                Rule::Replace { include_ext, .. } | Rule::Regex { include_ext, .. } | Rule::Case { include_ext, .. } => *include_ext = !*include_ext,
+                _ => {}
+            },
+            _ => {}
+        }
+    });
+}
+
+fn control_rule(h: HWND) -> Option<usize> {
+    let id = unsafe { GetDlgCtrlID(h) };
+    if id < ID_BASE {
+        return None;
+    }
+    let i = ((id - ID_BASE) / STRIDE) as usize;
+    (i < MAX_RULES).then_some(i)
 }
 
 unsafe fn toggle_rule(i: usize) {
-    let on = rule_enabled(i);
     ST.with(|s| {
         let mut st = s.borrow_mut();
         let n = st.rules.len();
@@ -1006,7 +1060,7 @@ unsafe fn toggle_rule(i: usize) {
             st.enabled.resize(n, true);
         }
         if let Some(slot) = st.enabled.get_mut(i) {
-            *slot = on;
+            *slot = !*slot;
         }
         st.note.clear();
     });
@@ -1047,10 +1101,9 @@ fn card_at_y(y: i32) -> Option<usize> {
     let dpi = ST.with(|s| s.borrow().dpi.max(96));
     let scroll = ST.with(|s| s.borrow().rule_scroll);
     let rules = ST.with(|s| s.borrow().rules.clone());
-    let host_w = rules_host_w();
     let mut top = -scroll;
     for (i, rule) in rules.iter().enumerate() {
-        let stride = rule_stride(rule, dpi, host_w);
+        let stride = rule_stride(rule, dpi);
         if y >= top && y < top + stride {
             return Some(i);
         }
@@ -1063,10 +1116,9 @@ fn insert_at_y(y: i32) -> usize {
     let dpi = ST.with(|s| s.borrow().dpi.max(96));
     let scroll = ST.with(|s| s.borrow().rule_scroll);
     let rules = ST.with(|s| s.borrow().rules.clone());
-    let host_w = rules_host_w();
     let mut top = -scroll;
     for (i, rule) in rules.iter().enumerate() {
-        let stride = rule_stride(rule, dpi, host_w);
+        let stride = rule_stride(rule, dpi);
         if y < top + stride / 2 {
             return i;
         }
@@ -1078,7 +1130,7 @@ fn insert_at_y(y: i32) -> usize {
 unsafe fn begin_drag(h: HWND, lp: LPARAM) {
     let (x, y) = lp_point(lp);
     let dpi = ST.with(|s| s.borrow().dpi.max(96));
-    if x > sc(dpi, 16) {
+    if x > drag_max_x(dpi) {
         return;
     }
     let Some(i) = card_at_y(y) else { return };
@@ -1533,26 +1585,27 @@ fn geo(rc: RECT, dpi: i32) -> Geo {
     let pad = sc(dpi, 16);
     let gap = sc(dpi, COL_GAP_DIP);
     let top = pad;
-    let lbl_h = sc(dpi, 28);
+    let tool_h = sc(dpi, FIELD_H_DIP);
+    let head_h = sc(dpi, 28);
     let add_w = sc(dpi, 120);
-    let add = RECT { left: rc.right - pad - add_w, top, right: rc.right - pad, bottom: top + lbl_h };
-    let tools = RECT { left: rc.left + pad, top, right: (add.left - sc(dpi, 8)).max(rc.left + pad), bottom: top + lbl_h };
+    let add = RECT { left: rc.right - pad - add_w, top, right: rc.right - pad, bottom: top + tool_h };
+    let tools = RECT { left: rc.left + pad, top, right: (add.left - sc(dpi, 8)).max(rc.left + pad), bottom: top + tool_h };
     let foot_h = sc(dpi, 56);
     let foot_top = rc.bottom - foot_h;
     let head_top = tools.bottom + sc(dpi, 10);
-    let body_top = head_top + lbl_h + sc(dpi, 4);
+    let body_top = head_top + head_h + sc(dpi, 4);
     let body_bot = (foot_top - sc(dpi, 8)).max(body_top);
     let content_left = rc.left + pad;
     let content_right = rc.right - pad;
     let (left_w, _) = column_widths((content_right - content_left - gap).max(0), sc(dpi, COL_MIN_DIP));
     let split = content_left + left_w;
     let col_right = (split + gap).min(content_right);
-    let rules_lbl = RECT { left: content_left, top: head_top, right: split.max(content_left), bottom: head_top + lbl_h };
+    let rules_lbl = RECT { left: content_left, top: head_top, right: split.max(content_left), bottom: head_top + head_h };
     let host = RECT { left: content_left, top: body_top, right: split.max(content_left), bottom: body_bot };
     let prev_w = sc(dpi, 140).min((content_right - col_right).max(0));
-    let prev_lbl = RECT { left: col_right, top: head_top, right: col_right + prev_w, bottom: head_top + lbl_h };
+    let prev_lbl = RECT { left: col_right, top: head_top, right: col_right + prev_w, bottom: head_top + head_h };
     let summary_left = (prev_lbl.right + sc(dpi, 8)).min(content_right);
-    let summary = RECT { left: summary_left, top: head_top, right: content_right, bottom: head_top + lbl_h };
+    let summary = RECT { left: summary_left, top: head_top, right: content_right, bottom: head_top + head_h };
     let list = RECT { left: col_right, top: body_top, right: content_right, bottom: body_bot };
     let btn_h = sc(dpi, 32);
     let btn_y = foot_top + (foot_h - btn_h) / 2;
@@ -1620,35 +1673,91 @@ unsafe fn place_tools(h: HWND, r: RECT, dpi: i32) {
     move_to(ctl(h, ID_DELPRE), t.del);
 }
 
-fn checks_wrap(rule: &Rule, host_w: i32, dpi: i32) -> bool {
-    matches!(rule, Rule::Replace { .. } | Rule::Regex { .. }) && host_w < sc(dpi.max(96), CHECK_WRAP_DIP)
-}
-
-fn card_dip(rule: &Rule, host_w: i32, dpi: i32) -> i32 {
-    let tall = matches!(rule, Rule::Number { .. } | Rule::Date { .. }) || checks_wrap(rule, host_w, dpi);
-    if tall { 128 } else { 92 }
-}
-
-fn rule_stride(rule: &Rule, dpi: i32, host_w: i32) -> i32 {
-    sc(dpi.max(96), card_dip(rule, host_w, dpi))
-}
-
-fn rules_span(rules: &[Rule], dpi: i32, host_w: i32) -> i32 {
-    rules.iter().map(|r| rule_stride(r, dpi, host_w)).sum()
-}
-
-fn rules_host_w() -> i32 {
-    let host = ST.with(|s| s.borrow().host);
-    if !host.0.is_null() {
-        let mut rc = RECT::default();
-        unsafe { let _ = GetClientRect(host, &mut rc); }
-        let w = rc.right - rc.left;
-        if w > 0 {
-            return w;
-        }
+/// Replace and regex keep the case and extension ticks on their own row.
+/// Number and date need a third field row. Everything else is the header plus one row.
+fn rule_row_count(rule: &Rule) -> i32 {
+    match rule {
+        Rule::Replace { .. } | Rule::Regex { .. } | Rule::Number { .. } | Rule::Date { .. } => 3,
+        _ => 2,
     }
-    let g = geo_now();
-    (g.host.right - g.host.left).max(0)
+}
+
+/// Card body plus the gap before the next card. Each piece is scaled on its own
+/// so 125% and 150% match the rows placed inside the card.
+fn rule_stride(rule: &Rule, dpi: i32) -> i32 {
+    let dpi = dpi.max(96);
+    let rows = rule_row_count(rule);
+    sc(dpi, CARD_PAD_DIP) * 2 + rows * sc(dpi, FIELD_H_DIP) + (rows - 1) * sc(dpi, ROW_GAP_DIP) + sc(dpi, CARD_GAP_DIP)
+}
+
+fn rules_span(rules: &[Rule], dpi: i32) -> i32 {
+    rules.iter().map(|r| rule_stride(r, dpi)).sum()
+}
+
+fn row_top(card: RECT, dpi: i32, index: i32) -> i32 {
+    card.top + sc(dpi.max(96), CARD_PAD_DIP) + index * (sc(dpi.max(96), FIELD_H_DIP) + sc(dpi.max(96), ROW_GAP_DIP))
+}
+
+fn card_rect(y: i32, stride: i32, width: i32, dpi: i32) -> RECT {
+    let gap = sc(dpi.max(96), CARD_GAP_DIP);
+    let top_gap = gap / 2;
+    RECT { left: sc(dpi, 2), top: y + top_gap, right: width - sc(dpi, 2), bottom: y + stride - (gap - top_gap) }
+}
+
+/// Grip is the left cluster of the header row. Clicks to its right belong to the tick.
+fn drag_max_x(dpi: i32) -> i32 {
+    sc(dpi.max(96), 2) + sc(dpi.max(96), 8) + sc(dpi.max(96), 10) + sc(dpi.max(96), 2)
+}
+
+/// Two columns of three dots, centred on the header row beside the enable tick.
+fn grip_dots(card: RECT, dpi: i32) -> [RECT; 6] {
+    let dpi = dpi.max(96);
+    let row = row_top(card, dpi, 0);
+    let mid = row + sc(dpi, FIELD_H_DIP) / 2;
+    let dot_w = sc(dpi, 3).max(2);
+    let dot_h = sc(dpi, 2).max(1);
+    let gap = sc(dpi, 2).max(1);
+    let block = 3 * dot_h + 2 * gap;
+    let top = mid - block / 2;
+    let x0 = card.left + sc(dpi, 8);
+    let x1 = x0 + dot_w + gap;
+    let mut out = [RECT::default(); 6];
+    for i in 0..3usize {
+        let y = top + i as i32 * (dot_h + gap);
+        out[i * 2] = RECT { left: x0, top: y, right: x0 + dot_w, bottom: y + dot_h };
+        out[i * 2 + 1] = RECT { left: x1, top: y, right: x1 + dot_w, bottom: y + dot_h };
+    }
+    out
+}
+
+/// An off rule is the card colour at 55% over the window, the same composite as the mockup.
+fn plate(on: bool) -> u32 {
+    if on { crate::pal().card } else { crate::blend(crate::pal().bg, crate::pal().card, 0.55) }
+}
+
+fn plate_line(on: bool) -> u32 {
+    if on { crate::pal().line } else { crate::blend(crate::pal().bg, crate::pal().line, 0.55) }
+}
+
+fn primary_fill(hot: bool) -> u32 {
+    if hot { CERULEAN_DEEP } else { CERULEAN }
+}
+
+fn primary_edge() -> u32 {
+    CERULEAN_DEEP
+}
+
+/// Changed-span wash. Light is 28% cerulean on white. Dark is 32% cerulean on the card.
+fn mark_wash(dark: bool, card: u32) -> u32 {
+    if dark { crate::blend(card, CERULEAN, 0.32) } else { crate::blend(0xFFFFFF, CERULEAN, 0.28) }
+}
+
+fn mark_ink(dark: bool) -> u32 {
+    if dark { MARK_INK_DARK } else { CERULEAN_DEEP }
+}
+
+fn row_hover(dark: bool) -> u32 {
+    if dark { ROW_HOVER_DARK } else { ROW_HOVER_LIGHT }
 }
 
 /// Inset of a single-line edit inside its painted frame. Equal on every side,
@@ -1668,7 +1777,9 @@ fn is_text_field(field: i32) -> bool {
 }
 
 fn kind_x(card: RECT, dpi: i32) -> i32 {
-    card.left + sc(dpi, 14) + sc(dpi, 22) + sc(dpi, 6)
+    // Pad, grip, gap, tick, gap. The kind combo starts where the mockup's does.
+    let dpi = dpi.max(96);
+    card.left + sc(dpi, 8) + sc(dpi, 10) + sc(dpi, 6) + sc(dpi, TICK_DIP) + sc(dpi, 6)
 }
 
 unsafe fn place_rules() {
@@ -1681,7 +1792,7 @@ unsafe fn place_rules() {
     let _ = GetClientRect(host, &mut rc);
     let width = (rc.right - rc.left).max(1);
     let rules = ST.with(|s| s.borrow().rules.clone());
-    let content = rules_span(&rules, dpi, width);
+    let content = rules_span(&rules, dpi);
     let view = (rc.bottom - rc.top).max(0);
     let max = (content - view).max(0);
     ST.with(|s| {
@@ -1696,9 +1807,9 @@ unsafe fn place_rules() {
     let scroll = ST.with(|s| s.borrow().rule_scroll);
     let mut y = -scroll;
     for (i, rule) in rules.iter().enumerate() {
-        let stride = rule_stride(rule, dpi, width);
-        let card = RECT { left: sc(dpi, 2), top: y + sc(dpi, 4), right: width - sc(dpi, 2), bottom: y + stride - sc(dpi, 4) };
-        place_card(host, i, card, dpi, rule, width);
+        let stride = rule_stride(rule, dpi);
+        let card = card_rect(y, stride, width, dpi);
+        place_card(host, i, card, dpi, rule);
         y += stride;
     }
     for i in rules.len()..MAX_RULES {
@@ -1713,9 +1824,10 @@ unsafe fn place_rules() {
 
 /// Painted frame for each control under the kind row. Text-field rects are the
 /// frame, the same height as the combos; the edit window is centred inside later.
-fn card_slots(card: RECT, dpi: i32, rule: &Rule, host_w: i32) -> Vec<(i32, RECT)> {
-    let row2 = card.top + sc(dpi, 46);
-    let row3 = card.top + sc(dpi, 82);
+fn card_slots(card: RECT, dpi: i32, rule: &Rule) -> Vec<(i32, RECT)> {
+    let dpi = dpi.max(96);
+    let row2 = row_top(card, dpi, 1);
+    let row3 = row_top(card, dpi, 2);
     let h = sc(dpi, FIELD_H_DIP);
     let gap = sc(dpi, 6);
     let x = kind_x(card, dpi);
@@ -1728,29 +1840,16 @@ fn card_slots(card: RECT, dpi: i32, rule: &Rule, host_w: i32) -> Vec<(i32, RECT)
     };
     match rule {
         Rule::Replace { .. } | Rule::Regex { .. } => {
-            let case_w = sc(dpi, 168);
-            let ext_w = sc(dpi, 176);
-            if checks_wrap(rule, host_w, dpi) {
-                let span = (end - x - gap).max(sc(dpi, 40));
-                let w = span / 2;
-                add(F_A, x, row2, x + w);
-                add(F_B, x + w + gap, row2, (x + w + gap + w).min(end));
-                add(F_CASE, x, row3, (x + case_w).min(end));
-                let ext_l = x + case_w + gap;
-                if ext_l < end {
-                    add(F_EXT, ext_l, row3, (ext_l + ext_w).min(end));
-                }
-            } else {
-                let mut edge = end;
-                add(F_EXT, edge - ext_w, row2, edge);
-                edge -= ext_w + gap;
-                add(F_CASE, edge - case_w, row2, edge);
-                edge -= case_w + gap;
-                let span = (edge - x - gap).max(sc(dpi, 40));
-                let w = span / 2;
-                add(F_A, x, row2, x + w);
-                add(F_B, x + w + gap, row2, (x + w + gap + w).min(edge));
-            }
+            let span = (end - x - gap).max(sc(dpi, 40));
+            let w = span / 2;
+            add(F_A, x, row2, x + w);
+            add(F_B, x + w + gap, row2, (x + w + gap + w).min(end));
+            // Ticks share the row under the fields, the same way the mockup draws them.
+            let check_gap = sc(dpi, 14);
+            let room = (end - x - check_gap).max(0);
+            let half = room / 2;
+            add(F_CASE, x, row3, x + half);
+            add(F_EXT, x + half + check_gap, row3, end);
         }
         Rule::Prefix { .. } | Rule::Suffix { .. } | Rule::Extension { .. } => {
             add(F_A, x, row2, (x + sc(dpi, 280)).min(end));
@@ -1804,31 +1903,48 @@ fn card_slots(card: RECT, dpi: i32, rule: &Rule, host_w: i32) -> Vec<(i32, RECT)
     slots
 }
 
-unsafe fn place_card(host: HWND, i: usize, card: RECT, dpi: i32, rule: &Rule, host_w: i32) {
-    let row1 = card.top + sc(dpi, 10);
+struct HeadCtl {
+    tick: RECT,
+    kind: RECT,
+    up: RECT,
+    down: RECT,
+    del: RECT,
+}
+
+/// Header row: grip (painted), enable tick, kind combo, then up / down / remove.
+fn head_controls(card: RECT, dpi: i32) -> HeadCtl {
+    let dpi = dpi.max(96);
+    let row1 = row_top(card, dpi, 0);
     let h = sc(dpi, FIELD_H_DIP);
-    let btn = sc(dpi, 28);
+    let btn = sc(dpi, MINI_W_DIP);
     let gap = sc(dpi, 6);
     let right = card.right - sc(dpi, 10);
     let del = RECT { left: right - btn, top: row1, right, bottom: row1 + h };
     let down = RECT { left: del.left - gap - btn, top: row1, right: del.left - gap, bottom: row1 + h };
     let up = RECT { left: down.left - gap - btn, top: row1, right: down.left - gap, bottom: row1 + h };
-    let grip = sc(dpi, 14);
-    let box_w = sc(dpi, 22);
-    put(host, id(i, F_ON), RECT { left: card.left + grip, top: row1, right: card.left + grip + box_w, bottom: row1 + h }, true);
+    let side = sc(dpi, TICK_DIP);
+    let tick_left = card.left + sc(dpi, 8) + sc(dpi, 10) + sc(dpi, 6);
+    // The control is the full row so the tick is easy to hit. draw_check centres the 16 DIP box in it.
+    let tick = RECT { left: tick_left, top: row1, right: tick_left + side, bottom: row1 + h };
     let kx = kind_x(card, dpi);
-    let kind = RECT { left: kx, top: row1, right: (kx + sc(dpi, 168)).min(up.left - gap), bottom: row1 + h };
-    put(host, id(i, F_KIND), kind, true);
-    put(host, id(i, F_UP), up, true);
-    put(host, id(i, F_DOWN), down, true);
-    put(host, id(i, F_DEL), del, true);
+    let kind = RECT { left: kx, top: row1, right: (kx + sc(dpi, KIND_W_DIP)).min(up.left - gap), bottom: row1 + h };
+    HeadCtl { tick, kind, up, down, del }
+}
+
+unsafe fn place_card(host: HWND, i: usize, card: RECT, dpi: i32, rule: &Rule) {
+    let head = head_controls(card, dpi);
+    put(host, id(i, F_ON), head.tick, true);
+    put(host, id(i, F_KIND), head.kind, true);
+    put(host, id(i, F_UP), head.up, true);
+    put(host, id(i, F_DOWN), head.down, true);
+    put(host, id(i, F_DEL), head.del, true);
     let _ = EnableWindow(ctl(host, id(i, F_UP)), (i > 0).into());
     let last = i + 1 == ST.with(|s| s.borrow().rules.len());
     let _ = EnableWindow(ctl(host, id(i, F_DOWN)), (!last).into());
     for f in [F_A, F_B, F_C, F_AT, F_CASE, F_EXT, F_MODE, F_POS, F_SRC] {
         put(host, id(i, f), RECT::default(), false);
     }
-    for (field, outer) in card_slots(card, dpi, rule, host_w) {
+    for (field, outer) in card_slots(card, dpi, rule) {
         if is_text_field(field) {
             place_field(host, id(i, field), outer, dpi);
         } else {
@@ -1850,6 +1966,8 @@ unsafe fn place_field(parent: HWND, cid: i32, outer: RECT, dpi: i32) {
         let _ = ShowWindow(c, SW_HIDE);
         return;
     }
+    let m = sc(dpi.max(96), 6) as isize;
+    let _ = SendMessageW(c, EM_SETMARGINS, Some(WPARAM(3)), Some(LPARAM(m | (m << 16))));
     crate::place_edit(c, field_inner(outer, dpi), true);
 }
 
@@ -1905,20 +2023,25 @@ unsafe fn on_wheel(delta: i32) {
 
 unsafe fn paint(h: HWND) {
     let dpi = ST.with(|s| s.borrow().dpi.max(96));
-    let font = ST.with(|s| s.borrow().font);
-    let small = ST.with(|s| s.borrow().small);
+    let (font, bold, small) = ST.with(|s| {
+        let st = s.borrow();
+        (st.font, st.bold, st.small)
+    });
     crate::buffered(h, |dc, rc| {
         let g = geo(rc, dpi);
         crate::fill(dc, rc, crate::pal().bg);
-        crate::text(dc, g.rules_lbl, tx(crate::Key::Rules), font, crate::pal().text, DT_LEFT);
-        let hint = tx(crate::Key::TopBottom);
-        crate::text(dc, RECT { left: g.rules_lbl.left + sc(dpi, 70), ..g.rules_lbl }, hint, small, crate::pal().sub, DT_LEFT);
-        paint_field_frame(dc, tool_rects(g.tools, dpi).ext, dpi, crate::pal().card, crate::pal().bg);
+        let rules_title = tx(crate::Key::Rules);
+        crate::text(dc, g.rules_lbl, rules_title, bold, crate::pal().text, DT_LEFT);
+        let hint_left = g.rules_lbl.left + text_w(dc, bold, rules_title) + sc(dpi, 12);
+        if hint_left < g.rules_lbl.right {
+            crate::text(dc, RECT { left: hint_left, ..g.rules_lbl }, tx(crate::Key::TopBottom), small, crate::pal().sub, DT_LEFT);
+        }
+        paint_field_frame(dc, tool_rects(g.tools, dpi).ext, dpi, crate::pal().card, crate::pal().bg, crate::pal().line);
         if g.list.left > g.host.right {
             let x = g.host.right + (g.list.left - g.host.right) / 2;
-            crate::fill(dc, RECT { left: x, top: g.rules_lbl.top, right: x + 1, bottom: g.host.bottom }, crate::pal().line);
+            crate::fill(dc, RECT { left: x, top: g.host.top, right: x + 1, bottom: g.host.bottom }, crate::pal().line);
         }
-        crate::text(dc, g.prev_lbl, tx(crate::Key::Preview), font, crate::pal().text, DT_LEFT);
+        crate::text(dc, g.prev_lbl, tx(crate::Key::Preview), bold, crate::pal().text, DT_LEFT);
         let note = ST.with(|s| s.borrow().note.clone());
         let rows = ST.with(|s| s.borrow().rows.clone());
         let summary = if note.is_empty() {
@@ -1928,24 +2051,32 @@ unsafe fn paint(h: HWND) {
         };
         let sum_color = if engine::error_count(&rows) > 0 && ST.with(|s| s.borrow().note.is_empty()) { err_color() } else { crate::pal().sub };
         crate::text(dc, g.summary, &summary, small, sum_color, DT_RIGHT);
-        paint_list(dc, g.list, dpi, font, small, &rows);
+        paint_list(dc, g.list, dpi, font, bold, small, &rows);
         crate::fill(dc, RECT { left: rc.left, top: g.undo.top - sc(dpi, 12), right: rc.right, bottom: g.undo.top - sc(dpi, 11), ..rc }, crate::pal().line);
     });
 }
 
-unsafe fn paint_list(dc: HDC, list: RECT, dpi: i32, font: HFONT, small: HFONT, rows: &[PreviewRow]) {
+unsafe fn paint_list(dc: HDC, list: RECT, dpi: i32, font: HFONT, bold: HFONT, small: HFONT, rows: &[PreviewRow]) {
     if list.bottom <= list.top {
         return;
     }
-    crate::aa_rfill(dc, list, sc(dpi, 8), crate::pal().card, Some(crate::pal().line), crate::pal().bg);
+    let rad = sc(dpi, 8);
     let head = sc(dpi, 28);
+    // Card body, then the header strip in the theme background so the top matches the caption ground.
+    crate::aa_rfill(dc, list, rad, crate::pal().card, Some(crate::pal().line), crate::pal().bg);
+    let head_r = RECT { bottom: (list.top + head).min(list.bottom), ..list };
+    if head_r.bottom > list.top {
+        let _ = SaveDC(dc);
+        let _ = IntersectClipRect(dc, list.left, list.top, list.right, head_r.bottom);
+        crate::aa_rfill(dc, list, rad, crate::pal().bg, Some(crate::pal().line), crate::pal().bg);
+        let _ = RestoreDC(dc, -1);
+    }
     let split = list.left + (list.right - list.left) * 42 / 100;
     let new_left = split + sc(dpi, 28);
     let err_w = sc(dpi, 168);
-    let head_r = RECT { bottom: list.top + head, ..list };
     crate::text(dc, RECT { left: list.left + sc(dpi, 12), right: split, ..head_r }, tx(crate::Key::Current), small, crate::pal().sub, DT_LEFT);
     crate::text(dc, RECT { left: new_left, right: list.right - err_w, ..head_r }, tx(crate::Key::NewName), small, crate::pal().sub, DT_LEFT);
-    crate::fill(dc, RECT { top: head_r.bottom - 1, bottom: head_r.bottom, ..list }, crate::pal().line);
+    crate::fill(dc, RECT { left: list.left + 1, top: head_r.bottom - 1, right: list.right - 1, bottom: head_r.bottom }, crate::pal().line);
     let _ = SaveDC(dc);
     let _ = IntersectClipRect(dc, list.left + 1, head_r.bottom, list.right - 1, list.bottom - 1);
     let row_h = sc(dpi, 36).max(1);
@@ -1965,22 +2096,23 @@ unsafe fn paint_list(dc: HDC, list: RECT, dpi: i32, font: HFONT, small: HFONT, r
         if i > 0 {
             crate::fill(dc, RECT { bottom: r.top + 1, top: r.top, ..r }, crate::pal().line);
         }
+        let dark = crate::DARK_ON.load(std::sync::atomic::Ordering::Relaxed);
         if ST.with(|s| s.borrow().hover) == Some(i) {
-            crate::fill(dc, RECT { left: r.left + 1, right: r.right - 1, top: r.top + 1, bottom: r.bottom - 1 }, crate::blend(crate::pal().card, crate::pal().text, 0.06));
+            crate::fill(dc, RECT { left: r.left + 1, right: r.right - 1, top: r.top + 1, bottom: r.bottom - 1 }, row_hover(dark));
         }
         let old_r = RECT { left: r.left + sc(dpi, 12), right: split - sc(dpi, 8), ..r };
         let arrow = RECT { left: split, right: new_left, ..r };
         let new_r = RECT { left: new_left, right: r.right - err_w, ..r };
         let err_r = RECT { left: r.right - err_w, right: r.right - sc(dpi, 10), ..r };
-        let accent = chrome();
-        let wash = crate::blend(crate::pal().card, accent, 0.28);
+        let wash = mark_wash(dark, crate::pal().card);
+        let mark = mark_ink(dark);
         if row.skipped {
             crate::text(dc, old_r, &row.old_name, font, crate::pal().sub, DT_LEFT);
             crate::text(dc, new_r, &row.new_name, font, crate::pal().sub, DT_LEFT);
             crate::text(dc, err_r, tx(crate::Key::Skipped), small, crate::pal().sub, DT_RIGHT);
         } else if row.issues.is_empty() {
-            paint_marked(dc, old_r, &row.old_name, row.old_span, font, crate::pal().text, wash, accent);
-            paint_marked(dc, new_r, &row.new_name, row.new_span, font, crate::pal().text, wash, accent);
+            paint_marked(dc, old_r, &row.old_name, row.old_span, font, bold, dpi, crate::pal().text, wash, mark);
+            paint_marked(dc, new_r, &row.new_name, row.new_span, font, bold, dpi, crate::pal().text, wash, mark);
         } else {
             crate::text(dc, old_r, &row.old_name, font, crate::pal().text, DT_LEFT);
             crate::text(dc, new_r, &row.new_name, font, err_color(), DT_LEFT);
@@ -2019,25 +2151,24 @@ unsafe fn paint_host(h: HWND) {
         let scroll = ST.with(|s| s.borrow().rule_scroll);
         let width = rc.right - rc.left;
         let mut y = -scroll;
-        for (_, rule) in rules.iter().enumerate() {
-            let stride = rule_stride(rule, dpi, width);
-            let card = RECT { left: sc(dpi, 2), top: y + sc(dpi, 4), right: width - sc(dpi, 2), bottom: y + stride - sc(dpi, 4) };
+        for (i, rule) in rules.iter().enumerate() {
+            let stride = rule_stride(rule, dpi);
+            let card = card_rect(y, stride, width, dpi);
             y += stride;
             if card.bottom < 0 || card.top > rc.bottom {
                 continue;
             }
-            crate::aa_rfill(dc, card, sc(dpi, 8), crate::pal().card, Some(crate::pal().line), crate::pal().bg);
-            let gx = card.left + sc(dpi, 6);
-            let gy = card.top + (card.bottom - card.top) / 2;
-            let ink = crate::blend(crate::pal().card, crate::pal().text, 0.45);
-            for dy in [-4, 0, 4] {
-                crate::fill(dc, RECT { left: gx, top: gy + dy, right: gx + sc(dpi, 3), bottom: gy + dy + 2 }, ink);
-                crate::fill(dc, RECT { left: gx + sc(dpi, 5), top: gy + dy, right: gx + sc(dpi, 8), bottom: gy + dy + 2 }, ink);
+            let on = rule_is_on(i);
+            let fill = plate(on);
+            crate::aa_rfill(dc, card, sc(dpi, 8), fill, Some(plate_line(on)), crate::pal().bg);
+            let ink = crate::blend(fill, crate::pal().text, 0.45);
+            for dot in grip_dots(card, dpi) {
+                crate::fill(dc, dot, ink);
             }
             // Frame is the combo-height slot. The edit itself is only the font cell, centred in it.
-            for (field, outer) in card_slots(card, dpi, rule, width) {
+            for (field, outer) in card_slots(card, dpi, rule) {
                 if is_text_field(field) {
-                    paint_field_frame(dc, outer, dpi, crate::pal().card, crate::pal().card);
+                    paint_field_frame(dc, outer, dpi, fill, fill, plate_line(on));
                 }
             }
         }
@@ -2048,12 +2179,12 @@ unsafe fn paint_host(h: HWND) {
                 if i == to {
                     break;
                 }
-                y += rule_stride(rule, dpi, width);
+                y += rule_stride(rule, dpi);
             }
             let _ = from;
-            crate::fill(dc, RECT { left: sc(dpi, 8), top: y, right: width - sc(dpi, 8), bottom: y + sc(dpi, 2) }, chrome());
+            crate::fill(dc, RECT { left: sc(dpi, 8), top: y, right: width - sc(dpi, 8), bottom: y + sc(dpi, 2) }, CERULEAN);
         }
-        let content = rules_span(&rules, dpi, width);
+        let content = rules_span(&rules, dpi);
         let view = rc.bottom - rc.top;
         let max = (content - view).max(0);
         if max > 0 {
@@ -2073,7 +2204,7 @@ unsafe fn paint_thumb(dc: HDC, r: RECT, scroll: i32, max: i32, dpi: i32, ground:
     crate::aa_rfill(dc, RECT { left: track.left, top: y, right: track.right, bottom: y + thumb_h }, sc(dpi, 2), crate::blend(crate::pal().bg, crate::pal().text, 0.35), None, track_c);
 }
 
-unsafe fn paint_marked(dc: HDC, rect: RECT, text: &str, span: Option<(usize, usize)>, font: HFONT, normal: u32, wash: u32, mark: u32) {
+unsafe fn paint_marked(dc: HDC, rect: RECT, text: &str, span: Option<(usize, usize)>, font: HFONT, bold: HFONT, dpi: i32, normal: u32, wash: u32, mark: u32) {
     let Some((a, b)) = span else {
         crate::text(dc, rect, text, font, normal, DT_LEFT);
         return;
@@ -2082,30 +2213,38 @@ unsafe fn paint_marked(dc: HDC, rect: RECT, text: &str, span: Option<(usize, usi
     let pre: String = chars.get(..a).unwrap_or(&[]).iter().collect();
     let mid: String = chars.get(a..b).unwrap_or(&[]).iter().collect();
     let post: String = chars.get(b..).unwrap_or(&[]).iter().collect();
-    let total = text_w(dc, font, text);
-    if total > (rect.right - rect.left).max(0) {
+    if mid.is_empty() {
+        crate::text(dc, rect, text, font, normal, DT_LEFT);
+        return;
+    }
+    let mark_font = if bold.is_invalid() { font } else { bold };
+    let width = (rect.right - rect.left).max(0);
+    let total = text_w(dc, font, &pre) + text_w(dc, mark_font, &mid) + text_w(dc, font, &post);
+    if total > width {
         crate::text(dc, rect, text, font, mark, DT_LEFT);
         return;
     }
     let mut x = rect.left;
-    let draw = |dc: HDC, x: i32, s: &str, fg: u32, bg: Option<u32>| -> i32 {
+    let draw = |dc: HDC, x: i32, s: &str, face: HFONT, fg: u32, bg: Option<u32>| -> i32 {
         if s.is_empty() {
             return x;
         }
-        let w = text_w(dc, font, s).max(0);
+        let w = text_w(dc, face, s).max(0);
         let r = RECT { left: x, top: rect.top, right: x + w, bottom: rect.bottom };
         if let Some(bg) = bg {
-            let pad = RECT { top: r.top + 6, bottom: r.bottom - 6, ..r };
-            if pad.bottom > pad.top {
-                crate::fill(dc, pad, bg);
+            let pad_y = sc(dpi, 8);
+            let pad_x = sc(dpi, 1);
+            let band = RECT { left: r.left - pad_x, top: r.top + pad_y, right: r.right + pad_x, bottom: r.bottom - pad_y };
+            if band.bottom > band.top && band.right > band.left {
+                crate::rfill(dc, band, sc(dpi, 2).max(1), bg, None);
             }
         }
-        crate::text(dc, r, s, font, fg, DT_LEFT);
+        crate::text(dc, r, s, face, fg, DT_LEFT);
         x + w
     };
-    x = draw(dc, x, &pre, normal, None);
-    x = draw(dc, x, &mid, mark, Some(wash));
-    let _ = draw(dc, x, &post, normal, None);
+    x = draw(dc, x, &pre, font, normal, None);
+    x = draw(dc, x, &mid, mark_font, mark, Some(wash));
+    let _ = draw(dc, x, &post, font, normal, None);
 }
 
 unsafe fn text_w(dc: HDC, font: HFONT, s: &str) -> i32 {
@@ -2120,12 +2259,23 @@ unsafe fn text_w(dc: HDC, font: HFONT, s: &str) -> i32 {
     r.right - r.left
 }
 
+fn is_check(field: i32) -> bool {
+    matches!(field, F_ON | F_CASE | F_EXT)
+}
+
 unsafe fn draw_btn(d: &DRAWITEMSTRUCT) {
     let id = d.CtlID as i32;
-    let dis = d.itemState.0 & 4 != 0;
-    let pressed = d.itemState.0 & 1 != 0;
+    if id >= ID_BASE && is_check((id - ID_BASE) % STRIDE) {
+        draw_check(d);
+        return;
+    }
+    let dis = d.itemState.0 & ODS_DISABLED.0 != 0;
+    let pressed = d.itemState.0 & ODS_SELECTED.0 != 0;
+    let hot = !dis && crate::app(|a| a.hover) == d.hwndItem;
     let dpi = ST.with(|s| s.borrow().dpi.max(96));
-    let (font, bold) = if id >= ID_BASE {
+    let in_card = id >= ID_BASE;
+    let rule_on = if in_card { rule_is_on(((id - ID_BASE) / STRIDE) as usize) } else { true };
+    let (font, bold) = if in_card {
         ST.with(|s| {
             let st = s.borrow();
             (st.small, st.small)
@@ -2136,34 +2286,52 @@ unsafe fn draw_btn(d: &DRAWITEMSTRUCT) {
             (st.font, st.bold)
         })
     };
-    let accent = chrome();
-    let in_card = id >= ID_BASE;
-    let ground = if in_card { crate::pal().card } else { crate::pal().bg };
+    let ground = if in_card { plate(rule_on) } else { crate::pal().bg };
     crate::fill(d.hDC, d.rcItem, ground);
     let accent_btn = id == ID_APPLY && !dis;
     let (fill, border, ink) = if accent_btn {
-        (accent, accent, crate::on_color(accent))
+        (primary_fill(hot || pressed), primary_edge(), 0xFFFFFFu32)
     } else if dis {
         (crate::blend(ground, crate::pal().sub, 0.12), crate::pal().line, crate::pal().sub)
     } else if pressed {
         (crate::blend(ground, crate::pal().text, 0.08), crate::pal().line, crate::pal().text)
+    } else if hot {
+        (crate::blend(ground, CERULEAN, 0.12), CERULEAN, crate::pal().text)
+    } else if !rule_on {
+        (ground, plate_line(false), crate::blend(ground, crate::pal().text, 0.55))
     } else {
         (ground, crate::pal().line, crate::pal().text)
     };
-    crate::aa_rfill(d.hDC, d.rcItem, sc(dpi, 6), fill, Some(border), ground);
+    let rad = if matches!(id, ID_UNDO | ID_CLOSE | ID_APPLY) { sc(dpi, 6) } else { sc(dpi, 4) };
+    crate::aa_rfill(d.hDC, d.rcItem, rad, fill, Some(border), ground);
     let label = crate::text_of(d.hwndItem);
     let label_font = if accent_btn && !bold.is_invalid() { bold } else { font };
     crate::text(d.hDC, d.rcItem, &label, label_font, ink, DT_CENTER);
 }
 
-fn chrome() -> u32 {
-    let (c, dark) = crate::app(|a| (a.s.accent_now(), a.s.dark));
-    let plain = if dark { crate::DARK.accents[1].1 } else { crate::LIGHT.accents[1].1 };
-    if c == plain {
-        if dark { 0x4CC2FF } else { 0x0067C0 }
-    } else {
-        c
+unsafe fn draw_check(d: &DRAWITEMSTRUCT) {
+    let id = d.CtlID as i32;
+    let i = ((id - ID_BASE) / STRIDE) as usize;
+    let field = (id - ID_BASE) % STRIDE;
+    let dpi = ST.with(|s| s.borrow().dpi.max(96));
+    let on_rule = rule_is_on(i);
+    let ground = plate(on_rule);
+    let hot = d.itemState.0 & ODS_DISABLED.0 == 0 && crate::app(|a| a.hover) == d.hwndItem;
+    crate::fill(d.hDC, d.rcItem, ground);
+    let side = sc(dpi, TICK_DIP);
+    let top = d.rcItem.top + ((d.rcItem.bottom - d.rcItem.top) - side) / 2;
+    let mark = RECT { left: d.rcItem.left, top, right: d.rcItem.left + side, bottom: top + side };
+    let icon = ST.with(|s| s.borrow().icon);
+    let tick = if stored_flag(i, field) { crate::shell::ctxmenu::Tick::On } else { crate::shell::ctxmenu::Tick::Off };
+    crate::draw_tick(d.hDC, mark, tick, CERULEAN, dpi, icon, ground, hot);
+    let label = crate::text_of(d.hwndItem);
+    if label.is_empty() {
+        return;
     }
+    let font = ST.with(|s| s.borrow().font);
+    let ink = if on_rule { crate::pal().text } else { crate::blend(ground, crate::pal().text, 0.55) };
+    let lab = RECT { left: mark.right + sc(dpi, 6), ..d.rcItem };
+    crate::text(d.hDC, lab, &label, font, ink, DT_LEFT);
 }
 
 fn err_color() -> u32 {
@@ -2172,11 +2340,11 @@ fn err_color() -> u32 {
 
 /// Rounded field at `outer`. The borderless edit sits inside this rect, so the
 /// box stays the same height as the combo or button it lines up with.
-unsafe fn paint_field_frame(dc: HDC, outer: RECT, dpi: i32, fill: u32, ground: u32) {
+unsafe fn paint_field_frame(dc: HDC, outer: RECT, dpi: i32, fill: u32, ground: u32, border: u32) {
     if outer.right <= outer.left || outer.bottom <= outer.top {
         return;
     }
-    crate::aa_rfill(dc, outer, sc(dpi, 4), fill, Some(crate::pal().line), ground);
+    crate::aa_rfill(dc, outer, sc(dpi, 4), fill, Some(border), ground);
 }
 
 fn current_filter() -> engine::Filter {
@@ -2531,11 +2699,15 @@ fn load_existing(items: &[BatchItem]) -> HashSet<(String, String)> {
 }
 
 unsafe fn style_window(h: HWND) {
+    // Same caption as Settings / Excel tidy: theme background, no cerulean fill, no gradient.
     let dark = crate::DARK_ON.load(std::sync::atomic::Ordering::Relaxed);
     let on = BOOL::from(dark);
     let _ = DwmSetWindowAttribute(h, DWMWINDOWATTRIBUTE(20), &on as *const _ as _, 4);
     let caption = crate::cref(crate::pal().bg);
     let _ = DwmSetWindowAttribute(h, DWMWA_CAPTION_COLOR, &caption as *const _ as _, 4);
+    let def = COLORREF(0xFFFF_FFFF);
+    let _ = DwmSetWindowAttribute(h, DWMWINDOWATTRIBUTE(36), &def as *const _ as _, 4);
+    let _ = DwmSetWindowAttribute(h, DWMWINDOWATTRIBUTE(34), &def as *const _ as _, 4);
 }
 
 fn make_font(face: &str, px: i32, weight: i32, dpi: i32) -> HFONT {
@@ -2556,33 +2728,36 @@ fn rebuild_fonts() {
     let dpi = ST.with(|s| s.borrow().dpi.max(96));
     let custom = crate::app(|a| a.s.font_face.clone());
     let face = if custom.is_empty() { crate::ui_face() } else { custom.as_str() };
-    let new = (make_font(face, 14, 400, dpi), make_font(face, 14, 700, dpi), make_font(face, 12, 400, dpi));
+    let new = (make_font(face, 14, 400, dpi), make_font(face, 14, 700, dpi), make_font(face, 12, 400, dpi), make_font("Segoe MDL2 Assets", 14, 400, dpi));
     let old = ST.with(|s| {
         let mut st = s.borrow_mut();
-        let old = (st.font, st.bold, st.small);
-        (st.font, st.bold, st.small) = new;
+        let old = (st.font, st.bold, st.small, st.icon);
+        (st.font, st.bold, st.small, st.icon) = new;
         old
     });
     unsafe {
         drop_font(old.0);
         drop_font(old.1);
         drop_font(old.2);
+        drop_font(old.3);
     }
 }
 
 fn drop_fonts() {
     let old = ST.with(|s| {
         let mut st = s.borrow_mut();
-        let old = (st.font, st.bold, st.small);
+        let old = (st.font, st.bold, st.small, st.icon);
         st.font = HFONT::default();
         st.bold = HFONT::default();
         st.small = HFONT::default();
+        st.icon = HFONT::default();
         old
     });
     unsafe {
         drop_font(old.0);
         drop_font(old.1);
         drop_font(old.2);
+        drop_font(old.3);
     }
 }
 
@@ -2653,7 +2828,7 @@ mod tests {
 
     #[test]
     fn panels_sit_side_by_side_at_100_and_150_percent() {
-        for dpi in [96, 144] {
+        for dpi in [96, 120, 144] {
             let g = geo(client(sc(dpi, DLG_W_DIP), sc(dpi, DLG_H_DIP)), dpi);
             let left_w = g.host.right - g.host.left;
             let right_w = g.list.right - g.list.left;
@@ -2686,7 +2861,7 @@ mod tests {
 
     #[test]
     fn minimum_window_keeps_both_columns_and_the_footer() {
-        for dpi in [96, 144] {
+        for dpi in [96, 120, 144] {
             let g = geo(client(sc(dpi, DLG_MIN_W_DIP), sc(dpi, DLG_MIN_H_DIP)), dpi);
             assert!(g.host.right > g.host.left, "dpi {dpi}");
             assert!(g.list.right > g.list.left, "dpi {dpi}");
@@ -2703,7 +2878,7 @@ mod tests {
 
     #[test]
     fn edit_frames_match_the_row_and_centre_the_line_at_100_and_150_percent() {
-        for dpi in [96, 144] {
+        for dpi in [96, 120, 144] {
             let frame_h = sc(dpi, FIELD_H_DIP);
             let outer = RECT { left: 40, top: 80, right: 220, bottom: 80 + frame_h };
             let inner = field_inner(outer, dpi);
@@ -2724,7 +2899,7 @@ mod tests {
             }
             let wide = sc(dpi, 800);
             let card = RECT { left: sc(dpi, 2), top: 0, right: wide - sc(dpi, 2), bottom: sc(dpi, 120) };
-            let slots = card_slots(card, dpi, &replace_rule(), wide);
+            let slots = card_slots(card, dpi, &replace_rule());
             let texts: Vec<_> = slots.iter().filter(|(f, _)| is_text_field(*f)).collect();
             assert!(texts.len() >= 2, "dpi {dpi}");
             for (_, r) in texts {
@@ -2734,28 +2909,90 @@ mod tests {
     }
 
     #[test]
-    fn narrow_replace_card_wraps_checks_and_a_wide_one_does_not() {
+    fn replace_checks_sit_under_the_fields_at_100_125_and_150_percent() {
         let rule = replace_rule();
+        let prefix = Rule::Prefix { text: String::new() };
         let number = Rule::Number { start: 1, step: 1, pad: 0, pos: NumPos::Suffix };
-        for dpi in [96, 144] {
-            let wide = sc(dpi, CHECK_WRAP_DIP);
-            let narrow = wide - 1;
-            assert!(!checks_wrap(&rule, wide, dpi));
-            assert!(checks_wrap(&rule, narrow, dpi));
-            assert_eq!(card_dip(&rule, wide, dpi), 92);
-            assert_eq!(card_dip(&rule, narrow, dpi), 128);
-            assert_eq!(card_dip(&number, narrow, dpi), 128);
-            let card = RECT { left: 0, top: 10, right: sc(dpi, 700), bottom: 200 };
-            let on_wide = card_slots(card, dpi, &rule, wide);
-            let on_narrow = card_slots(card, dpi, &rule, narrow);
-            let row_of = |slots: &[(i32, RECT)], field: i32| slots.iter().find(|(f, _)| *f == field).map(|(_, r)| r.top);
-            let text_top = row_of(&on_wide, F_A).unwrap();
-            assert_eq!(row_of(&on_wide, F_CASE), Some(text_top));
-            assert_eq!(row_of(&on_wide, F_EXT), Some(text_top));
-            assert_eq!(row_of(&on_narrow, F_A), Some(text_top));
-            let check_top = row_of(&on_narrow, F_CASE).unwrap();
-            assert!(check_top > text_top);
-            assert_eq!(row_of(&on_narrow, F_EXT), Some(check_top));
+        assert_eq!(rule_row_count(&rule), 3);
+        assert_eq!(rule_row_count(&prefix), 2);
+        assert_eq!(rule_row_count(&number), 3);
+        for dpi in [96, 120, 144] {
+            let body = rule_stride(&rule, dpi) - sc(dpi, CARD_GAP_DIP);
+            let expect = sc(dpi, CARD_PAD_DIP) * 2 + 3 * sc(dpi, FIELD_H_DIP) + 2 * sc(dpi, ROW_GAP_DIP);
+            assert_eq!(body, expect, "dpi {dpi}");
+            assert_eq!(rule_stride(&prefix, dpi) - sc(dpi, CARD_GAP_DIP), sc(dpi, CARD_PAD_DIP) * 2 + 2 * sc(dpi, FIELD_H_DIP) + sc(dpi, ROW_GAP_DIP), "dpi {dpi}");
+            let card = RECT { left: 0, top: sc(dpi, 4), right: sc(dpi, 700), bottom: sc(dpi, 400) };
+            let slots = card_slots(card, dpi, &rule);
+            let row_of = |field: i32| slots.iter().find(|(f, _)| *f == field).map(|(_, r)| r.top);
+            let text_top = row_of(F_A).unwrap();
+            let check_top = row_of(F_CASE).unwrap();
+            assert_eq!(text_top, row_top(card, dpi, 1), "dpi {dpi}");
+            assert_eq!(check_top, row_top(card, dpi, 2), "dpi {dpi}");
+            assert!(check_top > text_top, "dpi {dpi}");
+            assert_eq!(row_of(F_EXT), Some(check_top), "dpi {dpi}");
+            assert_eq!(row_of(F_B), Some(text_top), "dpi {dpi}");
+            for (_, r) in slots.iter().filter(|(f, _)| is_text_field(*f)) {
+                assert_eq!(r.bottom - r.top, sc(dpi, FIELD_H_DIP), "dpi {dpi}");
+            }
         }
+    }
+
+    #[test]
+    fn header_tick_grip_and_kind_stay_on_one_row() {
+        for dpi in [96, 120, 144] {
+            let stride = rule_stride(&replace_rule(), dpi);
+            let card = card_rect(0, stride, sc(dpi, 640), dpi);
+            let head = head_controls(card, dpi);
+            let row = row_top(card, dpi, 0);
+            let h = sc(dpi, FIELD_H_DIP);
+            assert_eq!(head.kind.top, row, "dpi {dpi}");
+            assert_eq!(head.up.top, row, "dpi {dpi}");
+            assert_eq!(head.down.top, head.up.top, "dpi {dpi}");
+            assert_eq!(head.del.top, head.up.top, "dpi {dpi}");
+            assert_eq!(head.tick.top, row, "dpi {dpi}");
+            assert_eq!(head.tick.bottom - head.tick.top, h, "dpi {dpi}");
+            assert_eq!(head.tick.right - head.tick.left, sc(dpi, TICK_DIP), "dpi {dpi}");
+            assert!(head.kind.left >= head.tick.right, "dpi {dpi}");
+            assert!(head.kind.right <= head.up.left, "dpi {dpi}");
+            assert!(head.up.right <= head.down.left, "dpi {dpi}");
+            assert!(head.down.right <= head.del.left, "dpi {dpi}");
+            assert!(head.del.right <= card.right, "dpi {dpi}");
+            let dots = grip_dots(card, dpi);
+            assert_eq!(dots.len(), 6);
+            let row_mid = row + h / 2;
+            let grip_mid = (dots[0].top + dots[4].bottom) / 2;
+            assert!((grip_mid - row_mid).abs() <= 1, "dpi {dpi} grip {grip_mid} row {row_mid}");
+            assert!(dots[0].right <= head.tick.left, "dpi {dpi}");
+            assert!(drag_max_x(dpi) < head.tick.left, "dpi {dpi}");
+            // Footer: undo on the left, close then the primary rename on the right.
+            let g = geo(client(sc(dpi, DLG_W_DIP), sc(dpi, DLG_H_DIP)), dpi);
+            assert!(g.undo.right < g.close.left, "dpi {dpi}");
+            assert!(g.close.right <= g.apply.left, "dpi {dpi}");
+            assert_eq!(g.apply.bottom - g.apply.top, sc(dpi, 32), "dpi {dpi}");
+            assert_eq!(g.tools.bottom - g.tools.top, sc(dpi, FIELD_H_DIP), "dpi {dpi}");
+        }
+    }
+
+    #[test]
+    fn cerulean_mark_and_primary_never_use_mint() {
+        let mint = 0x2EC4A6u32;
+        for c in [CERULEAN, CERULEAN_DEEP, MARK_INK_DARK, primary_fill(false), primary_fill(true), primary_edge(), mark_ink(false), mark_ink(true), mark_wash(false, 0xFFFFFF), mark_wash(true, 0x26282C), row_hover(false), row_hover(true)] {
+            assert_ne!(c, mint, "{c:#08X}");
+        }
+        assert_eq!(CERULEAN, 0x0A9BD6);
+        assert_eq!(CERULEAN_DEEP, 0x0786BC);
+        assert_eq!(primary_fill(false), CERULEAN);
+        assert_eq!(primary_fill(true), CERULEAN_DEEP);
+        assert_eq!(primary_edge(), CERULEAN_DEEP);
+        assert_eq!(mark_ink(false), CERULEAN_DEEP);
+        assert_eq!(mark_ink(true), 0x7FD4F5);
+        // Light wash is 28% cerulean on white. Dark wash is 32% cerulean on the card.
+        assert_eq!(mark_wash(false, 0xFFFFFF), crate::blend(0xFFFFFF, CERULEAN, 0.28));
+        assert_eq!(mark_wash(true, 0x26282C), crate::blend(0x26282C, CERULEAN, 0.32));
+        assert_eq!(row_hover(false), 0xF7F5F1);
+        assert_eq!(row_hover(true), 0x2A2C30);
+        let off = crate::blend(0xF3F1EC, 0xFFFFFF, 0.55);
+        assert_ne!(off, mint);
+        assert_ne!(off, 0xFFFFFF);
     }
 }
