@@ -18,6 +18,10 @@ pub(crate) const DROPDOWN: u32 = 0x2 | 0x200 | 0x10 | 0x0020_0000;
 
 const PAD_DIP: i32 = 8;
 const CHEVRON_DIP: i32 = 22;
+/// Filled arrow: 8×4 device pixels at 96 DPI, inset from the right by the text pad.
+const TRI_W_DIP: i32 = 8;
+const TRI_H_DIP: i32 = 4;
+const TRI_PAD_DIP: i32 = PAD_DIP;
 const RADIUS_DIP: i32 = 4;
 const INSET_DIP: i32 = 1;
 const VISIBLE: usize = 8;
@@ -153,6 +157,39 @@ fn chevron_rect(client: RECT, dpi: i32) -> RECT {
     let sys = unsafe { GetSystemMetricsForDpi(SM_CXVSCROLL, dpi as u32) };
     let w = px(dpi, CHEVRON_DIP).max(sys).max(1);
     RECT { left: (client.right - w).max(client.left), top: client.top, right: client.right, bottom: client.bottom }
+}
+
+/// Downward triangle in inclusive pixels. `None` when the face is too small.
+///
+/// The rightmost pixel is `TRI_PAD_DIP` inside the client, and every vertex is
+/// strictly inside the client, so the fill is not cut by the clip or the border.
+/// Width and height are `TRI_W_DIP` × `TRI_H_DIP` at 96 DPI.
+fn triangle_points(client: RECT, dpi: i32) -> Option<[POINT; 3]> {
+    let face_w = client.right - client.left;
+    let face_h = client.bottom - client.top;
+    if face_w < 4 || face_h < 4 {
+        return None;
+    }
+    let w = px(dpi, TRI_W_DIP).max(2).min(face_w - 2);
+    let h = px(dpi, TRI_H_DIP).max(2).min(face_h - 2);
+    let pad = px(dpi, TRI_PAD_DIP).max(1).min(face_w - w - 1);
+    // Last paintable pixel is `right - 1`. Leave `pad` pixels empty after the arrow.
+    let rightmost = client.right - 1 - pad;
+    let leftmost = rightmost - w + 1;
+    if leftmost < client.left {
+        return None;
+    }
+    let topmost = client.top + (face_h - h) / 2;
+    let bottommost = topmost + h - 1;
+    if topmost < client.top || bottommost >= client.bottom {
+        return None;
+    }
+    let apex_x = leftmost + (rightmost - leftmost) / 2;
+    Some([
+        POINT { x: leftmost, y: topmost },
+        POINT { x: rightmost, y: topmost },
+        POINT { x: apex_x, y: bottommost },
+    ])
 }
 
 /// Text box inside the border. `chevron` reserves the button; list rows do not.
@@ -436,23 +473,20 @@ unsafe fn paint_label(dc: HDC, bounds: RECT, text: &str, font: HFONT, color: u32
     draw_ink_line(dc, baseline_rect(bounds, nudge), text, font, color, DT_LEFT | DT_END_ELLIPSIS);
 }
 
-unsafe fn paint_chevron(dc: HDC, slot: RECT, rgb: u32, dpi: i32) {
-    if slot.right - slot.left < 6 || slot.bottom <= slot.top {
+unsafe fn paint_triangle(dc: HDC, client: RECT, rgb: u32, dpi: i32) {
+    let Some(pts) = triangle_points(client, dpi) else { return };
+    let brush = CreateSolidBrush(super::cref(rgb));
+    if brush.is_invalid() {
         return;
     }
-    let pen = CreatePen(PS_SOLID, (dpi / 96).max(1), super::cref(rgb));
-    if pen.is_invalid() {
-        return;
-    }
-    let old = SelectObject(dc, pen.into());
-    let cx = (slot.left + slot.right) / 2;
-    let cy = (slot.top + slot.bottom) / 2;
-    let dx = px(dpi, 4).max(3);
-    let dy = px(dpi, 2).max(1);
-    let pts = [POINT { x: cx - dx, y: cy - dy }, POINT { x: cx, y: cy + dy }, POINT { x: cx + dx, y: cy - dy }];
-    let _ = Polyline(dc, &pts);
-    SelectObject(dc, old);
-    let _ = DeleteObject(pen.into());
+    // No pen: a stroke is centred on the vertices and was what clipped the old chevron.
+    let pen = HPEN(GetStockObject(NULL_PEN).0);
+    let old_pen = SelectObject(dc, pen.into());
+    let old_brush = SelectObject(dc, brush.into());
+    let _ = Polygon(dc, &pts);
+    SelectObject(dc, old_brush);
+    SelectObject(dc, old_pen);
+    let _ = DeleteObject(brush.into());
 }
 
 unsafe fn paint_closed(hwnd: HWND, dc: HDC) {
@@ -464,8 +498,8 @@ unsafe fn paint_closed(hwnd: HWND, dc: HDC) {
     let face = current_face(hwnd);
     let edge = edge_of(hwnd, face);
     super::aa_rfill(dc, client, px(dpi, RADIUS_DIP).max(1), face.fill, Some(edge), face.ground);
-    let chev = chevron_rect(client, dpi);
-    paint_chevron(dc, chev, super::pal().sub, dpi);
+    // Same ink as the label: theme text when enabled, `pal().sub` when disabled.
+    paint_triangle(dc, client, face.ink, dpi);
     // An editable combo's child edit draws the text on the same cell.
     if find_edit(hwnd).0.is_null() {
         paint_label(dc, text_bounds(client, dpi, true), &selected_text(hwnd), font_of(hwnd), face.ink);
@@ -675,7 +709,7 @@ unsafe fn parent_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESUL
 #[cfg(test)]
 mod tests {
     use super::{
-        adopt, centered_edit_rect, face_rect, find_edit, line_top, px, selection_request, window_in_parent, CHEVRON_DIP, CLOSED_BORDER, DROPDOWN, LIST, PAD_DIP, RADIUS_DIP, SELECTION_EXTRA, CERULEAN_BRAND,
+        adopt, centered_edit_rect, face_rect, find_edit, line_top, px, selection_request, text_bounds, triangle_points, window_in_parent, CHEVRON_DIP, CLOSED_BORDER, DROPDOWN, LIST, PAD_DIP, RADIUS_DIP, SELECTION_EXTRA, TRI_H_DIP, TRI_PAD_DIP, TRI_W_DIP, CERULEAN_BRAND,
     };
     use crate::imports::*;
 
@@ -695,7 +729,43 @@ mod tests {
         for dpi in [96, 120, 144] {
             assert_eq!(px(dpi, PAD_DIP), PAD_DIP * dpi / 96, "pad {dpi}");
             assert_eq!(px(dpi, CHEVRON_DIP), CHEVRON_DIP * dpi / 96, "chevron {dpi}");
+            assert_eq!(px(dpi, TRI_W_DIP), TRI_W_DIP * dpi / 96, "arrow width {dpi}");
+            assert_eq!(px(dpi, TRI_H_DIP), TRI_H_DIP * dpi / 96, "arrow height {dpi}");
+            assert_eq!(px(dpi, TRI_PAD_DIP), TRI_PAD_DIP * dpi / 96, "arrow pad {dpi}");
             assert_eq!(px(dpi, RADIUS_DIP), RADIUS_DIP * dpi / 96, "radius {dpi}");
+        }
+    }
+
+    #[test]
+    fn filled_triangle_stays_inside_the_face_at_100_125_and_150() {
+        // Batch Rename is 26 DIP, Settings is 32. 120 and 144 are 125% and 150%.
+        for dpi in [96, 120, 144] {
+            let w = px(dpi, TRI_W_DIP);
+            let h = px(dpi, TRI_H_DIP);
+            let pad = px(dpi, TRI_PAD_DIP);
+            assert_eq!((w, h, pad), (8 * dpi / 96, 4 * dpi / 96, 8 * dpi / 96), "dpi {dpi}");
+            for (origin_x, origin_y, face_h) in [(0, 0, 26 * dpi / 96), (40, 12, 32 * dpi / 96)] {
+                let client = RECT { left: origin_x, top: origin_y, right: origin_x + 220, bottom: origin_y + face_h };
+                let pts = triangle_points(client, dpi).expect("face fits the arrow");
+                let min_x = pts.iter().map(|p| p.x).min().unwrap();
+                let max_x = pts.iter().map(|p| p.x).max().unwrap();
+                let min_y = pts.iter().map(|p| p.y).min().unwrap();
+                let max_y = pts.iter().map(|p| p.y).max().unwrap();
+                assert!(min_x >= client.left && max_x < client.right, "x inside at {dpi} h {face_h}: {min_x}..{max_x}");
+                assert!(min_y >= client.top && max_y < client.bottom, "y inside at {dpi} h {face_h}: {min_y}..{max_y}");
+                assert_eq!(max_x - min_x + 1, w, "width {dpi}");
+                assert_eq!(max_y - min_y + 1, h, "height {dpi}");
+                assert_eq!(client.right - 1 - max_x, pad, "right pad {dpi}");
+                // Pixel centre of the arrow matches the face. Odd heights land within one pixel.
+                let slack = (min_y + max_y) - (origin_y + origin_y + face_h - 1);
+                assert!(slack.abs() <= 1, "centred at {dpi} h {face_h}, slack {slack}");
+                assert_eq!(pts[0].y, min_y, "flat top");
+                assert_eq!(pts[1].y, min_y, "flat top");
+                assert_eq!(pts[2].y, max_y, "apex down");
+                assert!(pts[2].x > min_x && pts[2].x < max_x, "apex between the top corners");
+                let text = text_bounds(client, dpi, true);
+                assert!(text.right <= min_x, "label clears the arrow at {dpi}");
+            }
         }
     }
 
