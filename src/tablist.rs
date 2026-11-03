@@ -224,7 +224,7 @@ pub(crate) enum KbdSeg {
     Key(String),
 }
 
-/// Split a status line on `{Enter}` / `{Del}` / `{Esc}` so those words draw as key chips.
+/// Split a status line on `{Enter}` / `{F2}` / `{Del}` / `{Esc}` so those words draw as key chips.
 pub(crate) fn kbd_segs(s: &str) -> Vec<KbdSeg> {
     let mut out = Vec::new();
     let mut rest = s;
@@ -248,6 +248,86 @@ pub(crate) fn kbd_segs(s: &str) -> Vec<KbdSeg> {
         out.push(KbdSeg::Text(rest.to_string()));
     }
     out
+}
+
+/// One wrapped run of key-hint pieces. `start`..`end` indexes the measured widths.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct FooterRow {
+    pub start: usize,
+    pub end: usize,
+    pub width: i32,
+}
+
+/// Greedy rows of piece widths. A piece wider than `width` sits on its own row.
+/// Each step takes at least one piece, so an empty remainder cannot loop.
+pub(crate) fn wrap_runs(widths: &[i32], width: i32) -> Vec<FooterRow> {
+    let width = width.max(1);
+    let mut rows = Vec::new();
+    let mut i = 0;
+    while i < widths.len() {
+        let start = i;
+        let mut w = 0;
+        loop {
+            let piece = widths[i].max(0);
+            if i > start && w + piece > width {
+                break;
+            }
+            w += piece;
+            i += 1;
+            if i == widths.len() || w >= width {
+                break;
+            }
+        }
+        rows.push(FooterRow { start, end: i, width: w });
+    }
+    rows
+}
+
+/// How the status line shares its width. The key hint is never clipped to make room for the count.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct FooterPlan {
+    /// Width given to the left-hand count. It ellipsizes inside this.
+    pub count_w: i32,
+    /// The count shares the key row. Otherwise it is a full-width row above the keys.
+    pub count_on_keys: bool,
+    pub key_rows: Vec<FooterRow>,
+    pub rows: i32,
+}
+
+/// `width` is the status bar. `text_w` is the count string. `piece_w` are key-hint segments.
+/// `gap` sits between the count and the keys when they share a row.
+///
+/// Keys that fit on one line stay on that line and the count shrinks. Keys that do not fit wrap,
+/// and the count takes the row above them.
+pub(crate) fn plan_footer(width: i32, text_w: i32, piece_w: &[i32], gap: i32) -> FooterPlan {
+    let width = width.max(1);
+    let text_w = text_w.max(0);
+    let gap = gap.max(0);
+    let keys: i32 = piece_w.iter().map(|w| (*w).max(0)).sum();
+    if piece_w.is_empty() || keys == 0 {
+        return FooterPlan { count_w: width.min(text_w), count_on_keys: true, key_rows: Vec::new(), rows: 1 };
+    }
+    if keys <= width {
+        let room = if text_w == 0 { 0 } else { width.saturating_sub(keys).saturating_sub(gap) };
+        return FooterPlan {
+            count_w: room.min(text_w),
+            count_on_keys: true,
+            key_rows: vec![FooterRow { start: 0, end: piece_w.len(), width: keys }],
+            rows: 1,
+        };
+    }
+    let key_rows = wrap_runs(piece_w, width);
+    let n = key_rows.len().max(1) as i32;
+    FooterPlan { count_w: width.min(text_w), count_on_keys: false, key_rows, rows: n + 1 }
+}
+
+fn status_caption(n: usize, q: &str) -> String {
+    let n = n.to_string();
+    if q.trim().is_empty() {
+        tf(Key::TabListStatus, &[("n", n.as_str())])
+    } else {
+        tf(Key::TabListStatusFilter, &[("n", n.as_str()), ("q", q.trim())])
+    }
 }
 
 fn row_ok(row: &Row, q: &str) -> bool {
@@ -636,21 +716,12 @@ unsafe fn layout(hwnd: HWND) {
     let hint_h = sc(dpi, 18);
     let search_h = sc(dpi, 26);
     let btn_h = sc(dpi, 24);
-    let status_h = sc(dpi, 22);
     let y0 = pad;
     let hint = RECT { left: pad, top: y0, right: width - pad, bottom: y0 + hint_h };
     let search = RECT { left: pad, top: hint.bottom + gap, right: width - pad, bottom: hint.bottom + gap + search_h };
-    let btn_top = height - pad - status_h - gap - btn_h;
-    let frame_top = search.bottom + gap;
-    let frame_bot = (btn_top - gap).max(frame_top + sc(dpi, 40));
-    let frame = RECT { left: pad, top: frame_top, right: width - pad, bottom: frame_bot };
-    let head_h = sc(dpi, 22);
-    let head = RECT { left: frame.left + 1, top: frame.top + 1, right: frame.right - 1, bottom: (frame.top + 1 + head_h).min(frame.bottom - 1) };
-    let list = RECT { left: head.left, top: head.bottom, right: head.right, bottom: (frame.bottom - 1).max(head.bottom) };
-    let status = RECT { left: pad, top: height - pad - status_h, right: width - pad, bottom: height - pad };
 
     let dc = GetDC(Some(hwnd));
-    let (font, bold, mono) = with_st(|s| (s.font, s.bold, s.mono));
+    let (font, bold, mono, small) = with_st(|s| (s.font, s.bold, s.mono, s.small));
     let chord = chord_label();
     let chord_w = if chord.is_empty() { 0 } else { text_px(dc, mono, &chord) + sc(dpi, 10) };
     let chord_r = if chord_w == 0 {
@@ -671,6 +742,23 @@ unsafe fn layout(hwnd: HWND) {
     let sel = clamp_sel(&rows_all, &q, prev_sel);
     let shown: Vec<Row> = rows_all.into_iter().filter(|r| row_ok(r, &q)).collect();
 
+    // The key hint stays whole. The count shrinks on the same line, or the keys wrap and the
+    // count takes the line above. Measured before the list, so the buttons move up with it.
+    let line_h = sc(dpi, 22);
+    let status_w = (width - pad * 2).max(1);
+    let caption = status_caption(shown.len(), &q);
+    let piece_w = kbd_piece_widths(dc, small, mono, dpi);
+    let footer = plan_footer(status_w, text_px(dc, small, &caption), &piece_w, sc(dpi, 8));
+    let status_h = line_h * footer.rows.max(1);
+    let btn_top = height - pad - status_h - gap - btn_h;
+    let frame_top = search.bottom + gap;
+    let frame_bot = (btn_top - gap).max(frame_top + sc(dpi, 40));
+    let frame = RECT { left: pad, top: frame_top, right: width - pad, bottom: frame_bot };
+    let head_h = sc(dpi, 22);
+    let head = RECT { left: frame.left + 1, top: frame.top + 1, right: frame.right - 1, bottom: (frame.top + 1 + head_h).min(frame.bottom - 1) };
+    let list = RECT { left: head.left, top: head.bottom, right: head.right, bottom: (frame.bottom - 1).max(head.bottom) };
+    let status = RECT { left: pad, top: height - pad - status_h, right: width - pad, bottom: height - pad };
+
     let col_name = sc(dpi, 112);
     let col_lay = sc(dpi, 56);
     let col_n = sc(dpi, 32);
@@ -681,7 +769,6 @@ unsafe fn layout(hwnd: HWND) {
     let avail = (folders_right - folders_left).max(1);
     let chip_h = sc(dpi, 16);
     let chip_gap = sc(dpi, 3);
-    let small = with_st(|s| s.small);
 
     let mut y = 0;
     let mut boxes = Vec::new();
@@ -709,7 +796,6 @@ unsafe fn layout(hwnd: HWND) {
         boxes.push(RowBox { tab: row.index, y, h: row_h });
         y += row_h;
     }
-    let _ = ReleaseDC(Some(hwnd), dc);
     let content_h = y;
     let view_h = (list.bottom - list.top).max(0);
     let max_scroll = (content_h - view_h).max(0);
@@ -736,7 +822,6 @@ unsafe fn layout(hwnd: HWND) {
     let go_on = !shown.is_empty();
     let close_on = go_on && app(|a| can_close_tab(&a.s.tabs, sel));
     let labels = [(GO, tr(Key::TabListGo), true), (CLOSE_TAB, tr(Key::CloseTab), false), (DISMISS, tr(Key::Close), false)];
-    let dc = GetDC(Some(hwnd));
     let mut buttons = Vec::new();
     let mut x = pad;
     for (id, label, primary) in labels {
@@ -1080,16 +1165,7 @@ unsafe fn paint(dc: HDC, _rc: RECT) {
     for (id, rect, on) in &st.buttons {
         paint_btn(dc, *rect, *id, *on, st.hot_btn == Some(*id), &st);
     }
-    let n = st.shown.len().to_string();
-    let left = if st.query.trim().is_empty() {
-        tf(Key::TabListStatus, &[("n", n.as_str())])
-    } else {
-        tf(Key::TabListStatusFilter, &[("n", n.as_str()), ("q", st.query.trim())])
-    };
-    let kbd_left = kbd_left_edge(dc, st.status, &st);
-    let count = RECT { right: (kbd_left - sc(dpi, 8)).max(st.status.left), ..st.status };
-    text(dc, count, &left, st.small, p.sub, DT_LEFT);
-    paint_kbd(dc, st.status, &st);
+    paint_footer(dc, st.status, &status_caption(st.shown.len(), &st.query), &st);
 }
 
 struct PaintSnap {
@@ -1118,17 +1194,57 @@ struct PaintSnap {
     icon: HFONT,
 }
 
-unsafe fn kbd_left_edge(dc: HDC, status: RECT, st: &PaintSnap) -> i32 {
-    let segs = kbd_segs(tr(Key::TabListKeys));
-    let dpi = st.dpi;
-    let total: i32 = segs
+unsafe fn kbd_piece_widths(dc: HDC, small: HFONT, mono: HFONT, dpi: i32) -> Vec<i32> {
+    kbd_segs(tr(Key::TabListKeys))
         .iter()
         .map(|seg| match seg {
-            KbdSeg::Text(s) => text_px(dc, st.small, s),
-            KbdSeg::Key(s) => text_px(dc, st.mono, s) + sc(dpi, 8),
+            KbdSeg::Text(s) => text_px(dc, small, s),
+            KbdSeg::Key(s) => text_px(dc, mono, s) + sc(dpi, 8),
         })
-        .sum();
-    status.right - total
+        .collect()
+}
+
+/// The count ellipsizes. Every key chip is drawn, on a later row when the bar is too narrow.
+unsafe fn paint_footer(dc: HDC, status: RECT, caption: &str, st: &PaintSnap) {
+    let dpi = st.dpi;
+    let width = (status.right - status.left).max(1);
+    let segs = kbd_segs(tr(Key::TabListKeys));
+    let widths = kbd_piece_widths(dc, st.small, st.mono, dpi);
+    let plan = plan_footer(width, text_px(dc, st.small, caption), &widths, sc(dpi, 8));
+    let line_h = sc(dpi, 22);
+    let p = pal();
+    if plan.count_w > 0 {
+        let bottom = if plan.count_on_keys { status.bottom } else { (status.top + line_h).min(status.bottom) };
+        let count = RECT { left: status.left, top: status.top, right: status.left + plan.count_w, bottom };
+        text(dc, count, caption, st.small, p.sub, DT_LEFT);
+    }
+    let mut y = if plan.count_on_keys { status.top } else { status.top + line_h };
+    let saved = SaveDC(dc);
+    IntersectClipRect(dc, status.left, status.top, status.right, status.bottom);
+    for row in &plan.key_rows {
+        let fits = row.width <= width;
+        let mut x = if fits { status.right - row.width } else { status.left };
+        let row_bot = y + line_h;
+        for i in row.start..row.end {
+            let w = widths.get(i).copied().unwrap_or(0);
+            let r = RECT { left: x, top: y, right: x + w, bottom: row_bot };
+            match segs.get(i) {
+                Some(KbdSeg::Text(s)) => text(dc, r, s, st.small, p.sub, DT_LEFT),
+                Some(KbdSeg::Key(s)) => {
+                    let h = sc(dpi, 14);
+                    let top = y + (line_h - h) / 2;
+                    let kr = RECT { left: r.left, top, right: r.right, bottom: top + h };
+                    aa_rfill(dc, kr, sc(dpi, 2).max(1), p.pill, Some(p.line), p.bg);
+                    fill(dc, RECT { top: kr.bottom - sc(dpi, 2).max(2), ..kr }, p.line);
+                    text(dc, kr, s, st.mono, p.sub, DT_CENTER);
+                }
+                None => {}
+            }
+            x += w;
+        }
+        y += line_h;
+    }
+    let _ = RestoreDC(dc, saved);
 }
 
 unsafe fn paint_name(dc: HDC, row: RECT, data: &Row, dpi: i32, st: &PaintSnap, ground: u32) {
@@ -1242,40 +1358,6 @@ unsafe fn paint_btn(dc: HDC, r: RECT, id: u8, on: bool, hot: bool, st: &PaintSna
     };
     let font = if primary && on { st.bold } else { st.font };
     text(dc, r, label, font, ink, DT_CENTER);
-}
-
-unsafe fn paint_kbd(dc: HDC, status: RECT, st: &PaintSnap) {
-    let p = pal();
-    let segs = kbd_segs(tr(Key::TabListKeys));
-    let dpi = st.dpi;
-    let mut widths = Vec::new();
-    for seg in &segs {
-        let w = match seg {
-            KbdSeg::Text(s) => text_px(dc, st.small, s),
-            KbdSeg::Key(s) => text_px(dc, st.mono, s) + sc(dpi, 8),
-        };
-        widths.push(w);
-    }
-    let total: i32 = widths.iter().sum();
-    let mut x = status.right - total;
-    let saved = SaveDC(dc);
-    IntersectClipRect(dc, status.left, status.top, status.right, status.bottom);
-    for (seg, w) in segs.iter().zip(widths) {
-        let r = RECT { left: x, top: status.top, right: x + w, bottom: status.bottom };
-        match seg {
-            KbdSeg::Text(s) => text(dc, r, &s, st.small, p.sub, DT_LEFT),
-            KbdSeg::Key(s) => {
-                let h = sc(dpi, 14);
-                let top = status.top + (status.bottom - status.top - h) / 2;
-                let kr = RECT { left: r.left, top, right: r.right, bottom: top + h };
-                aa_rfill(dc, kr, sc(dpi, 2).max(1), p.pill, Some(p.line), p.bg);
-                fill(dc, RECT { top: kr.bottom - sc(dpi, 2).max(2), ..kr }, p.line);
-                text(dc, kr, &s, st.mono, p.sub, DT_CENTER);
-            }
-        }
-        x += w;
-    }
-    let _ = RestoreDC(dc, saved);
 }
 
 unsafe extern "system" fn edit_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM, _id: usize, _data: usize) -> LRESULT {
@@ -1687,7 +1769,64 @@ mod tests {
     fn footer_offers_f2_to_rename() {
         let s = tr(Key::TabListKeys);
         assert!(s.contains("{F2}"), "{s}");
+        assert!(s.contains("rename"), "{s}");
         assert!(kbd_segs(&s).iter().any(|seg| matches!(seg, KbdSeg::Key(k) if k == "F2")));
+    }
+
+    fn ini_value(text: &str, key: &str) -> String {
+        text.lines()
+            .find_map(|line| {
+                let rest = line.trim().strip_prefix(key)?.trim_start();
+                Some(rest.strip_prefix('=')?.trim().to_string())
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn footer_names_f2_in_korean_and_japanese() {
+        let ko = ini_value(include_str!("../lang/lang.ko.ini"), "tab_list_keys");
+        let ja = ini_value(include_str!("../lang/lang.ja.ini"), "tab_list_keys");
+        assert!(ko.contains("{F2}"), "{ko}");
+        assert!(ko.contains("이름 바꾸기"), "{ko}");
+        assert!(ja.contains("{F2}"), "{ja}");
+        assert!(ja.contains("名前の変更"), "{ja}");
+        for line in [&ko, &ja] {
+            assert!(kbd_segs(line).iter().any(|seg| matches!(seg, KbdSeg::Key(k) if k == "F2")), "{line}");
+        }
+    }
+
+    #[test]
+    fn footer_shrinks_the_count_before_clipping_keys() {
+        // Default client is 560 DIP; the status bar is that minus 8 DIP of padding on each side.
+        // The count fits in what the keys leave, so nothing wraps and nothing is ellipsized.
+        let plan = plan_footer(544, 192, &[70, 80, 70, 64], 8);
+        assert_eq!(plan.rows, 1);
+        assert!(plan.count_on_keys);
+        assert_eq!(plan.count_w, 192);
+        assert_eq!(plan.key_rows[0].width, 284);
+        assert_eq!(plan.key_rows[0].end, 4);
+
+        // A long count gives up space. The three key pieces stay on the one row.
+        let tight = plan_footer(360, 200, &[100, 100, 100], 8);
+        assert_eq!(tight.rows, 1);
+        assert!(tight.count_on_keys);
+        assert_eq!(tight.count_w, 52);
+        assert_eq!(tight.key_rows[0].width, 300);
+    }
+
+    #[test]
+    fn footer_wraps_keys_instead_of_clipping_them() {
+        let plan = plan_footer(150, 80, &[100, 100], 8);
+        assert!(!plan.count_on_keys);
+        assert!(plan.rows >= 2);
+        let placed: Vec<usize> = plan.key_rows.iter().flat_map(|row| row.start..row.end).collect();
+        assert_eq!(placed, vec![0, 1]);
+        assert!(plan.key_rows.iter().all(|row| row.width <= 150));
+
+        let wide = wrap_runs(&[200, 40], 100);
+        assert_eq!(wide.len(), 2);
+        assert_eq!(wide[0].width, 200);
+        assert_eq!((wide[1].start, wide[1].end), (1, 2));
     }
 
     #[test]
