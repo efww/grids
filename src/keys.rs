@@ -64,6 +64,7 @@ const CMDS: &[Cmd] = &[
     cmd("tab.reopen", TAB, crate::Key::ReopenClosedTab, 0x54, true, true, false, false, false),
     // Ctrl+K stays free. Duplicate tab is Ctrl+Alt+K; the tab right-click menu does the same.
     cmd("tab.dup", TAB, crate::Key::DuplicateTab, 0x4B, true, false, true, false, false),
+    cmd("tab.list", TAB, crate::Key::TabList, 0x4C, true, true, false, false, false),
     cmd("pane.next", PANE, crate::Key::NextPane, 0x22, true, false, false, false, false),
     cmd("pane.prev", PANE, crate::Key::PreviousPane, 0x21, true, false, false, false, false),
     cmd("pane.goto", PANE, crate::Key::GoPane19, 0x31, true, false, false, false, true),
@@ -719,6 +720,19 @@ mod tests {
         assert!(help_text().lines().any(|l| l == "Ctrl+Alt+K\tDuplicate tab"));
         assert_eq!(lookup(b'K' as u16, true, false, false, false), None); // Ctrl+K stays free
         assert_eq!(lookup(b'K' as u16, true, true, true, false), None);
+        let list = index("tab.list").unwrap();
+        assert_eq!(CMDS[list].cat, TAB);
+        assert_eq!(CMDS[list].act, crate::Key::TabList);
+        assert_eq!(chord_text(list), "Ctrl+Shift+L");
+        assert_eq!(lookup(b'L' as u16, true, true, false, false), Some(list));
+        assert_eq!(lookup(b'L' as u16, true, false, false, false), index("nav.addr"));
+        assert!(help_text().lines().any(|l| l == "Ctrl+Shift+L\tTab list"));
+        let list_chord = default_chord(list).unwrap();
+        for (i, c) in CMDS.iter().enumerate() {
+            if i != list {
+                assert!(!overlaps(c.chord(), list_chord), "{} collides with tab.list", c.id);
+            }
+        }
         let chord = default_chord(dup).unwrap();
         for (i, c) in CMDS.iter().enumerate() {
             if i != dup {

@@ -196,6 +196,16 @@ pub(crate) fn close_other_indexes(tabs: &[Tab], keep: usize) -> Vec<usize> {
     tabs.iter().enumerate().filter(|(i, t)| *i != keep && !t.locked).map(|(i, _)| i).collect()
 }
 
+/// Indexes closed by "close all tabs": every unlocked tab, low to high. Locked tabs stay.
+pub(crate) fn close_all_indexes(tabs: &[Tab]) -> Vec<usize> {
+    tabs.iter().enumerate().filter(|(_, t)| !t.locked).map(|(i, _)| i).collect()
+}
+
+/// True when closing every unlocked tab would leave none, so a fresh default tab has to be opened first.
+pub(crate) fn close_all_needs_fresh(tabs: &[Tab]) -> bool {
+    !tabs.is_empty() && tabs.iter().all(|t| !t.locked)
+}
+
 pub(crate) fn reorder_vec<T>(v: &mut Vec<T>, from: usize, to: usize) {
     if from == to || from >= v.len() || to >= v.len() {
         return;

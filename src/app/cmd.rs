@@ -276,6 +276,19 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
         }
         return true;
     }
+    // The tab list keeps arrows, Enter, and Esc. Typing stays in its filter. Ctrl+Shift+L toggles it.
+    if crate::tablist::captures(m.hwnd) {
+        if let Some(i) = crate::keys::lookup(vk, ctrl, shift, alt, win) {
+            let id = crate::keys::id_of(i);
+            if id == "tab.list" {
+                if m.lParam.0 & (1 << 30) != 0 {
+                    return true;
+                }
+                return dispatch(id, vk, active_pane(), false, || false);
+            }
+        }
+        return crate::tablist::on_key(vk, ctrl, shift, alt);
+    }
     // The file basket is its own window. Its keys stay here, including the toggle and add chords.
     if crate::basket::captures(m.hwnd) {
         if let Some(i) = crate::keys::lookup(vk, ctrl, shift, alt, win) {
@@ -367,10 +380,10 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
         if id == "app.keys" && m.lParam.0 & (1 << 30) != 0 {
             return true; // holding Ctrl+/ toggles once
         }
-        if matches!(id, "file.basket" | "file.basket.add") && m.lParam.0 & (1 << 30) != 0 {
+        if matches!(id, "file.basket" | "file.basket.add" | "tab.list") && m.lParam.0 & (1 << 30) != 0 {
             return true;
         }
-        if matches!(id, "focus.next" | "focus.prev" | "app.keys" | "file.basket" | "file.basket.add") {
+        if matches!(id, "focus.next" | "focus.prev" | "app.keys" | "file.basket" | "file.basket.add" | "tab.list") {
             return dispatch(id, vk, a, list, shell);
         }
     }
@@ -436,7 +449,7 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
     }
     if let Some(i) = crate::keys::lookup(vk, ctrl, shift, alt, win) {
         let id = crate::keys::id_of(i);
-        if matches!(id, "app.keys" | "view.peek" | "view.preview" | "app.front" | "dialog.jump" | "clip.open" | "view.gather" | "view.recentfiles" | "file.mkdir" | "file.winmerge" | "file.reveal" | "file.basket" | "file.basket.add" | "ws.load" | "ws.save" | "watch.open") && m.lParam.0 & (1 << 30) != 0 {
+        if matches!(id, "app.keys" | "view.peek" | "view.preview" | "app.front" | "dialog.jump" | "clip.open" | "view.gather" | "view.recentfiles" | "file.mkdir" | "file.winmerge" | "file.reveal" | "file.basket" | "file.basket.add" | "ws.load" | "ws.save" | "watch.open" | "tab.list") && m.lParam.0 & (1 << 30) != 0 {
             return true;
         }
         // Pane-tab chords stay out of the address bar (already returned) and out of every other focus,
@@ -534,6 +547,7 @@ unsafe fn dispatch(id: &str, vk: u16, a: usize, list: bool, shell: impl Fn() -> 
         "tab.prev" => switch_rel(-1),
         "tab.reopen" => reopen_closed_at(0),
         "tab.dup" => duplicate_tab(app(|x| x.s.tab)),
+        "tab.list" => crate::tablist::open_toggle(),
         "pane.next" => cycle(1),
         "pane.prev" => cycle(-1),
         "pane.goto" => {
@@ -780,7 +794,7 @@ unsafe fn side_popup(h: HWND) -> bool {
     if h.0.is_null() {
         return false;
     }
-    if settings::captures(h) || crate::rename::captures(h) || fav_manager_captures(h) || crate::basket::captures(h) {
+    if settings::captures(h) || crate::rename::captures(h) || fav_manager_captures(h) || crate::basket::captures(h) || crate::tablist::captures(h) {
         return true;
     }
     let (peek, load, grid, keys, fav, match_hwnd) = app(|a| {

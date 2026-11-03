@@ -237,6 +237,8 @@ pub(crate) struct Desk {
     pub(crate) fav_pop_tip: bool,   // tracking tooltip for the favourites window is installed
     pub(crate) tab_hot_plus: bool,
     pub(crate) tab_hot_over: bool, // pointer over the overflow chevron
+    pub(crate) tab_hot_list: bool, // pointer over the tab-list button
+    pub(crate) tab_list_tip: bool, // tracking tooltip for that button is installed
     pub(crate) tab_scroll: usize,  // first visible window tab while the strip overflows
     pub(crate) tab_drag: Option<usize>,
     pub(crate) tab_press: Option<(usize, i32, i32, bool)>, // tab, x, y, press landed on its close box
@@ -431,6 +433,8 @@ pub(crate) fn blank_desk() -> Desk {
         fav_pop_tip: false,
         tab_hot_plus: false,
         tab_hot_over: false,
+        tab_hot_list: false,
+        tab_list_tip: false,
         tab_scroll: 0,
         tab_drag: None,
         tab_press: None,
@@ -552,6 +556,9 @@ fn desk_owns(d: &Desk, h: HWND) -> bool {
     }
     // The peek popup's preview host is its child, not the main window's.
     if !d.peek.0.is_null() && unsafe { IsChild(d.peek, h).as_bool() } {
+        return true;
+    }
+    if crate::tablist::belongs(d.main, h) {
         return true;
     }
     unsafe { IsChild(d.main, h).as_bool() }

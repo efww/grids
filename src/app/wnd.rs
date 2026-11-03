@@ -536,6 +536,7 @@ fn main_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                 if window_count() == 0 {
                     crate::watch::shutdown();
                     crate::basket::close();
+                    crate::tablist::close();
                     crate::dialogjump::shutdown();
                     PostQuitMessage(0);
                 } else {

@@ -12,6 +12,7 @@ mod clippath;
 mod cliphot;
 mod app;
 mod basket;
+mod tablist;
 mod ui;
 mod pane;
 mod session;
@@ -215,6 +216,15 @@ fn main() -> Result<()> {
             hCursor: arrow,
             hIcon: LoadIconW(Some(hinst), PCWSTR(ICON_GROUP_LIGHT as _)).unwrap_or_default(),
             lpszClassName: w!("MaguroBasket"),
+            ..Default::default()
+        });
+        RegisterClassW(&WNDCLASSW {
+            style: CS_DBLCLKS | CS_HREDRAW | CS_VREDRAW,
+            lpfnWndProc: Some(tablist::tablist_proc),
+            hInstance: hinst,
+            hCursor: arrow,
+            hIcon: LoadIconW(Some(hinst), PCWSTR(ICON_GROUP_LIGHT as _)).unwrap_or_default(),
+            lpszClassName: w!("MaguroTabList"),
             ..Default::default()
         });
         RegisterClassW(&WNDCLASSW {
@@ -582,6 +592,13 @@ mod tests {
         assert!(!can_close_tab(&tabs, 0) && can_close_tab(&tabs, 1));
         assert_eq!(close_other_indexes(&tabs, 0), vec![1]);
         assert!(close_other_indexes(&tabs, 1).is_empty());
+        assert!(close_all_needs_fresh(&old.tabs));
+        assert_eq!(close_all_indexes(&tabs), vec![1]);
+        assert!(!close_all_needs_fresh(&tabs));
+        let mut locked_tabs = tabs.clone();
+        locked_tabs[1].locked = true;
+        assert!(close_all_indexes(&locked_tabs).is_empty());
+        assert!(!close_all_needs_fresh(&locked_tabs));
         assert_eq!(duplicate_name(&tabs, "2"), "3");
         assert_eq!(duplicate_name(&tabs, "Work"), "Work (2)");
         let mut again = tabs.clone();
