@@ -1582,8 +1582,8 @@ mod tests {
         let folder = vec![FindHit { name: "findme_note.txt".into(), path: r"C:\t\findme_note.txt".into(), dir: false, size: None, modified: None }];
         let glyph = vec![FindHit { name: "\u{3131}".into(), path: "\u{3131}".into(), dir: false, size: None, modified: None }];
         let real = vec![
-            FindHit { name: "findme_dir".into(), path: r"C:\Users\Jun\dev\grids-test\search\findme_dir".into(), dir: true, size: None, modified: None },
-            FindHit { name: "findme_note.txt".into(), path: r"C:\Users\Jun\dev\grids-test\search\findme_note.txt".into(), dir: false, size: None, modified: None },
+            FindHit { name: "findme_dir".into(), path: r"C:\Users\Jun\dev\maguro-test\search\findme_dir".into(), dir: true, size: None, modified: None },
+            FindHit { name: "findme_note.txt".into(), path: r"C:\Users\Jun\dev\maguro-test\search\findme_note.txt".into(), dir: false, size: None, modified: None },
         ];
         assert_eq!(merge_hits(&folder, glyph.clone(), FindEngine::Everything, 10), glyph);
         assert_eq!(merge_hits(&folder, real.clone(), FindEngine::Everything, 10), real);
@@ -1679,7 +1679,7 @@ mod tests {
 
     #[test]
     fn walk_is_case_blind_capped_and_stops() {
-        let root = std::env::temp_dir().join(format!("grids-find-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("maguro-find-{}", std::process::id()));
         _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("Sub")).unwrap();
         std::fs::write(root.join("Report.TXT"), b"a").unwrap();

@@ -1,5 +1,5 @@
 // Settings file: %APPDATA%\Maguro\maguro.json, or next to the exe when portable.txt is there.
-// Named .grids sessions stay in the ini shape. Missing maguro.json is copied from grids.json, else read once from grids.ini or qdir.ini; the source file is left untouched.
+// Named .maguro sessions stay in the ini shape. A missing maguro.json starts from the defaults.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -250,7 +250,6 @@ struct SettingsFile {
     side_split: f64,
     /// Which half is on top. `"tree"` puts the folder tree above favourites.
     /// Missing, `"fav"`, or anything else is favourites on top, and the key is omitted.
-    /// Not written into grids.ini.
     #[serde(default = "side_fav", skip_serializing_if = "side_is_fav")]
     side_order: String,
     /// Explorer pins group expanded. The pinned folders themselves are not stored.
@@ -325,7 +324,7 @@ struct SettingsFile {
     #[serde(default, skip_serializing_if = "is_wheel_off")]
     peek_wheel_nav: bool,
     /// Remember sort, columns, view mode, icon size and grouping for each folder.
-    /// Missing means on. The views themselves live in folder-views.json, never in grids.ini.
+    /// Missing means on. The views themselves live in folder-views.json.
     #[serde(default = "yes", skip_serializing_if = "is_on")]
     remember_folder_view: bool,
     /// Status line shows a selected folder's total. Missing means on. Omitted while on.
@@ -340,7 +339,7 @@ struct SettingsFile {
     /// The one-time Everything install question was shown. Missing means not yet.
     #[serde(default, skip_serializing_if = "is_off")]
     ev_asked: bool,
-    /// Everything result sort code. Missing means name A→Z. Not written into grids.ini.
+    /// Everything result sort code. Missing means name A→Z. A named session file does not store this.
     #[serde(default = "sort_by_name", skip_serializing_if = "is_name_sort")]
     ev_sort: u32,
     /// The one-time rclone and WinFsp install question was shown. Missing means not yet.
@@ -364,18 +363,18 @@ struct SettingsFile {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     favorites_tree: Vec<Value>,
     /// Third-party context-menu targets turned off in Maguro. Omitted when every handler is on.
-    /// A .grids file does not store this.
+    /// A .maguro file does not store this.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     ctx_menu: BTreeMap<String, Vec<String>>,
     /// Menu strings observed for each handler id. Omitted until a menu has been opened.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     ctx_labels: BTreeMap<String, Vec<String>>,
     /// Targets explicitly enabled for handlers that start off (WinMerge). Omitted while empty,
-    /// which keeps those commands hidden. A .grids file does not store this.
+    /// which keeps those commands hidden. A .maguro file does not store this.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     ctx_on: BTreeMap<String, Vec<String>>,
     /// Handler ids that added no visible menu item. Omitted until a menu has been learned.
-    /// They leave the settings list only. A .grids file does not store this.
+    /// They leave the settings list only. A .maguro file does not store this.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     ctx_quiet: BTreeSet<String>,
     /// Older denylist (`packaged:{clsid}`). Read so a saved file does not keep the key
@@ -384,7 +383,7 @@ struct SettingsFile {
     #[allow(dead_code)]
     ctx_packaged_off: BTreeSet<String>,
     /// Packaged Windows 11 commands the user turned on. Empty means all off.
-    /// Not written into grids.ini.
+    /// A named session file does not store this.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     ctx_packaged_on: BTreeSet<String>,
     /// Set after the one-time switch that turns previously-on packaged commands off.
@@ -395,24 +394,24 @@ struct SettingsFile {
     #[serde(default, skip_serializing_if = "is_off")]
     ctx_win11_view: bool,
     /// DLL file names blocked inside Maguro only. Omitted when empty.
-    /// Not written to the registry and not written into grids.ini.
+    /// Not written to the registry. A named session file does not store this.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     blocked_shell_extensions: Vec<String>,
-    /// Workspace slots 1–9. Each entry is `{slot, name?, grids?}`. Omitted when every slot is empty.
-    /// A `.grids` file does not store this.
+    /// Workspace slots 1–9. Each entry is `{slot, name?, session?}`. Omitted when every slot is empty.
+    /// A `.maguro` file does not store this.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     workspaces: Vec<Value>,
     /// Ask before loading a workspace replaces the current tabs. Missing means no. Omitted while off.
     #[serde(default, skip_serializing_if = "is_off")]
     workspace_confirm: bool,
-    /// Paths in the file basket. Omitted when empty. Not written into grids.ini.
+    /// Paths in the file basket. Omitted when empty. A named session file does not store this.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     file_basket: Vec<String>,
     /// Last Excel tidy checkboxes. Omitted at the portable default (A1/zoom/first on, backup off).
-    /// Not written into grids.ini.
+    /// A named session file does not store this.
     #[serde(default = "excel_tidy_default", skip_serializing_if = "excel_tidy_is_default")]
     excel_tidy: ExcelTidyJson,
-    /// Folders watched while Maguro is running. Not part of a session and not written into grids.ini.
+    /// Folders watched while Maguro is running. Not part of a session file.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     folder_watches: Vec<crate::watch::WatchJson>,
     #[serde(default, flatten)]
@@ -1045,9 +1044,9 @@ pub(crate) fn read_settings_file(path: &Path) -> Result<Option<String>, String> 
     }
 }
 
-/// Load maguro.json, copy a fork grids.json, or import a legacy ini. An existing file that cannot be read or parsed is an error,
-/// so a later save does not replace it with defaults.
-pub(crate) fn try_load_at(exe: &Path, cfg: &Path, old_cfg: &Path) -> Result<Session, String> {
+/// Load maguro.json. An existing file that cannot be read or parsed is an error,
+/// so a later save does not replace it with defaults. A missing file starts from the defaults.
+pub(crate) fn try_load_at(cfg: &Path) -> Result<Session, String> {
     let _ = std::fs::create_dir_all(cfg);
     let json_path = cfg.join(SETTINGS_FILE);
     match read_settings_file(&json_path)? {
@@ -1080,39 +1079,18 @@ pub(crate) fn try_load_at(exe: &Path, cfg: &Path, old_cfg: &Path) -> Result<Sess
             }
             Ok(s)
         }
-        None => Ok(load_legacy(exe, cfg, old_cfg)),
-    }
-}
-
-/// Copy a fork `grids.json`, else import ini. Never renames, moves, deletes, or writes a source file.
-fn load_legacy(exe: &Path, cfg: &Path, old_cfg: &Path) -> Session {
-    let json_path = cfg.join(SETTINGS_FILE);
-    for cand in [exe.join("grids.json"), old_cfg.join("grids.json")] {
-        let Ok(Some(text)) = read_settings_file(&cand) else { continue };
-        let Some(mut s) = adopt(&text) else { continue };
-        if write_atomic(&json_path, text.as_bytes()).is_ok() {
-            forget_missing_face(&mut s);
-            return s;
+        None => {
+            let s = Session::default();
+            remember(SettingsFile::from_session(&s));
+            Ok(s)
         }
     }
-    for cand in [exe.join("grids.ini"), old_cfg.join("grids.ini"), exe.join("qdir.ini")] {
-        let Ok(text) = std::fs::read_to_string(&cand) else { continue };
-        let s = Session::parse(&text);
-        let file = SettingsFile::from_session(&s);
-        if write_atomic(&json_path, pretty(&file).as_bytes()).is_ok() {
-            remember(file);
-            return s;
-        }
-    }
-    let s = Session::default();
-    remember(SettingsFile::from_session(&s));
-    s
 }
 
 /// Same as `try_load_at` for tests that only see a readable file.
 #[cfg(test)]
-pub(crate) fn load_at(exe: &Path, cfg: &Path, old_cfg: &Path) -> Session {
-    try_load_at(exe, cfg, old_cfg).unwrap_or_else(|_| {
+pub(crate) fn load_at(cfg: &Path) -> Session {
+    try_load_at(cfg).unwrap_or_else(|_| {
         remember(SettingsFile::default());
         Session::default()
     })
@@ -1121,8 +1099,7 @@ pub(crate) fn load_at(exe: &Path, cfg: &Path, old_cfg: &Path) -> Session {
 pub(crate) fn load() -> Result<Session, String> {
     let cfg = config_dir();
     let _ = std::fs::create_dir_all(&cfg);
-    let old_base = roaming_appdata().or_else(|| std::env::var_os("APPDATA").map(PathBuf::from)).unwrap_or_else(exe_dir);
-    try_load_at(&exe_dir(), &cfg, &old_base.join("grids"))
+    try_load_at(&cfg)
 }
 
 pub(crate) fn write_settings(text: &str) -> std::io::Result<()> {
@@ -1177,7 +1154,7 @@ mod tests {
     use super::*;
 
     fn scratch(name: &str) -> PathBuf {
-        let p = std::env::temp_dir().join(format!("grids-json-{name}-{}", std::process::id()));
+        let p = std::env::temp_dir().join(format!("maguro-json-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
         p
@@ -1198,7 +1175,7 @@ mod tests {
         s.accent_dark = 0x4CC2FF;
         s.dark = true;
         s.dblup = false;
-        s.file = "C:\\s\\work.grids".into();
+        s.file = "C:\\s\\work.maguro".into();
         s.favs = vec!["C:\\WORK\tWork".into(), "D:\\Photos".into(), "E:\\\tLater".into()];
         s.recent = vec!["D:\\Photos".into(), "C:\\WORK".into()];
         s.lang = Lang::Ko;
@@ -1219,7 +1196,7 @@ mod tests {
         s.dropm = 2;
         s.layout_new = 2;
         s.boot = 1;
-        s.boot_file = "C:\\s.grids".into();
+        s.boot_file = "C:\\s.maguro".into();
         s.autosave = true;
         s.dot = false;
         s
@@ -1277,28 +1254,28 @@ mod tests {
         let text = sync_text(&s);
         assert!(!text.contains("\"workspaces\""));
         assert!(!text.contains("workspace_confirm"));
-        let grids = "cols=1\np0=C:\\work\n";
-        assert!(crate::store_workspace(0, grids));
+        let session = "cols=1\np0=C:\\work\n";
+        assert!(crate::store_workspace(0, session));
         crate::rename_workspace_name(0, "Desk");
         crate::set_workspaces_confirm(true);
         let text = sync_text(&s);
         let v: Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["workspaces"][0]["slot"], 1);
         assert_eq!(v["workspaces"][0]["name"], "Desk");
-        assert_eq!(v["workspaces"][0]["grids"], grids);
+        assert_eq!(v["workspaces"][0]["session"], session);
         assert_eq!(v["workspace_confirm"], true);
         crate::reset_workspaces();
-        assert!(crate::workspace_grids(0).is_none());
+        assert!(crate::workspace_session(0).is_none());
         let back = adopt(&text).unwrap();
         assert_eq!(back.theme, s.theme);
         assert!(crate::workspaces_confirm());
-        assert_eq!(crate::workspace_grids(0).as_deref(), Some(grids));
+        assert_eq!(crate::workspace_session(0).as_deref(), Some(session));
         assert_eq!(crate::workspace_name(0), "Desk");
         crate::reset_workspaces();
     }
 
     #[test]
-    fn ctx_menu_lives_in_json_and_stays_out_of_grids_ini() {
+    fn ctx_menu_lives_in_json_and_not_in_a_session_file() {
         let mut s = Session::default();
         s.ctx_off.insert("clsid:abc".into(), vec!["nope".into(), "File".into(), "drive".into(), "file".into()]);
         s.ctx_labels.insert("clsid:abc".into(), vec!["  ".into(), "반디집으로 압축하기".into(), "반디집으로 압축하기".into(), "SVN 업데이트".into()]);
@@ -1496,17 +1473,12 @@ mod tests {
     }
 
     #[test]
-    fn fresh_config_is_one_pane_and_a_saved_grid_stays() {
+    fn fresh_config_is_one_pane_and_a_saved_layout_stays() {
         let root = scratch("fresh-panes");
-        let exe = root.join("exe");
         let cfg = root.join("cfg");
-        let old = root.join("old");
-        std::fs::create_dir_all(&exe).unwrap();
-        let fresh = load_at(&exe, &cfg, &old);
+        let fresh = load_at(&cfg);
         assert_eq!((fresh.layout_new, fresh.heights.clone(), fresh.panes()), (3, vec![1], 1));
-        assert!(!exe.join("grids.ini").exists());
-        assert!(!old.join("grids.ini").exists());
-        assert!(!cfg.join("grids.ini").exists());
+        assert!(!cfg.join(SETTINGS_FILE).exists());
 
         let mut saved = Session::default();
         saved.set_heights(vec![2, 2]);
@@ -1514,13 +1486,11 @@ mod tests {
         saved.layout_new = 3;
         saved.anchor();
         std::fs::write(cfg.join(SETTINGS_FILE), sync_text(&saved)).unwrap();
-        let back = load_at(&exe, &cfg, &old);
+        let back = load_at(&cfg);
         assert_eq!(back.heights, vec![2, 2]);
         assert_eq!(back.paths[0], r"C:\keep");
         assert_eq!(back.layout_new, 3);
         assert_eq!(back.panes(), 4);
-        assert!(!exe.join("grids.ini").exists());
-        assert!(!cfg.join("grids.ini").exists());
     }
 
     #[test]
@@ -1621,80 +1591,6 @@ mod tests {
         assert_eq!(again["tabs"][0]["panes"][0]["filter"], "*.pdf");
     }
 
-    #[test]
-    fn ini_imports_to_json_and_the_source_stays() {
-        let root = scratch("migrate");
-        let exe = root.join("exe");
-        let cfg = root.join("appdata").join("Maguro");
-        let old = root.join("old");
-        std::fs::create_dir_all(&exe).unwrap();
-        std::fs::create_dir_all(&old).unwrap();
-        let parsed = Session::parse(&sample().to_ini());
-        let ini_body = parsed.to_ini();
-        let ini = exe.join("grids.ini");
-        std::fs::write(&ini, &ini_body).unwrap();
-        std::fs::create_dir_all(exe.join("sessions")).unwrap();
-        std::fs::write(exe.join("sessions").join("work.grids"), parsed.snapshot()).unwrap();
-
-        let loaded = load_at(&exe, &cfg, &old);
-        assert_eq!(loaded, parsed);
-        assert_eq!(std::fs::read_to_string(&ini).unwrap(), ini_body);
-        assert!(ini.is_file());
-        assert!(!exe.join("grids.ini.bak").exists());
-        let json = std::fs::read_to_string(cfg.join(SETTINGS_FILE)).unwrap();
-        assert!(json.contains("\"version\": 1"));
-        assert_eq!(adopt(&json).unwrap(), parsed);
-        assert_eq!(std::fs::read_to_string(exe.join("sessions").join("work.grids")).unwrap(), parsed.snapshot());
-
-        // A second launch reads maguro.json and leaves the ini alone.
-        let again = load_at(&exe, &cfg, &old);
-        assert_eq!(again, parsed);
-        assert_eq!(std::fs::read_to_string(&ini).unwrap(), ini_body);
-        assert!(!exe.join("grids.ini.bak").exists());
-
-        // An ini that only exists in the old config dir is imported from there.
-        let root2 = scratch("appdata-ini");
-        let exe2 = root2.join("exe");
-        let cfg2 = root2.join("cfg");
-        let old2 = root2.join("old");
-        std::fs::create_dir_all(&exe2).unwrap();
-        std::fs::create_dir_all(&old2).unwrap();
-        let ini2 = old2.join("grids.ini");
-        std::fs::write(&ini2, "lang=ja\n").unwrap();
-        assert_eq!(load_at(&exe2, &cfg2, &old2).lang, Lang::Ja);
-        assert!(cfg2.join(SETTINGS_FILE).is_file());
-        assert_eq!(std::fs::read_to_string(&ini2).unwrap(), "lang=ja\n");
-        assert!(ini2.is_file());
-        assert!(!old2.join("grids.ini.bak").exists());
-
-        // An existing maguro.json is not replaced.
-        let root3 = scratch("keep-json");
-        let exe3 = root3.join("exe");
-        let cfg3 = root3.join("cfg");
-        let old3 = root3.join("old");
-        std::fs::create_dir_all(&exe3).unwrap();
-        std::fs::create_dir_all(&cfg3).unwrap();
-        std::fs::write(exe3.join("grids.ini"), "lang=en\n").unwrap();
-        std::fs::write(cfg3.join(SETTINGS_FILE), pretty(&SettingsFile::from_session(&Session { lang: Lang::Ko, ..Session::default() }))).unwrap();
-        assert_eq!(load_at(&exe3, &cfg3, &old3).lang, Lang::Ko);
-        assert_eq!(std::fs::read_to_string(exe3.join("grids.ini")).unwrap(), "lang=en\n");
-        assert!(exe3.join("grids.ini").is_file());
-        assert!(!exe3.join("grids.ini.bak").exists());
-
-        // qdir.ini is the older name, used when grids.ini is absent.
-        let root4 = scratch("qdir");
-        let exe4 = root4.join("exe");
-        let cfg4 = root4.join("cfg");
-        let old4 = root4.join("old");
-        std::fs::create_dir_all(&exe4).unwrap();
-        let qdir = exe4.join("qdir.ini");
-        std::fs::write(&qdir, "lang=en\nsingle=0\n").unwrap();
-        let q = load_at(&exe4, &cfg4, &old4);
-        assert_eq!((q.lang, q.single), (Lang::En, false));
-        assert_eq!(std::fs::read_to_string(&qdir).unwrap(), "lang=en\nsingle=0\n");
-        assert!(qdir.is_file());
-        assert!(!exe4.join("qdir.ini.bak").exists());
-    }
 
     #[test]
     fn missing_lang_is_auto_and_a_saved_lang_stays() {
@@ -1715,68 +1611,29 @@ mod tests {
 
         let lang_json = |name: &str, body: &str| {
             let root = scratch(name);
-            let exe = root.join("exe");
             let cfg = root.join("cfg");
-            std::fs::create_dir_all(&exe).unwrap();
             std::fs::create_dir_all(&cfg).unwrap();
             std::fs::write(cfg.join(SETTINGS_FILE), body).unwrap();
-            load_at(&exe, &cfg, &cfg).lang
+            load_at(&cfg).lang
         };
         assert_eq!(lang_json("lang-json-missing", "{\"version\":1,\"bar\":true}\n"), Lang::Auto);
         assert_eq!(lang_json("lang-json-auto", "{\"lang\":\"auto\"}\n"), Lang::Auto);
         assert_eq!(lang_json("lang-json-en", "{\"lang\":\"en\"}\n"), Lang::En);
         assert_eq!(lang_json("lang-json-ko", "{\"lang\":\"ko\"}\n"), Lang::Ko);
 
-        let lang_ini = |name: &str, body: &str| {
-            let root = scratch(name);
-            let exe = root.join("exe");
-            let cfg = root.join("cfg");
-            std::fs::create_dir_all(&exe).unwrap();
-            std::fs::create_dir_all(&cfg).unwrap();
-            std::fs::write(cfg.join("grids.ini"), body).unwrap();
-            let s = load_at(&exe, &cfg, &cfg);
-            let written = std::fs::read_to_string(cfg.join(SETTINGS_FILE)).unwrap();
-            (s.lang, written)
-        };
-        let (missing, written) = lang_ini("lang-ini-missing", "bar=0\n");
-        assert_eq!(missing, Lang::Auto);
-        assert!(written.contains("\"lang\": \"auto\""), "{written}");
-        assert_eq!(lang_ini("lang-ini-auto", "lang=auto\n").0, Lang::Auto);
-        let (en, en_written) = lang_ini("lang-ini-en", "lang=en\n");
-        assert_eq!(en, Lang::En);
-        assert!(en_written.contains("\"lang\": \"en\""), "{en_written}");
-        assert_eq!(lang_ini("lang-ini-ko", "lang=ko\n").0, Lang::Ko);
-
         let root = scratch("lang-fresh");
-        let exe = root.join("exe");
         let cfg = root.join("cfg");
-        std::fs::create_dir_all(&exe).unwrap();
-        assert_eq!(load_at(&exe, &cfg, &cfg).lang, Lang::Auto);
-
-        let root_exe = scratch("lang-exe-ini");
-        let exe_ini = root_exe.join("exe");
-        let cfg_ini = root_exe.join("cfg");
-        std::fs::create_dir_all(&exe_ini).unwrap();
-        std::fs::create_dir_all(&cfg_ini).unwrap();
-        std::fs::write(exe_ini.join("grids.ini"), "single=0\n").unwrap();
-        assert_eq!(load_at(&exe_ini, &cfg_ini, &cfg_ini).lang, Lang::Auto);
+        assert_eq!(load_at(&cfg).lang, Lang::Auto);
+        assert!(!cfg.join(SETTINGS_FILE).exists());
     }
 
     #[test]
-    fn portable_json_sits_beside_the_exe() {
-        let dir = scratch("portable");
-        let ini = dir.join("grids.ini");
-        let body = sample().to_ini();
-        std::fs::write(dir.join("portable.txt"), b"").unwrap();
-        std::fs::write(&ini, &body).unwrap();
-        let loaded = load_at(&dir, &dir, &dir);
-        assert_eq!(loaded, Session::parse(&body));
-        assert!(dir.join(SETTINGS_FILE).is_file());
-        assert_eq!(std::fs::read_to_string(&ini).unwrap(), body);
-        assert!(ini.is_file());
-        assert!(!dir.join("grids.ini.bak").exists());
-        assert!(!dir.join(format!("maguro.json.{}.tmp", std::process::id())).exists());
-        assert!(std::fs::read_dir(&dir).unwrap().flatten().all(|e| !e.file_name().to_string_lossy().ends_with(".tmp")), "no tmp file is left");
+    fn missing_settings_use_defaults_and_write_nothing() {
+        let dir = scratch("fresh-missing");
+        let loaded = load_at(&dir);
+        assert_eq!(loaded.lang, Lang::Auto);
+        assert_eq!(loaded.layout_new, Session::default().layout_new);
+        assert!(!dir.join(SETTINGS_FILE).exists());
     }
 
     #[test]
@@ -1824,15 +1681,15 @@ mod tests {
         let dir = scratch("unread");
         assert!(read_settings_file(&dir.join("missing.json")).unwrap().is_none());
         std::fs::write(dir.join(SETTINGS_FILE), "{\"lang\":\"ko\"}").unwrap();
-        assert!(try_load_at(&dir, &dir, &dir).is_ok());
+        assert!(try_load_at(&dir).is_ok());
         let locked = scratch("locked");
         std::fs::create_dir(locked.join(SETTINGS_FILE)).unwrap();
         assert!(read_settings_file(&locked.join(SETTINGS_FILE)).is_err());
-        assert!(try_load_at(&locked, &locked, &locked).is_err());
+        assert!(try_load_at(&locked).is_err());
         assert!(locked.join(SETTINGS_FILE).is_dir());
         let bad = scratch("badjson");
         std::fs::write(bad.join(SETTINGS_FILE), "{").unwrap();
-        assert!(try_load_at(&bad, &bad, &bad).is_err());
+        assert!(try_load_at(&bad).is_err());
         assert_eq!(std::fs::read_to_string(bad.join(SETTINGS_FILE)).unwrap(), "{");
     }
 
@@ -1927,44 +1784,6 @@ mod tests {
         assert!(serde_json::from_str::<Value>(&sync_text(&cleared)).unwrap().get("side_order").is_none());
     }
 
-    #[test]
-    fn side_order_import_leaves_grids_ini_byte_for_byte() {
-        let root = scratch("side-order-ini");
-        let exe = root.join("exe");
-        let cfg = root.join("cfg");
-        let old = root.join("old");
-        std::fs::create_dir_all(&exe).unwrap();
-        std::fs::create_dir_all(&old).unwrap();
-        let body = "tree=1\nsplit=0.25\nlang=en\n";
-        let ini = exe.join("grids.ini");
-        std::fs::write(&ini, body).unwrap();
-        let loaded = load_at(&exe, &cfg, &old);
-        assert!(loaded.fav_top);
-        assert!((loaded.side_split - 0.25).abs() < 1e-9);
-        assert_eq!(std::fs::read_to_string(&ini).unwrap(), body);
-        assert!(ini.is_file());
-        assert!(!exe.join("grids.ini.bak").exists());
-        let json = std::fs::read_to_string(cfg.join(SETTINGS_FILE)).unwrap();
-        assert!(!json.contains("side_order"));
-        assert!(!json.contains("grids.ini"));
-
-        let root2 = scratch("side-order-tree");
-        let exe2 = root2.join("exe");
-        let cfg2 = root2.join("cfg");
-        let old2 = root2.join("old");
-        std::fs::create_dir_all(&exe2).unwrap();
-        std::fs::create_dir_all(&old2).unwrap();
-        let body2 = "sideorder=tree\nsplit=0.4\n";
-        let ini2 = exe2.join("grids.ini");
-        std::fs::write(&ini2, body2).unwrap();
-        let tree = load_at(&exe2, &cfg2, &old2);
-        assert!(!tree.fav_top);
-        assert!((tree.side_split - 0.4).abs() < 1e-9);
-        assert_eq!(std::fs::read_to_string(&ini2).unwrap(), body2);
-        assert!(!exe2.join("grids.ini.bak").exists());
-        let json2 = std::fs::read_to_string(cfg2.join(SETTINGS_FILE)).unwrap();
-        assert!(json2.contains("\"side_order\": \"tree\""));
-    }
 
     #[test]
     fn load_drops_a_retired_panel_key_once() {
@@ -1974,12 +1793,12 @@ mod tests {
         std::fs::create_dir_all(&exe).unwrap();
         std::fs::create_dir_all(&cfg).unwrap();
         std::fs::write(cfg.join(SETTINGS_FILE), "{\"version\":1,\"panel\":\"fav\",\"side_split\":0.25,\"lang\":\"en\"}\n").unwrap();
-        let s = load_at(&exe, &cfg, &cfg);
+        let s = load_at(&cfg);
         assert!((s.side_split - 0.25).abs() < 1e-9);
         let json = std::fs::read_to_string(cfg.join(SETTINGS_FILE)).unwrap();
         assert!(!json.contains("\"panel\""));
         assert!(json.contains("0.25"));
-        let again = load_at(&exe, &cfg, &cfg);
+        let again = load_at(&cfg);
         assert!((again.side_split - 0.25).abs() < 1e-9);
         assert_eq!(std::fs::read_to_string(cfg.join(SETTINGS_FILE)).unwrap(), json);
     }
@@ -2227,7 +2046,7 @@ mod tests {
     }
 
     #[test]
-    fn remember_folder_view_defaults_on_and_is_not_a_grids_ini_key_we_write_back() {
+    fn remember_folder_view_defaults_on_and_round_trips_in_json() {
         assert!(Session::default().remember_views);
         assert!(adopt("{}").unwrap().remember_views);
         assert!(adopt(r#"{"version":1}"#).unwrap().remember_views);
@@ -2357,7 +2176,7 @@ mod tests {
         let mut raw = vec![0xEF, 0xBB, 0xBF];
         raw.extend(br#"{"version":1,"favorites_tree":[{"name":"Jobs","children":[{"name":"note","path":"C:\\a\\note.txt","file":true}]}]}"#);
         std::fs::write(cfg.join(SETTINGS_FILE), raw).unwrap();
-        let s = load_at(&exe, &cfg, &cfg);
+        let s = load_at(&cfg);
         assert_eq!(s.tree.len(), 1);
         assert_eq!(s.tree[0].name, "Jobs");
         assert!(s.tree[0].is_group());
@@ -2426,7 +2245,7 @@ mod tests {
         std::fs::create_dir_all(&exe).unwrap();
         std::fs::create_dir_all(&cfg).unwrap();
         std::fs::write(cfg.join(SETTINGS_FILE), "{\"version\":1,\"lang\":\"ja\",\"font_face\":\"Not A Real Font Zzz\",\"future\":1}\n").unwrap();
-        let s = load_at(&exe, &cfg, &cfg);
+        let s = load_at(&cfg);
         assert!(s.font_face.is_empty(), "missing face should fall back");
         assert_eq!(s.lang, Lang::Ja);
         let kept: Value = serde_json::from_str(&current_text()).unwrap();
@@ -2444,84 +2263,16 @@ mod tests {
         assert!(appdata_dir(base).ends_with("Maguro"));
     }
 
-    #[test]
-    fn fork_grids_json_is_copied_and_the_source_stays() {
-        let root = scratch("fork-json");
-        let exe = root.join("exe");
-        let cfg = root.join("cfg");
-        let old = root.join("old");
-        std::fs::create_dir_all(&exe).unwrap();
-        std::fs::create_dir_all(&old).unwrap();
-        let body = "{\"version\":1,\"lang\":\"ko\"}\n";
-        let src = old.join("grids.json");
-        std::fs::write(&src, body).unwrap();
-        let bytes = std::fs::read(&src).unwrap();
-        let mtime = std::fs::metadata(&src).unwrap().modified().unwrap();
-        assert_eq!(load_at(&exe, &cfg, &old).lang, Lang::Ko);
-        assert_eq!(std::fs::read(cfg.join(SETTINGS_FILE)).unwrap(), bytes);
-        assert_eq!(std::fs::read(&src).unwrap(), bytes);
-        assert_eq!(std::fs::metadata(&src).unwrap().modified().unwrap(), mtime);
-        assert!(src.is_file());
-        assert!(!old.join("grids.json.bak").exists());
 
-        // grids.json beside the exe is the portable fork build and wins over the old appdata file.
-        let root2 = scratch("fork-json-exe");
-        let exe2 = root2.join("exe");
-        let cfg2 = root2.join("cfg");
-        let old2 = root2.join("old");
-        std::fs::create_dir_all(&exe2).unwrap();
-        std::fs::create_dir_all(&old2).unwrap();
-        let exe_body = "{\"version\":1,\"lang\":\"ja\"}\n";
-        let exe_src = exe2.join("grids.json");
-        std::fs::write(&exe_src, exe_body).unwrap();
-        std::fs::write(old2.join("grids.json"), body).unwrap();
-        let exe_bytes = std::fs::read(&exe_src).unwrap();
-        let exe_mtime = std::fs::metadata(&exe_src).unwrap().modified().unwrap();
-        let old_bytes = std::fs::read(old2.join("grids.json")).unwrap();
-        let old_mtime = std::fs::metadata(old2.join("grids.json")).unwrap().modified().unwrap();
-        assert_eq!(load_at(&exe2, &cfg2, &old2).lang, Lang::Ja);
-        assert_eq!(std::fs::read(cfg2.join(SETTINGS_FILE)).unwrap(), exe_bytes);
-        assert_eq!(std::fs::read(&exe_src).unwrap(), exe_bytes);
-        assert_eq!(std::fs::metadata(&exe_src).unwrap().modified().unwrap(), exe_mtime);
-        assert_eq!(std::fs::read(old2.join("grids.json")).unwrap(), old_bytes);
-        assert_eq!(std::fs::metadata(old2.join("grids.json")).unwrap().modified().unwrap(), old_mtime);
-    }
 
     #[test]
-    fn grids_ini_import_leaves_the_source_and_does_not_run_twice() {
-        let root = scratch("ini-once");
-        let exe = root.join("exe");
-        let cfg = root.join("cfg");
-        let old = root.join("old");
-        std::fs::create_dir_all(&exe).unwrap();
-        std::fs::create_dir_all(&old).unwrap();
-        let ini = exe.join("grids.ini");
-        let body = "lang=ko\n";
-        std::fs::write(&ini, body).unwrap();
-        let bytes = std::fs::read(&ini).unwrap();
-        let mtime = std::fs::metadata(&ini).unwrap().modified().unwrap();
-        assert_eq!(load_at(&exe, &cfg, &old).lang, Lang::Ko);
-        assert_eq!(std::fs::read(&ini).unwrap(), bytes);
-        assert_eq!(std::fs::metadata(&ini).unwrap().modified().unwrap(), mtime);
-        assert!(ini.is_file());
-        assert!(!exe.join("grids.ini.bak").exists());
-        assert!(!old.join("grids.ini.bak").exists());
-        let saved = std::fs::read(cfg.join(SETTINGS_FILE)).unwrap();
-        assert!(!saved.is_empty());
-        std::fs::write(&ini, "lang=ja\n").unwrap();
-        assert_eq!(load_at(&exe, &cfg, &old).lang, Lang::Ko);
-        assert_eq!(std::fs::read(cfg.join(SETTINGS_FILE)).unwrap(), saved);
-    }
-
-    #[test]
-    fn default_view_for_a_new_pane_roundtrips_in_json_and_leaves_grids_ini_alone() {
+    fn default_view_for_a_new_pane_roundtrips_in_json() {
         let mut s = Session::default();
         s.view_new = 1;
         s.view_icon = 48;
         let text = pretty(&SettingsFile::from_session(&s));
         assert!(text.contains("\"view_new\": 1"), "{text}");
         assert!(text.contains("\"view_icon\": 48"), "{text}");
-        assert!(!text.contains("grids.ini"));
         let back = adopt(&text).unwrap();
         assert_eq!((back.view_new, back.view_icon), (1, 48));
         assert_eq!(back.default_view(), (1, 48));

@@ -429,9 +429,9 @@ mod tests {
 
     fn list_w_findme() -> Vec<u8> {
         let rows = [
-            (FOLDER, "findme_dir", r"C:\Users\Jun\dev\grids-test\search"),
-            (0, "findme_deep.txt", r"C:\Users\Jun\dev\grids-test\search\findme_dir"),
-            (0, "findme_note.txt", r"C:\Users\Jun\dev\grids-test\search"),
+            (FOLDER, "findme_dir", r"C:\Users\Jun\dev\maguro-test\search"),
+            (0, "findme_deep.txt", r"C:\Users\Jun\dev\maguro-test\search\findme_dir"),
+            (0, "findme_note.txt", r"C:\Users\Jun\dev\maguro-test\search"),
         ];
         let mut strings = Vec::new();
         let mut items = Vec::new();
@@ -477,7 +477,7 @@ mod tests {
         let best = best_list(&wide, 10).unwrap();
         let names: Vec<_> = best.hits.iter().map(|h| h.name.as_str()).collect();
         assert_eq!(names, ["findme_dir", "findme_deep.txt", "findme_note.txt"]);
-        assert_eq!(best.hits[2].path, r"C:\Users\Jun\dev\grids-test\search\findme_note.txt");
+        assert_eq!(best.hits[2].path, r"C:\Users\Jun\dev\maguro-test\search\findme_note.txt");
     }
 
     #[test]

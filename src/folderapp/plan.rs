@@ -774,7 +774,7 @@ mod tests {
         for p in explorer {
             assert_eq!(route_arg(p), ArgRoute::Explorer, "{p}");
         }
-        let pane = [r"C:\", r"C:\Users\Public", r"\\server\share\dir", r"D:", "notes.txt", "session.grids", r"folder\child"];
+        let pane = [r"C:\", r"C:\Users\Public", r"\\server\share\dir", r"D:", "notes.txt", "session.maguro", r"folder\child"];
         for p in pane {
             assert_eq!(route_arg(p), ArgRoute::Pane, "{p}");
         }

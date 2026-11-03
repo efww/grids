@@ -4,8 +4,7 @@
 //! filter; the report records the faulting module and offset while that DLL is loaded.
 //! Fail-fast (`0xC0000409`, `0xC0000602`) skips both, so a detached watcher reads the exit
 //! code and the last flushed trace. A killed process (`0xFFFFFFFF`, `0xC000013A`) is not
-//! a fail-fast. Reports live in the settings folder (`crashes\`),
-//! never in a grids folder and never in `grids.ini`.
+//! a fail-fast. Reports live in the settings folder (`crashes\`).
 
 use std::cell::Cell;
 use std::cell::RefCell;

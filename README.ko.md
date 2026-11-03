@@ -10,7 +10,7 @@
 
 <p align="center">빠르고 가벼운 Windows용 다중 패널 파일 관리자.</p>
 
-> **Maguro는 efww의 [efww/grids](https://github.com/efww/grids) 포크입니다.** exe 이름(`maguro.exe`), 창 클래스, 설정 폴더, 단축키(Win+Shift+E)가 달라 원본 Grids와 설정을 건드리지 않고 함께 쓸 수 있습니다.
+> **Maguro는 efww의 [efww/grids](https://github.com/efww/grids) 포크입니다.** exe 이름(`maguro.exe`), 창 클래스, 설정 폴더, 단축키(Win+Shift+E)가 다릅니다.
 
 <p align="center">
   <a href="https://github.com/Samek86/maguro"><img alt="플랫폼: Windows" src="https://img.shields.io/badge/platform-Windows-0078D4?logo=windows&logoColor=white"></a>
@@ -188,7 +188,7 @@ Windows를 따르는 라이트/다크, 테마마다 강조색 여섯(기본 세�
 
 **요구 사항:** Windows 10 (1903 이상) 또는 Windows 11, x64. SFTP/FTP는 [rclone](https://rclone.org/)과 [WinFsp](https://winfsp.dev/)도 필요합니다(연결 추가 때 Maguro가 설치를 안내할 수 있음).
 
-설정은 `%APPDATA%\Maguro\maguro.json`에 있습니다. `maguro.exe` 옆에 `portable.txt`를 두면 설정이 exe 옆에 생깁니다. 이름 있는 세션은 exe 옆 `maguro-sessions` 폴더의 `.grids` 파일입니다.
+설정은 `%APPDATA%\Maguro\maguro.json`에 있습니다. `maguro.exe` 옆에 `portable.txt`를 두면 설정이 exe 옆에 생깁니다. 이름 있는 세션은 exe 옆 `maguro-sessions` 폴더의 `.maguro` 파일입니다.
 
 소스에서 빌드하려면 [CONTRIBUTING.md](CONTRIBUTING.md)를 보세요.
 
@@ -237,7 +237,7 @@ Windows를 따르는 라이트/다크, 테마마다 강조색 여섯(기본 세�
 
 탭 줄의 톱니바퀴가 보기 메뉴를 엽니다. 설정은 그 메뉴에 있습니다(`Ctrl+,`).
 
-언어(자동, English, 그리고 언어 파일마다), 글꼴, 라이트/다크, 강조색, 단축키는 설정에서 바꿉니다. 이전 Grids 설정 이전, 파일 저장 방식, `maguro.json` 키 전체 표는 [docs/settings.ko.md](docs/settings.ko.md)에 있습니다.
+언어(자동, English, 그리고 언어 파일마다), 글꼴, 라이트/다크, 강조색, 단축키는 설정에서 바꿉니다. 파일 저장 방식과 `maguro.json` 키 전체 표는 [docs/settings.ko.md](docs/settings.ko.md)에 있습니다.
 
 ## 언어 파일
 

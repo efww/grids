@@ -1261,7 +1261,7 @@ fn diag(line: &str) {
 
 #[cfg(debug_assertions)]
 fn pin_log(msg: &str) {
-    let path = std::env::temp_dir().join("grids-pins.log");
+    let path = std::env::temp_dir().join("maguro-pins.log");
     let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) else { return };
     use std::io::Write;
     let _ = writeln!(file, "{msg}");
@@ -1584,7 +1584,6 @@ mod tests {
         assert_eq!(log.file_name().and_then(|s| s.to_str()), Some("favorite-remove.log"));
         let low = log.to_string_lossy().to_ascii_lowercase();
         assert!(low.contains("maguro"));
-        assert!(!low.contains("\\grids\\") && !low.contains("/grids/"));
         let dir = std::env::temp_dir().join(format!("maguro-favlog-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();

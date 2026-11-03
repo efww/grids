@@ -1116,7 +1116,7 @@ fn grid_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                 }
             }
             WM_KEYDOWN => {
-                // keyboard picks even grids: arrows move the corner, Enter applies
+                // keyboard picks an even layout: arrows move the corner, Enter applies
                 let v = app(|a| a.grid_preview.clone());
                 let (r, c) = (v[v.len() - 1] - 1, v.len() - 1);
                 let (r, c) = match VIRTUAL_KEY(wp.0 as u16) {

@@ -10,7 +10,7 @@
 
 <p align="center">A fast, lightweight multi-pane file manager for Windows.</p>
 
-> **Maguro is a fork of [efww/grids](https://github.com/efww/grids)** by efww. It uses its own exe name (`maguro.exe`), window class, settings folder and hotkey (Win+Shift+E), so it can run next to the original Grids without touching its settings.
+> **Maguro is a fork of [efww/grids](https://github.com/efww/grids)** by efww. It uses its own exe name (`maguro.exe`), window class, settings folder and hotkey (Win+Shift+E).
 
 <p align="center">
   <a href="https://github.com/Samek86/maguro"><img alt="Platform: Windows" src="https://img.shields.io/badge/platform-Windows-0078D4?logo=windows&logoColor=white"></a>
@@ -188,7 +188,7 @@ The exe is not code-signed, so Windows SmartScreen may warn the first time. Choo
 
 **Requirements:** Windows 10 (1903 or later) or Windows 11, x64. SFTP/FTP also need [rclone](https://rclone.org/) and [WinFsp](https://winfsp.dev/) (Maguro can install them when you add a connection).
 
-Settings live in `%APPDATA%\Maguro\maguro.json`. Put a file named `portable.txt` next to `maguro.exe` to keep `maguro.json` beside the exe instead. Named sessions stay `.grids` files in the `maguro-sessions` folder next to the exe.
+Settings live in `%APPDATA%\Maguro\maguro.json`. Put a file named `portable.txt` next to `maguro.exe` to keep `maguro.json` beside the exe instead. Named sessions stay `.maguro` files in the `maguro-sessions` folder next to the exe.
 
 To build from source, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -237,7 +237,7 @@ Defaults; every one can be changed in Settings → Shortcuts.
 
 The gear on the tab row opens the view menu. Settings is in that menu (`Ctrl+,`).
 
-Language (Auto, English, and every language file), font, light / dark theme, accent, and shortcuts are all set there. Migration from older Grids settings, how the file is written, and the full `maguro.json` key table are in [docs/settings.md](docs/settings.md).
+Language (Auto, English, and every language file), font, light / dark theme, accent, and shortcuts are all set there. How the file is written, and the full `maguro.json` key table, are in [docs/settings.md](docs/settings.md).
 
 ## Language files
 

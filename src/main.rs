@@ -64,8 +64,7 @@ fn main() -> Result<()> {
         }
         // Read first so single=0 can opt out of handing arguments to the running window.
         // one_window still hands off: the running window comes forward and opens paths as tabs.
-        // maguro.json is the store. If it is missing, a previous grids.json is copied;
-        // otherwise grids.ini or qdir.ini is imported read-only. Those sources stay untouched.
+        // maguro.json is the store. A missing file starts from the defaults.
         // A file that is there but unreadable must not be overwritten with defaults.
         let mut s = loop {
             match store::load() {
@@ -358,7 +357,7 @@ mod tests {
         assert_eq!(old.theme, 2);
         assert!(old.dark && old.bar && old.dot && old.drive_buttons && old.space_preview);
         assert_eq!(old.layout_new, 0);
-        let t = Session::parse("theme=auto\ndark=1\nfont=2\nbar=0\nstat=0\nviewnew=1\nstart=2\nstartp=C:\\Work\next=0\ntree=0\nedge=0\nconfirm=0\ndel=1\nnewname=note.txt\ndrop=1\nboot=1\nbootf=C:\\s.grids\nautosave=1\ndot=0\nfav=C:\\WORK\tWork\n");
+        let t = Session::parse("theme=auto\ndark=1\nfont=2\nbar=0\nstat=0\nviewnew=1\nstart=2\nstartp=C:\\Work\next=0\ntree=0\nedge=0\nconfirm=0\ndel=1\nnewname=note.txt\ndrop=1\nboot=1\nbootf=C:\\s.maguro\nautosave=1\ndot=0\nfav=C:\\WORK\tWork\n");
         assert_eq!(t.theme, 0);
         assert!(t.dark);
         assert!(!t.to_ini().contains("font="));
@@ -371,7 +370,7 @@ mod tests {
         assert_eq!(t.dropm, 1);
         assert_eq!(t.layout_new, 0);
         assert_eq!(t.boot, 1);
-        assert_eq!(t.boot_file, "C:\\s.grids");
+        assert_eq!(t.boot_file, "C:\\s.maguro");
         assert!(t.autosave);
         assert_eq!(fav_path(&t.favs[0]), "C:\\WORK");
         assert_eq!(fav_label(&t.favs[0]), "Work");
@@ -829,7 +828,7 @@ mod tests {
             let span = |f: fn(&(i32, i32)) -> i32| added.iter().map(f).min().unwrap() + added.iter().map(f).max().unwrap();
             assert_eq!((span(|p| p.0), span(|p| p.1)), (n - 1, n - 1), "{n}");
         }
-        // favourites: kept in grids.ini, case-insensitive, never in a named session
+        // favourites: case-insensitive, never in a named session
         let mut f = Session { favs: vec![r"C:\Work".into(), r"D:\".into()], ..Default::default() };
         f = Session::parse(&f.to_ini());
         assert!(f.is_fav(r"c:\work") && !f.is_fav(r"C:\Work\x") && !f.is_fav(""));
@@ -853,8 +852,9 @@ mod tests {
         let mut s = Session::default();
         apply_args(&mut s, (0..5).map(|i| format!("::{{x{i}}}")).collect());
         assert_eq!((s.heights.clone(), s.paths[4].as_str()), (vec![2, 2, 2], "::{x4}"));
-        assert_eq!((session_arg(&["a.GRIDS".into()]), session_arg(&["old.qdr".into()])), (Some("a.GRIDS"), Some("old.qdr")));
-        assert_eq!(session_arg(&["a.grids".into(), "b".into()]), None);
+        assert_eq!(session_arg(&["a.MAGURO".into()]), Some("a.MAGURO"));
+        assert_eq!(session_arg(&["old.qdr".into()]), None);
+        assert_eq!(session_arg(&["a.maguro".into(), "b".into()]), None);
         assert_eq!(fresh_file("New Text Document.txt", |_| false), "New Text Document.txt");
         assert_eq!(fresh_file("New Text Document.txt", |n| n == "New Text Document.txt"), "New Text Document (2).txt");
         assert_eq!(fresh_file("새 텍스트 문서.txt", |n| n == "새 텍스트 문서.txt" || n == "새 텍스트 문서 (2).txt"), "새 텍스트 문서 (3).txt");
@@ -953,7 +953,7 @@ mod tests {
 
     // A fresh folder under %TEMP% holding `files` (relative path, size).
     fn tree(name: &str, files: &[(String, usize)]) -> PathBuf {
-        let root = std::env::temp_dir().join(format!("grids-test-{}-{name}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("maguro-test-{}-{name}", std::process::id()));
         _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         for (f, n) in files {

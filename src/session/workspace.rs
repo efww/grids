@@ -1,4 +1,4 @@
-// Nine workspace slots in maguro.json. Each occupied slot keeps a `.grids` snapshot of this
+// Nine workspace slots in maguro.json. Each occupied slot keeps a `.maguro` snapshot of this
 // window's tabs (layout and folders), the same text a named session file would store.
 // Loading replaces the tabs on screen and leaves theme, hotkey, and favourites alone.
 // Ctrl+Alt+1..9 loads. Ctrl+Alt+Shift+1..9 saves. Neither chord is a global hotkey.
@@ -19,7 +19,7 @@ pub(crate) const SLOTS: usize = 9;
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct Slot {
     name: String,
-    grids: String,
+    session: String,
 }
 
 struct Book {
@@ -61,16 +61,16 @@ pub(crate) fn workspace_name(slot: usize) -> String {
     with_book(|b| b.slots.get(slot).map(|s| s.name.clone()).unwrap_or_default())
 }
 
-pub(crate) fn workspace_grids(slot: usize) -> Option<String> {
+pub(crate) fn workspace_session(slot: usize) -> Option<String> {
     with_book(|b| {
         let s = b.slots.get(slot)?;
-        (!s.grids.is_empty()).then(|| s.grids.clone())
+        (!s.session.is_empty()).then(|| s.session.clone())
     })
 }
 
 pub(crate) fn workspace_blank(slot: usize) -> bool {
     with_book(|b| match b.slots.get(slot) {
-        Some(s) => s.name.is_empty() && s.grids.is_empty(),
+        Some(s) => s.name.is_empty() && s.session.is_empty(),
         None => true,
     })
 }
@@ -89,11 +89,11 @@ fn slot_ok(slot: usize) -> bool {
     slot < SLOTS
 }
 
-pub(crate) fn store_workspace(slot: usize, grids: &str) -> bool {
-    if !slot_ok(slot) || grids.len() > 1_500_000 || !looks_like_session(grids) {
+pub(crate) fn store_workspace(slot: usize, session: &str) -> bool {
+    if !slot_ok(slot) || session.len() > 1_500_000 || !looks_like_session(session) {
         return false;
     }
-    with_book(|b| b.slots[slot].grids = grids.to_string());
+    with_book(|b| b.slots[slot].session = session.to_string());
     true
 }
 
@@ -116,7 +116,7 @@ pub(crate) fn clear_workspace_slot(slot: usize) {
 pub(crate) fn workspaces_json() -> Vec<Value> {
     with_book(|b| {
         b.slots.iter().enumerate().filter_map(|(i, s)| {
-            if s.name.is_empty() && s.grids.is_empty() {
+            if s.name.is_empty() && s.session.is_empty() {
                 return None;
             }
             let mut m = Map::new();
@@ -124,8 +124,8 @@ pub(crate) fn workspaces_json() -> Vec<Value> {
             if !s.name.is_empty() {
                 m.insert("name".into(), Value::String(s.name.clone()));
             }
-            if !s.grids.is_empty() {
-                m.insert("grids".into(), Value::String(s.grids.clone()));
+            if !s.session.is_empty() {
+                m.insert("session".into(), Value::String(s.session.clone()));
             }
             Some(Value::Object(m))
         }).collect()
@@ -143,19 +143,19 @@ pub(crate) fn load_workspaces(slots: &[Value], confirm: bool) {
             continue;
         }
         let i = (n - 1) as usize;
-        let grids = obj.get("grids").and_then(|g| g.as_str()).unwrap_or("");
-        let grids = if !grids.is_empty() && looks_like_session(grids) { grids.to_string() } else { String::new() };
+        let session = obj.get("session").and_then(|g| g.as_str()).unwrap_or("");
+        let session = if !session.is_empty() && looks_like_session(session) { session.to_string() } else { String::new() };
         let name = clean_workspace_name(obj.get("name").and_then(|x| x.as_str()).unwrap_or(""));
-        if grids.is_empty() && name.is_empty() {
+        if session.is_empty() && name.is_empty() {
             continue;
         }
-        with_book(|b| b.slots[i] = Slot { name, grids });
+        with_book(|b| b.slots[i] = Slot { name, session });
     }
 }
 
 /// Copy the snapshot's tabs onto `dst`. Window rect, theme, hotkey, and favourites stay on `dst`.
 /// The previous session-file link is dropped so Save does not overwrite that file with this layout.
-pub(crate) fn apply_window_grids(dst: &mut Session, text: &str) -> bool {
+pub(crate) fn apply_window_session(dst: &mut Session, text: &str) -> bool {
     let text = text.trim();
     if text.is_empty() || !looks_like_session(text) {
         return false;
@@ -172,7 +172,7 @@ pub(crate) fn apply_window_grids(dst: &mut Session, text: &str) -> bool {
     true
 }
 
-/// `.grids` text of the window on screen. Settings are in the text and ignored on load.
+/// `.maguro` text of the window on screen. Settings are in the text and ignored on load.
 pub(crate) fn capture_window(s: &Session) -> String {
     s.snapshot()
 }
@@ -180,7 +180,7 @@ pub(crate) fn capture_window(s: &Session) -> String {
 fn menu_title(slot: usize) -> String {
     let n = (slot + 1).to_string();
     let name = workspace_name(slot);
-    if workspace_grids(slot).is_none() && name.is_empty() {
+    if workspace_session(slot).is_none() && name.is_empty() {
         return tf(crate::Key::WorkspaceSlotEmpty, &[("n", &n)]);
     }
     if name.is_empty() {
@@ -260,12 +260,12 @@ pub(crate) unsafe fn sync_workspace_menu(menu: HMENU) {
         let _ = ModifyMenuW(sub, (ID_WS_LOAD + i) as u32, MF_BYCOMMAND | MF_STRING, ID_WS_LOAD + i, &HSTRING::from(load));
         let _ = ModifyMenuW(sub, (ID_WS_RENAME + i) as u32, MF_BYCOMMAND | MF_STRING, ID_WS_RENAME + i, &HSTRING::from(tr(crate::Key::Rename)));
         let _ = ModifyMenuW(sub, (ID_WS_CLEAR + i) as u32, MF_BYCOMMAND | MF_STRING, ID_WS_CLEAR + i, &HSTRING::from(tr(crate::Key::ClearSlot)));
-        let no_grids = workspace_grids(i).is_none();
+        let no_session = workspace_session(i).is_none();
         let gray = |id: usize, off: bool| {
             let flag = MF_BYCOMMAND | if off { MF_GRAYED } else { MF_ENABLED };
             let _ = EnableMenuItem(sub, id as u32, flag);
         };
-        gray(ID_WS_LOAD + i, no_grids);
+        gray(ID_WS_LOAD + i, no_session);
         gray(ID_WS_CLEAR + i, workspace_blank(i));
     }
     let on = workspaces_confirm();
@@ -291,7 +291,7 @@ pub(crate) unsafe fn load_workspace(slot: usize) {
     if !slot_ok(slot) {
         return;
     }
-    let Some(grids) = workspace_grids(slot) else {
+    let Some(session) = workspace_session(slot) else {
         note(tf(crate::Key::WorkspaceEmpty, &[("name", &workspace_label(slot))]));
         return;
     };
@@ -303,7 +303,7 @@ pub(crate) unsafe fn load_workspace(slot: usize) {
         }
     }
     let mut next = app(|a| a.s.clone());
-    if !apply_window_grids(&mut next, &grids) {
+    if !apply_window_session(&mut next, &session) {
         note(tr(crate::Key::ThisSessionCanTBeRead).to_string());
         _ = MessageBeep(MB_ICONWARNING);
         return;
@@ -314,7 +314,7 @@ pub(crate) unsafe fn load_workspace(slot: usize) {
         close_peek(peek);
     }
     end_rename(false);
-    install_grids(next);
+    install_session(next);
     relayout();
     sync_filter_edits();
     redraw_all();
@@ -379,8 +379,8 @@ pub(crate) enum LoadPlan {
     Ask,
 }
 
-pub(crate) fn load_plan(has_grids: bool, confirm: bool) -> LoadPlan {
-    if !has_grids {
+pub(crate) fn load_plan(has_session: bool, confirm: bool) -> LoadPlan {
+    if !has_session {
         LoadPlan::Empty
     } else if confirm {
         LoadPlan::Ask
@@ -435,9 +435,9 @@ mod tests {
         dst.hotkey = false;
         dst.side = 180;
         dst.accent = 0x112233;
-        dst.file = r"C:\old.grids".into();
+        dst.file = r"C:\old.maguro".into();
         dst.paths[0] = r"C:\now".into();
-        assert!(apply_window_grids(&mut dst, &text));
+        assert!(apply_window_session(&mut dst, &text));
         assert_eq!(dst.theme, 2);
         assert!(!dst.hotkey);
         assert_eq!(dst.side, 180);
@@ -457,7 +457,7 @@ mod tests {
         assert_eq!(tabs[1].paths[0], r"E:\docs\b");
         assert_eq!(tabs[1].pane_folders[0], vec![r"E:\docs".to_string(), r"E:\docs\a".to_string(), r"E:\docs\b".to_string()]);
         assert_eq!(tabs[1].pane_cur[0], 2);
-        assert!(!apply_window_grids(&mut dst, "not a session"));
+        assert!(!apply_window_session(&mut dst, "not a session"));
     }
 
     #[test]
@@ -477,28 +477,28 @@ mod tests {
         assert_eq!(workspace_label(2), "Deskwork");
         assert_eq!(workspace_label(0), "1");
         rename_workspace_name(0, "Later");
-        assert!(workspace_grids(0).is_none());
+        assert!(workspace_session(0).is_none());
         assert!(!workspace_blank(0));
 
         let saved = workspaces_json();
         let confirm = true;
         reset_workspaces();
-        assert!(workspace_grids(2).is_none());
+        assert!(workspace_session(2).is_none());
         load_workspaces(&saved, confirm);
         assert!(workspaces_confirm());
         assert_eq!(workspace_name(2), "Deskwork");
-        assert_eq!(workspace_grids(2).as_deref(), Some(text.as_str()));
+        assert_eq!(workspace_session(2).as_deref(), Some(text.as_str()));
         assert_eq!(workspace_name(0), "Later");
-        assert!(workspace_grids(0).is_none());
+        assert!(workspace_session(0).is_none());
 
         clear_workspace_slot(2);
         assert!(workspace_blank(2));
         assert!(!store_workspace(9, &text));
         assert!(!store_workspace(0, "hello"));
-        let junk = vec![serde_json::json!({"slot": 0, "grids": text}), serde_json::json!({"slot": 4, "name": "Only"})];
+        let junk = vec![serde_json::json!({"slot": 0, "session": text}), serde_json::json!({"slot": 4, "name": "Only"})];
         load_workspaces(&junk, false);
         assert!(!workspaces_confirm());
-        assert!(workspace_grids(0).is_none());
+        assert!(workspace_session(0).is_none());
         assert_eq!(workspace_name(3), "Only");
     }
 }

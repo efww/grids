@@ -197,14 +197,14 @@ pub(crate) enum NameErr {
 
 pub(crate) const SESSION_NAME_MAX: usize = 120;
 
-/// The `.grids` file a typed name saves to in `dir`, and whether a session with that name is already there
-/// (a `.grids` or an old `.qdr` file, any letter case).
+/// The `.maguro` file a typed name saves to in `dir`, and whether a session with that name is already there
+/// (any letter case).
 pub(crate) fn session_target(dir: &Path, input: &str) -> std::result::Result<(PathBuf, bool), NameErr> {
     let stem = session_stem_ok(input).ok_or(NameErr::Invalid)?;
     if stem.chars().count() > SESSION_NAME_MAX {
         return Err(NameErr::TooLong);
     }
-    let path = dir.join(format!("{stem}.grids"));
+    let path = dir.join(format!("{stem}.maguro"));
     let low = stem.to_lowercase();
     let taken = std::fs::read_dir(dir).into_iter().flatten().flatten().any(|e| {
         let p = e.path();
@@ -330,11 +330,11 @@ mod name_tests {
         let d = std::env::temp_dir().join(format!("pg-name-{}", std::process::id()));
         _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
-        std::fs::write(d.join("Work.grids"), "x").unwrap();
+        std::fs::write(d.join("Work.maguro"), "x").unwrap();
         std::fs::write(d.join("old.qdr"), "x").unwrap();
-        assert_eq!(session_target(&d, " new "), Ok((d.join("new.grids"), false)));
-        assert_eq!(session_target(&d, "work"), Ok((d.join("work.grids"), true)));
-        assert_eq!(session_target(&d, "OLD").map(|r| r.1), Ok(true));
+        assert_eq!(session_target(&d, " new "), Ok((d.join("new.maguro"), false)));
+        assert_eq!(session_target(&d, "work"), Ok((d.join("work.maguro"), true)));
+        assert_eq!(session_target(&d, "OLD").map(|r| r.1), Ok(false));
         for bad in ["a/b", "x?", "CON", "", "end."] {
             assert_eq!(session_target(&d, bad), Err(NameErr::Invalid), "{bad:?}");
         }

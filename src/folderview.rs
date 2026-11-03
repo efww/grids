@@ -1,4 +1,4 @@
-// Per-folder view memory, separate from maguro.json and from any grids.ini.
+// Per-folder view memory, separate from maguro.json.
 // The file is folder-views.json in the config folder (roaming Maguro, or the exe folder when portable.txt is present).
 // A folder key is its shell parsing name, not the localized display name.
 
@@ -869,12 +869,11 @@ mod tests {
         s.remember("C:\\x", snap(4, ""));
         assert!(s.save_to(&path).is_err());
         assert_eq!(std::fs::read(&path).unwrap(), b"{not json");
-        assert!(!dir.join("grids.ini").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn atomic_save_roundtrips_and_leaves_no_grids_ini() {
+    fn atomic_save_roundtrips_and_leaves_settings_alone() {
         let dir = std::env::temp_dir().join(format!("maguro-fv-ok-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -887,7 +886,6 @@ mod tests {
         assert!(back.contains("c:\\a"));
         assert_eq!(back.default_view().unwrap().mode, 4);
         assert!(!back.blocked);
-        assert!(!dir.join("grids.ini").exists());
         assert!(!dir.join("maguro.json").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }

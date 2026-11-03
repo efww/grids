@@ -11,7 +11,7 @@ use super::model::*;
 // The original file is renamed to a backup beside those files. maguro.json (the open
 // window) is not rewritten here: startup restore keeps every tab it already stored.
 // A path map records old file → the tab that was active, so a later launch can retarget
-// a session link without touching grids.ini or the old grids settings folder.
+// a session link. The settings file is left alone.
 
 const MAP_FILE: &str = "maguro-split-map.txt";
 
@@ -142,7 +142,7 @@ fn free_stem(dir: &Path, want: &str, reserved: &mut HashSet<String>) -> String {
 }
 
 fn backup_path(path: &Path) -> PathBuf {
-    let name = path.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "session.grids".into());
+    let name = path.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "session.maguro".into());
     let dir = path.parent().unwrap_or(Path::new("."));
     let mut cand = dir.join(format!("{name}.bak"));
     let mut n = 2u32;
@@ -209,7 +209,7 @@ pub(crate) fn migrate_session_file(path: &Path) -> Option<SplitDone> {
     let mut files = Vec::new();
     let mut failed = false;
     for (tmp, name) in temps.iter().zip(&names) {
-        let dest = dir.join(format!("{name}.grids"));
+        let dest = dir.join(format!("{name}.maguro"));
         if land(tmp, &dest) {
             files.push(dest);
         } else {
@@ -303,17 +303,17 @@ mod tests {
         let d = scratch("basic");
         let src = two_tab_session();
         let original = src.to_ini();
-        std::fs::write(d.join("Work.grids"), &original).unwrap();
-        std::fs::write(d.join("Solo.grids"), "cols=1\np0=C:\\only\n").unwrap();
-        let solo_before = std::fs::read(d.join("Solo.grids")).unwrap();
+        std::fs::write(d.join("Work.maguro"), &original).unwrap();
+        std::fs::write(d.join("Solo.maguro"), "cols=1\np0=C:\\only\n").unwrap();
+        let solo_before = std::fs::read(d.join("Solo.maguro")).unwrap();
 
         let done = migrate_sessions_in(&d);
         assert_eq!(done.len(), 1);
         assert_eq!(done[0].files.len(), 2);
         assert_eq!(done[0].active, 1);
-        assert!(done[0].backup.ends_with("Work.grids.bak"));
+        assert!(done[0].backup.ends_with("Work.maguro.bak"));
         assert_eq!(std::fs::read_to_string(&done[0].backup).unwrap(), original);
-        assert!(!d.join("Work.grids").exists());
+        assert!(!d.join("Work.maguro").exists());
 
         let stems: Vec<String> = done[0].files.iter().map(|p| p.file_stem().unwrap().to_string_lossy().into_owned()).collect();
         assert_eq!(stems, vec!["Work (1)".to_string(), "Work (2)".into()]);
@@ -341,8 +341,8 @@ mod tests {
         assert_eq!(second_tabs[0].paths[1], r"E:\Notes\old");
         assert_eq!(second_tabs[0].tints[0], 5);
 
-        assert_eq!(std::fs::read(d.join("Solo.grids")).unwrap(), solo_before);
-        assert!(!d.join("Solo.grids.bak").exists());
+        assert_eq!(std::fs::read(d.join("Solo.maguro")).unwrap(), solo_before);
+        assert!(!d.join("Solo.maguro.bak").exists());
 
         let again = names(&d);
         assert!(migrate_sessions_in(&d).is_empty());
@@ -352,20 +352,20 @@ mod tests {
     }
 
     #[test]
-    fn split_does_not_overwrite_an_existing_name_or_a_qdr() {
+    fn split_does_not_overwrite_an_existing_name() {
         let d = scratch("clash");
-        std::fs::write(d.join("Work (1).grids"), b"cols=1\np0=C:\\keep\n").unwrap();
-        let keep = std::fs::read(d.join("Work (1).grids")).unwrap();
-        std::fs::write(d.join("old (1).grids"), b"cols=1\np0=C:\\taken\n").unwrap();
-        let taken = std::fs::read(d.join("old (1).grids")).unwrap();
+        std::fs::write(d.join("Work (1).maguro"), b"cols=1\np0=C:\\keep\n").unwrap();
+        let keep = std::fs::read(d.join("Work (1).maguro")).unwrap();
+        std::fs::write(d.join("old (1).maguro"), b"cols=1\np0=C:\\taken\n").unwrap();
+        let taken = std::fs::read(d.join("old (1).maguro")).unwrap();
         let src = two_tab_session();
-        std::fs::write(d.join("old.qdr"), src.to_ini()).unwrap();
-        let done = migrate_session_file(&d.join("old.qdr")).unwrap();
-        assert_eq!(std::fs::read(d.join("Work (1).grids")).unwrap(), keep);
-        assert_eq!(std::fs::read(d.join("old (1).grids")).unwrap(), taken);
-        assert!(done.backup.ends_with("old.qdr.bak"));
+        std::fs::write(d.join("old.maguro"), src.to_ini()).unwrap();
+        let done = migrate_session_file(&d.join("old.maguro")).unwrap();
+        assert_eq!(std::fs::read(d.join("Work (1).maguro")).unwrap(), keep);
+        assert_eq!(std::fs::read(d.join("old (1).maguro")).unwrap(), taken);
+        assert!(done.backup.ends_with("old.maguro.bak"));
         assert_eq!(std::fs::read_to_string(&done.backup).unwrap(), src.to_ini());
-        assert!(!d.join("old.qdr").exists());
+        assert!(!d.join("old.maguro").exists());
         let stems: Vec<String> = done.files.iter().map(|p| p.file_stem().unwrap().to_string_lossy().into_owned()).collect();
         assert_eq!(stems[0], "old (1) (2)");
         assert_eq!(stems[1], "old (2)");
@@ -376,42 +376,40 @@ mod tests {
     #[test]
     fn unreadable_and_foreign_files_stay() {
         let d = scratch("skip");
-        std::fs::write(d.join("bad.qdr"), [0xFFu8, 0xFE, 0x80, 0x81]).unwrap();
-        std::fs::write(d.join("note.grids"), b"hello from somewhere else").unwrap();
-        std::fs::write(d.join("grids.ini"), b"lang=en\n").unwrap();
+        std::fs::write(d.join("bad.maguro"), [0xFFu8, 0xFE, 0x80, 0x81]).unwrap();
+        std::fs::write(d.join("note.maguro"), b"hello from somewhere else").unwrap();
+        std::fs::write(d.join("keep.txt"), b"lang=en\n").unwrap();
         assert!(migrate_sessions_in(&d).is_empty());
-        assert_eq!(std::fs::read(d.join("bad.qdr")).unwrap(), vec![0xFF, 0xFE, 0x80, 0x81]);
-        assert_eq!(std::fs::read(d.join("note.grids")).unwrap(), b"hello from somewhere else");
-        assert_eq!(std::fs::read(d.join("grids.ini")).unwrap(), b"lang=en\n");
+        assert_eq!(std::fs::read(d.join("bad.maguro")).unwrap(), vec![0xFF, 0xFE, 0x80, 0x81]);
+        assert_eq!(std::fs::read(d.join("note.maguro")).unwrap(), b"hello from somewhere else");
+        assert_eq!(std::fs::read(d.join("keep.txt")).unwrap(), b"lang=en\n");
         let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
-    fn migration_does_not_touch_grids_ini_or_the_old_settings_folder() {
+    fn split_leaves_a_sibling_folder_and_a_text_file_alone() {
         let root = scratch("away");
         let sessions = root.join("maguro-sessions");
-        let old = root.join("grids");
+        let other = root.join("other");
         std::fs::create_dir_all(&sessions).unwrap();
-        std::fs::create_dir_all(&old).unwrap();
-        std::fs::write(old.join("grids.ini"), b"theme=dark\n").unwrap();
-        std::fs::write(root.join("grids.ini"), b"lang=ko\n").unwrap();
-        std::fs::write(sessions.join("Work.grids"), two_tab_session().to_ini()).unwrap();
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(other.join("theme.txt"), b"theme=dark\n").unwrap();
+        std::fs::write(root.join("keep.txt"), b"lang=ko\n").unwrap();
+        std::fs::write(sessions.join("Work.maguro"), two_tab_session().to_ini()).unwrap();
         assert_eq!(migrate_sessions_in(&sessions).len(), 1);
-        assert_eq!(std::fs::read(old.join("grids.ini")).unwrap(), b"theme=dark\n");
-        assert_eq!(std::fs::read(root.join("grids.ini")).unwrap(), b"lang=ko\n");
-        assert!(!old.join("grids.ini.bak").exists());
-        assert!(!root.join("grids.ini.bak").exists());
+        assert_eq!(std::fs::read(other.join("theme.txt")).unwrap(), b"theme=dark\n");
+        assert_eq!(std::fs::read(root.join("keep.txt")).unwrap(), b"lang=ko\n");
         let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
     fn startup_window_tabs_keep_their_folders_when_a_link_moves() {
         let mut s = two_tab_session();
-        s.file = r"C:\s\Work.grids".into();
-        s.tabs[1].session = r"C:\s\Work.grids".into();
-        s.boot_file = r"c:/s/Work.grids".into();
+        s.file = r"C:\s\Work.maguro".into();
+        s.tabs[1].session = r"C:\s\Work.maguro".into();
+        s.boot_file = r"c:/s/Work.maguro".into();
         let before = s.view_tabs();
-        let maps = vec![PathMap { from: r"C:\s\Work.grids".into(), to: r"C:\s\Work (2).grids".into() }];
+        let maps = vec![PathMap { from: r"C:\s\Work.maguro".into(), to: r"C:\s\Work (2).maguro".into() }];
         retarget_session_links(&mut s, &maps);
         let after = s.view_tabs();
         assert_eq!(after.len(), before.len());
@@ -420,22 +418,22 @@ mod tests {
         assert_eq!(after[0].heights, before[0].heights);
         assert_eq!(after[1].name, "Notes");
         assert_eq!(after[1].color, before[1].color);
-        assert_eq!(s.tabs[1].session, r"C:\s\Work (2).grids");
+        assert_eq!(s.tabs[1].session, r"C:\s\Work (2).maguro");
         assert_eq!(s.tabs[0].session, "");
-        assert_eq!(s.file, r"C:\s\Work (2).grids");
-        assert_eq!(s.boot_file, r"C:\s\Work (2).grids");
+        assert_eq!(s.file, r"C:\s\Work (2).maguro");
+        assert_eq!(s.boot_file, r"C:\s\Work (2).maguro");
         assert_eq!(s.tab, 1);
 
         let mut win = serde_json::json!({
-            "session": r"C:\s\Work.grids",
+            "session": r"C:\s\Work.maguro",
             "tabs": [
                 {"name": "A", "layout": {"columns": [1, 1]}, "panes": [{"index": 0, "path": "C:\\Keep"}]},
-                {"name": "B", "active": true, "session": r"C:\s\Work.grids", "layout": {"columns": [2]}, "panes": [{"index": 0, "path": "D:\\Other"}, {"index": 1, "path": "E:\\More"}]}
+                {"name": "B", "active": true, "session": r"C:\s\Work.maguro", "layout": {"columns": [2]}, "panes": [{"index": 0, "path": "D:\\Other"}, {"index": 1, "path": "E:\\More"}]}
             ]
         });
         retarget_window_value(&mut win, &maps);
-        assert_eq!(win["session"], r"C:\s\Work (2).grids");
-        assert_eq!(win["tabs"][1]["session"], r"C:\s\Work (2).grids");
+        assert_eq!(win["session"], r"C:\s\Work (2).maguro");
+        assert_eq!(win["tabs"][1]["session"], r"C:\s\Work (2).maguro");
         assert!(win["tabs"][0].get("session").is_none());
         assert_eq!(win["tabs"][0]["panes"][0]["path"], r"C:\Keep");
         assert_eq!(win["tabs"][1]["panes"][0]["path"], r"D:\Other");
@@ -447,37 +445,37 @@ mod tests {
     fn opened_sessions_land_beside_the_current_tab() {
         let saved = two_tab_session();
         let text = tab_session_text(&saved, 1).unwrap();
-        let incoming = tabs_from_session_text(&text, r"C:\s\Notes.grids");
+        let incoming = tabs_from_session_text(&text, r"C:\s\Notes.maguro");
         assert_eq!(incoming.len(), 1);
-        assert_eq!(incoming[0].session, r"C:\s\Notes.grids");
+        assert_eq!(incoming[0].session, r"C:\s\Notes.maguro");
         assert_eq!(incoming[0].name, "Notes");
         assert_eq!(incoming[0].paths[0], r"E:\Notes");
         assert_eq!(incoming[0].tints[0], 5);
         assert_eq!(incoming[0].color, Some(0x2A_6A_C4));
 
         let mut open = saved.clone();
-        open.tabs[0].session = r"C:\s\a.grids".into();
+        open.tabs[0].session = r"C:\s\a.maguro".into();
         open.tab = 0;
         let (tabs, at) = tabs_after_open(&open.tabs, 0, &incoming);
         assert_eq!(at, 1);
         assert_eq!(tabs.len(), 3);
-        assert_eq!(tabs[0].session, r"C:\s\a.grids");
+        assert_eq!(tabs[0].session, r"C:\s\a.maguro");
         assert_eq!(tabs[0].paths[0], r"C:\Work");
         assert_eq!(tabs[0].tints[1], 3);
         assert_eq!(tabs[1].name, "Notes");
-        assert_eq!(tabs[1].session, r"C:\s\Notes.grids");
+        assert_eq!(tabs[1].session, r"C:\s\Notes.maguro");
         assert_eq!(tabs[2].paths[0], r"E:\Notes");
         assert_eq!(tabs[2].session, "");
 
-        let both = tabs_from_session_text(&saved.to_ini(), r"C:\s\Work.grids");
+        let both = tabs_from_session_text(&saved.to_ini(), r"C:\s\Work.maguro");
         assert_eq!(both.len(), 2);
         assert!(both[0].session.is_empty());
-        assert_eq!(both[1].session, r"C:\s\Work.grids");
+        assert_eq!(both[1].session, r"C:\s\Work.maguro");
         assert_eq!(both[0].paths[0], r"C:\Work");
         assert_eq!(both[1].paths[0], r"E:\Notes");
         let (tabs, at) = tabs_after_open(&open.tabs, 0, &both);
         assert_eq!((at, tabs.len()), (1, 4));
         assert_eq!(tabs[0].paths[0], r"C:\Work");
-        assert_eq!(tabs[0].session, r"C:\s\a.grids");
+        assert_eq!(tabs[0].session, r"C:\s\a.maguro");
     }
 }

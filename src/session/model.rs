@@ -4,7 +4,7 @@ use crate::app::*;
 use crate::i18n::*;
 use crate::store;
 
-// ---------- session (settings live in maguro.json; named sessions stay .grids files in the ini shape) ----------
+// ---------- session (settings live in maguro.json; named sessions stay .maguro files in the ini shape) ----------
 
 /// One tab: a whole pane grid (layout, folders, view, columns, filter). The active tab's grid
 /// also lives on the session fields the rest of the window already reads.
@@ -29,7 +29,7 @@ pub(crate) struct Tab {
     pub(crate) pane_folders: Vec<Vec<String>>,
     /// Per pane: which pane-tab is current. The current entry in `pane_folders` is stale; `paths[i]` is the truth.
     pub(crate) pane_cur: Vec<usize>,
-    /// `.grids` file this tab was saved as, or that a session was loaded into. Empty means Save asks for a name.
+    /// `.maguro` file this tab was saved as, or that a session was loaded into. Empty means Save asks for a name.
     /// Other tabs keep their own paths. Omitted from older files, which still load.
     pub(crate) session: String,
 }
@@ -282,7 +282,7 @@ pub(crate) struct Session {
     /// The one-time "install Everything?" question was already shown. Never asked again.
     pub(crate) ev_asked: bool,
     /// Everything result order. Everything's own sort code (1 name A→Z … 14 newest first).
-    /// maguro.json only. A .grids file and grids.ini do not carry this.
+    /// maguro.json only. A .maguro file does not carry this.
     pub(crate) ev_sort: u32,
     /// The one-time "install rclone and WinFsp?" question was already shown. Never asked again.
     pub(crate) remote_asked: bool,
@@ -329,7 +329,7 @@ pub(crate) struct Session {
     pub(crate) tab: usize,             // which tab is on screen
     /// Third-party context-menu handlers turned off, by id. Values are target names
     /// (`file`, `folder`, `background`, `drive`). A missing id stays on. maguro.json only:
-    /// a .grids file never carries this, and the system registry is never written.
+    /// a .maguro file never carries this, and the system registry is never written.
     pub(crate) ctx_off: std::collections::BTreeMap<String, Vec<String>>,
     /// Menu item labels seen for a handler id. maguro.json only; the registry is never written.
     pub(crate) ctx_labels: std::collections::BTreeMap<String, Vec<String>>,
@@ -340,7 +340,7 @@ pub(crate) struct Session {
     /// The shell menu is unchanged. maguro.json only.
     pub(crate) ctx_quiet: std::collections::BTreeSet<String>,
     /// Packaged Windows 11 commands the user turned on (`packaged:{clsid}`).
-    /// Empty means every packaged command stays off. maguro.json only; a .grids file does not carry this.
+    /// Empty means every packaged command stays off. maguro.json only; a .maguro file does not carry this.
     pub(crate) ctx_packaged_on: std::collections::BTreeSet<String>,
     /// One-time switch for configs that used to show every packaged command.
     /// Once true, `ctx_packaged_on` is kept and that switch does not run again.
@@ -348,13 +348,13 @@ pub(crate) struct Session {
     /// Settings → Right-click menu is showing the Windows 11 list. maguro.json only.
     pub(crate) ctx_win11_view: bool,
     /// DLL file names that must not load inside this process. Empty means nothing extra is blocked.
-    /// maguro.json only. The registry is not written, and a .grids file does not carry this.
+    /// maguro.json only. The registry is not written, and a .maguro file does not carry this.
     pub(crate) blocked_shell_extensions: Vec<String>,
-    /// Paths kept in the file basket. maguro.json only. A .grids file does not carry this.
+    /// Paths kept in the file basket. maguro.json only. A .maguro file does not carry this.
     /// Remove and Clear edit this list. They do not delete the files.
     pub(crate) file_basket: Vec<String>,
     /// Last "Tidy to A1 · 100%" checkboxes. Missing from maguro.json means A1/zoom/first on, backup off.
-    /// A .grids file does not carry these.
+    /// A .maguro file does not carry these.
     pub(crate) excel_tidy_a1: bool,
     pub(crate) excel_tidy_zoom: bool,
     pub(crate) excel_tidy_first: bool,
@@ -826,7 +826,7 @@ impl Session {
                     };
                     saw_theme = true;
                 }
-                // Retired UI scale (0/1/2). An older grids.ini still loads; the key is not written back.
+                // Retired UI scale (0/1/2). The key is ignored and not written back.
                 "font" => {}
                 "bar" => s.bar = v.trim() != "0",
                 "drivebuttons" => s.drive_buttons = v.trim() != "0",
@@ -834,7 +834,7 @@ impl Session {
                 "viewnew" => s.view_new = match v.trim() {
                     "list" => 3,
                     "icon" => 1,
-                    // The number is the same key grids.ini already had. No new key is written.
+                    // The number is the existing view-mode key. No new key is written.
                     other => known_view_mode(other.parse().unwrap_or(4)),
                 },
                 "start" => s.start_new = v.trim().parse::<u8>().unwrap_or(0).min(2),
@@ -846,7 +846,7 @@ impl Session {
                     let n = v.trim().parse::<i32>().unwrap_or(0);
                     s.preview_w = if n <= 0 { 0 } else { n.clamp(160, 4000) };
                 }
-                // Omitted, or any value other than tree: favourites on top. The source grids.ini is never rewritten.
+                // Omitted, or any value other than tree: favourites on top. The key is omitted when that is the default.
                 "sideorder" => s.fav_top = v.trim() != "tree",
                 "edge" => s.edge = v.trim() != "0",
                 "confirm" => s.confirm = v.trim() != "0",
@@ -969,7 +969,7 @@ impl Session {
         if self.preview_w > 0 {
             o += &format!("previeww={}\n", self.preview_w);
         }
-        // Default (favourites on top) adds no line, so an imported grids.ini is not given a new key.
+        // Default (favourites on top) adds no line.
         if !self.fav_top {
             o += "sideorder=tree\n";
         }
@@ -1035,7 +1035,7 @@ impl Session {
     }
 
     /// What goes into a named session file: no window position, no pointer to itself, no favourites or recent folders.
-    /// Per-tab session paths stay on the window. A `.grids` file is not tied to the place it was written.
+    /// Per-tab session paths stay on the window. A `.maguro` file is not tied to the place it was written.
     pub(crate) fn snapshot(&self) -> String {
         let mut c = self.clone();
         c.anchor();
@@ -1512,7 +1512,7 @@ pub(crate) fn active_tab_dirty(cur: &Session, saved: Option<&Tab>, order: &[u8])
     order_moved(order) || saved.is_some_and(|t| tab_layout_differs(cur, t))
 }
 
-/// Grid a tab is clean against. `file_tab` is the active tab of its `.grids` file, when that file was read.
+/// Grid a tab is clean against. `file_tab` is the active tab of its `.maguro` file, when that file was read.
 pub(crate) fn saved_grid(tab: &Tab, file_tab: Option<&Tab>) -> Tab {
     let Some(src) = file_tab else { return tab.clone() };
     let mut grid = tab.clone();
@@ -1567,7 +1567,7 @@ pub(crate) fn tab_session_text(s: &Session, i: usize) -> Option<String> {
 }
 
 /// Tabs a saved session contributes when it is opened. One file is one tab, linked to `path`.
-/// A file that still holds several tabs opens each of them, so none of those grids are dropped.
+/// A file that still holds several tabs opens each of them, so none of those layouts are dropped.
 /// Only the tab that was active in the file keeps `path`. Save then writes that one tab, not the others.
 pub(crate) fn tabs_from_session_text(text: &str, path: &str) -> Vec<Tab> {
     let text = text.trim_start_matches('\u{feff}').trim();
@@ -2102,8 +2102,7 @@ pub(crate) fn resolve(p: String) -> String {
 }
 
 pub(crate) fn is_session_file(p: &Path) -> bool {
-    // .qdr: sessions saved before the rename
-    p.extension().is_some_and(|x| x.eq_ignore_ascii_case("grids") || x.eq_ignore_ascii_case("qdr"))
+    p.extension().is_some_and(|x| x.eq_ignore_ascii_case("maguro"))
 }
 
 fn pane_slot_key(k: &str) -> bool {
@@ -2116,7 +2115,7 @@ fn pane_slot_key(k: &str) -> bool {
     rest.parse::<usize>().ok().is_some_and(|i| i < MAXP)
 }
 
-/// A line this build knows how to load. Plain text and a foreign `.qdr` are not sessions.
+/// A line this build knows how to load. Plain text is not a session.
 pub(crate) fn looks_like_session(text: &str) -> bool {
     let text = text.trim_start_matches('\u{feff}');
     text.lines().any(|line| {
@@ -2137,7 +2136,7 @@ pub(crate) fn session_arg(args: &[String]) -> Option<&str> {
     }
 }
 
-// `grids.exe A B C` opens the paths in pane order, growing the grid if needed.
+// `maguro.exe A B C` opens the paths in pane order, growing the layout if needed.
 pub(crate) fn apply_args(s: &mut Session, args: Vec<String>) {
     if args.is_empty() {
         return;
@@ -2155,33 +2154,10 @@ pub(crate) fn apply_args(s: &mut Session, args: Vec<String>) {
 }
 
 /// %APPDATA%\\Maguro\\maguro-sessions (next to the exe in portable mode). Created when missing.
-/// The first time, sessions from the old folders next to the exe are copied in; the old files stay.
 pub(crate) fn sessions_dir() -> PathBuf {
     let dir = store::config_dir().join("maguro-sessions");
-    if !dir.exists() && std::fs::create_dir_all(&dir).is_ok() {
-        let exe = store::exe_dir();
-        for old in [exe.join("maguro-sessions"), exe.join("sessions")] {
-            if old != dir && old.is_dir() {
-                copy_old_sessions(&old, &dir);
-            }
-        }
-    }
+    let _ = std::fs::create_dir_all(&dir);
     dir
-}
-
-// Copy top-level .grids and .qdr files. Sources stay put.
-fn copy_old_sessions(old: &Path, new: &Path) {
-    let Ok(rd) = std::fs::read_dir(old) else { return };
-    for ent in rd.flatten() {
-        let src = ent.path();
-        if !src.is_file() || !is_session_file(&src) {
-            continue;
-        }
-        let dst = new.join(ent.file_name());
-        if !dst.exists() {
-            let _ = std::fs::copy(&src, &dst);
-        }
-    }
 }
 
 pub(crate) fn human(b: u64) -> String {
@@ -2736,38 +2712,6 @@ mod face_tests {
 }
 
 #[cfg(test)]
-mod session_copy_tests {
-    use super::copy_old_sessions;
-
-    #[test]
-    fn copy_old_sessions_leaves_the_source_files() {
-        let root = std::env::temp_dir().join(format!("maguro-sessions-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        let old = root.join("sessions");
-        let new = root.join("maguro-sessions");
-        std::fs::create_dir_all(&old).unwrap();
-        std::fs::create_dir_all(&new).unwrap();
-        std::fs::write(old.join("work.grids"), b"one").unwrap();
-        std::fs::write(old.join("old.qdr"), b"two").unwrap();
-        std::fs::write(old.join("notes.txt"), b"skip").unwrap();
-        let grids_mtime = std::fs::metadata(old.join("work.grids")).unwrap().modified().unwrap();
-        let qdr_mtime = std::fs::metadata(old.join("old.qdr")).unwrap().modified().unwrap();
-        copy_old_sessions(&old, &new);
-        assert_eq!(std::fs::read(old.join("work.grids")).unwrap(), b"one");
-        assert_eq!(std::fs::read(old.join("old.qdr")).unwrap(), b"two");
-        assert_eq!(std::fs::metadata(old.join("work.grids")).unwrap().modified().unwrap(), grids_mtime);
-        assert_eq!(std::fs::metadata(old.join("old.qdr")).unwrap().modified().unwrap(), qdr_mtime);
-        assert_eq!(std::fs::read(new.join("work.grids")).unwrap(), b"one");
-        assert_eq!(std::fs::read(new.join("old.qdr")).unwrap(), b"two");
-        assert!(!new.join("notes.txt").exists());
-        assert!(old.join("work.grids").is_file());
-        assert!(old.join("old.qdr").is_file());
-        let _ = std::fs::remove_dir_all(&root);
-    }
-}
-
-
-#[cfg(test)]
 mod ratio_tests {
     use super::fix;
 
@@ -2808,47 +2752,47 @@ mod session_assoc_tests {
     #[test]
     fn save_uses_only_the_active_tabs_file() {
         let mut s = two_tabs();
-        assert!(bind_tab_session(&mut s, 0, r"C:\s\a.grids"));
-        assert_eq!(save_choice(&s.tabs, 0), SaveChoice::Overwrite(r"C:\s\a.grids"));
+        assert!(bind_tab_session(&mut s, 0, r"C:\s\a.maguro"));
+        assert_eq!(save_choice(&s.tabs, 0), SaveChoice::Overwrite(r"C:\s\a.maguro"));
         assert_eq!(save_choice(&s.tabs, 1), SaveChoice::AskName);
         assert_eq!(s.tabs[1].session, "");
-        assert_eq!(s.file, r"C:\s\a.grids");
+        assert_eq!(s.file, r"C:\s\a.maguro");
 
         s.tab = 1;
         settle_sessions(&mut s);
         assert_eq!(s.file, "");
         assert_eq!(save_choice(&s.tabs, 1), SaveChoice::AskName);
-        assert!(bind_tab_session(&mut s, 1, r"D:\s\b.grids"));
-        assert_eq!(s.tabs[0].session, r"C:\s\a.grids");
-        assert_eq!(s.tabs[1].session, r"D:\s\b.grids");
-        assert_eq!(save_choice(&s.tabs, 1), SaveChoice::Overwrite(r"D:\s\b.grids"));
-        assert_eq!(save_choice(&s.tabs, 0), SaveChoice::Overwrite(r"C:\s\a.grids"));
-        assert_eq!(s.file, r"D:\s\b.grids");
+        assert!(bind_tab_session(&mut s, 1, r"D:\s\b.maguro"));
+        assert_eq!(s.tabs[0].session, r"C:\s\a.maguro");
+        assert_eq!(s.tabs[1].session, r"D:\s\b.maguro");
+        assert_eq!(save_choice(&s.tabs, 1), SaveChoice::Overwrite(r"D:\s\b.maguro"));
+        assert_eq!(save_choice(&s.tabs, 0), SaveChoice::Overwrite(r"C:\s\a.maguro"));
+        assert_eq!(s.file, r"D:\s\b.maguro");
     }
 
     #[test]
     fn load_and_save_do_not_retarget_another_tab() {
         let mut s = two_tabs();
-        bind_tab_session(&mut s, 0, r"C:\s\a.grids");
-        bind_tab_session(&mut s, 1, r"D:\s\b.grids");
+        bind_tab_session(&mut s, 0, r"C:\s\a.maguro");
+        bind_tab_session(&mut s, 1, r"D:\s\b.maguro");
         let mut incoming = s.tabs[1].clone();
         incoming.paths[0] = r"E:\loaded".into();
         incoming.heights = vec![1];
-        let links = load_into_tab(&mut s, 1, &incoming, r"E:\s\new.grids");
-        assert_eq!(links, vec![r"C:\s\a.grids".to_string(), r"E:\s\new.grids".into()]);
-        assert_eq!(s.tabs[0].session, r"C:\s\a.grids");
+        let links = load_into_tab(&mut s, 1, &incoming, r"E:\s\new.maguro");
+        assert_eq!(links, vec![r"C:\s\a.maguro".to_string(), r"E:\s\new.maguro".into()]);
+        assert_eq!(s.tabs[0].session, r"C:\s\a.maguro");
         assert_eq!(s.tabs[1].paths[0], r"E:\loaded");
-        assert_eq!(s.file, r"C:\s\a.grids"); // tab 0 is still on screen
+        assert_eq!(s.file, r"C:\s\a.maguro"); // tab 0 is still on screen
 
         s.tab = 1;
         s.publish();
         assert_eq!(s.paths[0], r"E:\loaded");
-        assert_eq!(s.file, r"E:\s\new.grids");
-        assert_eq!(s.tabs[0].session, r"C:\s\a.grids");
+        assert_eq!(s.file, r"E:\s\new.maguro");
+        assert_eq!(s.tabs[0].session, r"C:\s\a.maguro");
 
-        let links = load_into_tab(&mut s, 1, &incoming, r"E:\s\again.grids");
-        assert_eq!(links[0], r"C:\s\a.grids");
-        assert_eq!(links[1], r"E:\s\again.grids");
+        let links = load_into_tab(&mut s, 1, &incoming, r"E:\s\again.maguro");
+        assert_eq!(links[0], r"C:\s\a.maguro");
+        assert_eq!(links[1], r"E:\s\again.maguro");
         assert_eq!(s.tabs[0].paths[0], r"C:\a");
     }
 
@@ -2865,52 +2809,52 @@ mod session_assoc_tests {
 
         let with = serde_json::json!({
             "name": "Work",
-            "session": "C:\\s\\work.grids",
+            "session": "C:\\s\\work.maguro",
             "layout": {"columns": [1]},
             "panes": []
         });
-        assert_eq!(tab_from_value(&with).unwrap().session, r"C:\s\work.grids");
+        assert_eq!(tab_from_value(&with).unwrap().session, r"C:\s\work.maguro");
 
         let tabs = serde_json::json!([
             {"name": "A", "layout": {"columns": [1]}, "panes": [{"index": 0, "path": "C:\\a"}]},
             {"name": "B", "active": true, "layout": {"columns": [1]}, "panes": [{"index": 0, "path": "D:\\b"}]}
         ]);
-        let old = format!("session=C:\\s\\win.grids\ntabs={tabs}\n");
+        let old = format!("session=C:\\s\\win.maguro\ntabs={tabs}\n");
         let s = Session::parse(&old);
         assert_eq!(s.tab, 1);
-        assert_eq!(s.tabs[1].session, r"C:\s\win.grids");
+        assert_eq!(s.tabs[1].session, r"C:\s\win.maguro");
         assert_eq!(s.tabs[0].session, "");
-        assert_eq!(s.file, r"C:\s\win.grids");
+        assert_eq!(s.file, r"C:\s\win.maguro");
         assert_eq!(s.paths[0], r"D:\b");
 
         let text = s.to_ini();
         let back = Session::parse(&text);
         assert_eq!(back.tabs[0].session, "");
-        assert_eq!(back.tabs[1].session, r"C:\s\win.grids");
-        assert_eq!(back.file, r"C:\s\win.grids");
+        assert_eq!(back.tabs[1].session, r"C:\s\win.maguro");
+        assert_eq!(back.file, r"C:\s\win.maguro");
         assert_eq!(back.tab, 1);
 
         // Per-tab paths win over a stale window-level session= line.
         let mut kept = s.clone();
-        kept.tabs[0].session = r"C:\s\a.grids".into();
-        kept.file = r"C:\s\stale.grids".into();
+        kept.tabs[0].session = r"C:\s\a.maguro".into();
+        kept.file = r"C:\s\stale.maguro".into();
         settle_sessions(&mut kept);
-        assert_eq!(kept.tabs[0].session, r"C:\s\a.grids");
-        assert_eq!(kept.tabs[1].session, r"C:\s\win.grids");
-        assert_eq!(kept.file, r"C:\s\win.grids");
+        assert_eq!(kept.tabs[0].session, r"C:\s\a.maguro");
+        assert_eq!(kept.tabs[1].session, r"C:\s\win.maguro");
+        assert_eq!(kept.file, r"C:\s\win.maguro");
     }
 
     #[test]
     fn named_session_text_does_not_embed_the_path() {
         let mut s = two_tabs();
-        bind_tab_session(&mut s, 0, r"C:\s\a.grids");
-        bind_tab_session(&mut s, 1, r"D:\s\b.grids");
+        bind_tab_session(&mut s, 0, r"C:\s\a.maguro");
+        bind_tab_session(&mut s, 1, r"D:\s\b.maguro");
         let text = s.snapshot();
         assert!(!text.contains("session="), "{text}");
-        assert!(!text.contains("a.grids"), "{text}");
-        assert!(!text.contains("b.grids"), "{text}");
+        assert!(!text.contains("a.maguro"), "{text}");
+        assert!(!text.contains("b.maguro"), "{text}");
         let one = tab_session_text(&s, 1).unwrap();
-        assert!(!one.contains("b.grids"), "{one}");
+        assert!(!one.contains("b.maguro"), "{one}");
         assert!(one.contains(r"D:\b") || one.contains("D:\\\\b"), "{one}");
     }
 
@@ -2943,10 +2887,10 @@ mod session_assoc_tests {
     #[test]
     fn fork_rename_and_delete_keep_other_links() {
         let mut s = two_tabs();
-        bind_tab_session(&mut s, 0, r"C:\s\a.grids");
-        bind_tab_session(&mut s, 1, r"D:\s\b.grids");
+        bind_tab_session(&mut s, 0, r"C:\s\a.maguro");
+        bind_tab_session(&mut s, 1, r"D:\s\b.maguro");
         let copy = fork_tab(&s.tabs[0], "A (2)".into());
-        assert_eq!(s.tabs[0].session, r"C:\s\a.grids");
+        assert_eq!(s.tabs[0].session, r"C:\s\a.maguro");
         assert!(copy.session.is_empty());
         assert!(!copy.locked);
         assert_eq!(copy.name, "A (2)");
@@ -2955,50 +2899,50 @@ mod session_assoc_tests {
         let now = before.clone();
         let linked = vec![true, false];
         let cleared = sessions_after_delete(&before, &now, &linked, true).unwrap();
-        assert_eq!(cleared, vec!["".to_string(), r"D:\s\b.grids".into()]);
+        assert_eq!(cleared, vec!["".to_string(), r"D:\s\b.maguro".into()]);
         assert!(sessions_after_delete(&before, &now, &linked, false).is_none());
         // Dialog retargeted tab 0 before the delete finished.
-        let moved = vec![r"C:\s\other.grids".into(), before[1].clone()];
+        let moved = vec![r"C:\s\other.maguro".into(), before[1].clone()];
         assert!(sessions_after_delete(&before, &moved, &linked, true).is_none());
 
-        let renamed = sessions_after_rename(&before, &now, &[false, true], r"D:\s\b2.grids").unwrap();
-        assert_eq!(renamed, vec![r"C:\s\a.grids".to_string(), r"D:\s\b2.grids".into()]);
+        let renamed = sessions_after_rename(&before, &now, &[false, true], r"D:\s\b2.maguro").unwrap();
+        assert_eq!(renamed, vec![r"C:\s\a.maguro".to_string(), r"D:\s\b2.maguro".into()]);
         // Tab 0 changed during the dialog and was not linked to B. Tab 1 still is, so only B follows the rename.
-        let followed = sessions_after_rename(&before, &moved, &[false, true], r"D:\s\b2.grids").unwrap();
-        assert_eq!(followed, vec![r"C:\s\other.grids".to_string(), r"D:\s\b2.grids".into()]);
+        let followed = sessions_after_rename(&before, &moved, &[false, true], r"D:\s\b2.maguro").unwrap();
+        assert_eq!(followed, vec![r"C:\s\other.maguro".to_string(), r"D:\s\b2.maguro".into()]);
         // Tab 1 was pointed somewhere else while the dialog was up, so the rename leaves it.
-        let moved_b = vec![before[0].clone(), r"E:\s\elsewhere.grids".into()];
-        assert!(sessions_after_rename(&before, &moved_b, &[false, true], r"D:\s\b2.grids").is_none());
+        let moved_b = vec![before[0].clone(), r"E:\s\elsewhere.maguro".into()];
+        assert!(sessions_after_rename(&before, &moved_b, &[false, true], r"D:\s\b2.maguro").is_none());
     }
 
     #[test]
     fn link_loaded_window_binds_only_the_active_tab() {
         let mut s = two_tabs();
-        bind_tab_session(&mut s, 0, r"C:\s\a.grids");
+        bind_tab_session(&mut s, 0, r"C:\s\a.maguro");
         s.tab = 1;
-        link_loaded_window(&mut s, r"E:\s\boot.grids");
+        link_loaded_window(&mut s, r"E:\s\boot.maguro");
         assert_eq!(s.tabs[0].session, "");
-        assert_eq!(s.tabs[1].session, r"E:\s\boot.grids");
-        assert_eq!(s.file, r"E:\s\boot.grids");
+        assert_eq!(s.tabs[1].session, r"E:\s\boot.maguro");
+        assert_eq!(s.file, r"E:\s\boot.maguro");
         assert_eq!(save_choice(&s.tabs, 0), SaveChoice::AskName);
-        assert_eq!(save_choice(&s.tabs, 1), SaveChoice::Overwrite(r"E:\s\boot.grids"));
+        assert_eq!(save_choice(&s.tabs, 1), SaveChoice::Overwrite(r"E:\s\boot.maguro"));
     }
 
     #[test]
     fn window_snap_keeps_each_tabs_file_and_old_snaps_still_load() {
         let mut s = two_tabs();
-        bind_tab_session(&mut s, 0, r"C:\s\a.grids");
-        bind_tab_session(&mut s, 1, r"D:\s\b.grids");
+        bind_tab_session(&mut s, 0, r"C:\s\a.maguro");
+        bind_tab_session(&mut s, 1, r"D:\s\b.maguro");
         s.tab = 0;
         settle_sessions(&mut s);
         let back = crate::session_from_window(&crate::window_value(&s), &Session::default());
-        assert_eq!(back.tabs[0].session, r"C:\s\a.grids");
-        assert_eq!(back.tabs[1].session, r"D:\s\b.grids");
-        assert_eq!(back.file, r"C:\s\a.grids");
+        assert_eq!(back.tabs[0].session, r"C:\s\a.maguro");
+        assert_eq!(back.tabs[1].session, r"D:\s\b.maguro");
+        assert_eq!(back.file, r"C:\s\a.maguro");
         assert_eq!(back.tab, 0);
 
         let old = serde_json::json!({
-            "session": "C:\\s\\win.grids",
+            "session": "C:\\s\\win.maguro",
             "tabs": [
                 {"name": "A", "layout": {"columns": [1]}, "panes": [{"index": 0, "path": "C:\\a"}]},
                 {"name": "B", "active": true, "layout": {"columns": [1]}, "panes": [{"index": 0, "path": "D:\\b"}]}
@@ -3007,8 +2951,8 @@ mod session_assoc_tests {
         let back = crate::session_from_window(&old, &Session::default());
         assert_eq!(back.tab, 1);
         assert_eq!(back.tabs[0].session, "");
-        assert_eq!(back.tabs[1].session, r"C:\s\win.grids");
-        assert_eq!(back.file, r"C:\s\win.grids");
+        assert_eq!(back.tabs[1].session, r"C:\s\win.maguro");
+        assert_eq!(back.file, r"C:\s\win.maguro");
         assert_eq!(back.paths[0], r"D:\b");
     }
 
@@ -3021,14 +2965,14 @@ mod session_assoc_tests {
         saved.paths[0] = r"C:\saved".into();
         saved.heights = vec![1];
         saved.anchor();
-        let path = dir.join("a.grids");
+        let path = dir.join("a.maguro");
         std::fs::write(&path, saved.snapshot()).unwrap();
 
         let mut live = two_tabs();
         bind_tab_session(&mut live, 0, &path.to_string_lossy());
         live.tabs[0].paths[0] = r"C:\drift".into();
         live.tabs[0].heights = vec![2];
-        live.tabs[1].session = dir.join("missing.grids").to_string_lossy().into_owned();
+        live.tabs[1].session = dir.join("missing.maguro").to_string_lossy().into_owned();
         let bases = initial_tab_bases(&live);
         assert_eq!(bases[0].grid.paths[0], r"C:\saved");
         assert_eq!(bases[0].grid.heights, vec![1]);
@@ -3122,7 +3066,6 @@ mod view_menu_tests {
         let ini = s.to_ini();
         assert!(ini.contains("viewnew=8\n"));
         assert!(!ini.contains("viewicon"));
-        assert!(!ini.contains("grids.ini"));
         assert_eq!(Session::parse(&ini).view_new, 8);
         assert_eq!(Session::parse(&ini).view_icon, 0);
     }

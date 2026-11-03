@@ -1130,7 +1130,7 @@ mod tests {
         assert!(!low.contains("github"), "{desc}");
         assert!(!desc.contains("http"), "{desc}");
         assert!(!low.contains("samek86"), "{desc}");
-        assert!(!desc.contains("efww/grids"), "{desc}");
+        assert!(!desc.contains("efww/"), "{desc}");
     }
 
     fn shot(page: usize, query: &str) -> Snap {
@@ -1171,17 +1171,18 @@ mod tests {
     fn typing_agy_does_not_open_shortcuts_or_lay_out_its_table() {
         let _lock = ui_lock();
         let _keep = lang(1);
-        // "Ag" still opens Shortcuts first (PageUp / PageDown). The sessions path
-        // "%APPDATA%\\Maguro\\maguro-sessions" also contains "ag", so "Ag" is not unique.
+        // "Ag" matches General first: the clipboard hint says "Maguro".
+        // Shortcuts (PageUp / PageDown) and the sessions path also contain "ag".
         // "Agy" matches nothing. Keeping the page a prefix opened is what showed the empty table.
+        assert!(page_match("Ag", 0));
         assert!(page_match("Ag", 5));
         assert!(page_match("Ag", 6));
-        assert_eq!((0..PAGES.len()).find(|&p| page_match("Ag", p)), Some(5));
+        assert_eq!((0..PAGES.len()).find(|&p| page_match("Ag", p)), Some(0));
         assert!(search_miss("Agy"));
         assert!((0..PAGES.len()).all(|p| !page_match("Agy", p)));
 
         crate::UI.store(2, Ordering::Relaxed);
-        assert_eq!((0..PAGES.len()).find(|&p| page_match("Ag", p)), Some(5));
+        assert_eq!((0..PAGES.len()).find(|&p| page_match("Ag", p)), Some(0));
         assert!(search_miss("Agy"));
         crate::UI.store(1, Ordering::Relaxed);
 
@@ -1217,7 +1218,9 @@ mod tests {
         assert!(g.show.iter().all(|on| !*on));
         // The page the user picked still wins when the query actually matches it.
         crate::UI.store(1, Ordering::Relaxed);
-        assert_eq!(pick_search(0, 0, "단축키"), 5);
+        // The clipboard hint on General also says 단축키, so that word stays on page 0.
+        // PageU is only a shortcut chord, so a search from General opens Shortcuts.
+        assert_eq!(pick_search(0, 0, "PageU"), 5);
         assert_eq!(pick_search(2, 5, "단축키"), 5);
         assert!(!search_miss("단축키"));
         assert!(!search_miss(""));
@@ -1377,7 +1380,7 @@ mod tests {
     fn clearing_a_real_shortcut_hit_stays_on_that_page() {
         let _lock = ui_lock();
         let _keep = lang(1);
-        let (anchor, page) = commit_search(0, 0, "Ag");
+        let (anchor, page) = commit_search(0, 0, "PageU");
         assert_eq!((anchor, page), (0, 5));
         assert_eq!(commit_search(anchor, page, ""), (5, 5));
     }

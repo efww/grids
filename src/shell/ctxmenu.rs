@@ -1,7 +1,7 @@
 // Third-party context menu entries, and the Maguro-only filter.
 //
 // The registry is read, never written. Enablement lives in maguro.json (`ctx_menu`),
-// not in HKCR and not in a .grids file. Explorer is unchanged.
+// not in HKCR and not in a .maguro file. Explorer is unchanged.
 //
 // The visible menu is always the shell view's own `IContextMenu` (the same object as
 // when nothing is disabled). `SHCreateDefaultContextMenu` with a filtered `aKeys` list

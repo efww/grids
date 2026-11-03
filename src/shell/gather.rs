@@ -156,7 +156,7 @@ mod tests {
         // Slots without a live pane are neither kept nor filled.
         assert_eq!(plan(&["A", "E"], &[(0, "B"), (2, "C")], 0, 3), (o(&[(0, "A"), (2, "E")]), 0));
         // A folder named like a session file is just a folder here.
-        assert_eq!(plan(&["D:\\Backup.grids"], &[(0, "A")], 0, 1), (o(&[(0, "D:\\Backup.grids")]), 0));
+        assert_eq!(plan(&["D:\\Backup.maguro"], &[(0, "A")], 0, 1), (o(&[(0, "D:\\Backup.maguro")]), 0));
         assert_eq!(plan(&[], &[(0, "A")], 0, 1), (o(&[]), 0));
         assert_eq!(plan(&["A"], &[], 0, 0), (o(&[]), 1));
     }

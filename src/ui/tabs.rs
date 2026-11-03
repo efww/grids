@@ -995,7 +995,7 @@ pub(crate) unsafe fn tab_menu(i: usize, x: i32, y: i32) {
     }
 }
 
-pub(crate) unsafe fn install_grids(s: Session) {
+pub(crate) unsafe fn install_session(s: Session) {
     destroy_every_pane();
     let filters = s.tabs.get(s.tab.min(s.tabs.len().saturating_sub(1))).map(|t| t.filters.clone()).unwrap_or_default();
     let n = s.tabs.len().max(1);

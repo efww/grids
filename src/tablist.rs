@@ -160,7 +160,7 @@ fn inside(r: RECT, x: i32, y: i32) -> bool {
     x >= r.left && x < r.right && y >= r.top && y < r.bottom
 }
 
-/// Columns × rows when every column is the same height (`[2, 2]` is `2×2`). Uneven grids keep the column heights.
+/// Columns × rows when every column is the same height (`[2, 2]` is `2×2`). Uneven layouts keep the column heights.
 pub(crate) fn grid_label(heights: &[usize]) -> String {
     let Some(&first) = heights.first() else { return String::new() };
     if heights.iter().all(|&n| n == first) {

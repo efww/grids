@@ -2,9 +2,9 @@
 
 설정 파일 위치는 [README의 설치](../README.ko.md#설치)를 보세요.
 
-## 이전 설정 가져오기
+## 설정 파일
 
-처음 실행할 때 `maguro.json`이 없으면 `%APPDATA%\grids` 또는 exe 옆의 `grids.json`을 복사합니다. 그것도 없으면 `grids.ini` 또는 `qdir.ini`를 읽기 전용으로 가져옵니다. 원본 파일은 이름을 바꾸거나 수정하거나 지우지 않습니다(`.bak` 없음). `panegrid.json`과 `%APPDATA%\Panegrid`는 읽지 않습니다. 예전 `grids.ini`의 `lang=ko`도 한국어로 읽힙니다.
+Maguro는 설정 폴더의 `maguro.json`만 읽고 씁니다(`%APPDATA%\Maguro`, `portable.txt`가 있으면 exe 옆). 파일이 없으면 기본값으로 시작합니다. 이름 붙인 세션은 `maguro-sessions` 안의 `.maguro` 파일입니다.
 
 ## 저장 방식, 언어, 보기
 
@@ -19,7 +19,7 @@
 | 키 | 설명 |
 | --- | --- |
 | `side_split` | 폴더 트리가 왼쪽 패널에서 차지하는 비율. 나머지는 즐겨찾기예요. 어느 쪽이 위든 다시 열 때 돌아옵니다. 왼쪽 패널 전체는 설정에서 숨길 수 있습니다. |
-| `side_order` | 왼쪽 패널에서 어느 쪽이 위인지. 키가 없으면 즐겨찾기가 위예요. `"tree"`이면 폴더 트리가 위예요. 구분선은 그대로 끌 수 있고, `side_split`은 폴더 트리의 높이 비율로 남아요. 설정 → 패널·보기에서 바꾸면 바로 적용돼요. 즐겨찾기가 위일 때는 키가 빠지고, `grids.ini`에는 쓰지 않습니다. |
+| `side_order` | 왼쪽 패널에서 어느 쪽이 위인지. 키가 없으면 즐겨찾기가 위예요. `"tree"`이면 폴더 트리가 위예요. 구분선은 그대로 끌 수 있고, `side_split`은 폴더 트리의 높이 비율로 남아요. 설정 → 패널·보기에서 바꾸면 바로 적용돼요. 즐겨찾기가 위일 때는 키가 빠집니다. |
 | `use_everything` | `"use_everything": false`가 없으면 켜져 있습니다. 켜져 있으면 하위 폴더 검색이, Everything이 실행 중일 때 Everything에 묻습니다. 설정 → 일반에는 설치되어 실행 중, 설치되어 있지만 실행 중이 아님, 설치되어 있지 않음이 나오고, Everything이 버전을 알려 주면 함께 표시됩니다. Everything 시작은 설치된 `Everything.exe`를 실행합니다. 설치는 winget이 있으면 `winget install --id voidtools.Everything -e`를 실행하고, 없으면 voidtools 다운로드 페이지를 엽니다. |
 | `winmerge_path` | 비어 있으면 자동 감지이며, 키는 빠집니다. 설정 → 일반 → WinMerge에서 찾았는지 보이고, `WinMergeU.exe`나 그 폴더를 직접 지정할 수 있습니다. 그 경로, `HKLM`/`HKCU` `Software\Thingamahoochie\WinMerge`의 `Executable`, `WinMergeU.exe` App Paths, Program Files, `PATH` 순으로 찾습니다. 폴더 비교는 Ctrl+Alt+C, 톱니바퀴 메뉴, 파일 목록 메뉴입니다. |
 | `ev_asked` | Everything 설치를 한 번만 물은 답을 기억합니다. Everything이 없을 때 처음 하위 폴더 검색을 하면 설치할지 묻습니다. |
@@ -28,15 +28,15 @@
 | `hotkey` | 줄이 없으면 켜짐. Win+Shift+E로 Maguro를 앞으로 가져오고, 다시 누르면 최소화합니다. Maguro 대화 상자가 열려 있으면 그 창이 앞으로 옵니다. 보기 메뉴의 체크는 키가 실제로 등록됐을 때만 켜지므로, 시작에 실패해도 한 번 누르면 다시 시도합니다. 단축키는 설정에서 바꿀 수 있습니다. |
 | `dialog_jump` | 키가 없으면 켜짐. 다른 앱의 열기 또는 저장 대화 상자가 앞에 있을 때, 단축키(기본 Ctrl+Alt+G, 단축키 페이지에서 변경)가 Maguro에 열린 폴더를 보여주고 고른 폴더로 그 대화 상자를 옮깁니다. 그런 대화 상자가 앞에 있을 때만 단축키가 등록됩니다. 가상 폴더는 빠집니다. Win+Shift+E는 그대로입니다. |
 | `space_preview` | 키가 없으면 켜짐. 설정 → 패널·보기 → 스페이스로 미리보기를 끄면 스페이스로는 열리지 않습니다. 글자를 입력한 뒤 1초 안의 스페이스나, 한글·일본어를 조합하는 중의 스페이스는 이름의 일부로 들어갑니다. Ctrl+Space와 Shift+Space는 그대로 둡니다. |
-| `preview_pane` | 키가 없으면 꺼짐. 미리보기 창은 활성 패널에서 포커스된 파일을 Windows 미리보기 처리기(탐색기 미리보기 창과 같은 방식)로 그립니다. 없으면 미리보기 그림이나 짧은 안내가 나옵니다. Alt+P로 켜고 끕니다. 이름 붙인 `.grids` 파일은 이 값을 바꾸지 않습니다. |
+| `preview_pane` | 키가 없으면 꺼짐. 미리보기 창은 활성 패널에서 포커스된 파일을 Windows 미리보기 처리기(탐색기 미리보기 창과 같은 방식)로 그립니다. 없으면 미리보기 그림이나 짧은 안내가 나옵니다. Alt+P로 켜고 끕니다. 이름 붙인 `.maguro` 파일은 이 값을 바꾸지 않습니다. |
 | `preview_width` | 그 창의 너비(DIP). 없거나 `0`이면 구분선을 끌기 전까지 280입니다. 저장되는 최소 너비는 160입니다. 구분선을 두 번 누르면 기본값으로 돌아갑니다. |
 | `folders` | 패널 안의 탭으로 연 폴더. 패널마다 저장되고, 이름 붙인 세션에도 들어갑니다. 예전 `pane_tabs` 값은 무시됩니다. |
 | `favorites_tree` | 즐겨찾기 트리. 예전 목록은 맨 위로 옮겨집니다. |
 | `one_window` | 창 하나만 쓰기. 줄이 없으면 꺼져 있습니다. 켜면 다시 실행할 때 최소화된 창을 되돌리고, 경로 인자는 그 창의 탭으로 엽니다. Ctrl+N, 탭을 밖으로 끌기, 새 창으로 이동, 이미 앞에 있을 때의 Win+Shift+E는 새 창 대신 이 창의 탭을 엽니다. |
 | `lang` | `"auto"`, `"en"`, 또는 `"ko"`, `"ja"`, `"fr"`, `"de"` 같은 언어 파일 코드. 키가 없거나 `"auto"`이면 맞는 파일이 있을 때 Windows 표시 언어를 따르고, 없으면 영어입니다. |
 | `font_face` | 창 전체의 글꼴. 글꼴 크기는 저장하지 않습니다. 예전 `font` 값은 무시됩니다. |
-| `blocked_shell_extensions` | Maguro가 불러오지 않을 DLL 파일 이름. 예: `"codec.dll"`. 비어 있으면 막지 않으며 키는 빠집니다. Maguro 안에서만 적용됩니다. 레지스트리에는 쓰지 않고, 탐색기는 그대로이며, `grids.ini`에도 들어가지 않습니다. System32, SysWOW64, WinSxS 아래의 Windows DLL(`shell32.dll`, `explorerframe.dll` 포함)은 막지 않습니다. 목록을 고친 뒤에는 Maguro를 다시 시작합니다. CLSID 없이 경로로만 불러오는 핸들러는 이 설정으로 막을 수 없고, 그 DLL 이름은 충돌 보고서에 남습니다. |
+| `blocked_shell_extensions` | Maguro가 불러오지 않을 DLL 파일 이름. 예: `"codec.dll"`. 비어 있으면 막지 않으며 키는 빠집니다. Maguro 안에서만 적용됩니다. 레지스트리에는 쓰지 않고, 탐색기는 그대로입니다. System32, SysWOW64, WinSxS 아래의 Windows DLL(`shell32.dll`, `explorerframe.dll` 포함)은 막지 않습니다. 목록을 고친 뒤에는 Maguro를 다시 시작합니다. CLSID 없이 경로로만 불러오는 핸들러는 이 설정으로 막을 수 없고, 그 DLL 이름은 충돌 보고서에 남습니다. |
 
 ## 충돌 보고서
 
-Maguro가 패닉, 접근 위반, 또는 셸 확장 안의 fail-fast로 끝나면, 다음 실행에서 “Maguro closed unexpectedly last time”(한국어 화면에서는 번역된 문장), 보고서 경로, 폴더 열기가 나옵니다. 보고서는 설정 폴더의 `crashes` 안에 있는 텍스트 파일입니다(`%APPDATA%\Maguro\crashes`, `portable.txt`가 있으면 exe 옆). grids 폴더에는 쓰지 않습니다. 보고서에는 버전, 스레드, 패닉 또는 예외 코드와 주소, 오류가 난 모듈 이름과 오프셋, 마지막으로 연 폴더, 불러온 타사 모듈, 불러온 셸 확장 DLL이 들어갑니다. 폴더 열기는 그 `crashes` 폴더를 엽니다.
+Maguro가 패닉, 접근 위반, 또는 셸 확장 안의 fail-fast로 끝나면, 다음 실행에서 “Maguro closed unexpectedly last time”(한국어 화면에서는 번역된 문장), 보고서 경로, 폴더 열기가 나옵니다. 보고서는 설정 폴더의 `crashes` 안에 있는 텍스트 파일입니다(`%APPDATA%\Maguro\crashes`, `portable.txt`가 있으면 exe 옆). 보고서에는 버전, 스레드, 패닉 또는 예외 코드와 주소, 오류가 난 모듈 이름과 오프셋, 마지막으로 연 폴더, 불러온 타사 모듈, 불러온 셸 확장 DLL이 들어갑니다. 폴더 열기는 그 `crashes` 폴더를 엽니다.

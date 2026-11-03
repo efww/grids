@@ -851,7 +851,7 @@ mod tests {
     }
 
     #[test]
-    fn window_values_round_trip_each_grids_paths() {
+    fn window_values_round_trip_each_window_paths() {
         let mut a = Session::default();
         a.paths[0] = "C:\\one".into();
         a.side = 180;
@@ -864,7 +864,7 @@ mod tests {
         b.side = 90;
         b.side_split = 0.75;
         b.win = Some([40, 50, 800, 600, 1]);
-        b.file = "C:\\s\\b.grids".into();
+        b.file = "C:\\s\\b.maguro".into();
         b.accent = 0xAABBCC;
         b.anchor();
         let snaps = vec![window_value(&a), window_value(&b)];
@@ -873,7 +873,7 @@ mod tests {
         assert_eq!(back_b.win, Some([40, 50, 800, 600, 1]));
         assert_eq!(back_b.side, 90);
         assert_eq!(back_b.side_split, 0.75);
-        assert_eq!(back_b.file, "C:\\s\\b.grids");
+        assert_eq!(back_b.file, "C:\\s\\b.maguro");
         assert_eq!(back_b.accent, a.accent);
         assert_ne!(back_b.paths[0], a.paths[0]);
         let back_a = session_from_window(&snaps[0], &a);

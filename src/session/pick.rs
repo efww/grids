@@ -44,7 +44,7 @@ pub(crate) struct TabPreview {
 }
 
 /// What the detail pane can show. `readable` is false for a missing read, bad bytes, or a file
-/// that is not a session (including an old `.qdr` this build cannot parse).
+/// that is not a session.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SessionPreview {
     pub readable: bool,
@@ -165,7 +165,7 @@ pub(crate) fn preview_summary(text: &str) -> SessionPreview {
     SessionPreview { readable: true, tabs }
 }
 
-/// Bytes on disk. Invalid UTF-8 (some old `.qdr` files) is unreadable, not a best-effort decode.
+/// Bytes on disk. Invalid UTF-8 is unreadable, not a best-effort decode.
 pub(crate) fn preview_bytes(bytes: &[u8]) -> SessionPreview {
     match std::str::from_utf8(bytes) {
         Ok(t) => preview_summary(t),
@@ -1325,11 +1325,11 @@ mod tests {
         std::fs::create_dir_all(&d).unwrap();
         std::fs::write(d.join("old.qdr"), "x").unwrap();
         std::thread::sleep(std::time::Duration::from_millis(30));
-        std::fs::write(d.join("work.grids"), "x").unwrap();
+        std::fs::write(d.join("work.maguro"), "x").unwrap();
         std::fs::write(d.join("notes.txt"), "x").unwrap();
-        std::fs::create_dir_all(d.join("dir.grids")).unwrap();
+        std::fs::create_dir_all(d.join("dir.maguro")).unwrap();
         let names: Vec<String> = session_list(&d).into_iter().map(|e| e.name).collect();
-        assert_eq!(names, vec!["work".to_string(), "old".to_string()]);
+        assert_eq!(names, vec!["work".to_string()]);
         assert!(session_list(&d.join("missing")).is_empty());
         _ = std::fs::remove_dir_all(&d);
     }
@@ -1360,7 +1360,7 @@ mod tests {
     }
 
     #[test]
-    fn unreadable_and_old_qdr_stay_marked() {
+    fn unreadable_bytes_stay_marked() {
         assert!(!preview_summary("").readable);
         assert!(!preview_summary("hello from an old tool").readable);
         assert!(!preview_summary("x").readable);

@@ -176,7 +176,7 @@ pub(crate) fn session_stem_ok(input: &str) -> Option<String> {
     (!bad && !numbered && !matches!(dev.as_str(), "CON" | "PRN" | "AUX" | "NUL")).then(|| s.to_string())
 }
 
-/// Renames a session file, keeping its extension (`.grids`, or `.qdr` from before the rename).
+/// Renames a session file, keeping its `.maguro` extension.
 /// Never replaces another file: without `MOVEFILE_REPLACE_EXISTING` the OS refuses a taken name.
 /// A case-only change still goes through.
 pub(crate) fn rename_session(old: &Path, stem: &str) -> Result<PathBuf> {
@@ -513,23 +513,19 @@ mod tests {
 
     #[test]
     fn session_rename_never_replaces() {
-        let d = std::env::temp_dir().join(format!("grids-rename-{}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("maguro-rename-{}", std::process::id()));
         _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         let read = |n: &str| std::fs::read_to_string(d.join(n)).unwrap();
-        std::fs::write(d.join("a.grids"), "A").unwrap();
-        std::fs::write(d.join("b.grids"), "B").unwrap();
-        assert!(rename_session(&d.join("a.grids"), "b").is_err());
-        assert_eq!((read("a.grids"), read("b.grids")), ("A".into(), "B".into()));
-        assert_eq!(rename_session(&d.join("a.grids"), "A").unwrap(), d.join("A.grids"));
+        std::fs::write(d.join("a.maguro"), "A").unwrap();
+        std::fs::write(d.join("b.maguro"), "B").unwrap();
+        assert!(rename_session(&d.join("a.maguro"), "b").is_err());
+        assert_eq!((read("a.maguro"), read("b.maguro")), ("A".into(), "B".into()));
+        assert_eq!(rename_session(&d.join("a.maguro"), "A").unwrap(), d.join("A.maguro"));
         let names = || std::fs::read_dir(&d).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect::<Vec<_>>();
-        assert!(names().contains(&"A.grids".into()) && !names().contains(&"a.grids".into()));
-        assert_eq!(read("A.grids"), "A");
-        assert_eq!(rename_session(&d.join("A.grids"), "A").unwrap(), d.join("A.grids"));
-        std::fs::write(d.join("old.qdr"), "Q").unwrap();
-        assert_eq!(rename_session(&d.join("old.qdr"), "new").unwrap(), d.join("new.qdr"));
-        assert!(!d.join("old.qdr").exists());
-        assert_eq!(read("new.qdr"), "Q");
+        assert!(names().contains(&"A.maguro".into()) && !names().contains(&"a.maguro".into()));
+        assert_eq!(read("A.maguro"), "A");
+        assert_eq!(rename_session(&d.join("A.maguro"), "A").unwrap(), d.join("A.maguro"));
         _ = std::fs::remove_dir_all(&d);
     }
 }

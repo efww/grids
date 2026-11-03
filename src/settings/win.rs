@@ -2599,7 +2599,7 @@ mod tests {
         // Plain address only — never a URL scheme that would invite a browser open.
         assert!(!body.contains("http"));
         assert!(!body.contains("https"));
-        assert!(!body.contains("efww/grids"));
+        assert!(!body.contains("efww/"));
         assert!(!body.contains('?'));
         assert_eq!(crate::ICON_GROUP_EXE, 1);
         assert_eq!(crate::ICON_GROUP_DARK, 2);

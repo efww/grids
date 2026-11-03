@@ -827,7 +827,7 @@ pub(crate) unsafe fn file_dialog(owner: HWND, save: bool) -> Option<String> {
     use windows::Win32::UI::Controls::Dialogs::{GetOpenFileNameW, GetSaveFileNameW, OFN_FILEMUSTEXIST, OFN_OVERWRITEPROMPT, OFN_PATHMUSTEXIST, OPENFILENAMEW};
     let mut buf = [0u16; 520];
     if save {
-        for (d, c) in buf.iter_mut().zip("grids.ini".encode_utf16()) {
+        for (d, c) in buf.iter_mut().zip("maguro.json".encode_utf16()) {
             *d = c;
         }
     }
@@ -962,7 +962,7 @@ pub(crate) unsafe fn import_settings(text: &str) -> bool {
     let lang = s.lang;
     // set_language drops a chosen face. An imported file keeps the face it named.
     let face = s.font_face.clone();
-    install_grids(s);
+    install_session(s);
     if lang != lang_now {
         set_language(lang);
         if !face.is_empty() {
@@ -1051,7 +1051,7 @@ mod tests {
         assert_eq!(image_name("Clipboard image", &t, 1), "Clipboard image 2026-10-21 153002.png");
         assert_eq!(image_name("클립보드 이미지", &t, 2), "클립보드 이미지 2026-10-21 153002 (2).png");
         assert_eq!(image_name("クリップボード画像", &t, 1), "クリップボード画像 2026-10-21 153002.png");
-        let dir = std::env::temp_dir().join(format!("grids-picture-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("maguro-picture-{}", std::process::id()));
         _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("a.png"), vec![0u8; 3]).unwrap();
@@ -1072,7 +1072,7 @@ mod tests {
     #[test]
     fn drop_move_waits_until_the_drag_releases_the_file() {
         use std::os::windows::fs::OpenOptionsExt;
-        let root = std::env::temp_dir().join(format!("grids-drop-move-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("maguro-drop-move-{}", std::process::id()));
         let src_dir = root.join("src");
         let dst_dir = root.join("dst");
         let _ = std::fs::remove_dir_all(&root);

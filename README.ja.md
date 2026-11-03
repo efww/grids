@@ -10,7 +10,7 @@
 
 <p align="center">高速で軽量な、Windows向けマルチペイン・ファイルマネージャ。</p>
 
-> **Maguro は efww の [efww/grids](https://github.com/efww/grids) のフォークです。** 実行ファイル名（`maguro.exe`）、ウィンドウクラス、設定フォルダ、ホットキー（Win+Shift+E）が異なるため、元の Grids の設定に触れずに並べて使えます。
+> **Maguro は efww の [efww/grids](https://github.com/efww/grids) のフォークです。** 実行ファイル名（`maguro.exe`）、ウィンドウクラス、設定フォルダ、ホットキー（Win+Shift+E）が異なります。
 
 <p align="center">
   <a href="https://github.com/Samek86/maguro"><img alt="プラットフォーム: Windows" src="https://img.shields.io/badge/platform-Windows-0078D4?logo=windows&logoColor=white"></a>
@@ -188,7 +188,7 @@ Windows に従うライト／ダーク、テーマごとにアクセント色が
 
 **動作環境:** Windows 10（1903 以降）または Windows 11、x64。SFTP/FTP には [rclone](https://rclone.org/) と [WinFsp](https://winfsp.dev/) も必要です（接続追加時に Maguro が導入を案内できます）。
 
-設定は `%APPDATA%\Maguro\maguro.json` にあります。`maguro.exe` の隣に `portable.txt` を置くと、設定も exe の隣に置かれます。名前付きセッションは exe 隣の `maguro-sessions` フォルダ内の `.grids` ファイルです。
+設定は `%APPDATA%\Maguro\maguro.json` にあります。`maguro.exe` の隣に `portable.txt` を置くと、設定も exe の隣に置かれます。名前付きセッションは exe 隣の `maguro-sessions` フォルダ内の `.maguro` ファイルです。
 
 ソースからビルドする場合は [CONTRIBUTING.md](CONTRIBUTING.md) を参照してください。
 
@@ -237,7 +237,7 @@ Windows に従うライト／ダーク、テーマごとにアクセント色が
 
 タブ行の歯車が表示メニューを開きます。設定はその中にあります（`Ctrl+,`）。
 
-言語（自動、English、および各言語ファイル）、フォント、ライト／ダーク、アクセント、ショートカットは設定で変更します。古い Grids 設定からの移行、書き込み方、`maguro.json` のキー一覧は [docs/settings.md](docs/settings.md) にあります。
+言語（自動、English、および各言語ファイル）、フォント、ライト／ダーク、アクセント、ショートカットは設定で変更します。書き込み方と `maguro.json` のキー一覧は [docs/settings.md](docs/settings.md) にあります。
 
 ## 言語ファイル
 
