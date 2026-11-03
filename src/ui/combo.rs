@@ -42,6 +42,8 @@ struct Slot {
     face: FaceFn,
     hot: bool,
     edit_hooked: bool,
+    /// Closed face height in pixels. 0 until layout gives the control its slot.
+    face_h: i32,
 }
 
 static SLOTS: Mutex<Vec<Slot>> = Mutex::new(Vec::new());
@@ -49,7 +51,19 @@ static PARENTS: Mutex<Vec<isize>> = Mutex::new(Vec::new());
 
 thread_local! {
     static FITTING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Nonzero while a size message is inside `DefSubclassProc`, so the combo's
+    /// own follow-up `SetWindowPos` is not mistaken for a new layout slot.
+    static DEPTH: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
 }
+
+/// user32 stores `CB_SETITEMHEIGHT(-1, request)` as `request + 2` and sizes the
+/// closed window as that stored height plus `2 * COMBO_YBORDERSIZE` (2).
+/// `slot - 6` is the request whose closed window is the slot.
+const SELECTION_EXTRA: i32 = 6;
+/// Closed window minus the stored selection height.
+const CLOSED_BORDER: i32 = 4;
+/// Owner-draw selection `WM_MEASUREITEM` is stored as `returned + 6`.
+const MEASURE_SELECTION_PAD: i32 = 6;
 
 fn px(dpi: i32, dip: i32) -> i32 {
     dip * dpi.max(96) / 96
@@ -102,7 +116,7 @@ pub(crate) unsafe fn adopt(hwnd: HWND, face: FaceFn) {
         ensure_parent(parent);
     }
     if let Ok(mut g) = SLOTS.lock() {
-        g.push(Slot { hwnd: hwnd.0 as isize, face, hot: false, edit_hooked: false });
+        g.push(Slot { hwnd: hwnd.0 as isize, face, hot: false, edit_hooked: false, face_h: 0 });
     }
     clear_theme(hwnd);
     let cur = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32;
@@ -111,7 +125,6 @@ pub(crate) unsafe fn adopt(hwnd: HWND, face: FaceFn) {
     let _ = SendMessageW(hwnd, CB_SETMINVISIBLE, Some(WPARAM(VISIBLE)), None);
     let _ = SetWindowPos(hwnd, None, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
     hook_edit(hwnd);
-    fit(hwnd);
 }
 
 fn ensure_parent(parent: HWND) {
@@ -219,27 +232,119 @@ unsafe fn dropped(hwnd: HWND) -> bool {
     SendMessageW(hwnd, CB_GETDROPPEDSTATE, None, None).0 != 0
 }
 
-unsafe fn row_height(hwnd: HWND) -> i32 {
-    let rc = client_of(hwnd);
-    let h = rc.bottom - rc.top;
-    if h >= 8 { h } else { px(dpi_of(hwnd), 26) }
+fn slot_height(hwnd: HWND) -> i32 {
+    SLOTS.lock().ok().and_then(|g| g.iter().find(|s| s.hwnd == hwnd.0 as isize).map(|s| s.face_h)).unwrap_or(0)
 }
 
-unsafe fn fit(hwnd: HWND) {
+fn remember_slot(hwnd: HWND, h: i32) {
+    if h <= 0 {
+        return;
+    }
+    if let Ok(mut g) = SLOTS.lock() {
+        if let Some(slot) = g.iter_mut().find(|s| s.hwnd == hwnd.0 as isize) {
+            slot.face_h = h;
+        }
+    }
+}
+
+/// `CB_SETITEMHEIGHT(-1)` request that makes the closed window `slot` pixels tall.
+fn selection_request(slot: i32) -> i32 {
+    (slot - SELECTION_EXTRA).max(1)
+}
+
+/// The closed face is the layout slot. The dropped list is a separate popup.
+fn face_rect(slot: RECT) -> RECT {
+    slot
+}
+
+fn locking() -> bool {
+    FITTING.with(|c| c.get()) || DEPTH.with(|c| c.get()) > 0
+}
+
+unsafe fn stored_selection(hwnd: HWND) -> i32 {
+    SendMessageW(hwnd, CB_GETITEMHEIGHT, Some(WPARAM(usize::MAX)), None).0 as i32
+}
+
+/// Height user32 will snap the closed window to, from the stored selection field.
+unsafe fn preferred_closed(hwnd: HWND) -> i32 {
+    let item = stored_selection(hwnd);
+    if item <= 0 { 0 } else { item + CLOSED_BORDER }
+}
+
+/// Keep the HWND at the layout slot. A taller request is the combo adding its
+/// own border on top of the selection field, which is what covered the rows below.
+/// The combo's own resize keeps the position (`SWP_NOMOVE`) and asks for the
+/// selection height plus its border. Layout moves the window, so that size sticks.
+unsafe fn apply_pos(hwnd: HWND, pos: &mut WINDOWPOS) {
+    if pos.flags.0 & SWP_NOSIZE.0 != 0 || pos.cy <= 0 {
+        return;
+    }
+    let slot = slot_height(hwnd);
+    if locking() {
+        if slot > 0 {
+            pos.cy = slot;
+        }
+        return;
+    }
+    if slot > 0 && pos.cy != slot {
+        let nomove = pos.flags.0 & SWP_NOMOVE.0 != 0;
+        let preferred = preferred_closed(hwnd);
+        if nomove || (preferred > 0 && pos.cy == preferred) {
+            pos.cy = slot;
+            return;
+        }
+    }
+    if pos.cy != slot {
+        remember_slot(hwnd, pos.cy);
+    }
+}
+
+/// Client area of the closed face, clipped to the slot when the window is taller.
+fn face_client(hwnd: HWND) -> RECT {
+    let mut rc = client_of(hwnd);
+    let h = slot_height(hwnd);
+    if h > 0 && rc.bottom > rc.top + h {
+        rc.bottom = rc.top + h;
+    }
+    rc
+}
+
+unsafe fn lock_face(hwnd: HWND) {
     if FITTING.with(|c| c.get()) {
         return;
     }
+    let slot = slot_height(hwnd);
+    if slot <= 0 {
+        return;
+    }
     FITTING.with(|c| c.set(true));
-    let rc = client_of(hwnd);
-    if rc.bottom > rc.top {
-        let h = (rc.bottom - rc.top) as isize;
-        // -1 is the selection field. 0 sets the owner-drawn row. Both match the edit slot.
-        let _ = SendMessageW(hwnd, CB_SETITEMHEIGHT, Some(WPARAM(usize::MAX)), Some(LPARAM(h)));
-        let _ = SendMessageW(hwnd, CB_SETITEMHEIGHT, Some(WPARAM(0)), Some(LPARAM(h)));
+    let want_stored = (slot - CLOSED_BORDER).max(1);
+    if stored_selection(hwnd) != want_stored {
+        let _ = SendMessageW(hwnd, CB_SETITEMHEIGHT, Some(WPARAM(usize::MAX)), Some(LPARAM(selection_request(slot) as isize)));
+    }
+    let list = SendMessageW(hwnd, CB_GETITEMHEIGHT, Some(WPARAM(0)), None).0 as i32;
+    if list != slot {
+        let _ = SendMessageW(hwnd, CB_SETITEMHEIGHT, Some(WPARAM(0)), Some(LPARAM(slot as isize)));
+    }
+    let got = window_in_parent(hwnd);
+    let h = got.bottom - got.top;
+    let w = got.right - got.left;
+    if h != slot && w > 0 {
+        let _ = SetWindowPos(hwnd, None, 0, 0, w, slot, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
     }
     FITTING.with(|c| c.set(false));
     place_inner_edit(hwnd);
     hook_edit(hwnd);
+}
+
+unsafe fn in_size(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    DEPTH.with(|c| c.set(c.get().saturating_add(1)));
+    let r = DefSubclassProc(hwnd, msg, wp, lp);
+    DEPTH.with(|c| c.set(c.get().saturating_sub(1)));
+    if DEPTH.with(|c| c.get()) == 0 && !FITTING.with(|c| c.get()) {
+        lock_face(hwnd);
+    }
+    r
 }
 
 fn window_in_parent(hwnd: HWND) -> RECT {
@@ -266,7 +371,7 @@ unsafe fn place_inner_edit(hwnd: HWND) {
         return;
     }
     let dpi = dpi_of(hwnd);
-    let bounds = text_bounds(client_of(hwnd), dpi, true);
+    let bounds = text_bounds(face_client(hwnd), dpi, true);
     if bounds.bottom <= bounds.top || bounds.right <= bounds.left {
         return;
     }
@@ -351,7 +456,7 @@ unsafe fn paint_chevron(dc: HDC, slot: RECT, rgb: u32, dpi: i32) {
 }
 
 unsafe fn paint_closed(hwnd: HWND, dc: HDC) {
-    let client = client_of(hwnd);
+    let client = face_client(hwnd);
     if client.right <= client.left || client.bottom <= client.top || dc.is_invalid() {
         return;
     }
@@ -477,14 +582,17 @@ unsafe fn combo_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT
         WM_SETFOCUS | WM_KILLFOCUS | WM_ENABLE => {
             let _ = InvalidateRect(Some(h), None, false);
         }
-        WM_SETFONT => {
-            let r = DefSubclassProc(h, msg, wp, lp);
-            place_inner_edit(h);
-            return r;
+        WM_WINDOWPOSCHANGING => {
+            if lp.0 != 0 {
+                apply_pos(h, &mut *(lp.0 as *mut WINDOWPOS));
+            }
         }
-        WM_WINDOWPOSCHANGED => {
+        WM_SETFONT | WM_WINDOWPOSCHANGED => return in_size(h, msg, wp, lp),
+        CB_SETITEMHEIGHT => {
             let r = DefSubclassProc(h, msg, wp, lp);
-            fit(h);
+            if !FITTING.with(|c| c.get()) {
+                lock_face(h);
+            }
             return r;
         }
         WM_CTLCOLOREDIT | WM_CTLCOLORLISTBOX | WM_CTLCOLORSTATIC => return ctl_color(h, wp),
@@ -531,8 +639,15 @@ unsafe fn parent_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESUL
             let mi = &mut *(lp.0 as *mut MEASUREITEMSTRUCT);
             if mi.CtlType == ODT_COMBOBOX {
                 let combo = GetDlgItem(Some(h), mi.CtlID as i32).unwrap_or_default();
-                if is_styled(combo) {
-                    mi.itemHeight = row_height(combo).max(1) as u32;
+                let slot = slot_height(combo);
+                // A measure of the whole window is what made the face ~46px: user32
+                // adds 6 to the selection measure and then a 4px border.
+                if is_styled(combo) && slot > 0 {
+                    mi.itemHeight = if mi.itemID == u32::MAX {
+                        (slot - CLOSED_BORDER - MEASURE_SELECTION_PAD).max(1) as u32
+                    } else {
+                        slot.max(1) as u32
+                    };
                     return LRESULT(1);
                 }
             }
@@ -559,7 +674,9 @@ unsafe fn parent_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESUL
 
 #[cfg(test)]
 mod tests {
-    use super::{centered_edit_rect, find_edit, line_top, px, CHEVRON_DIP, DROPDOWN, LIST, PAD_DIP, RADIUS_DIP, CERULEAN_BRAND};
+    use super::{
+        adopt, centered_edit_rect, face_rect, find_edit, line_top, px, selection_request, window_in_parent, CHEVRON_DIP, CLOSED_BORDER, DROPDOWN, LIST, PAD_DIP, RADIUS_DIP, SELECTION_EXTRA, CERULEAN_BRAND,
+    };
     use crate::imports::*;
 
     #[test]
@@ -599,6 +716,85 @@ mod tests {
     fn selection_is_cerulean_not_mint() {
         assert_eq!(CERULEAN_BRAND, 0x0A9B_D6);
         assert_ne!(CERULEAN_BRAND, 0x2EC4_A6);
+    }
+
+    /// Batch Rename fields are 26 DIP and Settings combos are 32 DIP.
+    /// 120 and 144 are 125% and 150% of 96.
+    fn slot_heights() -> [i32; 6] {
+        let mut out = [0; 6];
+        let mut i = 0;
+        for dip in [26, 32] {
+            for dpi in [96, 120, 144] {
+                out[i] = dip * dpi / 96;
+                i += 1;
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn face_rect_equals_the_slot() {
+        for h in slot_heights() {
+            let slot = RECT { left: 8, top: 12, right: 160, bottom: 12 + h };
+            assert_eq!((face_rect(slot).bottom - face_rect(slot).top), h, "face {h}");
+            assert_eq!(face_rect(slot).top, slot.top, "face origin {h}");
+            assert_eq!(selection_request(h) + SELECTION_EXTRA, h, "request {h}");
+            assert!(h > CLOSED_BORDER, "{h}");
+        }
+        unsafe {
+            for style in [LIST, DROPDOWN] {
+                let parent = CreateWindowExW(WINDOW_EX_STYLE(0), w!("Static"), w!("t"), WS_POPUP, 0, 0, 480, 320, None, None, None, None).unwrap_or_default();
+                if parent.0.is_null() {
+                    return;
+                }
+                let combo = CreateWindowExW(
+                    WINDOW_EX_STYLE(0),
+                    w!("ComboBox"),
+                    w!(""),
+                    WS_CHILD | WS_VISIBLE | WINDOW_STYLE(style),
+                    0,
+                    0,
+                    0,
+                    0,
+                    Some(parent),
+                    Some(HMENU(7isize as _)),
+                    None,
+                    None,
+                )
+                .unwrap_or_default();
+                if combo.0.is_null() {
+                    let _ = DestroyWindow(parent);
+                    return;
+                }
+                adopt(combo, super::card_face);
+                for h in slot_heights() {
+                    let slot = RECT { left: 10, top: 20, right: 180, bottom: 20 + h };
+                    let _ = MoveWindow(combo, slot.left, slot.top, slot.right - slot.left, h, true);
+                    let got = window_in_parent(combo);
+                    assert_eq!(got.left, slot.left, "style {style:#x} x {h}");
+                    assert_eq!(got.top, slot.top, "style {style:#x} y {h}");
+                    assert_eq!(got.right, slot.right, "style {style:#x} right {h}");
+                    assert_eq!(got.bottom - got.top, h, "style {style:#x} face height {h}");
+                    // Setting the selection field to the client is what stretched the face.
+                    let _ = SendMessageW(combo, CB_SETITEMHEIGHT, Some(WPARAM(usize::MAX)), Some(LPARAM(80)));
+                    let after = window_in_parent(combo);
+                    assert_eq!(after.bottom - after.top, h, "item height must not grow the face, style {style:#x} {h}");
+                    assert_eq!(after.top, slot.top, "grown face moved, style {style:#x} {h}");
+                    if style & 3 == 2 {
+                        let edit = find_edit(combo);
+                        assert!(!edit.0.is_null(), "preset field keeps its edit");
+                        // The edit's parent is the combo, so this rect is inside the face.
+                        let er = window_in_parent(edit);
+                        let above = er.top;
+                        let below = h - er.bottom;
+                        assert!(above >= 0 && below >= 0 && er.bottom - er.top < h, "edit inside the {h}px face, above {above} below {below}");
+                        assert!((above - below).abs() <= 1, "edit centred in the {h}px face, above {above} below {below}");
+                    }
+                }
+                let _ = DestroyWindow(combo);
+                let _ = DestroyWindow(parent);
+            }
+        }
     }
 
     #[test]
