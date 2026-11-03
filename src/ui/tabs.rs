@@ -861,22 +861,13 @@ pub(crate) unsafe fn end_rename(save: bool) {
     }
 }
 
-pub(crate) unsafe fn begin_rename(i: usize) {
-    path_tooltip(None);
-    let (owner, prev) = app(|a| {
-        let prev = a.s.tabs.get(i).map(|t| t.name.clone()).unwrap_or_default();
-        (a.main, prev)
-    });
-    if owner.0.is_null() || app(|a| i >= a.s.tabs.len()) {
-        return;
-    }
-    // Empty when the tab is automatic, so confirming without typing leaves the folder name in charge.
-    let initial = custom_tab_name(&prev).unwrap_or("").to_string();
-    let title = tr(crate::Key::RenameTab);
-    let Some(text) = crate::settings::ask(owner, title, &initial) else { return };
-    let next = stored_tab_name(&text);
-    if stored_tab_name(&prev) == next {
-        return;
+/// Store a typed tab title the way the rename dialog does.
+/// Empty, and a legacy all-digit title, clear the custom name so the tab follows its folder again.
+/// The tab is the one still called `prev` when the index has moved. False when nothing changed.
+pub(crate) unsafe fn apply_tab_rename(i: usize, prev: &str, typed: &str) -> bool {
+    let next = stored_tab_name(typed);
+    if stored_tab_name(prev) == next {
+        return false;
     }
     // The prompt runs a message loop; tabs may have moved. Rename the tab still named `prev`.
     let done = app(|a| {
@@ -891,10 +882,27 @@ pub(crate) unsafe fn begin_rename(i: usize) {
         true
     });
     if !done {
-        return;
+        return false;
     }
     tabs_invalidate();
     note_save();
+    true
+}
+
+pub(crate) unsafe fn begin_rename(i: usize) {
+    path_tooltip(None);
+    let (owner, prev) = app(|a| {
+        let prev = a.s.tabs.get(i).map(|t| t.name.clone()).unwrap_or_default();
+        (a.main, prev)
+    });
+    if owner.0.is_null() || app(|a| i >= a.s.tabs.len()) {
+        return;
+    }
+    // Empty when the tab is automatic, so confirming without typing leaves the folder name in charge.
+    let initial = custom_tab_name(&prev).unwrap_or("").to_string();
+    let title = tr(crate::Key::RenameTab);
+    let Some(text) = crate::settings::ask(owner, title, &initial) else { return };
+    let _ = apply_tab_rename(i, &prev, &text);
 }
 
 pub(crate) unsafe fn set_tab_color(i: usize, color: Option<u32>) {

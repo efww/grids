@@ -276,7 +276,7 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
         }
         return true;
     }
-    // The tab list keeps arrows, Enter, and Esc. Typing stays in its filter. Ctrl+Shift+L toggles it.
+    // The tab list keeps arrows, Enter, Esc, and F2 (rename the selected row). Typing stays in its filter. Ctrl+Shift+L toggles it.
     if crate::tablist::captures(m.hwnd) {
         if let Some(i) = crate::keys::lookup(vk, ctrl, shift, alt, win) {
             let id = crate::keys::id_of(i);

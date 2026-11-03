@@ -15,6 +15,7 @@ use crate::ui::*;
 
 const CHIP_TIP: usize = 11;
 const ID_EDIT: i32 = 1;
+const ID_NAME: i32 = 2;
 const GO: u8 = 1;
 const CLOSE_TAB: u8 = 2;
 const DISMISS: u8 = 3;
@@ -66,8 +67,18 @@ struct State {
     hwnd: HWND,
     owner: HWND,
     edit: HWND,
+    /// Inline rename of the selected row. Hidden until F2.
+    name_edit: HWND,
     query: String,
     sel: usize,
+    /// Tab index whose name cell is the edit box. None when not renaming.
+    renaming: Option<usize>,
+    /// Stored `Tab::name` when the edit opened, so a moved tab is still the one that was renamed.
+    rename_prev: String,
+    /// Label placed in the box. Unchanged text is not written, so an automatic name stays automatic.
+    rename_shown: String,
+    /// Esc hides the box; the kill-focus that follows must not also save.
+    rename_skip: bool,
     scroll: i32,
     hot_row: Option<usize>,
     hot_btn: Option<u8>,
@@ -99,8 +110,13 @@ impl State {
             hwnd: HWND::default(),
             owner: HWND::default(),
             edit: HWND::default(),
+            name_edit: HWND::default(),
             query: String::new(),
             sel: 0,
+            renaming: None,
+            rename_prev: String::new(),
+            rename_shown: String::new(),
+            rename_skip: false,
             scroll: 0,
             hot_row: None,
             hot_btn: None,
@@ -344,6 +360,7 @@ pub(crate) unsafe fn restyle() {
 }
 
 pub(crate) unsafe fn close() {
+    end_name_edit(true);
     let h = with_st(|s| s.hwnd);
     if !h.0.is_null() && IsWindow(Some(h)).as_bool() {
         _ = DestroyWindow(h);
@@ -386,10 +403,21 @@ unsafe fn reopen(main: HWND) {
     open(main);
 }
 
-/// Keys the list owns. False leaves the key for the filter edit (typing, Ctrl+A, Del inside text).
+/// Keys the list owns. False leaves the key for the filter edit, or for the name box while renaming.
 pub(crate) unsafe fn on_key(vk: u16, ctrl: bool, shift: bool, alt: bool) -> bool {
     let ch = VIRTUAL_KEY(vk);
+    if name_editing() {
+        return name_edit_key(ch, ctrl, shift, alt);
+    }
     match ch {
+        VK_F2 if !ctrl && !alt && !shift => {
+            let filter = with_st(|s| s.edit);
+            if ime_composing(filter) {
+                return false;
+            }
+            begin_name_edit();
+            true
+        }
         VK_ESCAPE if !ctrl && !alt && !shift => {
             close();
             true
@@ -478,6 +506,7 @@ unsafe fn open(main: HWND) {
         SendMessageW(edit, WM_SETFONT, Some(WPARAM(font.0 as usize)), Some(LPARAM(1)));
         _ = SetWindowSubclass(edit, Some(edit_proc), 1, 0);
     }
+    let _ = ensure_name_edit();
     theme_edit();
     cue();
     layout(hwnd);
@@ -552,20 +581,24 @@ unsafe fn rebuild_fonts() {
             _ = DeleteObject(f.into());
         }
     }
-    let (edit, font) = with_st(|s| (s.edit, s.font));
+    let (edit, name, font, bold) = with_st(|s| (s.edit, s.name_edit, s.font, s.bold));
     if !edit.0.is_null() {
         SendMessageW(edit, WM_SETFONT, Some(WPARAM(font.0 as usize)), Some(LPARAM(1)));
+    }
+    if !name.0.is_null() {
+        SendMessageW(name, WM_SETFONT, Some(WPARAM(bold.0 as usize)), Some(LPARAM(1)));
     }
 }
 
 unsafe fn theme_edit() {
-    let edit = with_st(|s| s.edit);
-    if edit.0.is_null() {
-        return;
-    }
+    let (edit, name_edit) = with_st(|s| (s.edit, s.name_edit));
     let dark = DARK_ON.load(Ordering::Relaxed);
-    let name = if dark { w!("DarkMode_CFD") } else { w!("CFD") };
-    _ = SetWindowTheme(edit, name, PCWSTR::null());
+    let theme = if dark { w!("DarkMode_CFD") } else { w!("CFD") };
+    for h in [edit, name_edit] {
+        if !h.0.is_null() {
+            _ = SetWindowTheme(h, theme, PCWSTR::null());
+        }
+    }
 }
 
 unsafe fn cue() {
@@ -680,7 +713,20 @@ unsafe fn layout(hwnd: HWND) {
     let content_h = y;
     let view_h = (list.bottom - list.top).max(0);
     let max_scroll = (content_h - view_h).max(0);
-    let scroll = with_st(|s| s.scroll.clamp(0, max_scroll));
+    let mut scroll = with_st(|s| s.scroll.clamp(0, max_scroll));
+    // Keep the row being renamed on screen, so hiding the box to scroll it away does not save.
+    if let Some(tab) = with_st(|s| s.renaming) {
+        if let Some(row) = boxes.iter().find(|b| b.tab == tab) {
+            if row.h < view_h {
+                if row.y < scroll {
+                    scroll = row.y;
+                } else if row.y + row.h > scroll + view_h {
+                    scroll = row.y + row.h - view_h;
+                }
+                scroll = scroll.clamp(0, max_scroll);
+            }
+        }
+    }
     for chip in &mut chips {
         let row_y = boxes.iter().find(|b| b.tab == chip.tab).map(|b| b.y).unwrap_or(0);
         chip.rect.top += list.top + row_y - scroll;
@@ -734,6 +780,7 @@ unsafe fn layout(hwnd: HWND) {
     if !edit.0.is_null() {
         _ = SetWindowPos(edit, None, edit_r.left, edit_r.top, (edit_r.right - edit_r.left).max(1), (edit_r.bottom - edit_r.top).max(1), SWP_NOZORDER | SWP_NOACTIVATE);
     }
+    place_name_edit();
     let info = SCROLLINFO {
         cbSize: size_of::<SCROLLINFO>() as u32,
         fMask: SIF_RANGE | SIF_PAGE | SIF_POS,
@@ -793,6 +840,7 @@ unsafe fn reveal() {
 }
 
 unsafe fn go() {
+    end_name_edit(true);
     let h = with_st(|s| s.hwnd);
     if !h.0.is_null() {
         layout(h);
@@ -810,6 +858,7 @@ unsafe fn go() {
 }
 
 unsafe fn close_selected() {
+    end_name_edit(true);
     let h = with_st(|s| s.hwnd);
     if !h.0.is_null() {
         layout(h);
@@ -961,6 +1010,7 @@ unsafe fn paint(dc: HDC, _rc: RECT) {
         hot_row: s.hot_row,
         hot_btn: s.hot_btn,
         query: s.query.clone(),
+        renaming: s.renaming,
         font: s.font,
         bold: s.bold,
         small: s.small,
@@ -1019,7 +1069,7 @@ unsafe fn paint(dc: HDC, _rc: RECT) {
             fill(dc, RECT { right: r.left + sc(dpi, 3).max(3), ..r }, crate::basket::CERULEAN);
         }
         fill(dc, RECT { top: r.bottom - 1, bottom: r.bottom, ..r }, p.line);
-        paint_name(dc, r, row, dpi, &st);
+        paint_name(dc, r, row, dpi, &st, bg);
         paint_layout(dc, r, row, dpi, &st);
         let count = RECT { left: x2, top: r.top, right: x3 - sc(dpi, 2), bottom: r.bottom };
         text(dc, count, &row.panes.to_string(), st.small, p.sub, DT_RIGHT);
@@ -1060,6 +1110,7 @@ struct PaintSnap {
     hot_row: Option<usize>,
     hot_btn: Option<u8>,
     query: String,
+    renaming: Option<usize>,
     font: HFONT,
     bold: HFONT,
     small: HFONT,
@@ -1080,16 +1131,20 @@ unsafe fn kbd_left_edge(dc: HDC, status: RECT, st: &PaintSnap) -> i32 {
     status.right - total
 }
 
-unsafe fn paint_name(dc: HDC, row: RECT, data: &Row, dpi: i32, st: &PaintSnap) {
-    let (x0, x1, _, _, _) = cols(RECT { left: row.left, right: row.right, ..row }, dpi);
-    let mut r = RECT { left: x0, top: row.top, right: x1 - sc(dpi, 6), bottom: row.bottom };
+unsafe fn paint_name(dc: HDC, row: RECT, data: &Row, dpi: i32, st: &PaintSnap, ground: u32) {
+    let text_r = name_text_rect(row, data.color.is_some(), dpi);
     if let Some(c) = data.color {
         let d = sc(dpi, 8);
-        let mid = (r.top + r.bottom) / 2;
-        let dot = RECT { left: r.left, top: mid - d / 2, right: r.left + d, bottom: mid + d / 2 };
+        let mid = (row.top + row.bottom) / 2;
+        let dot = RECT { left: text_r.left - sc(dpi, 4) - d, top: mid - d / 2, right: text_r.left - sc(dpi, 4), bottom: mid + d / 2 };
         ellipse(dc, dot, c, None);
-        r.left += d + sc(dpi, 4);
     }
+    if st.renaming == Some(data.index) {
+        let field = name_field(row, data.color.is_some(), dpi);
+        aa_rfill(dc, field, sc(dpi, crate::settings::FIELD_RADIUS_DIP).max(1), pal().card, Some(pal().line), ground);
+        return;
+    }
+    let mut r = text_r;
     if data.locked {
         let lock_w = sc(dpi, 14);
         let room = (r.right - r.left - lock_w).max(0);
@@ -1330,6 +1385,17 @@ fn tablist_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                     hide_chip_tip();
                     layout(h);
                     _ = InvalidateRect(Some(h), None, false);
+                } else if id == ID_NAME && code == EN_KILLFOCUS {
+                    let (skip, on) = with_st(|s| {
+                        let skip = s.rename_skip;
+                        if skip {
+                            s.rename_skip = false;
+                        }
+                        (skip, s.renaming.is_some())
+                    });
+                    if !skip && on {
+                        end_name_edit(true);
+                    }
                 }
             }
             WM_CTLCOLOREDIT => {
@@ -1356,11 +1422,19 @@ fn tablist_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                 layout(h);
                 _ = InvalidateRect(Some(h), None, false);
             }
+            WM_CLOSE => {
+                end_name_edit(true);
+                hide_chip_tip();
+                _ = DestroyWindow(h);
+            }
             WM_DESTROY => {
                 hide_chip_tip();
-                let edit = with_st(|s| s.edit);
+                let (edit, name) = with_st(|s| (s.edit, s.name_edit));
                 if !edit.0.is_null() && IsWindow(Some(edit)).as_bool() {
                     _ = RemoveWindowSubclass(edit, Some(edit_proc), 1);
+                }
+                if !name.0.is_null() && IsWindow(Some(name)).as_bool() {
+                    _ = RemoveWindowSubclass(name, Some(edit_proc), 2);
                 }
                 let old = with_st(|s| {
                     let old = (s.font, s.bold, s.small, s.mono, s.icon);
@@ -1377,6 +1451,198 @@ fn tablist_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
         }
         LRESULT(0)
     }
+}
+
+/// Name column after the colour dot. The lock glyph is drawn in this rect when the row is not being renamed.
+fn name_text_rect(row: RECT, color: bool, dpi: i32) -> RECT {
+    let (x0, x1, _, _, _) = cols(RECT { left: row.left, right: row.right, ..row }, dpi);
+    let mut left = x0;
+    if color {
+        let d = sc(dpi, 8);
+        left += d + sc(dpi, 4);
+    }
+    RECT { left, top: row.top, right: (x1 - sc(dpi, 6)).max(left + 1), bottom: row.bottom }
+}
+
+/// One-line field behind the rename box, centred on the name. A tall chip row does not stretch it.
+fn name_field(row: RECT, color: bool, dpi: i32) -> RECT {
+    let text = name_text_rect(row, color, dpi);
+    let h = sc(dpi, 22).min((text.bottom - text.top).max(1));
+    let top = text.top + (text.bottom - text.top - h) / 2;
+    RECT { left: text.left, top, right: text.right, bottom: top + h }
+}
+
+/// `None` when the box still shows the label it opened with, so leaving it does not pin an automatic folder name.
+/// `Some` is the title to store. Empty clears a custom name.
+pub(crate) fn inline_rename_result(opened: &str, typed: &str) -> Option<String> {
+    if typed == opened { None } else { Some(stored_tab_name(typed)) }
+}
+
+fn name_editing() -> bool {
+    let (edit, on) = with_st(|s| (s.name_edit, s.renaming.is_some()));
+    on && !edit.0.is_null() && unsafe { GetFocus() } == edit
+}
+
+unsafe fn name_edit_key(ch: VIRTUAL_KEY, ctrl: bool, shift: bool, alt: bool) -> bool {
+    let edit = with_st(|s| s.name_edit);
+    match ch {
+        VK_RETURN if !ctrl && !alt && !shift => {
+            if ime_composing(edit) {
+                return false;
+            }
+            end_name_edit(true);
+            true
+        }
+        VK_ESCAPE if !ctrl && !alt && !shift => {
+            if ime_composing(edit) {
+                return false;
+            }
+            end_name_edit(false);
+            true
+        }
+        _ => false,
+    }
+}
+
+unsafe fn ensure_name_edit() -> HWND {
+    let existing = with_st(|s| s.name_edit);
+    if !existing.0.is_null() && IsWindow(Some(existing)).as_bool() {
+        return existing;
+    }
+    let (hwnd, bold) = with_st(|s| (s.hwnd, s.bold));
+    if hwnd.0.is_null() {
+        return HWND::default();
+    }
+    let edit = CreateWindowExW(
+        WINDOW_EX_STYLE(0),
+        w!("EDIT"),
+        w!(""),
+        WS_CHILD | WINDOW_STYLE(ES_AUTOHSCROLL as u32),
+        0,
+        0,
+        0,
+        0,
+        Some(hwnd),
+        Some(HMENU(ID_NAME as isize as _)),
+        None,
+        None,
+    )
+    .unwrap_or_default();
+    with_st(|s| s.name_edit = edit);
+    if !edit.0.is_null() {
+        SendMessageW(edit, WM_SETFONT, Some(WPARAM(bold.0 as usize)), Some(LPARAM(1)));
+        _ = SetWindowSubclass(edit, Some(edit_proc), 2, 0);
+        let dark = DARK_ON.load(Ordering::Relaxed);
+        let theme = if dark { w!("DarkMode_CFD") } else { w!("CFD") };
+        _ = SetWindowTheme(edit, theme, PCWSTR::null());
+    }
+    edit
+}
+
+unsafe fn place_name_edit() {
+    let (edit, tab, list, scroll, rows, shown, dpi) = with_st(|s| (s.name_edit, s.renaming, s.list, s.scroll, s.rows.clone(), s.shown.clone(), s.dpi));
+    if edit.0.is_null() {
+        return;
+    }
+    let Some(tab) = tab else {
+        if IsWindowVisible(edit).as_bool() {
+            _ = ShowWindow(edit, SW_HIDE);
+        }
+        return;
+    };
+    let Some(slot) = rows.iter().find(|r| r.tab == tab) else {
+        if IsWindowVisible(edit).as_bool() {
+            _ = ShowWindow(edit, SW_HIDE);
+        }
+        return;
+    };
+    let color = shown.iter().find(|r| r.index == tab).is_some_and(|r| r.color.is_some());
+    let row = RECT { left: list.left, top: list.top + slot.y - scroll, right: list.right, bottom: list.top + slot.y - scroll + slot.h };
+    let field = name_field(row, color, dpi);
+    let pad = sc(dpi, crate::settings::FIELD_INSET_DIP);
+    let inner = RECT {
+        left: field.left + pad,
+        top: field.top + pad,
+        right: (field.right - pad).max(field.left + pad + 1),
+        bottom: (field.bottom - pad).max(field.top + pad + 1),
+    };
+    place_edit(edit, inner, true);
+}
+
+unsafe fn begin_name_edit() {
+    if name_editing() {
+        let edit = with_st(|s| s.name_edit);
+        SendMessageW(edit, EM_SETSEL, Some(WPARAM(0)), Some(LPARAM(-1)));
+        return;
+    }
+    if with_st(|s| s.renaming.is_some()) {
+        end_name_edit(true);
+    }
+    let h = with_st(|s| s.hwnd);
+    if h.0.is_null() {
+        return;
+    }
+    layout(h);
+    let sel = with_st(|s| s.sel);
+    let label = with_st(|s| s.shown.iter().find(|r| r.index == sel).map(|r| r.name.clone()));
+    let Some(label) = label else { return };
+    let Some(prev) = app(|a| a.s.tabs.get(sel).map(|t| t.name.clone())) else { return };
+    let edit = ensure_name_edit();
+    if edit.0.is_null() {
+        return;
+    }
+    hide_chip_tip();
+    with_st(|s| {
+        s.renaming = Some(sel);
+        s.rename_prev = prev;
+        s.rename_shown = label.clone();
+        s.rename_skip = false;
+    });
+    let bold = with_st(|s| s.bold);
+    SendMessageW(edit, WM_SETFONT, Some(WPARAM(bold.0 as usize)), Some(LPARAM(1)));
+    _ = SetWindowTextW(edit, &HSTRING::from(label.as_str()));
+    layout(h);
+    _ = SetFocus(Some(edit));
+    SendMessageW(edit, EM_SETSEL, Some(WPARAM(0)), Some(LPARAM(-1)));
+    _ = InvalidateRect(Some(h), None, false);
+}
+
+unsafe fn end_name_edit(save: bool) {
+    let (edit, which, prev, shown) = with_st(|s| {
+        s.rename_skip = !save;
+        let which = s.renaming.take();
+        let prev = std::mem::take(&mut s.rename_prev);
+        let shown = std::mem::take(&mut s.rename_shown);
+        (s.name_edit, which, prev, shown)
+    });
+    let Some(i) = which else {
+        with_st(|s| s.rename_skip = false);
+        return;
+    };
+    let typed = if save && !edit.0.is_null() { Some(text_of(edit)) } else { None };
+    if !edit.0.is_null() && IsWindowVisible(edit).as_bool() {
+        _ = ShowWindow(edit, SW_HIDE);
+    }
+    if let Some(typed) = typed {
+        if inline_rename_result(&shown, &typed).is_some() {
+            apply_tab_rename(i, &prev, &typed);
+        }
+    }
+    let (h, filter) = with_st(|s| {
+        s.rename_skip = false;
+        (s.hwnd, s.edit)
+    });
+    if h.0.is_null() || !IsWindow(Some(h)).as_bool() {
+        return;
+    }
+    // A click in another window already moved focus. Put it back on the filter only when it is still ours.
+    let focus = GetFocus();
+    let ours = focus.0.is_null() || focus == h || focus == edit || IsChild(h, focus).as_bool();
+    if ours && !filter.0.is_null() && focus != filter {
+        _ = SetFocus(Some(filter));
+    }
+    layout(h);
+    _ = InvalidateRect(Some(h), None, false);
 }
 
 #[cfg(test)]
@@ -1415,6 +1681,34 @@ mod tests {
         assert_eq!((placed[1].left, placed[1].top), (43, 0));
         assert_eq!((placed[2].left, placed[2].top), (0, 19));
         assert_eq!(placed[2].bottom - placed[2].top, 16);
+    }
+
+    #[test]
+    fn footer_offers_f2_to_rename() {
+        let s = tr(Key::TabListKeys);
+        assert!(s.contains("{F2}"), "{s}");
+        assert!(kbd_segs(&s).iter().any(|seg| matches!(seg, KbdSeg::Key(k) if k == "F2")));
+    }
+
+    #[test]
+    fn rename_field_stays_one_line_on_a_tall_row() {
+        let row = RECT { left: 0, top: 40, right: 500, bottom: 160 };
+        let field = name_field(row, false, 96);
+        assert_eq!(field.bottom - field.top, 22);
+        assert_eq!(field.top, 40 + (120 - 22) / 2);
+        let short = name_field(RECT { left: 0, top: 0, right: 200, bottom: 24 }, true, 96);
+        assert_eq!(short.bottom - short.top, 22);
+        assert!(short.left > name_text_rect(RECT { left: 0, top: 0, right: 200, bottom: 24 }, false, 96).left);
+    }
+
+    #[test]
+    fn inline_rename_leaves_an_unedited_label_and_clears_when_emptied() {
+        assert_eq!(inline_rename_result("docs", "docs"), None);
+        assert_eq!(inline_rename_result("docs", ""), Some(String::new()));
+        assert_eq!(inline_rename_result("Work", "Plan"), Some("Plan".into()));
+        assert_eq!(inline_rename_result("Work", "  Work  "), Some("Work".into()));
+        assert_eq!(inline_rename_result("docs", "1"), Some(String::new()));
+        assert_eq!(inline_rename_result("docs", "   "), Some(String::new()));
     }
 
     #[test]
