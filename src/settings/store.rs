@@ -21,6 +21,10 @@ fn yes() -> bool {
     true
 }
 
+fn no() -> bool {
+    false
+}
+
 fn half_split() -> f64 {
     0.5
 }
@@ -51,16 +55,16 @@ struct ExcelTidyJson {
     zoom: bool,
     #[serde(default = "yes")]
     first_sheet: bool,
-    #[serde(default = "yes")]
+    #[serde(default = "no")]
     backup: bool,
 }
 
 fn excel_tidy_default() -> ExcelTidyJson {
-    ExcelTidyJson { selection: true, zoom: true, first_sheet: true, backup: true }
+    ExcelTidyJson { selection: true, zoom: true, first_sheet: true, backup: false }
 }
 
 fn excel_tidy_is_default(v: &ExcelTidyJson) -> bool {
-    v.selection && v.zoom && v.first_sheet && v.backup
+    v.selection && v.zoom && v.first_sheet && !v.backup
 }
 fn is_zero_i32(v: &i32) -> bool {
     *v == 0
@@ -395,7 +399,7 @@ struct SettingsFile {
     /// Paths in the file basket. Omitted when empty. Not written into grids.ini.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     file_basket: Vec<String>,
-    /// Last Excel tidy checkboxes. Omitted while every box is on, which is the default.
+    /// Last Excel tidy checkboxes. Omitted at the portable default (A1/zoom/first on, backup off).
     /// Not written into grids.ini.
     #[serde(default = "excel_tidy_default", skip_serializing_if = "excel_tidy_is_default")]
     excel_tidy: ExcelTidyJson,
@@ -2498,25 +2502,29 @@ mod tests {
     }
 
     #[test]
-    fn excel_tidy_choices_default_on_and_round_trip_in_json_only() {
+    fn excel_tidy_choices_default_backup_off_and_round_trip_in_json_only() {
         let fresh = adopt("{}").unwrap();
-        assert!(fresh.excel_tidy_a1 && fresh.excel_tidy_zoom && fresh.excel_tidy_first && fresh.excel_tidy_backup);
+        assert!(fresh.excel_tidy_a1 && fresh.excel_tidy_zoom && fresh.excel_tidy_first);
+        assert!(!fresh.excel_tidy_backup);
         assert!(!sync_text(&fresh).contains("excel_tidy"));
         let mut s = fresh;
         s.excel_tidy_zoom = false;
-        s.excel_tidy_backup = false;
+        s.excel_tidy_backup = true;
         let text = sync_text(&s);
         assert!(text.contains("\"excel_tidy\""), "{text}");
         assert!(text.contains("\"zoom\": false"), "{text}");
-        assert!(text.contains("\"backup\": false"), "{text}");
+        assert!(text.contains("\"backup\": true"), "{text}");
         let back = adopt(&text).unwrap();
         assert!(back.excel_tidy_a1 && back.excel_tidy_first);
-        assert!(!back.excel_tidy_zoom && !back.excel_tidy_backup);
-        let partial = adopt(r#"{"excel_tidy":{"backup":false}}"#).unwrap();
+        assert!(!back.excel_tidy_zoom && back.excel_tidy_backup);
+        let partial = adopt(r#"{"excel_tidy":{"backup":true}}"#).unwrap();
         assert!(partial.excel_tidy_a1 && partial.excel_tidy_zoom && partial.excel_tidy_first);
-        assert!(!partial.excel_tidy_backup);
+        assert!(partial.excel_tidy_backup);
+        let partial_off = adopt(r#"{"excel_tidy":{"zoom":false}}"#).unwrap();
+        assert!(partial_off.excel_tidy_a1 && partial_off.excel_tidy_first);
+        assert!(!partial_off.excel_tidy_zoom && !partial_off.excel_tidy_backup);
         assert!(!s.to_ini().contains("excel_tidy"));
-        assert!(Session::parse(&s.to_ini()).excel_tidy_backup);
+        assert!(!Session::parse(&s.to_ini()).excel_tidy_backup);
     }
 }
 

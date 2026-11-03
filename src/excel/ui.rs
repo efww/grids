@@ -6,6 +6,7 @@ use std::path::Path;
 
 use windows::Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH};
 use windows::Win32::UI::Input::KeyboardAndMouse::EnableWindow;
+use windows::Win32::UI::HiDpi::AdjustWindowRectExForDpi;
 
 use crate::imports::*;
 use crate::i18n::*;
@@ -15,8 +16,6 @@ use super::ooxml::{self, TidyOptions};
 /// Above the shell range, next to the other Maguro commands (who-is-using is 0x8004).
 pub(crate) const ID_CTX_EXCEL: u32 = 0x8007; // tidy A1; REVEAL=0x8005 excelro=0x8006
 
-const BM_GETCHECK: u32 = 0x00F0;
-const BM_SETCHECK: u32 = 0x00F1;
 const ID_OK: i32 = 1;
 const ID_CANCEL: i32 = 2;
 const ID_A1: i32 = 101;
@@ -258,28 +257,236 @@ fn notify(path: &str) {
 
 thread_local! {
     static ANSWER: Cell<Option<Option<Prefs>>> = const { Cell::new(None) };
+    static PREFS: Cell<Prefs> = const { Cell::new(Prefs { a1: true, zoom: true, first: true, backup: false }) };
+    static HOT: Cell<i32> = const { Cell::new(0) }; // hovered checkbox id, or 0
+}
+
+const MARGIN_DIP: i32 = 16;
+const ROW_DIP: i32 = 28;
+const ROW_GAP_DIP: i32 = 8;
+const BOX_DIP: i32 = 16;
+const BOX_TEXT_GAP_DIP: i32 = 8;
+const BTN_W_DIP: i32 = 80;
+const BTN_H_DIP: i32 = 28;
+const BTN_GAP_DIP: i32 = 12;
+const CLIENT_W_DIP: i32 = 420;
+
+fn check_ids() -> [i32; 4] {
+    [ID_A1, ID_ZOOM, ID_FIRST, ID_BACKUP]
+}
+
+fn check_label(id: i32) -> &'static str {
+    match id {
+        ID_A1 => tr(Key::ExcelTidySelection),
+        ID_ZOOM => tr(Key::ExcelTidyZoom),
+        ID_FIRST => tr(Key::ExcelTidyFirst),
+        ID_BACKUP => tr(Key::ExcelTidyBackup),
+        _ => "",
+    }
+}
+
+fn pref_get(p: Prefs, id: i32) -> bool {
+    match id {
+        ID_A1 => p.a1,
+        ID_ZOOM => p.zoom,
+        ID_FIRST => p.first,
+        ID_BACKUP => p.backup,
+        _ => false,
+    }
+}
+
+fn pref_set(p: &mut Prefs, id: i32, on: bool) {
+    match id {
+        ID_A1 => p.a1 = on,
+        ID_ZOOM => p.zoom = on,
+        ID_FIRST => p.first = on,
+        ID_BACKUP => p.backup = on,
+        _ => {}
+    }
+}
+
+fn sc(dpi: i32, dip: i32) -> i32 {
+    dip * dpi.max(96) / 96
+}
+
+fn ask_style() -> WINDOW_STYLE {
+    WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN
+}
+
+fn client_h(dpi: i32) -> i32 {
+    let rows = 4 * sc(dpi, ROW_DIP) + 3 * sc(dpi, ROW_GAP_DIP);
+    rows + sc(dpi, BTN_H_DIP) + 2 * sc(dpi, MARGIN_DIP) + sc(dpi, 16)
+}
+
+fn outer_size(dpi: i32) -> (i32, i32) {
+        let dpi = dpi.max(96);
+    let cw = sc(dpi, CLIENT_W_DIP);
+    let ch = client_h(dpi);
+    let mut r = RECT { left: 0, top: 0, right: cw, bottom: ch };
+    unsafe {
+        if AdjustWindowRectExForDpi(&mut r, ask_style(), false, WS_EX_DLGMODALFRAME, dpi as u32).is_ok() {
+            ((r.right - r.left).max(cw), (r.bottom - r.top).max(ch))
+        } else {
+            (cw, ch + sc(dpi, 48))
+        }
+    }
+}
+
+struct Lay {
+    marks: [RECT; 4],
+    labels: [RECT; 4],
+    rows: [RECT; 4],
+    ok: RECT,
+    cancel: RECT,
+}
+
+fn lay(client_w: i32, client_h: i32, dpi: i32) -> Lay {
+    let m = sc(dpi, MARGIN_DIP);
+    let row_h = sc(dpi, ROW_DIP);
+    let gap = sc(dpi, ROW_GAP_DIP);
+    let box_s = sc(dpi, BOX_DIP);
+    let text_gap = sc(dpi, BOX_TEXT_GAP_DIP);
+    let btn_w = sc(dpi, BTN_W_DIP);
+    let btn_h = sc(dpi, BTN_H_DIP);
+    let btn_gap = sc(dpi, BTN_GAP_DIP);
+    let cw = client_w.max(1);
+    let ch = client_h.max(1);
+    let mut marks = [RECT::default(); 4];
+    let mut labels = [RECT::default(); 4];
+    let mut rows = [RECT::default(); 4];
+    for i in 0..4 {
+        let y = m + i as i32 * (row_h + gap);
+        let row = RECT { left: m, top: y, right: cw - m, bottom: y + row_h };
+        let mark_y = y + (row_h - box_s) / 2;
+        let mark = RECT { left: m, top: mark_y, right: m + box_s, bottom: mark_y + box_s };
+        let label = RECT { left: mark.right + text_gap, top: y, right: row.right, bottom: row.bottom };
+        rows[i] = row;
+        marks[i] = mark;
+        labels[i] = label;
+    }
+    let by = ch - m - btn_h;
+    let cancel = RECT { left: (cw - m - btn_w).max(0), top: by, right: (cw - m).max(1), bottom: by + btn_h };
+    let ok = RECT {
+        left: (cancel.left - btn_gap - btn_w).max(0),
+        top: by,
+        right: (cancel.left - btn_gap).max(1),
+        bottom: by + btn_h,
+    };
+    Lay { marks, labels, rows, ok, cancel }
+}
+
+fn dialog_font() -> HFONT {
+    let font = crate::app(|a| a.font);
+    if font.is_invalid() {
+        let mut lf = LOGFONTW { lfHeight: -14, lfWeight: 400, lfQuality: CLEARTYPE_QUALITY, ..Default::default() };
+        for (d, c) in lf.lfFaceName.iter_mut().take(31).zip(crate::ui_face().encode_utf16()) {
+            *d = c;
+        }
+        unsafe { CreateFontIndirectW(&lf) }
+    } else {
+        font
+    }
+}
+
+fn icon_font() -> HFONT {
+    let font = crate::app(|a| a.icon_font);
+    if font.is_invalid() {
+        let mut lf = LOGFONTW {
+            lfHeight: -14,
+            lfWeight: 400,
+            lfCharSet: DEFAULT_CHARSET,
+            lfQuality: CLEARTYPE_QUALITY,
+            ..Default::default()
+        };
+        for (d, c) in lf.lfFaceName.iter_mut().take(31).zip("Segoe MDL2 Assets".encode_utf16()) {
+            *d = c;
+        }
+        unsafe { CreateFontIndirectW(&lf) }
+    } else {
+        font
+    }
+}
+
+unsafe fn style_caption(h: HWND) {
+    // Same caption as Settings / basket / watch: theme bg, no cerulean fill, no gradient.
+    let dark = crate::DARK_ON.load(Ordering::Relaxed);
+    let on = BOOL::from(dark);
+    let _ = DwmSetWindowAttribute(h, DWMWINDOWATTRIBUTE(20), &on as *const _ as _, 4);
+    let caption = crate::cref(crate::pal().bg);
+    let _ = DwmSetWindowAttribute(h, DWMWA_CAPTION_COLOR, &caption as *const _ as _, 4);
+    let def = COLORREF(0xFFFF_FFFF);
+    let _ = DwmSetWindowAttribute(h, DWMWINDOWATTRIBUTE(36), &def as *const _ as _, 4);
+    let _ = DwmSetWindowAttribute(h, DWMWINDOWATTRIBUTE(34), &def as *const _ as _, 4);
+}
+
+unsafe fn child(parent: HWND, class: PCWSTR, text: &str, style: u32, id: i32, font: HFONT) -> HWND {
+    let t = HSTRING::from(text);
+    crate::child(parent, class, PCWSTR(t.as_ptr()), style, WINDOW_EX_STYLE(0), id, font)
+}
+
+unsafe fn ctl(h: HWND, id: i32) -> HWND {
+    GetDlgItem(Some(h), id).unwrap_or_default()
+}
+
+unsafe fn layout(h: HWND) {
+    let dpi = GetDpiForWindow(h).max(96) as i32;
+    let mut rc = RECT::default();
+    let _ = GetClientRect(h, &mut rc);
+    let l = lay(rc.right - rc.left, rc.bottom - rc.top, dpi);
+    let _ = SetWindowPos(ctl(h, ID_OK), None, l.ok.left, l.ok.top, l.ok.right - l.ok.left, l.ok.bottom - l.ok.top, SWP_NOZORDER | SWP_NOACTIVATE);
+    let _ = SetWindowPos(ctl(h, ID_CANCEL), None, l.cancel.left, l.cancel.top, l.cancel.right - l.cancel.left, l.cancel.bottom - l.cancel.top, SWP_NOZORDER | SWP_NOACTIVATE);
+    let _ = InvalidateRect(Some(h), None, false);
+}
+
+unsafe fn paint(h: HWND) {
+    let dpi = GetDpiForWindow(h).max(96) as i32;
+    let prefs = PREFS.with(|p| p.get());
+    let hot = HOT.with(|c| c.get());
+    let font = dialog_font();
+    let icon = icon_font();
+    let accent = crate::settings::chrome_color();
+    crate::buffered(h, |dc, rc| {
+        crate::fill(dc, rc, crate::pal().card);
+        let l = lay(rc.right - rc.left, rc.bottom - rc.top, dpi);
+        for (i, id) in check_ids().into_iter().enumerate() {
+            let on = pref_get(prefs, id);
+            let tick = if on { crate::shell::ctxmenu::Tick::On } else { crate::shell::ctxmenu::Tick::Off };
+            crate::draw_tick(dc, l.marks[i], tick, accent, dpi, icon, crate::pal().card, hot == id);
+            crate::text(dc, l.labels[i], check_label(id), font, crate::pal().text, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        }
+    });
+}
+
+fn hit_check(l: &Lay, x: i32, y: i32) -> i32 {
+    for (i, id) in check_ids().into_iter().enumerate() {
+        let r = l.rows[i];
+        if x >= r.left && x < r.right && y >= r.top && y < r.bottom {
+            return id;
+        }
+    }
+    0
 }
 
 unsafe fn ask(owner: HWND, initial: Prefs) -> Option<Prefs> {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
         let Ok(m) = GetModuleHandleW(None) else { return };
+        let hinst: HINSTANCE = m.into();
         let _ = RegisterClassW(&WNDCLASSW {
             style: CS_HREDRAW | CS_VREDRAW,
             lpfnWndProc: Some(proc),
-            hInstance: m.into(),
+            hInstance: hinst,
             hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
+            hIcon: LoadIconW(Some(hinst), PCWSTR(crate::ICON_GROUP_LIGHT as _)).unwrap_or_default(),
             lpszClassName: w!("MaguroExcelTidy"),
             ..Default::default()
         });
     });
     ANSWER.with(|a| a.set(None));
+    PREFS.with(|p| p.set(initial));
+    HOT.with(|c| c.set(0));
     let dpi = if owner.0.is_null() { 96 } else { GetDpiForWindow(owner).max(96) as i32 };
-    let scale = |dip: i32| dip * dpi / 96;
-    let mut rect = RECT { left: 0, top: 0, right: scale(420), bottom: scale(220) };
-    let style = WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN;
-    let _ = AdjustWindowRectEx(&mut rect, style, false, WS_EX_DLGMODALFRAME);
-    let (ww, hh) = (rect.right - rect.left, rect.bottom - rect.top);
+    let (ww, hh) = outer_size(dpi);
     let (x, y) = if owner.0.is_null() {
         (80, 80)
     } else {
@@ -288,37 +495,24 @@ unsafe fn ask(owner: HWND, initial: Prefs) -> Option<Prefs> {
         (orc.left + (orc.right - orc.left - ww) / 2, orc.top + (orc.bottom - orc.top - hh) / 2)
     };
     let title = HSTRING::from(tr(Key::ExcelTidyTitle));
-    let h = CreateWindowExW(WS_EX_DLGMODALFRAME, w!("MaguroExcelTidy"), &title, style, x, y, ww, hh, Some(owner), None, None, None).unwrap_or_default();
+    // Shown only after the dark caption attributes are set, or the first frame stays light.
+    let h = CreateWindowExW(WS_EX_DLGMODALFRAME, w!("MaguroExcelTidy"), &title, ask_style(), x, y, ww, hh, Some(owner), None, None, None).unwrap_or_default();
     if h.0.is_null() {
         return None;
     }
     style_caption(h);
     let font = dialog_font();
     let tab = 0x0001_0000u32;
-    let checks = [
-        (ID_A1, tr(Key::ExcelTidySelection), initial.a1),
-        (ID_ZOOM, tr(Key::ExcelTidyZoom), initial.zoom),
-        (ID_FIRST, tr(Key::ExcelTidyFirst), initial.first),
-        (ID_BACKUP, tr(Key::ExcelTidyBackup), initial.backup),
-    ];
-    for (id, label, on) in checks {
-        let ctl = child(h, w!("BUTTON"), label, 3 | tab, id, font);
-        theme_ctl(ctl);
-        if on {
-            let _ = SendMessageW(ctl, BM_SETCHECK, Some(WPARAM(1)), Some(LPARAM(0)));
-        }
-    }
-    let ok = child(h, w!("BUTTON"), tr(Key::Ok), 1 | tab, ID_OK, font);
-    let cancel = child(h, w!("BUTTON"), tr(Key::Cancel), tab, ID_CANCEL, font);
-    theme_ctl(ok);
-    theme_ctl(cancel);
+    let ok = child(h, w!("BUTTON"), tr(Key::Ok), 0xB | tab, ID_OK, font);
+    let cancel = child(h, w!("BUTTON"), tr(Key::Cancel), 0xB | tab, ID_CANCEL, font);
+    let _ = (ok, cancel);
     layout(h);
     let _ = ShowWindow(h, SW_SHOW);
     crate::keys::set_modal(true);
     if !owner.0.is_null() {
         let _ = EnableWindow(owner, false);
     }
-    let _ = SetFocus(Some(GetDlgItem(Some(h), ID_A1).unwrap_or_default()));
+    let _ = SetFocus(Some(ctl(h, ID_OK)));
     let mut msg = MSG::default();
     while ANSWER.with(|a| a.get().is_none()) {
         if !GetMessageW(&mut msg, None, 0, 0).as_bool() {
@@ -326,6 +520,11 @@ unsafe fn ask(owner: HWND, initial: Prefs) -> Option<Prefs> {
             break;
         }
         let mine = msg.hwnd == h || IsChild(h, msg.hwnd).as_bool();
+        if msg.message == WM_MOUSEMOVE {
+            crate::set_hover(if crate::is_icon_button(msg.hwnd) { msg.hwnd } else { HWND::default() });
+        } else if msg.message == WM_MOUSELEAVE && crate::app(|a| a.hover) == msg.hwnd {
+            crate::set_hover(HWND::default());
+        }
         if msg.message == WM_KEYDOWN && mine {
             let vk = msg.wParam.0 as u16;
             if vk == VK_RETURN.0 {
@@ -340,6 +539,7 @@ unsafe fn ask(owner: HWND, initial: Prefs) -> Option<Prefs> {
         let _ = TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
+    crate::set_hover(HWND::default());
     crate::keys::set_modal(false);
     if !owner.0.is_null() {
         let _ = EnableWindow(owner, true);
@@ -348,97 +548,75 @@ unsafe fn ask(owner: HWND, initial: Prefs) -> Option<Prefs> {
     ANSWER.with(|a| a.get().flatten())
 }
 
-fn dialog_font() -> HFONT {
-    let font = crate::app(|a| a.font);
-    if font.is_invalid() {
-        let mut lf = LOGFONTW { lfHeight: -16, lfWeight: 400, lfQuality: CLEARTYPE_QUALITY, ..Default::default() };
-        for (d, c) in lf.lfFaceName.iter_mut().take(31).zip(crate::ui_face().encode_utf16()) {
-            *d = c;
-        }
-        unsafe { CreateFontIndirectW(&lf) }
-    } else {
-        font
-    }
-}
-
-unsafe fn style_caption(h: HWND) {
-    let dark = crate::DARK_ON.load(Ordering::Relaxed);
-    let on = BOOL::from(dark);
-    let _ = DwmSetWindowAttribute(h, DWMWINDOWATTRIBUTE(20), &on as *const _ as _, 4);
-    let caption = crate::cref(crate::pal().bg);
-    let _ = DwmSetWindowAttribute(h, DWMWA_CAPTION_COLOR, &caption as *const _ as _, 4);
-}
-
-unsafe fn theme_ctl(h: HWND) {
-    let dark = crate::DARK_ON.load(Ordering::Relaxed);
-    let name = if dark { w!("DarkMode_Explorer") } else { w!("Explorer") };
-    let _ = SetWindowTheme(h, name, PCWSTR::null());
-}
-
-unsafe fn child(parent: HWND, class: PCWSTR, text: &str, style: u32, id: i32, font: HFONT) -> HWND {
-    let t = HSTRING::from(text);
-    crate::child(parent, class, PCWSTR(t.as_ptr()), style, WINDOW_EX_STYLE(0), id, font)
-}
-
-unsafe fn layout(h: HWND) {
-    let dpi = GetDpiForWindow(h).max(96) as i32;
-    let s = |dip: i32| dip * dpi / 96;
-    let mut rc = RECT::default();
-    let _ = GetClientRect(h, &mut rc);
-    let m = s(16);
-    let row = s(26);
-    let gap = s(8);
-    let btn_w = s(96);
-    let btn_h = s(28);
-    for (i, id) in [ID_A1, ID_ZOOM, ID_FIRST, ID_BACKUP].into_iter().enumerate() {
-        let y = m + i as i32 * (row + gap);
-        let _ = SetWindowPos(ctl(h, id), None, m, y, rc.right - 2 * m, row, SWP_NOZORDER | SWP_NOACTIVATE);
-    }
-    let y = rc.bottom - m - btn_h;
-    let _ = SetWindowPos(ctl(h, ID_CANCEL), None, rc.right - m - btn_w, y, btn_w, btn_h, SWP_NOZORDER | SWP_NOACTIVATE);
-    let _ = SetWindowPos(ctl(h, ID_OK), None, rc.right - m - btn_w * 2 - s(8), y, btn_w, btn_h, SWP_NOZORDER | SWP_NOACTIVATE);
-}
-
-unsafe fn ctl(h: HWND, id: i32) -> HWND {
-    GetDlgItem(Some(h), id).unwrap_or_default()
-}
-
 unsafe extern "system" fn proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
-    crate::crash::catch_wnd(std::panic::AssertUnwindSafe(|| proc_inner(h, msg, wp, lp)))
+    crate::crash::catch_wnd(std::panic::AssertUnwindSafe(|| unsafe { proc_inner(h, msg, wp, lp) }))
 }
 
 unsafe fn proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     match msg {
-        WM_ERASEBKGND => {
-            let dc = HDC(wp.0 as _);
-            let mut rc = RECT::default();
-            let _ = GetClientRect(h, &mut rc);
-            let brush = CreateSolidBrush(crate::cref(crate::pal().card));
-            FillRect(dc, &rc, brush);
-            let _ = DeleteObject(brush.into());
+        WM_PAINT => {
+            paint(h);
+            return LRESULT(0);
+        }
+        WM_ERASEBKGND => return LRESULT(1),
+        WM_DRAWITEM => {
+            crate::settings::draw_btn(&*(lp.0 as *const DRAWITEMSTRUCT));
             return LRESULT(1);
         }
-        WM_CTLCOLORSTATIC | WM_CTLCOLORBTN => {
-            let dc = HDC(wp.0 as _);
-            SetBkMode(dc, TRANSPARENT);
-            SetTextColor(dc, crate::cref(crate::pal().text));
-            SetBkColor(dc, crate::cref(crate::pal().card));
-            SetDCBrushColor(dc, crate::cref(crate::pal().card));
-            return LRESULT(GetStockObject(DC_BRUSH).0 as isize);
+        WM_MOUSEMOVE => {
+            let dpi = GetDpiForWindow(h).max(96) as i32;
+            let mut rc = RECT::default();
+            let _ = GetClientRect(h, &mut rc);
+            let l = lay(rc.right - rc.left, rc.bottom - rc.top, dpi);
+            // SIGNED coords for multi-monitor / negative; LOWORD/HIWORD as i16
+            let x = lp.0 as i16 as i32;
+            let y = (lp.0 >> 16) as i16 as i32;
+            let next = hit_check(&l, x, y);
+            let prev = HOT.with(|c| c.replace(next));
+            if prev != next {
+                let _ = InvalidateRect(Some(h), None, false);
+            }
+            return LRESULT(0);
+        }
+        WM_LBUTTONDOWN => {
+            let dpi = GetDpiForWindow(h).max(96) as i32;
+            let mut rc = RECT::default();
+            let _ = GetClientRect(h, &mut rc);
+            let l = lay(rc.right - rc.left, rc.bottom - rc.top, dpi);
+            let x = lp.0 as i16 as i32;
+            let y = (lp.0 >> 16) as i16 as i32;
+            let id = hit_check(&l, x, y);
+            if id != 0 {
+                PREFS.with(|p| {
+                    let mut prefs = p.get();
+                    let on = !pref_get(prefs, id);
+                    pref_set(&mut prefs, id, on);
+                    p.set(prefs);
+                });
+                let _ = InvalidateRect(Some(h), None, false);
+            }
+            return LRESULT(0);
         }
         WM_SIZE => {
+            layout(h);
+            return LRESULT(0);
+        }
+        WM_DPICHANGED => {
+            let r = &*(lp.0 as *const RECT);
+            let _ = SetWindowPos(h, None, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE);
+            let font = dialog_font();
+            if !font.is_invalid() {
+                for id in [ID_OK, ID_CANCEL] {
+                    SendMessageW(ctl(h, id), WM_SETFONT, Some(WPARAM(font.0 as usize)), Some(LPARAM(1)));
+                }
+            }
             layout(h);
             return LRESULT(0);
         }
         WM_COMMAND => {
             let id = (wp.0 & 0xffff) as i32;
             if id == ID_OK {
-                let prefs = Prefs {
-                    a1: checked(h, ID_A1),
-                    zoom: checked(h, ID_ZOOM),
-                    first: checked(h, ID_FIRST),
-                    backup: checked(h, ID_BACKUP),
-                };
+                let prefs = PREFS.with(|p| p.get());
                 ANSWER.with(|a| a.set(Some(Some(prefs))));
                 let _ = DestroyWindow(h);
                 return LRESULT(0);
@@ -456,12 +634,7 @@ unsafe fn proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
         }
         _ => {}
     }
-    let _ = lp;
     DefWindowProcW(h, msg, wp, lp)
-}
-
-unsafe fn checked(h: HWND, id: i32) -> bool {
-    SendMessageW(ctl(h, id), BM_GETCHECK, None, None).0 == 1
 }
 
 #[cfg(test)]

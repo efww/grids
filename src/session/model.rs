@@ -340,7 +340,7 @@ pub(crate) struct Session {
     /// Paths kept in the file basket. maguro.json only. A .grids file does not carry this.
     /// Remove and Clear edit this list. They do not delete the files.
     pub(crate) file_basket: Vec<String>,
-    /// Last "Tidy to A1 · 100%" checkboxes. Missing from maguro.json means all on.
+    /// Last "Tidy to A1 · 100%" checkboxes. Missing from maguro.json means A1/zoom/first on, backup off.
     /// A .grids file does not carry these.
     pub(crate) excel_tidy_a1: bool,
     pub(crate) excel_tidy_zoom: bool,
@@ -487,7 +487,7 @@ impl Default for Session {
             excel_tidy_a1: true,
             excel_tidy_zoom: true,
             excel_tidy_first: true,
-            excel_tidy_backup: true,
+            excel_tidy_backup: false,
         };
         // A first-ever start: layout_new 3 is one pane. Saved maguro.json without layout_new stays 0 (two panes).
         s.set_heights(s.layout_heights());

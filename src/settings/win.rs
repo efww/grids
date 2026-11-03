@@ -1001,7 +1001,7 @@ unsafe fn draw_field(dc: HDC, r: RECT, dpi: i32, ground: u32) {
 }
 
 
-unsafe fn draw_btn(d: &DRAWITEMSTRUCT) {
+pub(crate) unsafe fn draw_btn(d: &DRAWITEMSTRUCT) {
     let id = d.CtlID as i32;
     let dis = d.itemState.0 & 4 != 0;
     let pressed = d.itemState.0 & 1 != 0;
