@@ -22,6 +22,9 @@ const CHEVRON_DIP: i32 = 22;
 /// apex is one pixel and each row steps in by one pixel on both sides.
 const TRI_H_DIP: i32 = 6;
 const TRI_PAD_DIP: i32 = PAD_DIP;
+/// Enabled arrow on the light theme. Darker than the label so it reads on white.
+/// Dark keeps the theme text; `#444444` would vanish on a charcoal face.
+const LIGHT_ARROW: u32 = 0x444444;
 const RADIUS_DIP: i32 = 4;
 const INSET_DIP: i32 = 1;
 const VISIBLE: usize = 8;
@@ -447,6 +450,12 @@ unsafe fn current_face(hwnd: HWND) -> Face {
     face
 }
 
+/// Light enabled arrows are `#444444`. Disabled stays `pal().sub` (already in `face_ink`).
+/// Dark, including an off rule's dimmed ink, stays `face_ink`.
+fn arrow_rgb(dark: bool, face_ink: u32) -> u32 {
+    if !dark && face_ink == super::LIGHT.text { LIGHT_ARROW } else { face_ink }
+}
+
 fn edge_of(hwnd: HWND, face: Face) -> u32 {
     let live = unsafe { IsWindowEnabled(hwnd).as_bool() && (is_hot(hwnd) || focused(hwnd) || dropped(hwnd)) };
     if live { CERULEAN_BRAND } else { face.edge }
@@ -514,8 +523,8 @@ unsafe fn paint_closed(hwnd: HWND, dc: HDC) {
     let face = current_face(hwnd);
     let edge = edge_of(hwnd, face);
     super::aa_rfill(dc, client, px(dpi, RADIUS_DIP).max(1), face.fill, Some(edge), face.ground);
-    // Same ink as the label: theme text when enabled, `pal().sub` when disabled.
-    paint_triangle(dc, client, face.ink, dpi);
+    let dark = super::DARK_ON.load(Ordering::Relaxed);
+    paint_triangle(dc, client, arrow_rgb(dark, face.ink), dpi);
     // An editable combo's child edit draws the text on the same cell.
     if find_edit(hwnd).0.is_null() {
         paint_label(dc, text_bounds(client, dpi, true), &selected_text(hwnd), font_of(hwnd), face.ink);
@@ -725,7 +734,7 @@ unsafe fn parent_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESUL
 #[cfg(test)]
 mod tests {
     use super::{
-        adopt, arrow_shape, centered_edit_rect, face_rect, find_edit, line_top, px, selection_request, text_bounds, window_in_parent, CHEVRON_DIP, CLOSED_BORDER, DROPDOWN, LIST, PAD_DIP, RADIUS_DIP, SELECTION_EXTRA, TRI_H_DIP, TRI_PAD_DIP, CERULEAN_BRAND,
+        adopt, arrow_rgb, arrow_shape, centered_edit_rect, face_rect, find_edit, line_top, px, selection_request, text_bounds, window_in_parent, CHEVRON_DIP, CLOSED_BORDER, DROPDOWN, LIGHT_ARROW, LIST, PAD_DIP, RADIUS_DIP, SELECTION_EXTRA, TRI_H_DIP, TRI_PAD_DIP, CERULEAN_BRAND,
     };
     use crate::imports::*;
 
@@ -798,6 +807,20 @@ mod tests {
                 assert_eq!(line_top(content, line, nudge), cell.top, "dpi {dpi} nudge {nudge}");
             }
         }
+    }
+
+    #[test]
+    fn light_enabled_arrow_is_444444_and_dark_and_disabled_stay() {
+        use super::super::{DARK, LIGHT};
+        assert_eq!(arrow_rgb(false, LIGHT.text), LIGHT_ARROW);
+        assert_eq!(LIGHT_ARROW, 0x4444_44);
+        assert_eq!(arrow_rgb(true, DARK.text), DARK.text, "dark theme keeps its text colour");
+        assert_eq!(arrow_rgb(false, LIGHT.sub), LIGHT.sub, "disabled light stays sub");
+        assert_eq!(arrow_rgb(true, DARK.sub), DARK.sub, "disabled dark stays sub");
+        let dimmed = 0x8A88_84;
+        assert_ne!(dimmed, LIGHT.text);
+        assert_eq!(arrow_rgb(false, dimmed), dimmed, "an off rule keeps its dimmed ink");
+        assert_eq!(arrow_rgb(true, dimmed), dimmed, "dark off rule keeps its dimmed ink");
     }
 
     #[test]
