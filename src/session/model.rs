@@ -271,6 +271,9 @@ pub(crate) struct Session {
     pub(crate) winmerge_path: String,
     /// The one-time "install Everything?" question was already shown. Never asked again.
     pub(crate) ev_asked: bool,
+    /// Everything result order. Everything's own sort code (1 name A→Z … 14 newest first).
+    /// maguro.json only. A .grids file and grids.ini do not carry this.
+    pub(crate) ev_sort: u32,
     /// The one-time "install rclone and WinFsp?" question was already shown. Never asked again.
     pub(crate) remote_asked: bool,
     pub(crate) cols: Vec<String>,      // per pane: columns and sort of its view (cols_text)
@@ -440,6 +443,7 @@ impl Default for Session {
             use_everything: true,
             winmerge_path: String::new(),
             ev_asked: false,
+            ev_sort: 1,
             remote_asked: false,
             cols: vec![String::new(); MAXP],
             tints: vec![0; MAXP],
@@ -530,6 +534,7 @@ impl PartialEq for Session {
             && self.use_everything == o.use_everything
             && self.winmerge_path == o.winmerge_path
             && self.ev_asked == o.ev_asked
+            && self.ev_sort == o.ev_sort
             && self.remote_asked == o.remote_asked
             && self.cols == o.cols
             && self.tints == o.tints

@@ -18,6 +18,8 @@ pub(crate) struct Found {
     pub(crate) name: String,
     pub(crate) path: String,
     pub(crate) dir: bool,
+    pub(crate) size: Option<u64>,
+    pub(crate) modified: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -52,13 +54,14 @@ pub(crate) fn ipc_hwnd() -> Option<HWND> {
 
 /// Query2 first (Everything 1.4.1 and later, including 1.5). Query W when that reply is missing
 /// or is not a list of real paths. A junk parse used to count as success, so Query W never ran.
+/// `sort` is Everything's sort code: it orders every match, then the reply keeps the first `max`.
 /// `None` is a transport failure. An empty hit list is a real answer.
-pub(crate) fn search(text: &str, max: u32) -> Option<FoundList> {
+pub(crate) fn search(text: &str, max: u32, sort: u32) -> Option<FoundList> {
     let ipc = ipc_hwnd()?;
     let reply = reply_window()?;
     let bits = reply.0 as usize as u32;
     let cap = max as usize;
-    let q2 = query2(bits, next_reply_id(), max, text);
+    let q2 = query2(bits, next_reply_id(), max, text, sort);
     if let Some(bytes) = send(ipc, reply, &q2) {
         if let Some(list) = best_list(&bytes, cap) {
             return Some(found(list));
@@ -71,7 +74,7 @@ pub(crate) fn search(text: &str, max: u32) -> Option<FoundList> {
 
 fn found(list: IpcList) -> FoundList {
     FoundList {
-        hits: list.hits.into_iter().map(|h| Found { name: h.name, path: h.path, dir: h.dir }).collect(),
+        hits: list.hits.into_iter().map(|h| Found { name: h.name, path: h.path, dir: h.dir, size: h.size, modified: h.modified }).collect(),
         more: list.more,
     }
 }

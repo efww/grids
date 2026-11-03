@@ -783,11 +783,12 @@ pub(crate) enum Key {
     WatchChanged,
     WatchFileChanged,
     WatchToastHint,
+    DateModified,
 }
 
-pub(crate) const KEY_COUNT: usize = 780;
+pub(crate) const KEY_COUNT: usize = 781;
 
-const _: () = assert!((Key::WatchToastHint as usize) + 1 == KEY_COUNT);
+const _: () = assert!((Key::DateModified as usize) + 1 == KEY_COUNT);
 
 pub(crate) const EN: [&str; KEY_COUNT] = [
     "About",
@@ -1569,6 +1570,7 @@ pub(crate) const EN: [&str; KEY_COUNT] = [
     "Folder change",
     "File change",
     "Click to open in a new tab",
+    "Date modified",
 
 ];
 
@@ -2353,6 +2355,7 @@ pub(crate) const KEY_ID: [&str; KEY_COUNT] = [
     "watch_changed",
     "watch_file_changed",
     "watch_toast_hint",
+    "date_modified",
 
 ];
 

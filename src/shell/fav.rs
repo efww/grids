@@ -1595,6 +1595,9 @@ pub(crate) unsafe fn explorer_new_folder(i: usize) {
         _ = MessageBeep(MB_ICONWARNING);
         return;
     };
+    // The view is the menu's site. Explorer's New folder asks that site to select the new
+    // folder and open its name box. Without a site, F7 only creates "New folder".
+    _ = IUnknown_SetSite(&cm, &sv);
     let Ok(menu) = CreatePopupMenu() else { return };
     let verb = b"NewFolder\0";
     if cm.QueryContextMenu(menu, 0, 1, 0x7fff, CMF_NORMAL).is_ok() {

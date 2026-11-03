@@ -10,6 +10,10 @@ pub(crate) const REQUEST_NAME: u32 = 0x0000_0001;
 pub(crate) const REQUEST_PATH: u32 = 0x0000_0002;
 pub(crate) const SORT_NAME_ASCENDING: u32 = 1;
 pub(crate) const FOLDER: u32 = 0x0000_0001;
+/// Name, path, size, date modified. Everything returns those columns in this bit order.
+pub(crate) const REQUEST_RESULT: u32 = REQUEST_NAME | REQUEST_PATH | REQUEST_SIZE | REQUEST_DATE_MODIFIED;
+/// EVERYTHING_IPC_SORT_*_ASCENDING for name, path, size, date modified. The next code is descending.
+const SORT_ASC: [u32; 4] = [1, 3, 5, 13];
 /// Matches kept from one reply. The total can be larger, which sets `more`.
 pub(crate) const MAX_RESULTS: u32 = 5000;
 
@@ -39,6 +43,31 @@ pub(crate) struct IpcHit {
     pub(crate) name: String,
     pub(crate) path: String,
     pub(crate) dir: bool,
+    /// Bytes. None when Everything does not know (folders, mostly).
+    pub(crate) size: Option<u64>,
+    /// FILETIME, UTC. None when Everything does not know.
+    pub(crate) modified: Option<u64>,
+}
+
+/// A sort code from settings, or anywhere else: one of the eight header orders, else name A→Z.
+pub(crate) fn ev_sort_ok(code: u32) -> u32 {
+    if SORT_ASC.iter().any(|&a| code == a || code == a + 1) { code } else { SORT_NAME_ASCENDING }
+}
+
+/// Column of a sort code (0 name, 1 path, 2 size, 3 date modified) and whether it is descending.
+pub(crate) fn ev_sort_col(code: u32) -> (usize, bool) {
+    let code = ev_sort_ok(code);
+    let c = SORT_ASC.iter().position(|&a| code == a || code == a + 1).unwrap_or(0);
+    (c, code != SORT_ASC[c])
+}
+
+/// A click on column `col`. The same column turns around. A new column starts A→Z for name and path,
+/// and biggest / newest first for size and date.
+pub(crate) fn ev_sort_click(cur: u32, col: usize) -> u32 {
+    let (c, desc) = ev_sort_col(cur);
+    let col = col.min(3);
+    let desc = if c == col { !desc } else { col >= 2 };
+    SORT_ASC[col] + u32::from(desc)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -48,15 +77,17 @@ pub(crate) struct IpcList {
     pub(crate) more: bool,
 }
 
-pub(crate) fn query2(reply_hwnd: u32, reply_msg: u32, max_results: u32, text: &str) -> IpcQuery {
+/// Query2 asks for name, path, size and date modified, sorted by `sort`.
+/// Everything orders every match, then this reply keeps the first `max_results`.
+pub(crate) fn query2(reply_hwnd: u32, reply_msg: u32, max_results: u32, text: &str, sort: u32) -> IpcQuery {
     let mut bytes = Vec::with_capacity(28 + text.len() * 2 + 2);
     push_u32(&mut bytes, reply_hwnd);
     push_u32(&mut bytes, reply_msg);
     push_u32(&mut bytes, 0);
     push_u32(&mut bytes, 0);
     push_u32(&mut bytes, max_results);
-    push_u32(&mut bytes, REQUEST_NAME | REQUEST_PATH);
-    push_u32(&mut bytes, SORT_NAME_ASCENDING);
+    push_u32(&mut bytes, REQUEST_RESULT);
+    push_u32(&mut bytes, ev_sort_ok(sort));
     push_utf16z(&mut bytes, text);
     IpcQuery { copy_data: COPYDATA_QUERY2_W, bytes }
 }
@@ -86,11 +117,11 @@ pub(crate) fn parse_list2(bytes: &[u8], cap: usize) -> Option<IpcList> {
         let base = 20 + i * 8;
         let Some(item_flags) = u32_at(bytes, base) else { break };
         let Some(data_off) = u32_at(bytes, base + 4) else { break };
-        let Some((name, path)) = read_named(bytes, data_off as usize, flags) else { continue };
+        let Some((name, path, size, modified)) = read_named(bytes, data_off as usize, flags) else { continue };
         if name.is_empty() {
             continue;
         }
-        hits.push(hit(name, path, item_flags));
+        hits.push(hit(name, path, item_flags, size, modified));
     }
     let more = total > hits.len();
     Some(IpcList { hits, total, more })
@@ -115,15 +146,15 @@ pub(crate) fn parse_list_w(bytes: &[u8], cap: usize) -> Option<IpcList> {
             continue;
         }
         let path = utf16z(bytes, path_off as usize).unwrap_or_default();
-        hits.push(hit(name, path, flags));
+        hits.push(hit(name, path, flags, None, None));
     }
     let more = total > hits.len();
     Some(IpcList { hits, total, more })
 }
 
-fn hit(name: String, path: String, flags: u32) -> IpcHit {
+fn hit(name: String, path: String, flags: u32, size: Option<u64>, modified: Option<u64>) -> IpcHit {
     let full = join_path(&path, &name);
-    IpcHit { name, path: full, dir: flags & FOLDER != 0 }
+    IpcHit { name, path: full, dir: flags & FOLDER != 0, size, modified }
 }
 
 fn join_path(path: &str, name: &str) -> String {
@@ -136,15 +167,24 @@ fn join_path(path: &str, name: &str) -> String {
     }
 }
 
-fn read_named(bytes: &[u8], mut off: usize, flags: u32) -> Option<(String, String)> {
+fn read_named(bytes: &[u8], mut off: usize, flags: u32) -> Option<(String, String, Option<u64>, Option<u64>)> {
     let mut name = None;
     let mut path = None;
+    let mut size = None;
+    let mut modified = None;
     for bit in [REQUEST_NAME, REQUEST_PATH, REQUEST_FULL, REQUEST_EXT, REQUEST_SIZE, REQUEST_DATE_CREATED, REQUEST_DATE_MODIFIED, REQUEST_DATE_ACCESSED, REQUEST_ATTR, REQUEST_FILELIST, REQUEST_RUN, REQUEST_DATE_RUN, REQUEST_DATE_RECENT, REQUEST_HL_NAME, REQUEST_HL_PATH, REQUEST_HL_FULL] {
         if flags & bit == 0 {
             continue;
         }
         if matches!(bit, REQUEST_SIZE | REQUEST_DATE_CREATED | REQUEST_DATE_MODIFIED | REQUEST_DATE_ACCESSED | REQUEST_DATE_RUN | REQUEST_DATE_RECENT) {
+            let v = u64_at(bytes, off)?;
             off = off.checked_add(8)?;
+            // -1 (and 0 for a date) is how Everything says it does not know.
+            if bit == REQUEST_SIZE && v != u64::MAX {
+                size = Some(v);
+            } else if bit == REQUEST_DATE_MODIFIED && v != 0 && v != u64::MAX {
+                modified = Some(v);
+            }
             continue;
         }
         if matches!(bit, REQUEST_ATTR | REQUEST_RUN) {
@@ -159,7 +199,7 @@ fn read_named(bytes: &[u8], mut off: usize, flags: u32) -> Option<(String, Strin
             path = Some(text);
         }
     }
-    Some((name?, path.unwrap_or_default()))
+    Some((name?, path.unwrap_or_default(), size, modified))
 }
 
 fn counted_utf16(bytes: &[u8], off: usize) -> Option<(String, usize)> {
@@ -268,6 +308,12 @@ fn u32_at(bytes: &[u8], off: usize) -> Option<u32> {
     Some(u32::from_le_bytes(bytes.get(off..off + 4)?.try_into().ok()?))
 }
 
+fn u64_at(bytes: &[u8], off: usize) -> Option<u64> {
+    let lo = u32_at(bytes, off)? as u64;
+    let hi = u32_at(bytes, off + 4)? as u64;
+    Some(lo | hi << 32)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,16 +324,17 @@ mod tests {
 
     #[test]
     fn query2_is_the_wide_v2_message_and_keeps_the_search_text() {
-        let q = query2(0x1111_2222, REPLY_ID, MAX_RESULTS, r#""C:\Work\" ext:pdf"#);
+        let q = query2(0x1111_2222, REPLY_ID, MAX_RESULTS, r#""C:\Work\" ext:pdf"#, 14);
         assert_eq!(q.copy_data, COPYDATA_QUERY2_W);
-        assert_eq!(u32s(&q.bytes, 7), vec![0x1111_2222, REPLY_ID, 0, 0, MAX_RESULTS, REQUEST_NAME | REQUEST_PATH, SORT_NAME_ASCENDING]);
+        assert_eq!(u32s(&q.bytes, 7), vec![0x1111_2222, REPLY_ID, 0, 0, MAX_RESULTS, REQUEST_RESULT, 14]);
+        assert_eq!(query2(1, 2, 10, "a", 99).bytes[24..28], 1u32.to_le_bytes());
         let text: Vec<u16> = r#""C:\Work\" ext:pdf"#.encode_utf16().chain(std::iter::once(0)).collect();
         assert_eq!(q.bytes.len(), 28 + text.len() * 2);
         for (i, u) in text.iter().enumerate() {
             let o = 28 + i * 2;
             assert_eq!(u16::from_le_bytes([q.bytes[o], q.bytes[o + 1]]), *u);
         }
-        let ko = query2(1, 2, 10, "보고서");
+        let ko = query2(1, 2, 10, "보고서", 1);
         let chars: Vec<u16> = "보고서".encode_utf16().chain(std::iter::once(0)).collect();
         assert_eq!(ko.bytes.len(), 28 + chars.len() * 2);
     }
@@ -322,6 +369,7 @@ mod tests {
         assert!(list.hits[0].dir);
         assert_eq!(list.hits[0].name, "Sub");
         assert_eq!(list.hits[0].path, r"C:\d\Sub");
+        assert_eq!((list.hits[0].size, list.hits[0].modified), (None, None));
         assert!(parse_list2(&bytes[..10], 10).is_none());
         assert!(parse_list2(&bytes, 0).is_none());
         let capped = parse_list2(&bytes, 1).unwrap();
@@ -430,5 +478,42 @@ mod tests {
         let names: Vec<_> = best.hits.iter().map(|h| h.name.as_str()).collect();
         assert_eq!(names, ["findme_dir", "findme_deep.txt", "findme_note.txt"]);
         assert_eq!(best.hits[2].path, r"C:\Users\Jun\dev\grids-test\search\findme_note.txt");
+    }
+
+    #[test]
+    fn sort_codes_and_sized_rows() {
+        assert_eq!([0, 1, 2, 3].map(|c| ev_sort_click(1, c)), [2, 3, 6, 14]);
+        assert_eq!((ev_sort_click(14, 3), ev_sort_click(13, 3), ev_sort_click(6, 2), ev_sort_click(14, 0)), (13, 14, 5, 1));
+        assert_eq!((ev_sort_col(14), ev_sort_col(3), ev_sort_col(0), ev_sort_col(9)), ((3, true), (1, false), (0, false), (0, false)));
+        assert_eq!([0, 2, 5, 7, 13, 15].map(ev_sort_ok), [1, 2, 5, 1, 13, 1]);
+
+        let flags = REQUEST_RESULT | REQUEST_EXT | REQUEST_DATE_CREATED;
+        let mut bytes = Vec::new();
+        for n in [2u32, 2, 0, flags, 14] {
+            bytes.extend_from_slice(&n.to_le_bytes());
+        }
+        let mut data = Vec::new();
+        let base = 20 + 16;
+        for (item, name, path, size, modified) in [
+            (FOLDER, "Work", r"C:\Users\me", u64::MAX, 133_000_000_000_000_000u64),
+            (0, "a.pdf", r"C:\Work", 1001u64, 133_000_000_000_000_001u64),
+        ] {
+            bytes.extend_from_slice(&item.to_le_bytes());
+            bytes.extend_from_slice(&((base + data.len()) as u32).to_le_bytes());
+            data.extend(counted(name));
+            data.extend(counted(path));
+            data.extend(counted("pdf"));
+            data.extend(size.to_le_bytes());
+            data.extend(7u64.to_le_bytes());
+            data.extend(modified.to_le_bytes());
+        }
+        bytes.extend(data);
+        let list = parse_list2(&bytes, 10).unwrap();
+        assert_eq!((list.hits[0].name.as_str(), list.hits[0].size, list.hits[0].modified), ("Work", None, Some(133_000_000_000_000_000)));
+        assert_eq!(
+            (list.hits[1].name.as_str(), list.hits[1].size, list.hits[1].modified, list.hits[1].path.as_str()),
+            ("a.pdf", Some(1001), Some(133_000_000_000_000_001), r"C:\Work\a.pdf"),
+        );
+        assert!(parse_list2(&bytes[..bytes.len() - 3], 10).unwrap().hits.len() < 2);
     }
 }

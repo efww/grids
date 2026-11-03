@@ -1,13 +1,17 @@
 // Quick search for the pane's filter box. The box still filters the open folder.
 // A result list streams from one background walker. A subfolder search asks Everything
 // when that setting is on and Everything is running; otherwise it walks. A new query or Esc drops the previous one.
+// Everything results are a table: name, path, size, date modified. A column title asks Everything
+// to sort every match, not only the rows on screen. The choice is kept in maguro.json.
 
 use std::collections::HashMap;
 use std::sync::{Condvar, Mutex, Once};
 use std::time::{Duration, Instant};
 
+use windows::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime};
+
 use crate::app::*;
-use crate::everything::{self, forces_everywhere, search_text, without_scope_prefix, MAX_RESULTS};
+use crate::everything::{self, ev_sort_click, ev_sort_col, ev_sort_ok, forces_everywhere, search_text, without_scope_prefix, MAX_RESULTS};
 use crate::i18n::*;
 use crate::imports::*;
 use crate::session::*;
@@ -22,6 +26,8 @@ pub(crate) struct FindHit {
     pub(crate) name: String,
     pub(crate) path: String,
     pub(crate) dir: bool,
+    pub(crate) size: Option<u64>,
+    pub(crate) modified: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -183,7 +189,7 @@ pub(crate) fn walk_search(root: &Path, query: &str, recursive: bool, show_hidden
                 stopped = true;
                 break;
             }
-            let hit = FindHit { name, path: path.to_string_lossy().into_owned(), dir: dir_ent };
+            let hit = FindHit { name, path: path.to_string_lossy().into_owned(), dir: dir_ent, size: None, modified: None };
             hits.push(hit.clone());
             pending.push(hit);
             if pending.len() >= 24 || last.elapsed() >= Duration::from_millis(50) {
@@ -251,6 +257,8 @@ struct FindUi {
     searched_sub: bool,
     searched_all: bool,
     engine: FindEngine,
+    searched_sort: u32,
+    hot_col: Option<usize>,
     sel: usize,
     scroll: i32,
     list: isize,
@@ -270,6 +278,7 @@ struct Job {
     hidden: bool,
     everything: bool,
     everywhere: bool,
+    sort: u32,
 }
 
 struct Batch {
@@ -432,7 +441,7 @@ pub(crate) unsafe fn step_find_sel(i: usize, prev: bool) -> Option<FindHit> {
     }
     let next = find_neighbour(u.sel, u.hits.len(), prev)?;
     u.sel = next;
-    let view_h = list_view_h(hwnd_of(u.list), dpi);
+    let view_h = list_view_h(hwnd_of(u.list), dpi, sticky_rows(u.engine));
     u.scroll = scroll_to_sel(u.sel, u.scroll, view_h, row_h(dpi));
     let hit = u.hits[u.sel].clone();
     let list = hwnd_of(u.list);
@@ -481,6 +490,7 @@ unsafe fn refresh_find_in(i: usize, force: bool) {
         return;
     }
     let show_hidden = hidden();
+    let sort = app(|a| ev_sort_ok(a.s.ev_sort));
     let resume = {
         let mut map = find_map();
         let u = map.entry(hwnd.0 as isize).or_insert_with(|| FindUi {
@@ -495,13 +505,16 @@ unsafe fn refresh_find_in(i: usize, force: bool) {
             searched_sub: false,
             searched_all: false,
             engine: FindEngine::Walk,
+            searched_sort: 1,
+            hot_col: None,
             sel: 0,
             scroll: 0,
             list: 0,
             show: false,
         });
         let all = u.everywhere || forces_everywhere(&query);
-        if !force && same_find(&query, &u.query, &root, &u.root, u.recursive, u.searched_sub, all, u.searched_all, u.running, u.hits.len()) {
+        let same = same_find(&query, &u.query, &root, &u.root, u.recursive, u.searched_sub, all, u.searched_all, u.running, u.hits.len());
+        if !force && reuse_hits(same, sort, u.searched_sort) {
             u.show = true;
             true
         } else {
@@ -536,6 +549,8 @@ unsafe fn refresh_find_in(i: usize, force: bool) {
         u.engine = if use_ev { FindEngine::Everything } else { FindEngine::Walk };
         u.searched_sub = u.recursive;
         u.searched_all = u.everywhere || forces_everywhere(&query);
+        u.searched_sort = sort;
+        u.hot_col = None;
         (u.gen, u.recursive, u.everywhere, use_ev)
     };
     // Any other pane's walk is stale once this one starts.
@@ -549,7 +564,7 @@ unsafe fn refresh_find_in(i: usize, force: bool) {
         }
     }
     show_list(hwnd);
-    let job = Job { hwnd: hwnd.0 as isize, gen, root, query, recursive, hidden: show_hidden, everything: use_ev, everywhere };
+    let job = Job { hwnd: hwnd.0 as isize, gen, root, query, recursive, hidden: show_hidden, everything: use_ev, everywhere, sort };
     {
         let mut slot = JOB.lock().unwrap_or_else(|e| e.into_inner());
         *slot = Some(job);
@@ -575,6 +590,11 @@ pub(crate) fn scope_after_click(everywhere: bool, query: &str) -> (bool, Option<
 /// the same words in the other scope must not reuse those hits.
 pub(crate) fn same_find(query: &str, prev_query: &str, root: &str, prev_root: &str, sub: bool, searched_sub: bool, all: bool, searched_all: bool, running: bool, hits: usize) -> bool {
     query == prev_query && root.eq_ignore_ascii_case(prev_root) && sub == searched_sub && all == searched_all && (running || hits > 0)
+}
+
+/// `same_find` plus the Everything sort. A new column order must ask again.
+pub(crate) fn reuse_hits(same: bool, sort: u32, searched_sort: u32) -> bool {
+    same && sort == searched_sort
 }
 
 /// All drives is Everything or an empty Everything answer. A folder walk must not fill that pill.
@@ -653,7 +673,7 @@ pub(crate) unsafe fn nudge_find(i: usize, delta: i32) -> bool {
         return false;
     }
     u.sel = clamp_sel(u.sel as i32 + delta, u.hits.len());
-    let view_h = list_view_h(hwnd_of(u.list), dpi);
+    let view_h = list_view_h(hwnd_of(u.list), dpi, sticky_rows(u.engine));
     u.scroll = scroll_to_sel(u.sel, u.scroll, view_h, row_h(dpi));
     let list = hwnd_of(u.list);
     drop(map);
@@ -744,13 +764,14 @@ fn pane_hwnd(i: usize) -> Option<HWND> {
     app(|a| a.panes.get(i).and_then(|p| p.as_ref()).map(|p| p.hwnd)).filter(|h| !h.0.is_null())
 }
 
-fn list_view_h(list: HWND, dpi: i32) -> i32 {
+fn list_view_h(list: HWND, dpi: i32, sticky: i32) -> i32 {
+    let head = row_h(dpi).saturating_mul(sticky.max(1));
     if list.0.is_null() {
         return row_h(dpi) * 8;
     }
     let mut rc = RECT::default();
     unsafe { _ = GetClientRect(list, &mut rc) };
-    (rc.bottom - row_h(dpi)).max(row_h(dpi))
+    (rc.bottom - head).max(row_h(dpi))
 }
 
 unsafe fn show_list(pane: HWND) {
@@ -903,10 +924,10 @@ fn find_worker() {
             let mut answered = false;
             if let Some(plan) = search_text(&job.root, &job.query, all, job.hidden) {
                 if !stop() {
-                    if let Some(list) = everything::search(&plan.text, MAX_RESULTS) {
+                    if let Some(list) = everything::search(&plan.text, MAX_RESULTS, job.sort) {
                         answered = true;
                         if !stop() {
-                            let hits = list.hits.into_iter().map(|h| FindHit { name: h.name, path: h.path, dir: h.dir }).collect();
+                            let hits = list.hits.into_iter().map(|h| FindHit { name: h.name, path: h.path, dir: h.dir, size: h.size, modified: h.modified }).collect();
                             publish(job.hwnd, job.gen, hits, list.more, true, FindEngine::Everything);
                         }
                     }
@@ -942,6 +963,19 @@ unsafe fn find_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT 
     match msg {
         WM_PAINT => paint_find(h, pane),
         WM_ERASEBKGND => return LRESULT(1),
+        WM_MOUSEMOVE => {
+            let (x, y) = crate::xy(lp);
+            hover_find_col(h, pane, x, y);
+        }
+        WM_MOUSELEAVE => {
+            let changed = {
+                let mut map = find_map();
+                map.get_mut(&(pane.0 as isize)).and_then(|u| u.hot_col.take()).is_some()
+            };
+            if changed {
+                _ = InvalidateRect(Some(h), None, false);
+            }
+        }
         WM_MOUSEWHEEL => {
             let delta = ((wp.0 >> 16) as i16 as i32) / 120;
             scroll_find(pane, -delta * row_h(app(|a| a.dpi)) * 3);
@@ -1015,7 +1049,7 @@ unsafe fn scroll_find(pane: HWND, dy: i32) {
     let mut map = find_map();
     let Some(u) = map.get_mut(&(pane.0 as isize)) else { return };
     let rows = u.hits.len() as i32 + if u.more { 1 } else { 0 };
-    let view = list_view_h(hwnd_of(u.list), dpi);
+    let view = list_view_h(hwnd_of(u.list), dpi, sticky_rows(u.engine));
     let max = (rows * row_h(dpi) - view).max(0);
     u.scroll = (u.scroll + dy).clamp(0, max);
     let list = hwnd_of(u.list);
@@ -1073,11 +1107,79 @@ pub(crate) fn header_hit(x: i32, y: i32, g: &HeaderGeom) -> HeaderHit {
 
 /// Row under a click in the result list. `y` is in the list's client area; the header occupies `rh`.
 pub(crate) fn row_at(y: i32, scroll: i32, rh: i32, n: usize) -> Option<usize> {
-    if rh <= 0 || y < rh || n == 0 {
+    row_under(y, scroll, rh, rh, n)
+}
+
+/// Like [`row_at`], when the sticky header is taller than one result row.
+pub(crate) fn row_under(y: i32, scroll: i32, head: i32, row: i32, n: usize) -> Option<usize> {
+    if row <= 0 || y < head || n == 0 {
         return None;
     }
-    let idx = (y - rh + scroll) / rh;
+    let idx = (y - head + scroll) / row;
     (idx >= 0 && (idx as usize) < n).then_some(idx as usize)
+}
+
+fn sticky_rows(engine: FindEngine) -> i32 {
+    if engine == FindEngine::Everything { 2 } else { 1 }
+}
+
+/// X edges of Name, Path, Size, Date modified inside a list `width` px wide.
+/// A wide list uses Everything's own proportions. A narrow pane keeps the four columns
+/// in order and gives each a share of the width, so the table still fits.
+pub(crate) fn ev_col_edges(width: i32, dpi: i32) -> [i32; 5] {
+    let s = |v: i32| v.saturating_mul(dpi.max(1)) / 96;
+    let width = width.max(0);
+    let pad = s(6);
+    let x0 = pad.min(width);
+    let xr = width.saturating_sub(pad).saturating_sub(s(6)).max(x0);
+    let span = (xr - x0).max(0);
+    let date_w = s(126).max(span.saturating_mul(16) / 100);
+    let size_w = s(80).max(span.saturating_mul(10) / 100);
+    if date_w.saturating_add(size_w).saturating_add(s(48)) <= span && span > 0 {
+        let x3 = xr - date_w;
+        let x2 = x3 - size_w;
+        let x1 = x0 + (x2 - x0).saturating_mul(42) / 100;
+        return [x0, x1.max(x0), x2.max(x1), x3.max(x2), xr.max(x3)];
+    }
+    let x1 = x0 + span.saturating_mul(34) / 100;
+    let x2 = x0 + span.saturating_mul(62) / 100;
+    let x3 = x0 + span.saturating_mul(78) / 100;
+    [x0, x1, x2, x3, xr]
+}
+
+/// Column under `x`, including the padding at either side of the titles. `None` outside the list.
+pub(crate) fn col_at(width: i32, edges: [i32; 5], x: i32) -> Option<usize> {
+    if width <= 0 || x < 0 || x >= width {
+        return None;
+    }
+    let mut e = edges;
+    e[0] = 0;
+    e[4] = width;
+    (0..4).find(|&i| x >= e[i] && x < e[i + 1])
+}
+
+fn hit_dir(path: &str) -> String {
+    let parent = Path::new(path).parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+    if parent.len() == 2 && parent.as_bytes().get(1) == Some(&b':') {
+        format!("{parent}\\")
+    } else {
+        parent
+    }
+}
+
+/// A FILETIME (UTC) as local "2026-11-03 14:05".
+fn modified_text(ft: u64) -> String {
+    if ft == 0 {
+        return String::new();
+    }
+    let ft = FILETIME { dwLowDateTime: ft as u32, dwHighDateTime: (ft >> 32) as u32 };
+    let (mut utc, mut local) = (SYSTEMTIME::default(), SYSTEMTIME::default());
+    unsafe {
+        if FileTimeToSystemTime(&ft, &mut utc).is_err() || SystemTimeToTzSpecificLocalTime(None, &utc, &mut local).is_err() {
+            return String::new();
+        }
+    }
+    format!("{:04}-{:02}-{:02} {:02}:{:02}", local.wYear, local.wMonth, local.wDay, local.wHour, local.wMinute)
 }
 
 unsafe fn text_px(dc: HDC, font: HFONT, s: &str) -> i32 {
@@ -1116,6 +1218,43 @@ unsafe fn header_now(h: HWND, dc: Option<HDC>, dpi: i32, header_h: i32, width: i
     header_geom(dpi, width, header_h, sub_w, scope_w, recursive)
 }
 
+unsafe fn hover_find_col(h: HWND, pane: HWND, x: i32, y: i32) {
+    let dpi = app(|a| a.dpi);
+    let rh = row_h(dpi);
+    let hot = {
+        let map = find_map();
+        let engine = map.get(&(pane.0 as isize)).map(|u| u.engine);
+        if engine == Some(FindEngine::Everything) && y >= rh && y < rh * 2 {
+            let mut rc = RECT::default();
+            _ = GetClientRect(h, &mut rc);
+            col_at(rc.right, ev_col_edges(rc.right, dpi), x)
+        } else {
+            None
+        }
+    };
+    let changed = {
+        let mut map = find_map();
+        let Some(u) = map.get_mut(&(pane.0 as isize)) else { return };
+        if u.hot_col == hot {
+            false
+        } else {
+            u.hot_col = hot;
+            true
+        }
+    };
+    if changed {
+        let mut t = TRACKMOUSEEVENT { cbSize: size_of::<TRACKMOUSEEVENT>() as u32, dwFlags: TME_LEAVE, hwndTrack: h, dwHoverTime: 0 };
+        _ = TrackMouseEvent(&mut t);
+        _ = InvalidateRect(Some(h), None, false);
+    }
+}
+
+unsafe fn sort_find_col(i: usize, col: usize) {
+    app(|a| a.s.ev_sort = ev_sort_click(a.s.ev_sort, col));
+    note_save();
+    refresh_find_in(i, true);
+}
+
 unsafe fn click_find(list: HWND, pane: HWND, x: i32, y: i32, dbl: bool) -> bool {
     let i = match pane_of(pane) {
         Some(i) => i,
@@ -1123,6 +1262,13 @@ unsafe fn click_find(list: HWND, pane: HWND, x: i32, y: i32, dbl: bool) -> bool 
     };
     let dpi = app(|a| a.dpi);
     let rh = row_h(dpi);
+    let (recursive, all, engine) = {
+        let map = find_map();
+        match map.get(&(pane.0 as isize)) {
+            Some(u) => (u.recursive, u.everywhere || forces_everywhere(&u.query), u.engine),
+            None => return false,
+        }
+    };
     if y < rh {
         // CS_DBLCLKS turns the second press into WM_LBUTTONDBLCLK, not another WM_LBUTTONDOWN.
         // Toggling on both flipped the pill back inside the double-click time, so a quick
@@ -1130,13 +1276,6 @@ unsafe fn click_find(list: HWND, pane: HWND, x: i32, y: i32, dbl: bool) -> bool 
         if !dbl {
             let mut rc = RECT::default();
             _ = GetClientRect(list, &mut rc);
-            let (recursive, all) = {
-                let map = find_map();
-                match map.get(&(pane.0 as isize)) {
-                    Some(u) => (u.recursive, u.everywhere || forces_everywhere(&u.query)),
-                    None => return false,
-                }
-            };
             let g = header_now(list, None, dpi, rh, rc.right, recursive, all);
             match header_hit(x, y, &g) {
                 HeaderHit::Sub => toggle_find_sub(i),
@@ -1146,10 +1285,21 @@ unsafe fn click_find(list: HWND, pane: HWND, x: i32, y: i32, dbl: bool) -> bool 
         }
         return false;
     }
+    if engine == FindEngine::Everything && y < rh * 2 {
+        if !dbl {
+            let mut rc = RECT::default();
+            _ = GetClientRect(list, &mut rc);
+            if let Some(c) = col_at(rc.right, ev_col_edges(rc.right, dpi), x) {
+                sort_find_col(i, c);
+            }
+        }
+        return false;
+    }
     let hit = {
         let mut map = find_map();
         let Some(u) = map.get_mut(&(pane.0 as isize)) else { return false };
-        let Some(idx) = row_at(y, u.scroll, rh, u.hits.len()) else { return false };
+        let head = rh * sticky_rows(engine);
+        let Some(idx) = row_under(y, u.scroll, head, rh, u.hits.len()) else { return false };
         u.sel = idx;
         let hit = u.hits.get(u.sel).cloned();
         let list = hwnd_of(u.list);
@@ -1182,7 +1332,8 @@ unsafe fn find_context(pane: HWND, y: Option<i32>, screen: POINT) {
             return;
         }
         if let Some(y) = y {
-            let Some(idx) = row_at(y, u.scroll, rh, u.hits.len()) else { return };
+            let head = rh * sticky_rows(u.engine);
+            let Some(idx) = row_under(y, u.scroll, head, rh, u.hits.len()) else { return };
             u.sel = idx;
         }
         let hit = u.hits.get(u.sel).cloned();
@@ -1199,21 +1350,60 @@ unsafe fn find_context(pane: HWND, y: Option<i32>, screen: POINT) {
 }
 
 unsafe fn paint_find(h: HWND, pane: HWND) {
-    let dpi = app(|a| a.dpi);
-    let (font, icon_font, accent) = app(|a| (a.font, a.icon_font, a.s.accent_now()));
+    let (dpi, font, icon_font, small, accent, sort) = app(|a| (a.dpi, a.font, a.icon_font, a.small_font, a.s.accent_now(), a.s.ev_sort));
     let snap = {
         let map = find_map();
-        map.get(&(pane.0 as isize)).map(|u| (u.query.clone(), u.root.clone(), u.recursive, u.everywhere, u.engine, u.hits.clone(), u.more, u.running, u.sel, u.scroll))
+        map.get(&(pane.0 as isize)).map(|u| (u.query.clone(), u.root.clone(), u.recursive, u.everywhere, u.engine, u.hits.clone(), u.more, u.running, u.sel, u.scroll, u.hot_col))
     };
-    let Some((query, root, recursive, everywhere, engine, hits, more, running, sel, scroll)) = snap else {
+    let Some((query, root, recursive, everywhere, engine, hits, more, running, sel, scroll, hot_col)) = snap else {
         buffered(h, |dc, rc| fill(dc, rc, pal().card));
         return;
     };
     let all = everywhere || forces_everywhere(&query);
+    let table = engine == FindEngine::Everything;
+    let (sort_col, sort_desc) = ev_sort_col(sort);
     buffered(h, |dc, rc| {
         let rh = row_h(dpi);
         let s = |v: i32| v * dpi / 96;
+        let head_px = rh * sticky_rows(engine);
         fill(dc, rc, pal().card);
+        let edges = ev_col_edges(rc.right, dpi);
+        let mut y = head_px - scroll;
+        if hits.is_empty() && !running {
+            text(dc, RECT { left: s(8), top: head_px, right: rc.right - s(8), bottom: head_px + rh }, tr(crate::Key::NoMatches), font, pal().sub, DT_LEFT);
+        }
+        for (i, hit) in hits.iter().enumerate() {
+            let r = RECT { left: 0, top: y, right: rc.right, bottom: y + rh };
+            if r.bottom <= head_px || r.top >= rc.bottom {
+                y += rh;
+                continue;
+            }
+            if i == sel {
+                fill(dc, r, blend(pal().card, accent, 0.28));
+            }
+            if table {
+                let cell = |c: usize| RECT { left: edges[c] + s(8), right: edges[c + 1] - s(6), top: r.top, bottom: r.bottom };
+                text(dc, cell(0), &hit.name, font, pal().text, DT_LEFT);
+                text_path(dc, cell(1), &hit_dir(&hit.path), small, pal().sub, DT_LEFT);
+                if let Some(b) = hit.size {
+                    text(dc, cell(2), &human(b), small, pal().sub, DT_RIGHT);
+                }
+                if let Some(t) = hit.modified {
+                    text(dc, cell(3), &modified_text(t), small, pal().sub, DT_LEFT);
+                }
+            } else {
+                let label = hit_label(&root, hit);
+                text(dc, RECT { left: s(8), right: rc.right - s(8), ..r }, &label, font, pal().text, DT_LEFT);
+            }
+            y += rh;
+        }
+        if more {
+            let r = RECT { left: s(8), top: y, right: rc.right - s(8), bottom: y + rh };
+            if r.bottom > head_px {
+                text(dc, r, tr(crate::Key::MoreResultsAreNotShown), font, pal().sub, DT_LEFT);
+            }
+        }
+        // Drawn last, so a scrolled row never covers the controls or the column titles.
         let head = RECT { left: 0, top: 0, right: rc.right, bottom: rh };
         fill(dc, head, pal().bg);
         let g = header_now(h, Some(dc), dpi, rh, rc.right, recursive, all);
@@ -1233,26 +1423,28 @@ unsafe fn paint_find(h: HWND, pane: HWND) {
         }
         let status = find_status(running, hits.len(), more, engine, all && engine == FindEngine::Everything);
         text(dc, RECT { left: g.status_left, right: rc.right - s(8), ..head }, &status, font, pal().sub, DT_RIGHT);
-        let mut y = rh - scroll;
-        if hits.is_empty() && !running {
-            text(dc, RECT { left: s(8), top: rh, right: rc.right - s(8), bottom: rh + rh }, tr(crate::Key::NoMatches), font, pal().sub, DT_LEFT);
-        }
-        for (i, hit) in hits.iter().enumerate() {
-            let r = RECT { left: 0, top: y, right: rc.right, bottom: y + rh };
-            if r.bottom < rh || r.top > rc.bottom {
-                y += rh;
-                continue;
+        if table {
+            let band = RECT { left: 0, top: rh, right: rc.right, bottom: rh * 2 };
+            fill(dc, band, pal().bg);
+            let titles = [tr(crate::Key::Name), tr(crate::Key::Path), tr(crate::Key::Size), tr(crate::Key::DateModified)];
+            for (c, title) in titles.iter().enumerate() {
+                let col = RECT { left: edges[c], top: rh, right: edges[c + 1], bottom: rh * 2 };
+                if hot_col == Some(c) {
+                    fill(dc, col, pal().pill);
+                }
+                if c > 0 {
+                    fill(dc, RECT { left: col.left, right: col.left + 1, top: col.top + s(4), bottom: col.bottom - s(4) }, pal().line);
+                }
+                let on = c == sort_col;
+                let arrow = if sort_desc { "\u{25BE}" } else { "\u{25B4}" };
+                let label = if on { format!("{title} {arrow}") } else { (*title).to_string() };
+                let ink = if on || hot_col == Some(c) { pal().text } else { pal().sub };
+                text(dc, RECT { left: col.left + s(8), right: col.right - s(6), ..col }, &label, small, ink, if c == 2 { DT_RIGHT } else { DT_LEFT });
+                if on {
+                    fill(dc, RECT { left: col.left, top: col.bottom - s(2).max(1), right: col.right, bottom: col.bottom }, accent);
+                }
             }
-            if i == sel {
-                fill(dc, r, blend(pal().card, accent, 0.28));
-            }
-            let label = hit_label(&root, hit);
-            text(dc, RECT { left: s(8), right: rc.right - s(8), ..r }, &label, font, if hit.dir { pal().text } else { pal().text }, DT_LEFT);
-            y += rh;
-        }
-        if more {
-            let r = RECT { left: s(8), top: y, right: rc.right - s(8), bottom: y + rh };
-            text(dc, r, tr(crate::Key::MoreResultsAreNotShown), font, pal().sub, DT_LEFT);
+            fill(dc, RECT { left: 0, top: band.bottom - 1, right: rc.right, bottom: band.bottom }, pal().line);
         }
     });
 }
@@ -1301,9 +1493,9 @@ mod tests {
     fn opening_a_hit_goes_to_the_folder_or_the_file() {
         assert_eq!(hit_open(r"C:\a\b", true), FindHitOpen::Folder(r"C:\a\b".into()));
         assert_eq!(hit_open(r"C:\a\b.txt", false), FindHitOpen::File { path: r"C:\a\b.txt".into(), folder: r"C:\a".into() });
-        let hit = FindHit { name: "b.txt".into(), path: r"C:\Work\sub\b.txt".into(), dir: false };
+        let hit = FindHit { name: "b.txt".into(), path: r"C:\Work\sub\b.txt".into(), dir: false, size: None, modified: None };
         assert_eq!(hit_label(r"C:\Work", &hit), "b.txt  ·  sub");
-        let here = FindHit { name: "b.txt".into(), path: r"C:\Work\b.txt".into(), dir: false };
+        let here = FindHit { name: "b.txt".into(), path: r"C:\Work\b.txt".into(), dir: false, size: None, modified: None };
         assert_eq!(hit_label(r"C:\Work\", &here), "b.txt");
     }
 
@@ -1387,15 +1579,15 @@ mod tests {
         assert!(should_walk(true, false, false) && should_walk(false, false, false));
         assert!(!keep_batch(true, FindEngine::Walk));
         assert!(keep_batch(true, FindEngine::Everything) && keep_batch(false, FindEngine::Walk));
-        let folder = vec![FindHit { name: "findme_note.txt".into(), path: r"C:\t\findme_note.txt".into(), dir: false }];
-        let glyph = vec![FindHit { name: "\u{3131}".into(), path: "\u{3131}".into(), dir: false }];
+        let folder = vec![FindHit { name: "findme_note.txt".into(), path: r"C:\t\findme_note.txt".into(), dir: false, size: None, modified: None }];
+        let glyph = vec![FindHit { name: "\u{3131}".into(), path: "\u{3131}".into(), dir: false, size: None, modified: None }];
         let real = vec![
-            FindHit { name: "findme_dir".into(), path: r"C:\Users\Jun\dev\grids-test\search\findme_dir".into(), dir: true },
-            FindHit { name: "findme_note.txt".into(), path: r"C:\Users\Jun\dev\grids-test\search\findme_note.txt".into(), dir: false },
+            FindHit { name: "findme_dir".into(), path: r"C:\Users\Jun\dev\grids-test\search\findme_dir".into(), dir: true, size: None, modified: None },
+            FindHit { name: "findme_note.txt".into(), path: r"C:\Users\Jun\dev\grids-test\search\findme_note.txt".into(), dir: false, size: None, modified: None },
         ];
         assert_eq!(merge_hits(&folder, glyph.clone(), FindEngine::Everything, 10), glyph);
         assert_eq!(merge_hits(&folder, real.clone(), FindEngine::Everything, 10), real);
-        let walked = merge_hits(&folder, vec![FindHit { name: "findme_deep.txt".into(), path: r"C:\t\findme_dir\findme_deep.txt".into(), dir: false }], FindEngine::Walk, 10);
+        let walked = merge_hits(&folder, vec![FindHit { name: "findme_deep.txt".into(), path: r"C:\t\findme_dir\findme_deep.txt".into(), dir: false, size: None, modified: None }], FindEngine::Walk, 10);
         assert_eq!(walked.len(), 2);
         assert_eq!(merge_hits(&folder, Vec::new(), FindEngine::Walk, 10).len(), 1);
     }
@@ -1428,6 +1620,39 @@ mod tests {
         assert_eq!(row_at(88, 0, 22, 3), None);
         assert_eq!(row_at(30, 0, 0, 3), None);
         assert_eq!(row_at(30, 0, 22, 0), None);
+        // Everything adds a column-title row. Those 22px are not a result.
+        assert_eq!(row_under(22, 0, 44, 22, 3), None);
+        assert_eq!(row_under(43, 0, 44, 22, 3), None);
+        assert_eq!(row_under(44, 0, 44, 22, 3), Some(0));
+        assert_eq!(row_under(66, 0, 44, 22, 3), Some(1));
+        assert_eq!(row_under(44, 22, 44, 22, 3), Some(1));
+    }
+
+    #[test]
+    fn everything_columns_fit_a_narrow_pane_and_a_new_sort_is_not_reused() {
+        let wide = ev_col_edges(860, 96);
+        assert!(wide.windows(2).all(|p| p[0] < p[1]), "{wide:?}");
+        assert_eq!(wide[0], 6);
+        assert!(wide[4] <= 860);
+        assert!(wide[4] - wide[3] >= 126 && wide[3] - wide[2] >= 80, "{wide:?}");
+        let mid = ev_col_edges(628, 96);
+        assert!(mid.windows(2).all(|p| p[0] < p[1]) && mid[4] <= 628, "{mid:?}");
+        assert!(mid[4] - mid[3] >= 126 && mid[3] - mid[2] >= 80, "{mid:?}");
+        let narrow = ev_col_edges(200, 96);
+        assert!(narrow.windows(2).all(|p| p[0] < p[1]) && narrow[4] <= 200, "{narrow:?}");
+        let hi = ev_col_edges(1720, 192);
+        assert!(hi.windows(2).all(|p| p[0] < p[1]) && hi[4] - hi[3] >= 252, "{hi:?}");
+        assert_eq!(col_at(860, wide, 0), Some(0));
+        assert_eq!(col_at(860, wide, wide[2] + 4), Some(2));
+        assert_eq!(col_at(860, wide, 859), Some(3));
+        assert_eq!(col_at(860, wide, 860), None);
+        assert_eq!(col_at(0, wide, 10), None);
+        assert!(reuse_hits(true, 1, 1));
+        assert!(!reuse_hits(true, 14, 1));
+        assert!(!reuse_hits(false, 6, 6));
+        assert_eq!(hit_dir(r"C:\Work\a.txt"), r"C:\Work");
+        assert_eq!(hit_dir(r"C:\a.txt"), r"C:\");
+        assert_eq!(hit_dir(r"D:\サンプル\📄.txt"), r"D:\サンプル");
     }
 
     #[test]
@@ -1502,17 +1727,17 @@ mod utf8_boundary_tests {
         let hit = super::FindHit {
             name: "샘플.txt".into(),
             path: r"F:\한글폴더\샘플.txt".into(),
-            dir: false,
+            dir: false, size: None, modified: None,
         };
         assert_eq!(super::hit_label(r"F:\한글폴더", &hit), "샘플.txt");
         let nested = super::FindHit {
             name: "📄.txt".into(),
             path: r"D:\サンプル\📁\📄.txt".into(),
-            dir: false,
+            dir: false, size: None, modified: None,
         };
         let label = super::hit_label(r"D:\サンプル", &nested);
         assert!(label.contains("📄.txt"), "{label}");
-        let odd = super::FindHit { name: "😀あ".into(), path: r"E:\abcdサ\😀あ".into(), dir: false };
+        let odd = super::FindHit { name: "😀あ".into(), path: r"E:\abcdサ\😀あ".into(), dir: false, size: None, modified: None };
         let label = super::hit_label("abcdefgh", &odd);
         assert!(label.contains("😀あ"), "{label}");
     }

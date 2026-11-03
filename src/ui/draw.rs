@@ -26,6 +26,15 @@ pub(crate) unsafe fn frame(dc: HDC, r: RECT, w: i32, rgb: u32) {
 }
 
 pub(crate) unsafe fn text(dc: HDC, mut r: RECT, s: &str, font: HFONT, rgb: u32, align: DRAW_TEXT_FORMAT) {
+    draw_line(dc, &mut r, s, font, rgb, align | DT_END_ELLIPSIS);
+}
+
+/// A path, shortened in the middle so the last part stays visible.
+pub(crate) unsafe fn text_path(dc: HDC, mut r: RECT, s: &str, font: HFONT, rgb: u32, align: DRAW_TEXT_FORMAT) {
+    draw_line(dc, &mut r, s, font, rgb, align | DT_PATH_ELLIPSIS);
+}
+
+unsafe fn draw_line(dc: HDC, r: &mut RECT, s: &str, font: HFONT, rgb: u32, extra: DRAW_TEXT_FORMAT) {
     let mut w: Vec<u16> = s.encode_utf16().collect();
     if w.is_empty() {
         return; // an empty Vec's dangling pointer crashes DrawTextW even with length 0
@@ -33,7 +42,7 @@ pub(crate) unsafe fn text(dc: HDC, mut r: RECT, s: &str, font: HFONT, rgb: u32, 
     let old = SelectObject(dc, font.into());
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, cref(rgb));
-    DrawTextW(dc, &mut w, &mut r, align | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX | DT_END_ELLIPSIS);
+    DrawTextW(dc, &mut w, r, extra | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
     SelectObject(dc, old);
 }
 

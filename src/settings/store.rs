@@ -76,6 +76,12 @@ fn is_zero_usize(v: &usize) -> bool {
 fn is_zero_u8(v: &u8) -> bool {
     *v == 0
 }
+fn sort_by_name() -> u32 {
+    1
+}
+fn is_name_sort(v: &u32) -> bool {
+    *v == 1
+}
 fn files_open() -> bool {
     true
 }
@@ -334,6 +340,9 @@ struct SettingsFile {
     /// The one-time Everything install question was shown. Missing means not yet.
     #[serde(default, skip_serializing_if = "is_off")]
     ev_asked: bool,
+    /// Everything result sort code. Missing means name A→Z. Not written into grids.ini.
+    #[serde(default = "sort_by_name", skip_serializing_if = "is_name_sort")]
+    ev_sort: u32,
     /// The one-time rclone and WinFsp install question was shown. Missing means not yet.
     #[serde(default, skip_serializing_if = "is_off")]
     remote_asked: bool,
@@ -474,6 +483,7 @@ impl SettingsFile {
             folder_sizes_network: false,
             peek: None,
             ev_asked: false,
+            ev_sort: 1,
             remote_asked: false,
             winmerge_path: String::new(),
             session: String::new(),
@@ -586,6 +596,7 @@ impl SettingsFile {
             folder_sizes_network: s.folder_sizes_network,
             peek: peek_json(s),
             ev_asked: s.ev_asked,
+            ev_sort: crate::everything::ev_sort_ok(s.ev_sort),
             remote_asked: s.remote_asked,
             winmerge_path: s.winmerge_path.trim().to_string(),
             session: s.file.clone(),
@@ -648,6 +659,7 @@ impl SettingsFile {
         self.extra.remove("dialog_jump");
         self.extra.remove("clip_hotkey");
         self.extra.remove("ev_asked");
+        self.extra.remove("ev_sort");
         self.extra.remove("remote_asked");
         self.extra.remove("winmerge_path");
         self.extra.remove("space_preview");
@@ -774,6 +786,7 @@ impl SettingsFile {
         s.peek_image = self.peek.as_ref().and_then(|p| peek_pair(p.image));
         s.peek_doc = self.peek.as_ref().and_then(|p| peek_pair(p.doc));
         s.ev_asked = self.ev_asked;
+        s.ev_sort = crate::everything::ev_sort_ok(self.ev_sort);
         s.remote_asked = self.remote_asked;
         s.winmerge_path = self.winmerge_path.trim().to_string();
         s.ctx_off = clean_ctx(&self.ctx_menu);
@@ -2047,6 +2060,29 @@ mod tests {
         let again = sync_text(&kept);
         assert!(!again.contains("pane_tabs"), "{again}");
         assert!(again.contains("future_flag"));
+    }
+
+    #[test]
+    fn everything_sort_lives_in_maguro_json_only() {
+        assert_eq!(Session::default().ev_sort, 1);
+        assert_eq!(adopt(r#"{"version":1}"#).unwrap().ev_sort, 1);
+        assert_eq!(adopt(r#"{"ev_sort":9}"#).unwrap().ev_sort, 1);
+        assert_eq!(adopt(r#"{"ev_sort":14}"#).unwrap().ev_sort, 14);
+        let mut s = Session::default();
+        s.ev_sort = 6;
+        assert!(!s.to_ini().contains("ev_sort"), "{}", s.to_ini());
+        assert_eq!(Session::parse(&s.to_ini()).ev_sort, 1);
+        assert_eq!(Session::parse("ev_sort=14\n").ev_sort, 1);
+        let text = pretty(&SettingsFile::from_session(&s));
+        assert!(text.contains("\"ev_sort\": 6"), "{text}");
+        assert_eq!(adopt(&text).unwrap().ev_sort, 6);
+        assert!(!pretty(&SettingsFile::from_session(&Session::default())).contains("ev_sort"));
+        let mut file = SettingsFile::from_session(&s);
+        file.extra.insert("ev_sort".into(), serde_json::json!(14));
+        file.merge_forward(&file.clone());
+        let saved: Value = serde_json::from_str(&pretty(&file)).unwrap();
+        assert_eq!(saved["ev_sort"], 6);
+        assert!(saved.get("extra").is_none());
     }
 
     #[test]
