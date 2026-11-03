@@ -24,6 +24,10 @@
 </p>
 
 <p align="center">
+  <a href="https://samek86.github.io/maguro/help/ja/">オンラインヘルプ</a>はブラウザーで開きます（日本語・<a href="https://samek86.github.io/maguro/help/">한국어</a>・<a href="https://samek86.github.io/maguro/help/en/">English</a>）。
+</p>
+
+<p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images-v3/hero_dark.ja.png">
     <img alt="Maguro — ライトテーマ" src="docs/images-v3/hero_light.ja.png">
@@ -155,6 +159,12 @@ Maguro が起動していれば **Win+Shift+V** でクリップボードのフ�
 
 <p align="center"><img width="760" alt="クリップボードのパスを新しいタブで開いたところ" src="docs/images-v3/feature_win_shift_v.ja.png"></p>
 
+### 16. タブ一覧
+
+**Ctrl+Shift+L**、タブ行右端の一覧ボタン、またはタブ右クリックの **タブ一覧…** で、各タブの配置・ペイン・フォルダーを見ます。名前で絞り込み、Enter かダブルクリックで移動し、F2 で名前を変えます。
+
+<p align="center"><img width="560" alt="各タブの配置・ペイン・フォルダーを示すタブ一覧" src="docs/images-v3/tab_list.png"></p>
+
 ### テーマとアクセント
 
 Windows に従うライト／ダーク、テーマごとにアクセント色が六つ（既定はセルリアン `#0A9BD6`）。設定ウィンドウは English・日本語・한국어 に対応しています。
@@ -162,10 +172,9 @@ Windows に従うライト／ダーク、テーマごとにアクセント色が
 <table>
 <tr>
 <td><img alt="設定" src="docs/images-v3/settings.ja.png"></td>
-<td><img alt="ヘルプ" src="docs/images-v3/help.ja.png"></td>
 </tr>
 <tr>
-<td colspan="2"><img alt="ダークテーマ" src="docs/images-v3/hero_dark.ja.png"></td>
+<td><img alt="ダークテーマ" src="docs/images-v3/hero_dark.ja.png"></td>
 </tr>
 </table>
 
@@ -193,6 +202,7 @@ Windows に従うライト／ダーク、テーマごとにアクセント色が
 |  | Ctrl+W | タブを閉じる |
 |  | Ctrl+Tab / Ctrl+Shift+Tab | 次／前のタブ |
 |  | Ctrl+Shift+T | 閉じたタブを開き直す |
+|  | Ctrl+Shift+L | タブ一覧 |
 | **ペイン** | Alt+1…9 | ペインにフォーカス |
 |  | Ctrl+\ | レイアウト選択 |
 | **プレビュー** | Space / F3 | プレビュー |
@@ -214,7 +224,7 @@ Windows に従うライト／ダーク、テーマごとにアクセント色が
 | **その他** | Ctrl+B | クイックお気に入り |
 |  | Ctrl+S | このタブを保存 |
 |  | Ctrl+, | 設定 |
-|  | F1 / Ctrl+/ | ヘルプ／ショートカット一覧 |
+|  | F1 / Ctrl+/ | オンラインヘルプ／ショートカット一覧 |
 |  | Ctrl+N | 新しいウィンドウ |
 |  | Ctrl+Alt+G | ほかのアプリの開く/保存ダイアログで Maguro のフォルダーへ移動 |
 |  | Win+Shift+E | Maguro を前面に（グローバル） |

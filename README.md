@@ -24,6 +24,10 @@
 </p>
 
 <p align="center">
+  <a href="https://samek86.github.io/maguro/help/en/">Online help</a> opens in the browser (English · <a href="https://samek86.github.io/maguro/help/ja/">日本語</a> · <a href="https://samek86.github.io/maguro/help/">한국어</a>).
+</p>
+
+<p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images-v3/hero_dark.png">
     <img alt="Maguro — light theme hero" src="docs/images-v3/hero_light.png">
@@ -155,6 +159,12 @@ With Maguro running, **Win+Shift+V** opens the folder or file path on the clipbo
 
 <p align="center"><img width="760" alt="Clipboard path opened as a new tab" src="docs/images-v3/feature_win_shift_v.png"></p>
 
+### 16. Tab list
+
+**Ctrl+Shift+L**, the list button at the right end of the tab row, or **Tab list…** on the tab menu shows every tab's layout, panes, and folders. Filter by name, jump with Enter or a double-click, and rename with F2.
+
+<p align="center"><img width="560" alt="Tab list of each tab's layout, panes, and folders" src="docs/images-v3/tab_list.png"></p>
+
 ### Themes & accent
 
 Light and dark that follow Windows, six accent colours per theme (default cerulean `#0A9BD6`), and a settings window in English, 日本語, and 한국어.
@@ -162,10 +172,9 @@ Light and dark that follow Windows, six accent colours per theme (default cerule
 <table>
 <tr>
 <td><img alt="Settings" src="docs/images-v3/settings.png"></td>
-<td><img alt="Help" src="docs/images-v3/help.png"></td>
 </tr>
 <tr>
-<td colspan="2"><img alt="Dark theme" src="docs/images-v3/hero_dark.png"></td>
+<td><img alt="Dark theme" src="docs/images-v3/hero_dark.png"></td>
 </tr>
 </table>
 
@@ -193,6 +202,7 @@ Defaults; every one can be changed in Settings → Shortcuts.
 |  | Ctrl+W | Close tab |
 |  | Ctrl+Tab / Ctrl+Shift+Tab | Next / previous tab |
 |  | Ctrl+Shift+T | Reopen closed tab |
+|  | Ctrl+Shift+L | Tab list |
 | **Panes** | Alt+1…9 | Focus pane |
 |  | Ctrl+\ | Layout picker |
 | **Preview** | Space / F3 | Preview |
@@ -214,7 +224,7 @@ Defaults; every one can be changed in Settings → Shortcuts.
 | **Other** | Ctrl+B | Quick favourites list |
 |  | Ctrl+S | Save this tab |
 |  | Ctrl+, | Settings |
-|  | F1 / Ctrl+/ | Help / shortcut list |
+|  | F1 / Ctrl+/ | Online help / shortcut list |
 |  | Ctrl+N | New window |
 |  | Ctrl+Alt+G | Jump to a Maguro folder in another app's Open or Save dialog |
 |  | Win+Shift+E | Bring Maguro to the front (global) |

@@ -24,6 +24,10 @@
 </p>
 
 <p align="center">
+  <a href="https://samek86.github.io/maguro/help/">온라인 도움말</a>은 브라우저에서 열립니다 (한국어 · <a href="https://samek86.github.io/maguro/help/ja/">日本語</a> · <a href="https://samek86.github.io/maguro/help/en/">English</a>).
+</p>
+
+<p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images-v3/hero_dark.ko.png">
     <img alt="Maguro — 라이트 테마" src="docs/images-v3/hero_light.ko.png">
@@ -155,6 +159,12 @@ Maguro가 켜져 있으면 **Win+Shift+V**로 클립보드의 폴더·파일 경
 
 <p align="center"><img width="760" alt="클립보드 경로를 새 탭으로 연 모습" src="docs/images-v3/feature_win_shift_v.ko.png"></p>
 
+### 16. 탭 목록
+
+**Ctrl+Shift+L**, 탭 줄 오른쪽 끝의 목록 버튼, 또는 탭 우클릭의 **탭 목록…**으로 각 탭의 배치·패널·폴더를 봅니다. 이름으로 거르고, Enter나 두 번 클릭으로 이동하고, F2로 이름을 바꿉니다.
+
+<p align="center"><img width="560" alt="각 탭의 배치·패널·폴더를 보여주는 탭 목록" src="docs/images-v3/tab_list.png"></p>
+
 ### 테마와 강조색
 
 Windows를 따르는 라이트/다크, 테마마다 강조색 여섯(기본 세룰리안 `#0A9BD6`). 설정 창은 English·日本語·한국어를 지원합니다.
@@ -162,10 +172,9 @@ Windows를 따르는 라이트/다크, 테마마다 강조색 여섯(기본 세�
 <table>
 <tr>
 <td><img alt="설정" src="docs/images-v3/settings.ko.png"></td>
-<td><img alt="도움말" src="docs/images-v3/help.ko.png"></td>
 </tr>
 <tr>
-<td colspan="2"><img alt="다크 테마" src="docs/images-v3/hero_dark.ko.png"></td>
+<td><img alt="다크 테마" src="docs/images-v3/hero_dark.ko.png"></td>
 </tr>
 </table>
 
@@ -193,6 +202,7 @@ Windows를 따르는 라이트/다크, 테마마다 강조색 여섯(기본 세�
 |  | Ctrl+W | 탭 닫기 |
 |  | Ctrl+Tab / Ctrl+Shift+Tab | 다음 / 이전 탭 |
 |  | Ctrl+Shift+T | 닫은 탭 다시 열기 |
+|  | Ctrl+Shift+L | 탭 목록 |
 | **패널** | Alt+1…9 | 패널 포커스 |
 |  | Ctrl+\ | 레이아웃 고르기 |
 | **미리보기** | Space / F3 | 미리보기 |
@@ -214,7 +224,7 @@ Windows를 따르는 라이트/다크, 테마마다 강조색 여섯(기본 세�
 | **기타** | Ctrl+B | 빠른 즐겨찾기 |
 |  | Ctrl+S | 이 탭 저장 |
 |  | Ctrl+, | 설정 |
-|  | F1 / Ctrl+/ | 도움말 / 단축키 목록 |
+|  | F1 / Ctrl+/ | 온라인 도움말 / 단축키 목록 |
 |  | Ctrl+N | 새 창 |
 |  | Ctrl+Alt+G | 다른 앱의 열기/저장 대화 상자에서 Maguro 폴더로 이동 |
 |  | Win+Shift+E | Maguro를 앞으로 (전역) |
