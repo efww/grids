@@ -189,10 +189,6 @@ pub(crate) struct Desk {
     pub(crate) peek_pane: usize,               // pane whose focused item it shows
     pub(crate) peek_name: String,
     pub(crate) keys_scroll: i32,
-    pub(crate) help_popup: HWND, // F1 help; null while closed
-    pub(crate) help_prev: HWND,  // focus to restore when Help is closed on purpose
-    pub(crate) help_scroll: i32,
-    pub(crate) help_tab: usize,
     pub(crate) crumb_hot: Option<(HWND, usize)>, // pane, crumb under the pointer
     pub(crate) kids: Option<KidsAsk>,            // a '›' whose subfolder list has not come back yet
     pub(crate) lost: u32,                        // missing-folder notes merged while one is showing
@@ -389,10 +385,6 @@ pub(crate) fn blank_desk() -> Desk {
         peek_pane: 0,
         peek_name: String::new(),
         keys_scroll: 0,
-        help_popup: HWND::default(),
-        help_prev: HWND::default(),
-        help_scroll: 0,
-        help_tab: 0,
         crumb_hot: None,
         kids: None,
         lost: 0,
@@ -552,7 +544,7 @@ fn desk_owns(d: &Desk, h: HWND) -> bool {
     if h.0.is_null() || d.main.0.is_null() {
         return false;
     }
-    if h == d.main || h == d.tabs_hwnd || h == d.tab_edit || h == d.tree_hwnd || h == d.fav_popup || h == d.fav_mgr || h == d.load || h == d.grid || h == d.tip || h == d.keys_popup || h == d.help_popup || h == d.peek || h == d.pane_over || d.matcher.as_ref().is_some_and(|m| m.hwnd == h || m.edit == h) || d.bars.contains(&h) {
+    if h == d.main || h == d.tabs_hwnd || h == d.tab_edit || h == d.tree_hwnd || h == d.fav_popup || h == d.fav_mgr || h == d.load || h == d.grid || h == d.tip || h == d.keys_popup || h == d.peek || h == d.pane_over || d.matcher.as_ref().is_some_and(|m| m.hwnd == h || m.edit == h) || d.bars.contains(&h) {
         return true;
     }
     if !d.fav_mgr.0.is_null() && unsafe { IsChild(d.fav_mgr, h).as_bool() } {

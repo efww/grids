@@ -1081,14 +1081,10 @@ pub(crate) unsafe fn apply_theme_desk() {
         retint_preview();
     }
     redraw_all();
-    let (popups, help) = app(|a| {
+    let popups = app(|a| {
         let match_h = a.matcher.as_ref().map(|m| m.hwnd).unwrap_or_default();
-        ([a.fav_popup, a.load, a.grid, a.keys_popup, a.peek, match_h, a.help_popup], a.help_popup)
+        [a.fav_popup, a.load, a.grid, a.keys_popup, a.peek, match_h]
     });
-    if !help.0.is_null() && IsWindow(Some(help)).as_bool() {
-        let on = BOOL::from(dark);
-        _ = DwmSetWindowAttribute(help, DWMWINDOWATTRIBUTE(20), &on as *const _ as _, 4);
-    }
     for h in popups {
         if !h.0.is_null() && IsWindow(Some(h)).as_bool() {
             _ = RedrawWindow(Some(h), None, None, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);

@@ -1034,9 +1034,16 @@ pub(crate) unsafe fn hotkey_pressed() {
     }
 }
 
-/// F1 / Help. Opens the in-app Help window. Ctrl+/ still opens the compact shortcut list.
+/// F1 / Help. Opens the GitHub Pages Help in the browser. Ctrl+/ still opens the compact shortcut list.
 pub(crate) unsafe fn open_help() {
-    open_help_window();
+    let code = app(|a| a.s.lang.resolved_code());
+    let url = match code.as_str() {
+        "ko" => "https://samek86.github.io/maguro/help/",
+        "ja" => "https://samek86.github.io/maguro/help/ja/",
+        _ => "https://samek86.github.io/maguro/help/en/",
+    };
+    let url = HSTRING::from(url);
+    let _ = ShellExecuteW(None, w!("open"), &url, PCWSTR::null(), PCWSTR::null(), SW_SHOWNORMAL);
 }
 
 pub(crate) unsafe fn about(owner: HWND) {

@@ -209,13 +209,6 @@ fn main() -> Result<()> {
             ..Default::default()
         });
         RegisterClassW(&WNDCLASSW {
-            lpfnWndProc: Some(help_proc),
-            hInstance: hinst,
-            hCursor: arrow,
-            lpszClassName: w!("MaguroHelp"),
-            ..Default::default()
-        });
-        RegisterClassW(&WNDCLASSW {
             style: CS_DBLCLKS | CS_HREDRAW | CS_VREDRAW,
             lpfnWndProc: Some(basket::basket_proc),
             hInstance: hinst,

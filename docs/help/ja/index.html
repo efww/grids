@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Maguro ヘルプ</title>
+<style>
+
+
+:root {
+  --brand: #0A9BD6;
+  --brand-dark: #0786BC;
+  --brand-soft: #9BE3FA;
+  --bg: #f6f8fa;
+  --surface: #ffffff;
+  --surface-2: #eef3f7;
+  --text: #1a2332;
+  --muted: #5a6a7a;
+  --line: #d5dee7;
+  --kbd-bg: #eef2f6;
+  --kbd-border: #c5d0db;
+  --shadow: 0 1px 2px rgba(16,40,60,.06), 0 8px 24px rgba(16,40,60,.06);
+  --sidebar-w: 260px;
+  --radius: 12px;
+  color-scheme: light;
+}
+html.dark {
+  --bg: #0f1419; --surface: #171d25; --surface-2: #1e2630; --text: #e8eef4;
+  --muted: #9aabbc; --line: #2a3542; --kbd-bg: #243040; --kbd-border: #3a4a5c;
+  --shadow: 0 1px 2px rgba(0,0,0,.35), 0 8px 24px rgba(0,0,0,.35);
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: dark) {
+  html:not(.light) {
+    --bg: #0f1419; --surface: #171d25; --surface-2: #1e2630; --text: #e8eef4;
+    --muted: #9aabbc; --line: #2a3542; --kbd-bg: #243040; --kbd-border: #3a4a5c;
+    --shadow: 0 1px 2px rgba(0,0,0,.35), 0 8px 24px rgba(0,0,0,.35);
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  font-family: "Segoe UI", "Malgun Gothic", "Yu Gothic UI", "Meiryo", sans-serif;
+  background: var(--bg); color: var(--text); line-height: 1.65; font-size: 15px;
+}
+a { color: var(--brand-dark); text-decoration: none; }
+html.dark a, html:not(.light) a { color: var(--brand-soft); }
+@media (prefers-color-scheme: light) {
+  html:not(.dark) a { color: var(--brand-dark); }
+}
+a:hover { text-decoration: underline; }
+.layout { display: grid; grid-template-columns: var(--sidebar-w) 1fr; min-height: 100vh; }
+@media (max-width: 900px) {
+  .layout { grid-template-columns: 1fr; }
+  .sidebar { position: relative !important; height: auto !important; border-right: none; border-bottom: 1px solid var(--line); }
+}
+.sidebar {
+  position: sticky; top: 0; height: 100vh; overflow: auto;
+  background: var(--surface); border-right: 1px solid var(--line); padding: 20px 16px 32px;
+}
+.brand { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; padding: 4px 6px; }
+.brand-mark {
+  width: 32px; height: 32px; border-radius: 8px; flex: 0 0 auto;
+  background: linear-gradient(145deg, var(--brand), var(--brand-dark));
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.2);
+}
+.brand strong { font-size: 18px; letter-spacing: -0.02em; }
+.tagline { margin: 0 6px 12px; color: var(--muted); font-size: 12.5px; line-height: 1.4; }
+.lang-switch { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 6px 12px; }
+.lang-switch a {
+  display: inline-block; padding: 4px 10px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--surface-2);
+  color: var(--muted); font-size: 12px; font-weight: 600; text-decoration: none;
+}
+.lang-switch a:hover { border-color: var(--brand); color: var(--brand-dark); text-decoration: none; }
+.lang-switch a.active { background: var(--brand); border-color: var(--brand); color: #fff; }
+html.dark .lang-switch a.active, html:not(.light) .lang-switch a.active { color: #041018; }
+.theme-toggle { display: flex; gap: 6px; margin: 0 6px 14px; }
+.theme-toggle button {
+  flex: 1; padding: 7px 0; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--surface-2); color: var(--muted); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.theme-toggle button.active { background: var(--brand); border-color: var(--brand); color: #fff; }
+html.dark .theme-toggle button.active, html:not(.light) .theme-toggle button.active { color: #041018; }
+.search-wrap { position: relative; margin: 0 6px 14px; }
+.search-wrap input {
+  width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--surface-2); color: var(--text); font: inherit; outline: none;
+}
+.search-wrap input:focus { border-color: var(--brand); box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 25%, transparent); }
+.toc { margin: 0; padding: 0; }
+.toc-title {
+  margin: 8px 10px 6px; font-size: 11px; font-weight: 700; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--muted);
+}
+.toc a {
+  display: block; padding: 7px 10px; border-radius: 8px; color: var(--muted);
+  font-size: 13.5px; text-decoration: none;
+}
+.toc a:hover, .toc a:focus { background: var(--surface-2); color: var(--text); text-decoration: none; }
+.main { max-width: 880px; padding: 28px 28px 96px; }
+.hero h1 { margin: 0 0 6px; font-size: 28px; letter-spacing: -0.02em; }
+.hero .tag { color: var(--muted); margin: 0 0 20px; }
+.section-block {
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 22px 24px 20px; margin: 0 0 16px; box-shadow: var(--shadow);
+}
+.section-block.hidden { display: none; }
+.section-block h2 {
+  margin: 0 0 10px; font-size: 20px; letter-spacing: -0.01em;
+  padding-bottom: 10px; border-bottom: 1px solid var(--line);
+}
+.section-block p { margin: 0.55em 0; }
+.ref-shortcuts { font-size: 13px; color: var(--muted); margin: 0 0 0.85em; }
+.shot-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px; margin: 16px 0 2px;
+}
+.shot {
+  margin: 0; background: var(--surface-2); border: 1px solid var(--line);
+  border-radius: 10px; overflow: hidden; padding: 0 0 10px;
+}
+.shot img { display: block; width: 100%; height: auto; padding: 26px 26px 8px; box-sizing: border-box; }
+.shot figcaption { padding: 0 14px; font-size: 12px; color: var(--muted); text-align: center; }
+.shortcuts-table { width: 100%; border-collapse: collapse; font-size: 13.5px; margin-top: 8px; }
+.shortcuts-table th, .shortcuts-table td {
+  text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top;
+}
+.shortcuts-table th { color: var(--muted); font-weight: 600; font-size: 12px; letter-spacing: .04em; }
+.shortcuts-table tr:hover td { background: var(--surface-2); }
+.shortcuts-table .cat {
+  font-size: 12px; font-weight: 700; color: var(--brand-dark); padding-top: 16px; border-bottom: none;
+}
+html.dark .shortcuts-table .cat, html:not(.light) .shortcuts-table .cat { color: var(--brand-soft); }
+kbd {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 12px; padding: 2px 6px; border-radius: 5px;
+  background: var(--kbd-bg); border: 1px solid var(--kbd-border);
+  box-shadow: inset 0 -1px 0 rgba(0,0,0,.06); white-space: nowrap;
+}
+.chord { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.chord .sep { color: var(--muted); margin: 0 2px; font-size: 12px; }
+#no-match {
+  display: none; padding: 24px; text-align: center; color: var(--muted);
+  border: 1px dashed var(--line); border-radius: var(--radius); margin-bottom: 16px;
+}
+#no-match.show { display: block; }
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+}
+
+
+</style>
+</head>
+<body>
+<div class="layout">
+<aside class="sidebar">
+  <div class="brand"><span class="brand-mark" aria-hidden="true"></span><strong>Maguro</strong></div>
+  <p class="tagline">Windows 向けの速いマルチペイン ファイル マネージャー</p>
+  <div class="lang-switch" role="navigation" aria-label="Language"><a href="../" class="" hreflang="ko">한국어</a><a href="./" class="active" hreflang="ja">日本語</a><a href="../en/" class="" hreflang="en">English</a></div>
+  <div class="theme-toggle" role="group" aria-label="Theme">
+    <button type="button" id="theme-light">ライト</button>
+    <button type="button" id="theme-dark">ダーク</button>
+    <button type="button" id="theme-auto">自動</button>
+  </div>
+  <div class="search-wrap">
+    <label class="visually-hidden" for="q">ヘルプを検索…</label>
+    <input type="search" id="q" placeholder="ヘルプを検索…" autocomplete="off">
+  </div>
+  <nav class="toc" id="toc" aria-label="目次">
+    <div class="toc-title">目次</div>
+    <a href="#overview">概要</a><a href="#address-toolbar">アドレス バーとツール バー</a><a href="#layouts">レイアウトとペイン</a><a href="#panedrag">ペインの移動と複製</a><a href="#tabs">ウィンドウ タブとセッション</a><a href="#pane-tabs">ペイン タブ</a><a href="#pane-colors">ペインの色</a><a href="#favorites">お気に入りとフォルダー ツリー</a><a href="#search">検索</a><a href="#preview">プレビューとクイックルック</a><a href="#files">ファイル操作</a><a href="#batch-rename">一括名前変更</a><a href="#basket">ファイル バスケット</a><a href="#watch">フォルダー監視</a><a href="#clipboard">クリップボードのパス</a><a href="#workspaces">ワークスペース</a><a href="#servers">サーバー接続</a><a href="#office">Office ファイル</a><a href="#ctxmenu">右クリック メニュー</a><a href="#theme">テーマと外観</a><a href="#settings">設定</a><a href="#window-actions">その他のウィンドウ操作</a><a href="#shortcuts">ショートカット</a><a href="#troubleshoot">トラブルシューティング</a>
+  </nav>
+</aside>
+<main class="main">
+  <header class="hero">
+    <h1>Maguro ヘルプ</h1>
+    <p class="tag">Windows 向けの速いマルチペイン ファイル マネージャー</p>
+  </header>
+  <div id="no-match">一致する項目がありません。</div>
+  <section class="section-block" id="overview" data-search="開始 紹介 maguro grids">
+<h2>概要</h2>
+<p>Maguro は Windows 向けのマルチペイン ファイル マネージャーです。</p>
+<p>ペイン 1 つがフォルダー 1 つです。並べたり格子にしたりして、別のソフトなしでコピー・移動・比較できます。</p>
+<p>スタート メニューかコマンドラインから起動します。maguro.exe の後にフォルダーを書くか、.grids セッションを開きます。</p>
+<p>F1 はこのヘルプをブラウザーで開きます。Ctrl+/ はアプリ内の短いショートカット一覧です。Ctrl+, は設定です。</p>
+<div class="shot-grid"><figure class="shot"><img src="../../images-v3/hero_light.ja.png" alt="メイン（ライト）" loading="lazy"><figcaption>メイン（ライト）</figcaption></figure><figure class="shot"><img src="../../images-v3/hero_dark.ja.png" alt="メイン（ダーク）" loading="lazy"><figcaption>メイン（ダーク）</figcaption></figure></div>
+</section><section class="section-block" id="address-toolbar" data-search="アドレス ツール ステータス ⇄">
+<h2>アドレス バーとツール バー</h2>
+<p class="ref-shortcuts">キー一覧は <a href="#shortcuts">ショートカット</a>.</p>
+<p>アドレス バーが現在のフォルダーです。パス名をクリックすると移動します。山括弧で中のフォルダーを一覧します。</p>
+<p>現在のフォルダーか余白をクリックするか、ショートカットのアドレス バーでパスを入力します。</p>
+<p>ツール バーにはレイアウト、保存、セッションを開く、お気に入りがあります。ドライブ文字はタブ列に出せます。</p>
+<p>ステータス バーは選択数と空き容量を出します。</p>
+<p>⇄ は選択フォルダー（なければ現在）を別ペインで開き、列と表示を引き継ぎます。または選択ファイルを別ペインへコピー／移動します（最大 10,000）。ペインが一つなら左右に分けます。選択がなければ現在フォルダーを複製します。</p>
+
+</section><section class="section-block" id="layouts" data-search="レイアウト 格子 分割 最大化">
+<h2>レイアウトとペイン</h2>
+<p class="ref-shortcuts">キー一覧は <a href="#shortcuts">ショートカット</a>.</p>
+<p>ペインはフォルダー 1 つです。</p>
+<p>レイアウトをクリックで均等格子。押したままドラッグで列ごとの行数。方向キーと Enter も使えます。</p>
+<p>分割線のダブルクリックは均等分割、ドラッグはサイズ変更です。</p>
+<p>上限: 列 4、1 列の行 4、ペイン 16。</p>
+<p>Ctrl+Shift+M またはヘッダーのダブルクリックでそのペインを最大化し、もう一度で戻します。</p>
+<div class="shot-grid"><figure class="shot"><img src="../../images-v3/layout.ja.png" alt="レイアウト" loading="lazy"><figcaption>レイアウト</figcaption></figure><figure class="shot"><img src="../../images-v3/layout_2v.png" alt="2 ペイン" loading="lazy"><figcaption>2 ペイン</figcaption></figure><figure class="shot"><img src="../../images-v3/layout_4.png" alt="4 ペイン" loading="lazy"><figcaption>4 ペイン</figcaption></figure><figure class="shot"><img src="../../images-v3/layout_preset_31.png" alt="3+1" loading="lazy"><figcaption>3+1</figcaption></figure></div>
+</section><section class="section-block" id="panedrag" data-search="ドラッグ スワップ 複製">
+<h2>ペインの移動と複製</h2>
+<p>番号かヘッダーをドラッグして動かします。</p>
+<p>端に落とすと対象が分割され、中央は入れ替わります。</p>
+<p>Ctrl を押したままドラッグすると現在のペイン タブをコピーします。端は元を残して分割、中央はそのマスにペイン タブを追加します。</p>
+<p>赤いプレビューは上限超えです。Ctrl を離すと移動になります。</p>
+<div class="shot-grid"><figure class="shot"><img src="../../images-v3/panedrag_before.png" alt="ドラッグ前" loading="lazy"><figcaption>ドラッグ前</figcaption></figure><figure class="shot"><img src="../../images-v3/panedrag_after.png" alt="ドロップ後" loading="lazy"><figcaption>ドロップ後</figcaption></figure><figure class="shot"><img src="../../images-v3/panedrag_dup.png" alt="Ctrl ドラッグ複製" loading="lazy"><figcaption>Ctrl ドラッグ複製</figcaption></figure></div>
+</section><section class="section-block" id="tabs" data-search="タブ セッション 保存 grids">
+<h2>ウィンドウ タブとセッション</h2>
+<p class="ref-shortcuts">キー一覧は <a href="#shortcuts">ショートカット</a>.</p>
+<p>ウィンドウ タブはレイアウト全体（ペイン・フォルダー・表示・色ラベル）です。</p>
+<p>保存はこのタブを書き込みます。保存の緑の点はレイアウト未保存です（通常のファイルコピーとは別）。</p>
+<p>セッションを開くは保存したタブを隣に開きます。複数ならそれぞれタブになります。</p>
+<p>Ctrl+N は別ウィンドウです。単一ウィンドウ モードならこの窓を前面にし、パスはタブで開きます。単一インスタンスは次の起動をこのプロセスに入れます。</p>
+<p>新規／閉じる／次／前タブ、閉じたタブの再開、複製はショートカットを参照。</p>
+<div class="shot-grid"><figure class="shot"><img src="../../images-v3/tabs.ja.png" alt="ウィンドウ タブ" loading="lazy"><figcaption>ウィンドウ タブ</figcaption></figure></div>
+</section><section class="section-block" id="pane-tabs" data-search="ペイン タブ">
+<h2>ペイン タブ</h2>
+<p class="ref-shortcuts">キー一覧は <a href="#shortcuts">ショートカット</a>.</p>
+<p>ペイン タブは 1 ペイン内の追加フォルダーで、ウィンドウ タブとは別です。</p>
+<p>フォルダーが一つだと帯は隠れます。⇄ の右のボタンで追加します。</p>
+<p>中クリックや小さい閉じる印で閉じます。ペイン タブのショートカットはフォーカスがペイン内のときだけです。</p>
+
+</section><section class="section-block" id="pane-colors" data-search="色 ラベル">
+<h2>ペインの色</h2>
+<p>ペイン ヘッダーを右クリックして色ラベルを付けます。</p>
+<p>セッションに保存され、ウィンドウ タブの色とは別です。</p>
+<div class="shot-grid"><figure class="shot"><img src="../../images-v3/pane_colors.ja.png" alt="ペイン色" loading="lazy"><figcaption>ペイン色</figcaption></figure></div>
+</section><section class="section-block" id="favorites" data-search="お気に入り ツリー 左">
+<h2>お気に入りとフォルダー ツリー</h2>
+<p class="ref-shortcuts">キー一覧は <a href="#shortcuts">ショートカット</a>.</p>
+<p>お気に入りとフォルダー ツリーは左パネルを共有します。区切りをドラッグします。上下は設定で決めます。</p>
+<p>お気に入りをクリックするとアクティブ ペインで開きます。グループは展開／折りたたみです。検索は親グループを残します。</p>
+<p>フォルダーでもファイルでも登録できます。無いフォルダーは空パスを開かず案内します。</p>
+<p>ツール バーのお気に入りは大きい一覧（検索・改名・削除・アクティブで開く）です。エクスプローラーのピンも出ることがあります。</p>
+<p>ツリーで Enter かダブルクリックでペインに開きます。Ctrl クリック／中クリックはペイン タブです。</p>
+<p>左パネルの表示はショートカットを参照。</p>
+<div class="shot-grid"><figure class="shot"><img src="../../images-v3/favorites.ja.png" alt="お気に入りとツリー" loading="lazy"><figcaption>お気に入りとツリー</figcaption></figure></div>
+</section><section class="section-block" id="search" data-search="検索 everything">
+<h2>検索</h2>
+<p>Ctrl+F でこのフォルダーを検索します。</p>
+<p>深い下位検索には Everything を入れ、起動したままにします。設定 → 全般で状態確認・インストール／起動ができます。</p>
+<p>Everything 実行中だけ Maguro が問い合わせます。</p>
+<div class="shot-grid"><figure class="shot"><img src="../../images-v3/search.ja.png" alt="検索" loading="lazy"><figcaption>検索</figcaption></figure></div>
+</section><section class="section-block" id="preview" data-search="プレビュー クイックルック">
+<h2>プレビューとクイックルック</h2>
+<p class="ref-shortcuts">キー一覧は <a href="#shortcuts">ショートカット</a>.</p>
+<p>F3 がクイックルックです。Space プレビューがオンなら Space も同じです（入力直後・IME 中の Space は名前の一部）。</p>
+<p>クイックルックで Enter は既定アプリで開いて閉じます。Shift+Enter か右クリックは別アプリで開くです。</p>
+<p>Alt+P はプレビュー ペインです。オプションがオンならホイールで前後のファイルへ。</p>
+<div class="shot-grid"><figure class="shot"><img src="../../images-v3/preview.ja.png" alt="プレビュー" loading="lazy"><figcaption>プレビュー</figcaption></figure><figure class="shot"><img src="../../images-v3/preview_peek.ja.png" alt="クイックルック" loading="lazy"><figcaption>クイックルック</figcaption></figure></div>
+</section><section class="section-block" id="files" data-search="コピー 削除 ドラッグ robocopy winmerge">
+<h2>ファイル操作</h2>
+<p class="ref-shortcuts">キー一覧は <a href="#shortcuts">ショートカット</a>.</p>
+<p>コピー・切り取り・貼り付け・名前の変更・削除はエクスプローラーと同じです（ショートカット参照）。</p>
+<p>Del は Windows 既定（多くはごみ箱）。Shift+Del は完全削除。設定で確認と既定削除を選べます。</p>
+<p>ペイン間ドラッグでコピー／移動。同じドライブは移動、別ドライブはコピー（設定で既定ドラッグ変更可）。フォルダー行に落とすとその中へ。</p>
+<p>高速コピー（設定 → ファイル操作）はネットワークの貼り付け／ドラッグに robocopy と Maguro 進行・キャンセルを使います。宛先の余分は消しません。オフは Windows コピー窓。ローカルのみは Windows のままです。</p>
+<p>クリップボードに画像があれば Ctrl+V で現在フォルダーへ PNG 保存します。</p>
+<p>新しいフォルダー／テキスト ファイルはショートカットにあります。新しいファイル名は設定からです。</p>
+<p>Ctrl+Shift+O は同じ選択名を他ペインに集めます。</p>
+<p>Ctrl+Alt+C はアクティブと次ペインを WinMerge で比較します。歯車や一覧からファイル同士、または他ペインの同名とも比較できます。パスは設定 → 全般です。</p>
+
+</section><section class="section-block" id="batch-rename" data-search="一括 名前">
+<h2>一括名前変更</h2>
+<p class="ref-shortcuts">キー一覧は <a href="#shortcuts">ショートカット</a>.</p>
+<p>Ctrl+Shift+R で選択の一括名前変更です。</p>
+<p>接頭・接尾・置換を入れ、適用前にプレビューします。</p>
+<div class="shot-grid"><figure class="shot"><img src="../../images-v3/rename.ja.png" alt="一括名前変更" loading="lazy"><figcaption>一括名前変更</figcaption></figure></div>
+</section><section class="section-block" id="basket" data-search="バスケット">
+<h2>ファイル バスケット</h2>
+<p class="ref-shortcuts">キー一覧は <a href="#shortcuts">ショートカット</a>.</p>
+<p>Ctrl+Shift+B で常に手前の小さいバスケットを開きます。</p>
+<p>ドラッグするか Ctrl+Alt+B でアクティブ選択を追加します。元パスを保持します。</p>
+<p>アクティブへコピー／移動は Windows 進行窓。外へドラッグはコピー、Shift ドラッグは移動。削除とクリアは一覧だけ変えます。</p>
+<div class="shot-grid"><figure class="shot"><img src="../../images-v3/feature_basket.ja.png" alt="バスケット" loading="lazy"><figcaption>バスケット</figcaption></figure></div>
+</section><section class="section-block" id="watch" data-search="監視">
+<h2>フォルダー監視</h2>
+<p class="ref-shortcuts">キー一覧は <a href="#shortcuts">ショートカット</a>.</p>
+<p>Ctrl+Shift+W でフォルダー監視を開きます。</p>
+<p>変更を見て、新規や更新があればすぐ移ります。</p>
+<div class="shot-grid"><figure class="shot"><img src="../../images-v3/feature_folder_watch.ja.png" alt="フォルダー監視" loading="lazy"><figcaption>フォルダー監視</figcaption></figure></div>
+</section><section class="section-block" id="clipboard" data-search="クリップボード">
+<h2>クリップボードのパス</h2>
+<p class="ref-shortcuts">キー一覧は <a href="#shortcuts">ショートカット</a>.</p>
+<p>Win+Shift+V はクリップボードのパスを新しいタブで開きます。</p>
+<p>設定 → 全般でこのホットキーを切り替えられます。</p>
+<div class="shot-grid"><figure class="shot"><img src="../../images-v3/feature_win_shift_v.ja.png" alt="クリップボードのパス" loading="lazy"><figcaption>クリップボードのパス</figcaption></figure></div>
+</section><section class="section-block" id="workspaces" data-search="ワークスペース">
+<h2>ワークスペース</h2>
+<p class="ref-shortcuts">キー一覧は <a href="#shortcuts">ショートカット</a>.</p>
+<p>ワークスペースはタブ・ペイン・フォルダーを最大 9 スロットに保存します。</p>
+<p>Ctrl+Alt+1…9 で読み込み、Ctrl+Alt+Shift+1…9 で保存します。</p>
+<p>歯車 → ワークスペースで保存・読み込み・改名・クリア。空スロットは短い案内です。</p>
+<p>読み込みは現在のタブを置き換えます。確認はオプションがオンのときだけです。</p>
+
+</section><section class="section-block" id="servers" data-search="smb webdav sftp ftp">
+<h2>サーバー接続</h2>
+<p>SMB、WebDAV、SFTP、FTP に接続します。接続先は開いてコピーやプレビューできるフォルダーとして見えます。</p>
+<p>ダイアログで種類・アドレス・ポート・ユーザー・パスワードを入れます。パスワードは Windows 資格情報のみで、設定ファイルには書きません。</p>
+<p>SMB は Windows 共有。WebDAV は HTTPS が必要なことがあります。FTP は入力したホストとポート。SFTP は rclone と WinFsp が必要で、Maguro がインストールを案内できます。</p>
+<p>終わったら切断します。切れた共有はネットワーク フォルダーサイズがオフならサイズを歩きません。開けないときは F5 で再試行します。</p>
+<div class="shot-grid"><figure class="shot"><img src="../../images-v3/servers.ja.png" alt="サーバー" loading="lazy"><figcaption>サーバー</figcaption></figure></div>
+</section><section class="section-block" id="office" data-search="excel office">
+<h2>Office ファイル</h2>
+<p>他アプリが開いている Excel などは読み取り専用になることがあります。</p>
+<p>ロックされたブックが閲覧を妨げないよう一覧を整えます。</p>
+<div class="shot-grid"><figure class="shot"><img src="../../images-v3/feature_excel_readonly_tidy.ja.png" alt="Office / Excel" loading="lazy"><figcaption>Office / Excel</figcaption></figure></div>
+</section><section class="section-block" id="ctxmenu" data-search="コンテキスト">
+<h2>右クリック メニュー</h2>
+<p>設定 → 右クリック メニューでサードパーティ項目をオフにできます。</p>
+<p>クラシックと Windows 11 の二形。Windows 11 パッケージ項目は既定オフで、必要なものだけオンにします。</p>
+<p>更新でメニューを再読込します。開く・コピー・プロパティなど Windows 標準は残ります。</p>
+<div class="shot-grid"><figure class="shot"><img src="../../images-v3/settings_ctxmenu.ja.png" alt="右クリック設定" loading="lazy"><figcaption>右クリック設定</figcaption></figure></div>
+</section><section class="section-block" id="theme" data-search="テーマ アクセント">
+<h2>テーマと外観</h2>
+<p>設定 → 外観でテーマ、アクセント、ツール バー、ドライブ ボタン、ステータス バーを決めます。</p>
+<p>ライトとダークはアクセントを別々に覚えます。Windows に従うはシステムと連動します。</p>
+<p>テーマ変更後、フォルダー一覧の色は次回起動で付き、他はすぐ変わります。</p>
+<p>このヘルプのサイドバーにもライト／ダーク／自動があります。</p>
+<div class="shot-grid"><figure class="shot"><img src="../../images-v3/settings.ja.png" alt="設定" loading="lazy"><figcaption>設定</figcaption></figure></div>
+</section><section class="section-block" id="settings" data-search="設定 全般 外観 ペイン ファイル お気に入り ショートカット セッション 詳細">
+<h2>設定</h2>
+<p>Ctrl+, で設定を開きます。検索はタイトルか説明が一致するカードへジャンプします。</p>
+<p>全般 — 表示言語、フォント、起動時、既定フォルダーアプリ、既定レイアウト、単一インスタンス、単一ウィンドウ、開く／保存ダイアログのフォルダー、クリップボードパスのホットキー、余白ダブルクリックで親、Everything、WinMerge。</p>
+<p>外観 — テーマ、アクセント、ツール バー、ドライブ ボタン、ステータス バー。</p>
+<p>ペインと表示 — 新しいペインの既定表示、フォルダーごとの表示記憶、全フォルダー既定、新しいペインの開始フォルダー、隠しファイル、拡張子、フォルダーサイズ（ネットワーク含む）、左パネルと順序、アクティブ枠、プレビュー ペイン、Space プレビュー、ホイール前後。</p>
+<p>ファイル操作 — Windows コピー窓、ネットワーク高速コピー、削除確認、既定削除、新しいファイル名、既定ドラッグ。</p>
+<p>お気に入り — 左パネル表示とお気に入り／ツリーの上下。</p>
+<p>ショートカット — 行をダブルクリックして新しいキー。Esc で取消、リセットで既定。衝突は通知します。</p>
+<p>セッション — セッションフォルダー、終了時保存、緑の点。</p>
+<p>詳細 — 起動時更新確認、設定ファイル位置、すべてリセット。maguro.exe 横の portable.txt は設定を AppData ではなく exe 横に置きます。リセットは設定のみ戻し、レイアウト・フォルダー・お気に入りは残します。</p>
+<p>右クリック メニュー — サードパーティとメニュー形。</p>
+<p>バージョン情報 — バージョンとリンク。</p>
+
+</section><section class="section-block" id="window-actions" data-search="前面 ダイアログ フォーカス 隠し">
+<h2>その他のウィンドウ操作</h2>
+<p class="ref-shortcuts">キー一覧は <a href="#shortcuts">ショートカット</a>.</p>
+<p>Win+Shift+E は Maguro を前面にします。</p>
+<p>Ctrl+Alt+G はオプションがオンのとき、ファイルダイアログからフォルダーへジャンプします。</p>
+<p>F6 / Shift+F6 はフォーカス移動。Ctrl+H は隠しファイル切替。</p>
+<p>パターン選択・解除・反転はショートカット（Num+、Num−、Num*）にあります。</p>
+<p>フルパスコピーとフォルダーで表示もショートカットにあります。</p>
+<p>最近のファイルは Ctrl+Alt+R、最近のフォルダーは Alt+↓ です。</p>
+
+</section><section class="section-block" id="shortcuts" data-search="ショートカット キー">
+<h2>ショートカット</h2>
+<p>Maguro のすべてのキーが下にあります。同じ一覧は Ctrl+/ でアプリ内にも開きます。</p>
+<p>設定 → ショートカットで行をダブルクリックし、新しいキーを押します。Esc で取消、リセットで既定です。</p>
+<p>アプリ内一覧は再起動なしで設定に従います。</p>
+<table class="shortcuts-table"><thead><tr><th>キー</th><th>操作</th></tr></thead><tbody>
+<tr><td class="cat" colspan="2"> タブ</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>T</kbd></span></td><td> 新しいタブ</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>W</kbd></span></td><td> タブを閉じる</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Tab</kbd></span></td><td> 次のタブ</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Tab</kbd></span></td><td> 前のタブ</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd></span></td><td> 閉じたタブを開き直す</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>K</kbd></span></td><td> タブを複製</td></tr>
+<tr><td class="cat" colspan="2"> ペイン</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>PageDown</kbd></span></td><td> 次のペイン</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>PageUp</kbd></span></td><td> 前のペイン</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>1…9</kbd></span></td><td> ペイン 1〜9 へ移動</td></tr>
+<tr><td class="cat" colspan="2"> ペイン タブ</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>T</kbd></span></td><td> 新しいペイン タブ</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>W</kbd></span></td><td> ペイン タブを閉じる</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>PageDown</kbd></span></td><td> 次のペイン タブ</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>PageUp</kbd></span></td><td> 前のペイン タブ</td></tr>
+<tr><td class="cat" colspan="2"> 移動</td></tr>
+<tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>←</kbd></span></td><td> 左のペイン</td></tr>
+<tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>→</kbd></span></td><td> 右のペイン</td></tr>
+<tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>↑</kbd></span></td><td> 上のペイン</td></tr>
+<tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>↓</kbd></span></td><td> 下のペイン</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>←</kbd></span></td><td> 左のペインと入れ替え</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>→</kbd></span></td><td> 右のペインと入れ替え</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>↑</kbd></span></td><td> 上のペインと入れ替え</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>↓</kbd></span></td><td> 下のペインと入れ替え</td></tr>
+<tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>←</kbd></span></td><td> 戻る</td></tr>
+<tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>→</kbd></span></td><td> 進む</td></tr>
+<tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>↑</kbd></span></td><td> 上のフォルダー</td></tr>
+<tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>↓</kbd></span></td><td> 最近のフォルダー</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>L</kbd></span> <span class="sep">/</span> <span class="chord"><kbd>Alt</kbd>+<kbd>D</kbd></span> <span class="sep">/</span> <span class="chord"><kbd>F4</kbd></span></td><td> アドレス バー</td></tr>
+<tr><td class="cat" colspan="2"> 表示</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>F</kbd></span></td><td> このフォルダーを検索</td></tr>
+<tr><td><span class="chord"><kbd>F3</kbd></span></td><td> クイックルック</td></tr>
+<tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>P</kbd></span></td><td> プレビュー ウィンドウ</td></tr>
+<tr><td><span class="chord"><kbd>F6</kbd></span></td><td> 次のフォーカス</td></tr>
+<tr><td><span class="chord"><kbd>Shift</kbd>+<kbd>F6</kbd></span></td><td> 前のフォーカス</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>H</kbd></span></td><td> 隠しファイルを表示</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd></span></td><td> 左のパネルを表示</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd></span></td><td> エクスプローラーのフォルダーを開く</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>R</kbd></span></td><td> 最近使ったファイル</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd></span></td><td> ペインを最大化 / 元に戻す</td></tr>
+<tr><td class="cat" colspan="2"> ファイル</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd></span></td><td> フルパスをコピー</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd></span></td><td> 一括リネーム</td></tr>
+<tr><td><span class="chord"><kbd>Num</kbd>+<kbd></kbd></span> <span class="sep">/</span> <span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd></span></td><td> パターンで選択</td></tr>
+<tr><td><span class="chord"><kbd>Num−</kbd></span></td><td> パターンで選択解除</td></tr>
+<tr><td><span class="chord"><kbd>Num*</kbd></span></td><td> 選択を反転</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>N</kbd></span></td><td> 新しいテキスト ファイル</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd></span></td><td> 新しいフォルダー</td></tr>
+<tr><td><span class="chord"><kbd>F7</kbd></span></td><td> このペインに新しいフォルダー</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd></span></td><td> WinMerge でフォルダーを比較</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd></span></td><td> ファイルバスケット</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>B</kbd></span></td><td> 選択をバスケットに追加</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Enter</kbd></span></td><td> フォルダーに表示</td></tr>
+<tr><td class="cat" colspan="2"> セッション</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>S</kbd></span></td><td> このタブを保存</td></tr>
+<tr><td class="cat" colspan="2"> ワークスペース</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>1…9</kbd></span></td><td> ワークスペースを開く</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>1…9</kbd></span></td><td> ワークスペースを保存</td></tr>
+<tr><td class="cat" colspan="2"> お気に入り</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>B</kbd></span></td><td> お気に入り</td></tr>
+<tr><td class="cat" colspan="2"> ヘルプ</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>,</kbd></span></td><td> 設定</td></tr>
+<tr><td><span class="chord"><kbd>F1</kbd></span></td><td> ショートカットのヘルプ</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>/</kbd></span></td><td> ショートカット一覧</td></tr>
+<tr><td class="cat" colspan="2"> ウィンドウ</td></tr>
+<tr><td><span class="chord"><kbd>Win</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd></span></td><td> Maguro を前面に</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>G</kbd></span></td><td> ファイル ダイアログのフォルダーへ移動</td></tr>
+<tr><td><span class="chord"><kbd>Win</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd></span></td><td> クリップボードのパスを開く</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>N</kbd></span></td><td> 新しいウィンドウ</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>W</kbd></span></td><td> フォルダー監視</td></tr>
+</tbody></table>
+<p>マウス: レイアウトのクリック／ドラッグ、アドレスの山括弧、分割線ダブルクリック、ヘッダー右クリックで色、ペイン タブ中クリックで閉じる。</p>
+
+</section><section class="section-block" id="troubleshoot" data-search="トラブル F5 everything クラッシュ 更新">
+<h2>トラブルシューティング</h2>
+<p>フォルダーが開かない — ペインをクリックして F5。F5 はどこからでもアクティブを再読込し、失敗したネットワークを再試行します。</p>
+<p>下位検索が空 — Everything を入れて起動し、設定 → 全般を確認します。</p>
+<p>ネットワークコピーが遅い／Maguro 進行がない — ネットワーク高速コピーをオン。オフは Windows コピー窓。ローカルのみには高速コピーは使いません。</p>
+<p>WinMerge が起動しない — 設定 → 全般でパスを設定。フォルダー比較は実フォルダーが必要です。</p>
+<p>SFTP 失敗 — 案内どおり rclone と WinFsp を入れ、ホスト・ポート・ユーザー・パスワードを確認。WebDAV は HTTPS が必要なことがあります。SMB は Windows 共有パス、FTP は接続のホストとポートです。</p>
+<p>窓の色だけ変わり一覧はそのまま — Maguro を再起動。一覧色は起動時に付きます。</p>
+<p>前回クラッシュ — 次回起動でレポート位置（設定横の crashes）を知らせます。</p>
+<p>二回目起動がすぐ終わる — 単一インスタンス／単一ウィンドウがオンで最初の窓が残ります。インストール可能な更新は maguro.exe を差し替えて再起動します。zip のみのリリースは展開しないので、案内どおり exe を差し替えます。</p>
+<p>終了時保存のため、窓の閉じるボタンで終了します。</p>
+
+</section>
+</main>
+</div>
+<script>
+(function () {
+  var root = document.documentElement;
+  var q = document.getElementById('q');
+  var blocks = Array.prototype.slice.call(document.querySelectorAll('.section-block'));
+  var noMatch = document.getElementById('no-match');
+  var btns = {
+    light: document.getElementById('theme-light'),
+    dark: document.getElementById('theme-dark'),
+    auto: document.getElementById('theme-auto')
+  };
+  function applyTheme(mode) {
+    root.classList.remove('light', 'dark');
+    if (mode === 'light') root.classList.add('light');
+    if (mode === 'dark') root.classList.add('dark');
+    try { localStorage.setItem('maguro-help-theme', mode); } catch (e) {}
+    Object.keys(btns).forEach(function (k) {
+      btns[k].classList.toggle('active', k === mode);
+    });
+  }
+  var saved = 'auto';
+  try { saved = localStorage.getItem('maguro-help-theme') || 'auto'; } catch (e) {}
+  applyTheme(saved);
+  Object.keys(btns).forEach(function (k) {
+    btns[k].addEventListener('click', function () { applyTheme(k); });
+  });
+  function filter() {
+    var term = (q.value || '').trim().toLowerCase();
+    var shown = 0;
+    blocks.forEach(function (el) {
+      var hay = ((el.getAttribute('data-search') || '') + ' ' + el.textContent).toLowerCase();
+      var ok = !term || hay.indexOf(term) !== -1;
+      el.classList.toggle('hidden', !ok);
+      if (ok) shown++;
+    });
+    noMatch.classList.toggle('show', shown === 0);
+  }
+  q.addEventListener('input', filter);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Maguro 도움말</title>
+<style>
+
+
+:root {
+  --brand: #0A9BD6;
+  --brand-dark: #0786BC;
+  --brand-soft: #9BE3FA;
+  --bg: #f6f8fa;
+  --surface: #ffffff;
+  --surface-2: #eef3f7;
+  --text: #1a2332;
+  --muted: #5a6a7a;
+  --line: #d5dee7;
+  --kbd-bg: #eef2f6;
+  --kbd-border: #c5d0db;
+  --shadow: 0 1px 2px rgba(16,40,60,.06), 0 8px 24px rgba(16,40,60,.06);
+  --sidebar-w: 260px;
+  --radius: 12px;
+  color-scheme: light;
+}
+html.dark {
+  --bg: #0f1419; --surface: #171d25; --surface-2: #1e2630; --text: #e8eef4;
+  --muted: #9aabbc; --line: #2a3542; --kbd-bg: #243040; --kbd-border: #3a4a5c;
+  --shadow: 0 1px 2px rgba(0,0,0,.35), 0 8px 24px rgba(0,0,0,.35);
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: dark) {
+  html:not(.light) {
+    --bg: #0f1419; --surface: #171d25; --surface-2: #1e2630; --text: #e8eef4;
+    --muted: #9aabbc; --line: #2a3542; --kbd-bg: #243040; --kbd-border: #3a4a5c;
+    --shadow: 0 1px 2px rgba(0,0,0,.35), 0 8px 24px rgba(0,0,0,.35);
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  font-family: "Segoe UI", "Malgun Gothic", "Yu Gothic UI", "Meiryo", sans-serif;
+  background: var(--bg); color: var(--text); line-height: 1.65; font-size: 15px;
+}
+a { color: var(--brand-dark); text-decoration: none; }
+html.dark a, html:not(.light) a { color: var(--brand-soft); }
+@media (prefers-color-scheme: light) {
+  html:not(.dark) a { color: var(--brand-dark); }
+}
+a:hover { text-decoration: underline; }
+.layout { display: grid; grid-template-columns: var(--sidebar-w) 1fr; min-height: 100vh; }
+@media (max-width: 900px) {
+  .layout { grid-template-columns: 1fr; }
+  .sidebar { position: relative !important; height: auto !important; border-right: none; border-bottom: 1px solid var(--line); }
+}
+.sidebar {
+  position: sticky; top: 0; height: 100vh; overflow: auto;
+  background: var(--surface); border-right: 1px solid var(--line); padding: 20px 16px 32px;
+}
+.brand { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; padding: 4px 6px; }
+.brand-mark {
+  width: 32px; height: 32px; border-radius: 8px; flex: 0 0 auto;
+  background: linear-gradient(145deg, var(--brand), var(--brand-dark));
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.2);
+}
+.brand strong { font-size: 18px; letter-spacing: -0.02em; }
+.tagline { margin: 0 6px 12px; color: var(--muted); font-size: 12.5px; line-height: 1.4; }
+.lang-switch { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 6px 12px; }
+.lang-switch a {
+  display: inline-block; padding: 4px 10px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--surface-2);
+  color: var(--muted); font-size: 12px; font-weight: 600; text-decoration: none;
+}
+.lang-switch a:hover { border-color: var(--brand); color: var(--brand-dark); text-decoration: none; }
+.lang-switch a.active { background: var(--brand); border-color: var(--brand); color: #fff; }
+html.dark .lang-switch a.active, html:not(.light) .lang-switch a.active { color: #041018; }
+.theme-toggle { display: flex; gap: 6px; margin: 0 6px 14px; }
+.theme-toggle button {
+  flex: 1; padding: 7px 0; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--surface-2); color: var(--muted); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.theme-toggle button.active { background: var(--brand); border-color: var(--brand); color: #fff; }
+html.dark .theme-toggle button.active, html:not(.light) .theme-toggle button.active { color: #041018; }
+.search-wrap { position: relative; margin: 0 6px 14px; }
+.search-wrap input {
+  width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--surface-2); color: var(--text); font: inherit; outline: none;
+}
+.search-wrap input:focus { border-color: var(--brand); box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 25%, transparent); }
+.toc { margin: 0; padding: 0; }
+.toc-title {
+  margin: 8px 10px 6px; font-size: 11px; font-weight: 700; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--muted);
+}
+.toc a {
+  display: block; padding: 7px 10px; border-radius: 8px; color: var(--muted);
+  font-size: 13.5px; text-decoration: none;
+}
+.toc a:hover, .toc a:focus { background: var(--surface-2); color: var(--text); text-decoration: none; }
+.main { max-width: 880px; padding: 28px 28px 96px; }
+.hero h1 { margin: 0 0 6px; font-size: 28px; letter-spacing: -0.02em; }
+.hero .tag { color: var(--muted); margin: 0 0 20px; }
+.section-block {
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 22px 24px 20px; margin: 0 0 16px; box-shadow: var(--shadow);
+}
+.section-block.hidden { display: none; }
+.section-block h2 {
+  margin: 0 0 10px; font-size: 20px; letter-spacing: -0.01em;
+  padding-bottom: 10px; border-bottom: 1px solid var(--line);
+}
+.section-block p { margin: 0.55em 0; }
+.ref-shortcuts { font-size: 13px; color: var(--muted); margin: 0 0 0.85em; }
+.shot-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px; margin: 16px 0 2px;
+}
+.shot {
+  margin: 0; background: var(--surface-2); border: 1px solid var(--line);
+  border-radius: 10px; overflow: hidden; padding: 0 0 10px;
+}
+.shot img { display: block; width: 100%; height: auto; padding: 26px 26px 8px; box-sizing: border-box; }
+.shot figcaption { padding: 0 14px; font-size: 12px; color: var(--muted); text-align: center; }
+.shortcuts-table { width: 100%; border-collapse: collapse; font-size: 13.5px; margin-top: 8px; }
+.shortcuts-table th, .shortcuts-table td {
+  text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top;
+}
+.shortcuts-table th { color: var(--muted); font-weight: 600; font-size: 12px; letter-spacing: .04em; }
+.shortcuts-table tr:hover td { background: var(--surface-2); }
+.shortcuts-table .cat {
+  font-size: 12px; font-weight: 700; color: var(--brand-dark); padding-top: 16px; border-bottom: none;
+}
+html.dark .shortcuts-table .cat, html:not(.light) .shortcuts-table .cat { color: var(--brand-soft); }
+kbd {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 12px; padding: 2px 6px; border-radius: 5px;
+  background: var(--kbd-bg); border: 1px solid var(--kbd-border);
+  box-shadow: inset 0 -1px 0 rgba(0,0,0,.06); white-space: nowrap;
+}
+.chord { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.chord .sep { color: var(--muted); margin: 0 2px; font-size: 12px; }
+#no-match {
+  display: none; padding: 24px; text-align: center; color: var(--muted);
+  border: 1px dashed var(--line); border-radius: var(--radius); margin-bottom: 16px;
+}
+#no-match.show { display: block; }
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+}
+
+
+</style>
+</head>
+<body>
+<div class="layout">
+<aside class="sidebar">
+  <div class="brand"><span class="brand-mark" aria-hidden="true"></span><strong>Maguro</strong></div>
+  <p class="tagline">Windows용 빠른 다중 패널 파일 관리자</p>
+  <div class="lang-switch" role="navigation" aria-label="Language"><a href="./" class="active" hreflang="ko">한국어</a><a href="ja/" class="" hreflang="ja">日本語</a><a href="en/" class="" hreflang="en">English</a></div>
+  <div class="theme-toggle" role="group" aria-label="Theme">
+    <button type="button" id="theme-light">밝게</button>
+    <button type="button" id="theme-dark">어둡게</button>
+    <button type="button" id="theme-auto">자동</button>
+  </div>
+  <div class="search-wrap">
+    <label class="visually-hidden" for="q">도움말 검색…</label>
+    <input type="search" id="q" placeholder="도움말 검색…" autocomplete="off">
+  </div>
+  <nav class="toc" id="toc" aria-label="목차">
+    <div class="toc-title">목차</div>
+    <a href="#overview">개요</a><a href="#address-toolbar">주소 칸 · 도구 모음</a><a href="#layouts">레이아웃 · 패널</a><a href="#panedrag">패널 이동 · 복제</a><a href="#tabs">창 탭 · 세션</a><a href="#pane-tabs">패널 탭</a><a href="#pane-colors">패널 색</a><a href="#favorites">즐겨찾기 · 폴더 트리</a><a href="#search">검색</a><a href="#preview">미리보기 · 퀵룩</a><a href="#files">파일 작업</a><a href="#batch-rename">일괄 이름 변경</a><a href="#basket">파일 바구니</a><a href="#watch">폴더 감시</a><a href="#clipboard">클립보드 경로</a><a href="#workspaces">워크스페이스</a><a href="#servers">서버 연결</a><a href="#office">Office 파일</a><a href="#ctxmenu">오른쪽 클릭 메뉴</a><a href="#theme">테마 · 모양</a><a href="#settings">설정</a><a href="#window-actions">기타 창 동작</a><a href="#shortcuts">바로 가기</a><a href="#troubleshoot">문제 해결</a>
+  </nav>
+</aside>
+<main class="main">
+  <header class="hero">
+    <h1>Maguro 도움말</h1>
+    <p class="tag">Windows용 빠른 다중 패널 파일 관리자</p>
+  </header>
+  <div id="no-match">일치하는 항목이 없습니다.</div>
+  <section class="section-block" id="overview" data-search="시작 소개 maguro grids">
+<h2>개요</h2>
+<p>Maguro는 Windows용 다중 패널 파일 관리자입니다.</p>
+<p>패널 하나가 폴더 하나입니다. 나란히 또는 격자로 두고 다른 프로그램 없이 복사·이동·비교합니다.</p>
+<p>시작 메뉴나 명령줄에서 실행합니다. maguro.exe 뒤에 폴더 경로를 쓰거나 .grids 세션 파일을 엽니다.</p>
+<p>F1은 브라우저에서 이 도움말을 엽니다. Ctrl+/는 앱 안의 짧은 바로 가기 목록입니다. Ctrl+,는 설정입니다.</p>
+<div class="shot-grid"><figure class="shot"><img src="../images-v3/hero_light.ko.png" alt="메인 창 (밝게)" loading="lazy"><figcaption>메인 창 (밝게)</figcaption></figure><figure class="shot"><img src="../images-v3/hero_dark.ko.png" alt="메인 창 (어둡게)" loading="lazy"><figcaption>메인 창 (어둡게)</figcaption></figure></div>
+</section><section class="section-block" id="address-toolbar" data-search="주소 도구 상태 ⇄">
+<h2>주소 칸 · 도구 모음</h2>
+<p class="ref-shortcuts">키 목록은 <a href="#shortcuts">바로 가기</a>.</p>
+<p>주소 칸은 현재 폴더입니다. 경로의 이름을 누르면 이동합니다. › 를 누르면 안의 폴더를 봅니다.</p>
+<p>현재 폴더·빈 곳을 누르거나 바로 가기의 주소 칸으로 경로를 입력합니다.</p>
+<p>도구 모음에는 레이아웃, 저장, 세션 열기, 즐겨찾기가 있습니다. 드라이브 글자는 탭 줄에 둘 수 있습니다.</p>
+<p>상태 표시줄은 선택 개수와 남은 용량을 보여 줍니다.</p>
+<p>⇄ 는 선택한 폴더(없으면 현재 폴더)를 다른 패널에서 열고 열·보기를 유지합니다. 또는 선택한 파일을 다른 패널 폴더로 복사·이동합니다(최대 10,000). 패널이 하나면 좌우로 나눕니다. 선택이 없으면 현재 폴더를 복제합니다.</p>
+
+</section><section class="section-block" id="layouts" data-search="레이아웃 격자 분할 최대화">
+<h2>레이아웃 · 패널</h2>
+<p class="ref-shortcuts">키 목록은 <a href="#shortcuts">바로 가기</a>.</p>
+<p>패널은 폴더 하나입니다.</p>
+<p>레이아웃을 클릭하면 균등 격자입니다. 누른 채 끌면 열마다 칸 수를 정합니다. 방향키와 Enter도 됩니다.</p>
+<p>분할선을 더블클릭하면 균등 분할, 끌면 크기 변경입니다.</p>
+<p>한도: 열 4, 한 열의 행 4, 패널 16.</p>
+<p>Ctrl+Shift+M 또는 패널 머리글 더블클릭으로 그 패널을 최대화하고, 다시 하면 복원합니다.</p>
+<div class="shot-grid"><figure class="shot"><img src="../images-v3/layout.ko.png" alt="레이아웃" loading="lazy"><figcaption>레이아웃</figcaption></figure><figure class="shot"><img src="../images-v3/layout_2v.png" alt="패널 2" loading="lazy"><figcaption>패널 2</figcaption></figure><figure class="shot"><img src="../images-v3/layout_4.png" alt="패널 4" loading="lazy"><figcaption>패널 4</figcaption></figure><figure class="shot"><img src="../images-v3/layout_preset_31.png" alt="3+1" loading="lazy"><figcaption>3+1</figcaption></figure></div>
+</section><section class="section-block" id="panedrag" data-search="끌기 놓기 교환 복제">
+<h2>패널 이동 · 복제</h2>
+<p>번호나 머리글을 끌어 패널을 옮깁니다.</p>
+<p>가장자리에 놓으면 대상 패널이 분할됩니다. 중앙에 놓으면 서로 바꿉니다.</p>
+<p>Ctrl을 누른 채 끌면 현재 패널 탭을 복사합니다. 가장자리는 이 패널을 남기고 분할하고, 중앙은 그 칸에 패널 탭을 추가합니다.</p>
+<p>빨간 미리보기는 한도를 넘는다는 뜻입니다. Ctrl을 떼면 복제가 아니라 이동합니다.</p>
+<div class="shot-grid"><figure class="shot"><img src="../images-v3/panedrag_before.png" alt="끌기 전" loading="lazy"><figcaption>끌기 전</figcaption></figure><figure class="shot"><img src="../images-v3/panedrag_after.png" alt="놓은 후" loading="lazy"><figcaption>놓은 후</figcaption></figure><figure class="shot"><img src="../images-v3/panedrag_dup.png" alt="Ctrl 끌기 복제" loading="lazy"><figcaption>Ctrl 끌기 복제</figcaption></figure></div>
+</section><section class="section-block" id="tabs" data-search="탭 세션 저장 grids 초록">
+<h2>창 탭 · 세션</h2>
+<p class="ref-shortcuts">키 목록은 <a href="#shortcuts">바로 가기</a>.</p>
+<p>창 탭은 레이아웃 전체(패널·폴더·보기·색 라벨)를 담습니다.</p>
+<p>저장은 이 탭을 씁니다. 저장 버튼의 초록 점은 레이아웃이 아직 저장되지 않았다는 뜻입니다(일반 파일 복사와 무관).</p>
+<p>세션 열기는 저장한 탭을 현재 탭 옆에 엽니다. 여러 개를 열면 각각 탭이 됩니다.</p>
+<p>Ctrl+N은 새 창입니다. 단일 창 모드면 이 창을 앞으로 가져오고 경로는 탭으로 엽니다. 단일 인스턴스는 다음 실행을 이 프로세스에 붙입니다.</p>
+<p>새/닫기/다음/이전 탭, 닫은 탭 다시 열기, 탭 복제는 바로 가기를 보세요.</p>
+<div class="shot-grid"><figure class="shot"><img src="../images-v3/tabs.ko.png" alt="창 탭" loading="lazy"><figcaption>창 탭</figcaption></figure></div>
+</section><section class="section-block" id="pane-tabs" data-search="패널 탭">
+<h2>패널 탭</h2>
+<p class="ref-shortcuts">키 목록은 <a href="#shortcuts">바로 가기</a>.</p>
+<p>패널 탭은 한 패널 안의 추가 폴더입니다. 창 탭과 다릅니다.</p>
+<p>폴더가 하나면 줄이 숨겨집니다. ⇄ 옆 버튼으로 패널 탭을 추가합니다.</p>
+<p>가운데 클릭이나 작은 닫기 표시로 닫습니다. 패널 탭 바로 가기는 포커스가 패널에 있을 때만 동작합니다.</p>
+
+</section><section class="section-block" id="pane-colors" data-search="색 라벨">
+<h2>패널 색</h2>
+<p>패널 머리글을 오른쪽 클릭해 색 라벨을 정합니다.</p>
+<p>세션에 저장되며 창 탭 색과 별개입니다.</p>
+<div class="shot-grid"><figure class="shot"><img src="../images-v3/pane_colors.ko.png" alt="패널 색" loading="lazy"><figcaption>패널 색</figcaption></figure></div>
+</section><section class="section-block" id="favorites" data-search="즐겨찾기 핀 트리 왼쪽">
+<h2>즐겨찾기 · 폴더 트리</h2>
+<p class="ref-shortcuts">키 목록은 <a href="#shortcuts">바로 가기</a>.</p>
+<p>즐겨찾기와 폴더 트리는 왼쪽 패널을 나눕니다. 사이 분할선을 끕니다. 위아래 순서는 설정에서 정합니다.</p>
+<p>즐겨찾기를 누르면 활성 패널에서 엽니다. 그룹을 누르면 펼치거나 접습니다. 검색은 부모 그룹을 남겨 위치가 보이게 합니다.</p>
+<p>폴더와 파일 모두 즐겨찾기에 둘 수 있습니다. 없는 폴더는 빈 경로를 열지 않고 안내합니다.</p>
+<p>도구 모음 즐겨찾기는 큰 목록을 엽니다(검색·이름 변경·삭제·활성 패널에서 열기). 탐색기 핀도 나올 수 있습니다.</p>
+<p>폴더 트리에서 Enter나 더블클릭으로 패널에 엽니다. Ctrl 클릭·가운데 클릭은 패널 탭으로 엽니다.</p>
+<p>왼쪽 패널 표시는 바로 가기를 보세요.</p>
+<div class="shot-grid"><figure class="shot"><img src="../images-v3/favorites.ko.png" alt="즐겨찾기·트리" loading="lazy"><figcaption>즐겨찾기·트리</figcaption></figure></div>
+</section><section class="section-block" id="search" data-search="검색 everything">
+<h2>검색</h2>
+<p>Ctrl+F로 이 폴더를 검색합니다.</p>
+<p>하위 폴더까지 깊게 찾으려면 Everything을 설치하고 실행해 둡니다. 설정 → 일반에서 상태를 보고 설치·시작할 수 있습니다.</p>
+<p>Everything이 실행 중일 때만 Maguro가 질의합니다.</p>
+<div class="shot-grid"><figure class="shot"><img src="../images-v3/search.ko.png" alt="검색" loading="lazy"><figcaption>검색</figcaption></figure></div>
+</section><section class="section-block" id="preview" data-search="미리보기 퀵룩 space f3">
+<h2>미리보기 · 퀵룩</h2>
+<p class="ref-shortcuts">키 목록은 <a href="#shortcuts">바로 가기</a>.</p>
+<p>F3이 퀵룩입니다. Space 미리보기가 켜져 있으면 Space도 같습니다(입력 직후·IME 조합 중 Space는 이름에 남음).</p>
+<p>퀵룩에서 Enter는 기본 앱으로 열고 미리보기를 닫습니다. Shift+Enter나 오른쪽 클릭은 다른 앱으로 열기입니다.</p>
+<p>Alt+P는 미리보기 패널입니다. 옵션이 켜져 있으면 휠로 이전·다음 파일로 이동합니다.</p>
+<div class="shot-grid"><figure class="shot"><img src="../images-v3/preview.ko.png" alt="미리보기 패널" loading="lazy"><figcaption>미리보기 패널</figcaption></figure><figure class="shot"><img src="../images-v3/preview_peek.ko.png" alt="퀵룩" loading="lazy"><figcaption>퀵룩</figcaption></figure></div>
+</section><section class="section-block" id="files" data-search="복사 삭제 끌기 robocopy winmerge">
+<h2>파일 작업</h2>
+<p class="ref-shortcuts">키 목록은 <a href="#shortcuts">바로 가기</a>.</p>
+<p>복사·잘라내기·붙여넣기·이름 변경·삭제는 탐색기와 같습니다(바로 가기 참고).</p>
+<p>Del은 Windows 기본(보통 휴지통)을 따릅니다. Shift+Del은 완전 삭제입니다. 설정에서 Del 확인과 기본 삭제를 정할 수 있습니다.</p>
+<p>패널 사이 끌기로 복사·이동합니다. 같은 드라이브는 이동, 다른 드라이브는 복사(설정에서 기본 끌기를 바꿀 수 있음). 폴더 행에 놓으면 그 안으로 들어갑니다.</p>
+<p>빠른 복사(설정 → 파일 작업)는 네트워크 붙여넣기·끌기에 robocopy와 Maguro 진행률·취소를 씁니다. 대상의 여분 파일은 지우지 않습니다. 끄면 Windows 복사 창입니다. 로컬만의 복사는 Windows를 씁니다.</p>
+<p>클립보드에 그림이 있으면 Ctrl+V가 현재 폴더에 PNG로 저장합니다.</p>
+<p>새 폴더·새 텍스트 파일은 바로 가기에 있습니다. 새 파일 이름은 설정에서 옵니다.</p>
+<p>Ctrl+Shift+O는 같은 선택 이름을 다른 패널들에 모읍니다.</p>
+<p>Ctrl+Alt+C는 활성 패널 폴더와 다음 패널을 WinMerge로 비교합니다. 톱니·목록에서 파일 두 개, 또는 다른 패널의 같은 이름 파일과도 비교할 수 있습니다. WinMerge 경로는 설정 → 일반입니다.</p>
+
+</section><section class="section-block" id="batch-rename" data-search="일괄 이름">
+<h2>일괄 이름 변경</h2>
+<p class="ref-shortcuts">키 목록은 <a href="#shortcuts">바로 가기</a>.</p>
+<p>Ctrl+Shift+R로 선택 항목을 일괄 이름 변경합니다.</p>
+<p>접두·접미·바꾸기를 넣고 적용 전에 미리 봅니다.</p>
+<div class="shot-grid"><figure class="shot"><img src="../images-v3/rename.ko.png" alt="일괄 이름 변경" loading="lazy"><figcaption>일괄 이름 변경</figcaption></figure></div>
+</section><section class="section-block" id="basket" data-search="바구니 basket">
+<h2>파일 바구니</h2>
+<p class="ref-shortcuts">키 목록은 <a href="#shortcuts">바로 가기</a>.</p>
+<p>Ctrl+Shift+B로 항상 위 작은 창인 파일 바구니를 엽니다.</p>
+<p>끌어 놓거나 Ctrl+Alt+B로 활성 패널 선택을 넣습니다. 원래 경로를 유지합니다.</p>
+<p>활성 패널로 복사·이동은 Windows 진행 창을 씁니다. 밖으로 끌면 복사, Shift 끌면 이동입니다. 제거·모두 지우기는 목록만 바꿉니다.</p>
+<div class="shot-grid"><figure class="shot"><img src="../images-v3/feature_basket.ko.png" alt="파일 바구니" loading="lazy"><figcaption>파일 바구니</figcaption></figure></div>
+</section><section class="section-block" id="watch" data-search="감시 watch">
+<h2>폴더 감시</h2>
+<p class="ref-shortcuts">키 목록은 <a href="#shortcuts">바로 가기</a>.</p>
+<p>Ctrl+Shift+W로 폴더 감시를 엽니다.</p>
+<p>폴더 변경을 지켜보다가 새 항목·갱신이 있으면 바로 이동합니다.</p>
+<div class="shot-grid"><figure class="shot"><img src="../images-v3/feature_folder_watch.ko.png" alt="폴더 감시" loading="lazy"><figcaption>폴더 감시</figcaption></figure></div>
+</section><section class="section-block" id="clipboard" data-search="클립보드 경로">
+<h2>클립보드 경로</h2>
+<p class="ref-shortcuts">키 목록은 <a href="#shortcuts">바로 가기</a>.</p>
+<p>Win+Shift+V는 클립보드의 경로를 새 탭으로 엽니다.</p>
+<p>설정 → 일반에서 이 바로 가기를 켜거나 끌 수 있습니다.</p>
+<div class="shot-grid"><figure class="shot"><img src="../images-v3/feature_win_shift_v.ko.png" alt="클립보드 경로" loading="lazy"><figcaption>클립보드 경로</figcaption></figure></div>
+</section><section class="section-block" id="workspaces" data-search="워크스페이스">
+<h2>워크스페이스</h2>
+<p class="ref-shortcuts">키 목록은 <a href="#shortcuts">바로 가기</a>.</p>
+<p>워크스페이스는 탭·패널·폴더 배치를 최대 9칸에 저장합니다.</p>
+<p>Ctrl+Alt+1…9로 불러오고, Ctrl+Alt+Shift+1…9로 저장합니다.</p>
+<p>톱니 → 워크스페이스에서 저장·불러오기·이름·비우기를 합니다. 빈 칸은 짧은 안내를 냅니다.</p>
+<p>불러오면 현재 탭을 바꿉니다. 불러오기 전 확인은 해당 옵션이 켜져 있을 때만입니다.</p>
+
+</section><section class="section-block" id="servers" data-search="smb webdav sftp ftp">
+<h2>서버 연결</h2>
+<p>SMB, WebDAV, SFTP, FTP에 연결합니다. 연결된 서버는 열고·복사·미리보기할 수 있는 폴더로 보입니다.</p>
+<p>연결 대화상자에서 종류·주소·포트·사용자·비밀번호를 넣습니다. 비밀번호는 Windows 자격 증명에만 두고 설정 파일에는 쓰지 않습니다.</p>
+<p>SMB는 Windows 공유입니다. WebDAV는 HTTPS가 필요할 수 있습니다. FTP는 입력한 호스트·포트입니다. SFTP는 rclone과 WinFsp가 필요하며 Maguro가 설치를 안내할 수 있습니다.</p>
+<p>끝나면 끊습니다. 끊긴 공유는 네트워크 폴더 크기 옵션이 켜져 있지 않으면 크기를 걷지 않습니다. 네트워크 폴더가 안 열리면 F5로 다시 시도합니다.</p>
+<div class="shot-grid"><figure class="shot"><img src="../images-v3/servers.ko.png" alt="서버 연결" loading="lazy"><figcaption>서버 연결</figcaption></figure></div>
+</section><section class="section-block" id="office" data-search="excel office">
+<h2>Office 파일</h2>
+<p>다른 앱이 연 Excel 등 Office 파일은 읽기 전용으로 열릴 수 있습니다.</p>
+<p>잠긴 통합 문서가 탐색을 막지 않도록 목록을 정리합니다.</p>
+<div class="shot-grid"><figure class="shot"><img src="../images-v3/feature_excel_readonly_tidy.ko.png" alt="Office / Excel" loading="lazy"><figcaption>Office / Excel</figcaption></figure></div>
+</section><section class="section-block" id="ctxmenu" data-search="컨텍스트 메뉴">
+<h2>오른쪽 클릭 메뉴</h2>
+<p>설정 → 오른쪽 클릭 메뉴에서 타사 항목을 끌 수 있습니다.</p>
+<p>클래식과 Windows 11 두 형태가 있습니다. Windows 11 패키지 항목은 기본이 꺼짐이며 필요한 것만 켭니다.</p>
+<p>새로 고침으로 메뉴를 다시 읽습니다. 열기·복사·속성 같은 Windows 기본 항목은 유지됩니다.</p>
+<div class="shot-grid"><figure class="shot"><img src="../images-v3/settings_ctxmenu.ko.png" alt="오른쪽 클릭 메뉴" loading="lazy"><figcaption>오른쪽 클릭 메뉴</figcaption></figure></div>
+</section><section class="section-block" id="theme" data-search="테마 강조색">
+<h2>테마 · 모양</h2>
+<p>설정 → 모양에서 테마, 강조색, 도구 모음, 드라이브 버튼, 상태 표시줄을 정합니다.</p>
+<p>밝게·어둡게는 강조색을 따로 기억합니다. Windows 따르기는 시스템과 함께 바뀝니다.</p>
+<p>테마를 바꾼 뒤 폴더 목록 색은 다음 실행에 적용되고, 나머지 창은 바로 바뀝니다.</p>
+<p>이 도움말 쪽 사이드바에도 밝게/어둡게/자동이 있습니다.</p>
+<div class="shot-grid"><figure class="shot"><img src="../images-v3/settings.ko.png" alt="설정" loading="lazy"><figcaption>설정</figcaption></figure></div>
+</section><section class="section-block" id="settings" data-search="설정 일반 모양 패널 파일 즐겨찾기 바로가기 세션 고급">
+<h2>설정</h2>
+<p>Ctrl+,로 설정을 엽니다. 검색은 제목·설명이 맞는 카드로 이동합니다.</p>
+<p>일반 — 표시 언어, 글꼴, 시작할 때, 기본 폴더 앱, 기본 레이아웃, 단일 인스턴스, 단일 창, 열기/저장 대화상자의 폴더, 클립보드 경로 바로 가기, 빈곳 더블클릭으로 상위, Everything, WinMerge.</p>
+<p>모양 — 테마, 강조색, 도구 모음, 드라이브 버튼, 상태 표시줄.</p>
+<p>패널과 보기 — 새 패널 기본 보기, 폴더마다 보기 기억, 모든 폴더 기본 보기, 새 패널 시작 폴더, 숨김 파일, 확장자, 폴더 크기(네트워크 포함), 왼쪽 패널·순서, 활성 패널 테두리, 미리보기 패널, Space 미리보기, 휠로 이전·다음.</p>
+<p>파일 작업 — Windows 복사 창, 네트워크 빠른 복사, 삭제 확인, 기본 삭제, 새 파일 이름, 기본 끌어서 놓기.</p>
+<p>즐겨찾기 — 왼쪽 패널 표시와 즐겨찾기/트리 위아래.</p>
+<p>바로 가기 — 행을 더블클릭하고 새 키를 누릅니다. Esc는 취소, 재설정은 기본값. 충돌하면 알립니다.</p>
+<p>세션 — 세션 폴더, 종료 시 저장, 초록 점.</p>
+<p>고급 — 시작 시 업데이트 확인, 설정 파일 위치, 모두 재설정. maguro.exe 옆 portable.txt는 설정을 AppData 대신 exe 옆에 둡니다. 재설정은 기본 설정만 돌리고 레이아웃·폴더·즐겨찾기는 남깁니다.</p>
+<p>오른쪽 클릭 메뉴 — 타사 항목과 메뉴 형태.</p>
+<p>정보 — 버전과 링크.</p>
+
+</section><section class="section-block" id="window-actions" data-search="앞으로 대화상자 포커스 숨김 선택">
+<h2>기타 창 동작</h2>
+<p class="ref-shortcuts">키 목록은 <a href="#shortcuts">바로 가기</a>.</p>
+<p>Win+Shift+E는 Maguro를 앞으로 가져옵니다.</p>
+<p>Ctrl+Alt+G는 옵션이 켜져 있을 때 파일 대화상자에서 폴더로 점프합니다.</p>
+<p>F6 / Shift+F6은 포커스를 옮깁니다. Ctrl+H는 숨김 파일을 토글합니다.</p>
+<p>패턴으로 선택·해제·반전은 바로 가기(Num+, Num−, Num*)에 있습니다.</p>
+<p>전체 경로 복사와 폴더에서 보기도 바로 가기에 있습니다.</p>
+<p>최근 파일은 Ctrl+Alt+R, 최근 폴더는 Alt+↓입니다.</p>
+
+</section><section class="section-block" id="shortcuts" data-search="바로가기 단축키">
+<h2>바로 가기</h2>
+<p>Maguro의 모든 키가 아래에 있습니다. 같은 목록은 Ctrl+/로 앱에서도 엽니다.</p>
+<p>설정 → 바로 가기에서 행을 더블클릭하고 새 키를 누릅니다. Esc는 취소, 재설정은 기본값입니다.</p>
+<p>앱 안 목록은 설정을 다시 시작 없이 따릅니다.</p>
+<table class="shortcuts-table"><thead><tr><th>키</th><th>동작</th></tr></thead><tbody>
+<tr><td class="cat" colspan="2"> 탭</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>T</kbd></span></td><td> 새 탭</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>W</kbd></span></td><td> 탭 닫기</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Tab</kbd></span></td><td> 다음 탭</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Tab</kbd></span></td><td> 이전 탭</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd></span></td><td> 닫은 탭 다시 열기</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>K</kbd></span></td><td> 탭 복제</td></tr>
+<tr><td class="cat" colspan="2"> 패널</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>PageDown</kbd></span></td><td> 다음 패널</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>PageUp</kbd></span></td><td> 이전 패널</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>1…9</kbd></span></td><td> 1–9번 패널로 이동</td></tr>
+<tr><td class="cat" colspan="2"> 패널 탭</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>T</kbd></span></td><td> 새 패널 탭</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>W</kbd></span></td><td> 패널 탭 닫기</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>PageDown</kbd></span></td><td> 다음 패널 탭</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>PageUp</kbd></span></td><td> 이전 패널 탭</td></tr>
+<tr><td class="cat" colspan="2"> 이동</td></tr>
+<tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>←</kbd></span></td><td> 왼쪽 패널</td></tr>
+<tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>→</kbd></span></td><td> 오른쪽 패널</td></tr>
+<tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>↑</kbd></span></td><td> 위 패널</td></tr>
+<tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>↓</kbd></span></td><td> 아래 패널</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>←</kbd></span></td><td> 왼쪽 패널과 자리 바꾸기</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>→</kbd></span></td><td> 오른쪽 패널과 자리 바꾸기</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>↑</kbd></span></td><td> 위 패널과 자리 바꾸기</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>↓</kbd></span></td><td> 아래 패널과 자리 바꾸기</td></tr>
+<tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>←</kbd></span></td><td> 뒤로</td></tr>
+<tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>→</kbd></span></td><td> 앞으로</td></tr>
+<tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>↑</kbd></span></td><td> 상위 폴더</td></tr>
+<tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>↓</kbd></span></td><td> 최근 폴더</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>L</kbd></span> <span class="sep">/</span> <span class="chord"><kbd>Alt</kbd>+<kbd>D</kbd></span> <span class="sep">/</span> <span class="chord"><kbd>F4</kbd></span></td><td> 주소창</td></tr>
+<tr><td class="cat" colspan="2"> 보기</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>F</kbd></span></td><td> 이 폴더 검색</td></tr>
+<tr><td><span class="chord"><kbd>F3</kbd></span></td><td> 빠른 미리보기</td></tr>
+<tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>P</kbd></span></td><td> 미리보기 창</td></tr>
+<tr><td><span class="chord"><kbd>F6</kbd></span></td><td> 다음 포커스</td></tr>
+<tr><td><span class="chord"><kbd>Shift</kbd>+<kbd>F6</kbd></span></td><td> 이전 포커스</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>H</kbd></span></td><td> 숨김 파일 표시</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd></span></td><td> 왼쪽 패널 표시</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd></span></td><td> 탐색기 폴더 가져오기</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>R</kbd></span></td><td> 최근 파일</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd></span></td><td> 패널 크게 보기 / 복원</td></tr>
+<tr><td class="cat" colspan="2"> 파일</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd></span></td><td> 전체 경로 복사</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd></span></td><td> 일괄 이름 바꾸기</td></tr>
+<tr><td><span class="chord"><kbd>Num</kbd>+<kbd></kbd></span> <span class="sep">/</span> <span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd></span></td><td> 패턴으로 선택</td></tr>
+<tr><td><span class="chord"><kbd>Num−</kbd></span></td><td> 패턴으로 선택 해제</td></tr>
+<tr><td><span class="chord"><kbd>Num*</kbd></span></td><td> 선택 반전</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>N</kbd></span></td><td> 새 텍스트 문서</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd></span></td><td> 새 폴더</td></tr>
+<tr><td><span class="chord"><kbd>F7</kbd></span></td><td> 이 패널에 새 폴더</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd></span></td><td> WinMerge로 폴더 비교</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd></span></td><td> 파일 바구니</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>B</kbd></span></td><td> 선택을 바구니에 담기</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Enter</kbd></span></td><td> 폴더에서 표시</td></tr>
+<tr><td class="cat" colspan="2"> 세션</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>S</kbd></span></td><td> 이 탭 저장</td></tr>
+<tr><td class="cat" colspan="2"> 작업 공간</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>1…9</kbd></span></td><td> 작업 공간 불러오기</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>1…9</kbd></span></td><td> 작업 공간 저장</td></tr>
+<tr><td class="cat" colspan="2"> 즐겨찾기</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>B</kbd></span></td><td> 즐겨찾기</td></tr>
+<tr><td class="cat" colspan="2"> 도움말</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>,</kbd></span></td><td> 설정</td></tr>
+<tr><td><span class="chord"><kbd>F1</kbd></span></td><td> 단축키 도움말</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>/</kbd></span></td><td> 단축키 목록</td></tr>
+<tr><td class="cat" colspan="2"> 창</td></tr>
+<tr><td><span class="chord"><kbd>Win</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd></span></td><td> Maguro를 앞으로</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>G</kbd></span></td><td> 파일 대화 상자의 폴더로 이동</td></tr>
+<tr><td><span class="chord"><kbd>Win</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd></span></td><td> 클립보드 경로 열기</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>N</kbd></span></td><td> 새 창</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>W</kbd></span></td><td> 폴더 감시</td></tr>
+</tbody></table>
+<p>마우스: 레이아웃 클릭/끌기, 주소 칸 ›, 분할선 더블클릭, 패널 머리글 오른쪽 클릭으로 색, 패널 탭 가운데 클릭으로 닫기.</p>
+
+</section><section class="section-block" id="troubleshoot" data-search="문제 F5 everything 충돌 업데이트">
+<h2>문제 해결</h2>
+<p>폴더가 안 열림 — 패널을 누르고 F5. F5는 창 어디서든 활성 패널을 다시 읽고 실패한 네트워크 폴더를 재시도합니다.</p>
+<p>하위 검색이 비어 있음 — Everything을 설치·실행하고 설정 → 일반을 확인합니다.</p>
+<p>네트워크 복사가 느리거나 Maguro 진행이 없음 — 네트워크 빠른 복사를 켭니다. 끄면 Windows 복사 창입니다. 로컬만의 복사에는 빠른 복사가 쓰지 않습니다.</p>
+<p>WinMerge가 안 뜸 — 설정 → 일반에서 경로를 지정합니다. 폴더 비교는 실제 폴더여야 합니다.</p>
+<p>SFTP 실패 — 안내에 따라 rclone·WinFsp를 설치하고 호스트·포트·사용자·비밀번호를 확인합니다. WebDAV는 HTTPS가 필요할 수 있습니다. SMB는 Windows 공유 경로, FTP는 연결의 호스트·포트입니다.</p>
+<p>창 색만 바뀌고 목록은 그대로 — Maguro를 다시 시작합니다. 목록 색은 시작 때 붙습니다.</p>
+<p>지난번 비정상 종료 — 다음 시작에 보고서 위치(설정 옆 crashes)를 알려 줍니다.</p>
+<p>두 번째 실행이 바로 끝남 — 단일 인스턴스/단일 창이 켜져 있고 첫 창이 유지됩니다. 설치형 업데이트는 maguro.exe를 바꾸고 다시 시작합니다. zip만 있는 릴리스는 풀지 않으니 안내대로 exe를 바꿉니다.</p>
+<p>종료 시 저장이 되도록 창의 닫기 버튼으로 닫습니다.</p>
+
+</section>
+</main>
+</div>
+<script>
+(function () {
+  var root = document.documentElement;
+  var q = document.getElementById('q');
+  var blocks = Array.prototype.slice.call(document.querySelectorAll('.section-block'));
+  var noMatch = document.getElementById('no-match');
+  var btns = {
+    light: document.getElementById('theme-light'),
+    dark: document.getElementById('theme-dark'),
+    auto: document.getElementById('theme-auto')
+  };
+  function applyTheme(mode) {
+    root.classList.remove('light', 'dark');
+    if (mode === 'light') root.classList.add('light');
+    if (mode === 'dark') root.classList.add('dark');
+    try { localStorage.setItem('maguro-help-theme', mode); } catch (e) {}
+    Object.keys(btns).forEach(function (k) {
+      btns[k].classList.toggle('active', k === mode);
+    });
+  }
+  var saved = 'auto';
+  try { saved = localStorage.getItem('maguro-help-theme') || 'auto'; } catch (e) {}
+  applyTheme(saved);
+  Object.keys(btns).forEach(function (k) {
+    btns[k].addEventListener('click', function () { applyTheme(k); });
+  });
+  function filter() {
+    var term = (q.value || '').trim().toLowerCase();
+    var shown = 0;
+    blocks.forEach(function (el) {
+      var hay = ((el.getAttribute('data-search') || '') + ' ' + el.textContent).toLowerCase();
+      var ok = !term || hay.indexOf(term) !== -1;
+      el.classList.toggle('hidden', !ok);
+      if (ok) shown++;
+    });
+    noMatch.classList.toggle('show', shown === 0);
+  }
+  q.addEventListener('input', filter);
+})();
+</script>
+</body>
+</html>

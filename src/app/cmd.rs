@@ -783,11 +783,11 @@ unsafe fn side_popup(h: HWND) -> bool {
     if settings::captures(h) || crate::rename::captures(h) || fav_manager_captures(h) || crate::basket::captures(h) {
         return true;
     }
-    let (peek, load, grid, keys, help, fav, match_hwnd) = app(|a| {
-        (a.peek, a.load, a.grid, a.keys_popup, a.help_popup, a.fav_popup, a.matcher.as_ref().map(|m| m.hwnd).unwrap_or_default())
+    let (peek, load, grid, keys, fav, match_hwnd) = app(|a| {
+        (a.peek, a.load, a.grid, a.keys_popup, a.fav_popup, a.matcher.as_ref().map(|m| m.hwnd).unwrap_or_default())
     });
     let hit = |root: HWND| !root.0.is_null() && (h == root || IsChild(root, h).as_bool());
-    hit(peek) || hit(load) || hit(grid) || hit(keys) || hit(help) || hit(fav) || hit(match_hwnd)
+    hit(peek) || hit(load) || hit(grid) || hit(keys) || hit(fav) || hit(match_hwnd)
 }
 
 unsafe fn pane_from_hwnd(h: HWND) -> Option<usize> {

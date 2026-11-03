@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Maguro Help</title>
+<style>
+
+
+:root {
+  --brand: #0A9BD6;
+  --brand-dark: #0786BC;
+  --brand-soft: #9BE3FA;
+  --bg: #f6f8fa;
+  --surface: #ffffff;
+  --surface-2: #eef3f7;
+  --text: #1a2332;
+  --muted: #5a6a7a;
+  --line: #d5dee7;
+  --kbd-bg: #eef2f6;
+  --kbd-border: #c5d0db;
+  --shadow: 0 1px 2px rgba(16,40,60,.06), 0 8px 24px rgba(16,40,60,.06);
+  --sidebar-w: 260px;
+  --radius: 12px;
+  color-scheme: light;
+}
+html.dark {
+  --bg: #0f1419; --surface: #171d25; --surface-2: #1e2630; --text: #e8eef4;
+  --muted: #9aabbc; --line: #2a3542; --kbd-bg: #243040; --kbd-border: #3a4a5c;
+  --shadow: 0 1px 2px rgba(0,0,0,.35), 0 8px 24px rgba(0,0,0,.35);
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: dark) {
+  html:not(.light) {
+    --bg: #0f1419; --surface: #171d25; --surface-2: #1e2630; --text: #e8eef4;
+    --muted: #9aabbc; --line: #2a3542; --kbd-bg: #243040; --kbd-border: #3a4a5c;
+    --shadow: 0 1px 2px rgba(0,0,0,.35), 0 8px 24px rgba(0,0,0,.35);
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  font-family: "Segoe UI", "Malgun Gothic", "Yu Gothic UI", "Meiryo", sans-serif;
+  background: var(--bg); color: var(--text); line-height: 1.65; font-size: 15px;
+}
+a { color: var(--brand-dark); text-decoration: none; }
+html.dark a, html:not(.light) a { color: var(--brand-soft); }
+@media (prefers-color-scheme: light) {
+  html:not(.dark) a { color: var(--brand-dark); }
+}
+a:hover { text-decoration: underline; }
+.layout { display: grid; grid-template-columns: var(--sidebar-w) 1fr; min-height: 100vh; }
+@media (max-width: 900px) {
+  .layout { grid-template-columns: 1fr; }
+  .sidebar { position: relative !important; height: auto !important; border-right: none; border-bottom: 1px solid var(--line); }
+}
+.sidebar {
+  position: sticky; top: 0; height: 100vh; overflow: auto;
+  background: var(--surface); border-right: 1px solid var(--line); padding: 20px 16px 32px;
+}
+.brand { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; padding: 4px 6px; }
+.brand-mark {
+  width: 32px; height: 32px; border-radius: 8px; flex: 0 0 auto;
+  background: linear-gradient(145deg, var(--brand), var(--brand-dark));
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.2);
+}
+.brand strong { font-size: 18px; letter-spacing: -0.02em; }
+.tagline { margin: 0 6px 12px; color: var(--muted); font-size: 12.5px; line-height: 1.4; }
+.lang-switch { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 6px 12px; }
+.lang-switch a {
+  display: inline-block; padding: 4px 10px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--surface-2);
+  color: var(--muted); font-size: 12px; font-weight: 600; text-decoration: none;
+}
+.lang-switch a:hover { border-color: var(--brand); color: var(--brand-dark); text-decoration: none; }
+.lang-switch a.active { background: var(--brand); border-color: var(--brand); color: #fff; }
+html.dark .lang-switch a.active, html:not(.light) .lang-switch a.active { color: #041018; }
+.theme-toggle { display: flex; gap: 6px; margin: 0 6px 14px; }
+.theme-toggle button {
+  flex: 1; padding: 7px 0; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--surface-2); color: var(--muted); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.theme-toggle button.active { background: var(--brand); border-color: var(--brand); color: #fff; }
+html.dark .theme-toggle button.active, html:not(.light) .theme-toggle button.active { color: #041018; }
+.search-wrap { position: relative; margin: 0 6px 14px; }
+.search-wrap input {
+  width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--surface-2); color: var(--text); font: inherit; outline: none;
+}
+.search-wrap input:focus { border-color: var(--brand); box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 25%, transparent); }
+.toc { margin: 0; padding: 0; }
+.toc-title {
+  margin: 8px 10px 6px; font-size: 11px; font-weight: 700; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--muted);
+}
+.toc a {
+  display: block; padding: 7px 10px; border-radius: 8px; color: var(--muted);
+  font-size: 13.5px; text-decoration: none;
+}
+.toc a:hover, .toc a:focus { background: var(--surface-2); color: var(--text); text-decoration: none; }
+.main { max-width: 880px; padding: 28px 28px 96px; }
+.hero h1 { margin: 0 0 6px; font-size: 28px; letter-spacing: -0.02em; }
+.hero .tag { color: var(--muted); margin: 0 0 20px; }
+.section-block {
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 22px 24px 20px; margin: 0 0 16px; box-shadow: var(--shadow);
+}
+.section-block.hidden { display: none; }
+.section-block h2 {
+  margin: 0 0 10px; font-size: 20px; letter-spacing: -0.01em;
+  padding-bottom: 10px; border-bottom: 1px solid var(--line);
+}
+.section-block p { margin: 0.55em 0; }
+.ref-shortcuts { font-size: 13px; color: var(--muted); margin: 0 0 0.85em; }
+.shot-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px; margin: 16px 0 2px;
+}
+.shot {
+  margin: 0; background: var(--surface-2); border: 1px solid var(--line);
+  border-radius: 10px; overflow: hidden; padding: 0 0 10px;
+}
+.shot img { display: block; width: 100%; height: auto; padding: 26px 26px 8px; box-sizing: border-box; }
+.shot figcaption { padding: 0 14px; font-size: 12px; color: var(--muted); text-align: center; }
+.shortcuts-table { width: 100%; border-collapse: collapse; font-size: 13.5px; margin-top: 8px; }
+.shortcuts-table th, .shortcuts-table td {
+  text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top;
+}
+.shortcuts-table th { color: var(--muted); font-weight: 600; font-size: 12px; letter-spacing: .04em; }
+.shortcuts-table tr:hover td { background: var(--surface-2); }
+.shortcuts-table .cat {
+  font-size: 12px; font-weight: 700; color: var(--brand-dark); padding-top: 16px; border-bottom: none;
+}
+html.dark .shortcuts-table .cat, html:not(.light) .shortcuts-table .cat { color: var(--brand-soft); }
+kbd {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 12px; padding: 2px 6px; border-radius: 5px;
+  background: var(--kbd-bg); border: 1px solid var(--kbd-border);
+  box-shadow: inset 0 -1px 0 rgba(0,0,0,.06); white-space: nowrap;
+}
+.chord { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.chord .sep { color: var(--muted); margin: 0 2px; font-size: 12px; }
+#no-match {
+  display: none; padding: 24px; text-align: center; color: var(--muted);
+  border: 1px dashed var(--line); border-radius: var(--radius); margin-bottom: 16px;
+}
+#no-match.show { display: block; }
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+}
+
+
+</style>
+</head>
+<body>
+<div class="layout">
+<aside class="sidebar">
+  <div class="brand"><span class="brand-mark" aria-hidden="true"></span><strong>Maguro</strong></div>
+  <p class="tagline">Fast multi-pane file manager for Windows</p>
+  <div class="lang-switch" role="navigation" aria-label="Language"><a href="../" class="" hreflang="ko">한국어</a><a href="../ja/" class="" hreflang="ja">日本語</a><a href="./" class="active" hreflang="en">English</a></div>
+  <div class="theme-toggle" role="group" aria-label="Theme">
+    <button type="button" id="theme-light">Light</button>
+    <button type="button" id="theme-dark">Dark</button>
+    <button type="button" id="theme-auto">Auto</button>
+  </div>
+  <div class="search-wrap">
+    <label class="visually-hidden" for="q">Search help…</label>
+    <input type="search" id="q" placeholder="Search help…" autocomplete="off">
+  </div>
+  <nav class="toc" id="toc" aria-label="Contents">
+    <div class="toc-title">Contents</div>
+    <a href="#overview">Overview</a><a href="#address-toolbar">Address bar &amp; toolbar</a><a href="#layouts">Layouts &amp; panes</a><a href="#panedrag">Move &amp; duplicate panes</a><a href="#tabs">Window tabs &amp; sessions</a><a href="#pane-tabs">Pane tabs</a><a href="#pane-colors">Pane colours</a><a href="#favorites">Favourites &amp; folder tree</a><a href="#search">Search</a><a href="#preview">Preview &amp; Quick look</a><a href="#files">File operations</a><a href="#batch-rename">Batch rename</a><a href="#basket">File Basket</a><a href="#watch">Folder Watch</a><a href="#clipboard">Clipboard path</a><a href="#workspaces">Workspaces</a><a href="#servers">Server connections</a><a href="#office">Office files</a><a href="#ctxmenu">Right-click menu</a><a href="#theme">Theme &amp; appearance</a><a href="#settings">Settings</a><a href="#window-actions">Other window actions</a><a href="#shortcuts">Shortcuts</a><a href="#troubleshoot">Troubleshooting</a>
+  </nav>
+</aside>
+<main class="main">
+  <header class="hero">
+    <h1>Maguro Help</h1>
+    <p class="tag">Fast multi-pane file manager for Windows</p>
+  </header>
+  <div id="no-match">No matching sections.</div>
+  <section class="section-block" id="overview" data-search="start intro about maguro.exe grids">
+<h2>Overview</h2>
+<p>Maguro is a multi-pane file manager for Windows.</p>
+<p>Each pane shows one folder. Arrange panes side by side or in a grid to copy, move, and compare without a second program.</p>
+<p>Start from the Start menu or the command line. Pass folder paths after maguro.exe, or open a .grids session file.</p>
+<p>F1 opens this Help in the browser. Ctrl+/ opens the compact in-app shortcut list. Ctrl+, opens Settings.</p>
+<div class="shot-grid"><figure class="shot"><img src="../../images-v3/hero_light.png" alt="Main window (light)" loading="lazy"><figcaption>Main window (light)</figcaption></figure><figure class="shot"><img src="../../images-v3/hero_dark.png" alt="Main window (dark)" loading="lazy"><figcaption>Main window (dark)</figcaption></figure></div>
+</section><section class="section-block" id="address-toolbar" data-search="address toolbar status swap ⇄">
+<h2>Address bar &amp; toolbar</h2>
+<p class="ref-shortcuts">Keys are listed once in <a href="#shortcuts">Shortcuts</a>.</p>
+<p>The address bar is the current folder. Click a path segment to go there. Click a chevron to list folders inside.</p>
+<p>Click the current folder, empty space, or use Address bar (see Shortcuts) to type a path.</p>
+<p>The toolbar has Layout, Save, Open session, and Favourites. Drive letters can sit on the tab row.</p>
+<p>The status bar shows the selection count and free space.</p>
+<p>The ⇄ button opens the selected folder (or the current one) in another pane and keeps columns and view; or copies/moves selected files there (up to 10,000). With one pane it splits left–right. With nothing selected it duplicates the current folder.</p>
+
+</section><section class="section-block" id="layouts" data-search="layout grid splitter maximise pane">
+<h2>Layouts &amp; panes</h2>
+<p class="ref-shortcuts">Keys are listed once in <a href="#shortcuts">Shortcuts</a>.</p>
+<p>A pane is one folder.</p>
+<p>Click Layout for an even grid. Press and drag to set rows per column. Arrow keys and Enter work in that picker.</p>
+<p>Double-click a splitter to split evenly. Drag a splitter to resize.</p>
+<p>Limits: 4 columns, 4 rows in one column, 16 panes.</p>
+<p>Ctrl+Shift+M or double-click a pane header maximises that pane; do it again to restore.</p>
+<div class="shot-grid"><figure class="shot"><img src="../../images-v3/layout.png" alt="Layout picker" loading="lazy"><figcaption>Layout picker</figcaption></figure><figure class="shot"><img src="../../images-v3/layout_2v.png" alt="Two panes" loading="lazy"><figcaption>Two panes</figcaption></figure><figure class="shot"><img src="../../images-v3/layout_4.png" alt="Four panes" loading="lazy"><figcaption>Four panes</figcaption></figure><figure class="shot"><img src="../../images-v3/layout_preset_31.png" alt="3+1 preset" loading="lazy"><figcaption>3+1 preset</figcaption></figure></div>
+</section><section class="section-block" id="panedrag" data-search="drag drop swap duplicate">
+<h2>Move &amp; duplicate panes</h2>
+<p>Drag a pane by its number or header.</p>
+<p>Drop on an edge to split the target pane. Drop in the centre to swap.</p>
+<p>Hold Ctrl while dragging to copy the current pane tab: an edge splits and keeps this pane; the centre adds a pane tab in that cell.</p>
+<p>A red preview means the drop would pass the layout limit. Release Ctrl to move instead of copy.</p>
+<div class="shot-grid"><figure class="shot"><img src="../../images-v3/panedrag_before.png" alt="Before drag" loading="lazy"><figcaption>Before drag</figcaption></figure><figure class="shot"><img src="../../images-v3/panedrag_after.png" alt="After drop" loading="lazy"><figcaption>After drop</figcaption></figure><figure class="shot"><img src="../../images-v3/panedrag_dup.png" alt="Ctrl-drag duplicate" loading="lazy"><figcaption>Ctrl-drag duplicate</figcaption></figure></div>
+</section><section class="section-block" id="tabs" data-search="tab session save .grids green dot">
+<h2>Window tabs &amp; sessions</h2>
+<p class="ref-shortcuts">Keys are listed once in <a href="#shortcuts">Shortcuts</a>.</p>
+<p>Window tabs hold whole layouts: panes, folders, view, and colour labels.</p>
+<p>Save writes this tab. A green dot on Save means the layout is unsaved (not ordinary file copies).</p>
+<p>Open session opens a saved tab beside the current one. Opening several opens each as its own tab.</p>
+<p>Ctrl+N opens another window. Single-window mode brings this window forward and opens paths as tabs. Single-instance keeps a later launch in this process.</p>
+<p>See Shortcuts for New / Close / Next / Previous tab, Reopen closed tab, and Duplicate tab.</p>
+<div class="shot-grid"><figure class="shot"><img src="../../images-v3/tabs.png" alt="Window tabs" loading="lazy"><figcaption>Window tabs</figcaption></figure></div>
+</section><section class="section-block" id="pane-tabs" data-search="pane tab strip">
+<h2>Pane tabs</h2>
+<p class="ref-shortcuts">Keys are listed once in <a href="#shortcuts">Shortcuts</a>.</p>
+<p>Pane tabs are extra folders inside one pane. They are not window tabs.</p>
+<p>With one folder the strip stays hidden. The button next to ⇄ adds a pane tab.</p>
+<p>Middle-click or the small close mark closes a pane tab. Shortcuts for pane tabs work only while focus is in a pane.</p>
+
+</section><section class="section-block" id="pane-colors" data-search="colour color label header">
+<h2>Pane colours</h2>
+<p>Right-click a pane header to set a colour label.</p>
+<p>The label is saved with the session and is separate from the window-tab colour.</p>
+<div class="shot-grid"><figure class="shot"><img src="../../images-v3/pane_colors.png" alt="Pane colour labels" loading="lazy"><figcaption>Pane colour labels</figcaption></figure></div>
+</section><section class="section-block" id="favorites" data-search="favourites favorites pins tree left panel">
+<h2>Favourites &amp; folder tree</h2>
+<p class="ref-shortcuts">Keys are listed once in <a href="#shortcuts">Shortcuts</a>.</p>
+<p>Favourites and the folder tree share the left panel. Drag the divider between them. Settings chooses which is on top.</p>
+<p>Click a favourite to open it in the active pane. Click a group to expand or collapse. Search keeps parent groups so you can see where a match sits.</p>
+<p>Favourites can be folders or files. A missing folder shows a guide instead of opening an empty path.</p>
+<p>The toolbar Favourites button opens a larger list: search, rename, delete, open in the active pane. Explorer pins can appear there too.</p>
+<p>In the folder tree, Enter or double-click opens that folder in the pane. Ctrl-click or middle-click opens it as a pane tab.</p>
+<p>Toggle the left panel from Shortcuts (Show the left panel).</p>
+<div class="shot-grid"><figure class="shot"><img src="../../images-v3/favorites.png" alt="Favourites and tree" loading="lazy"><figcaption>Favourites and tree</figcaption></figure></div>
+</section><section class="section-block" id="search" data-search="search everything ctrl+f">
+<h2>Search</h2>
+<p>Ctrl+F searches this folder.</p>
+<p>For deep subfolder search, install Everything and keep it running. Settings → General shows status and can install or start it.</p>
+<p>Maguro asks Everything only while that program is running.</p>
+<div class="shot-grid"><figure class="shot"><img src="../../images-v3/search.png" alt="Search" loading="lazy"><figcaption>Search</figcaption></figure></div>
+</section><section class="section-block" id="preview" data-search="preview quick look space f3">
+<h2>Preview &amp; Quick look</h2>
+<p class="ref-shortcuts">Keys are listed once in <a href="#shortcuts">Shortcuts</a>.</p>
+<p>F3 opens Quick look. Space does the same when Preview with Space is on (a space while typing or during IME stays part of the name).</p>
+<p>In Quick look, Enter opens the file with its default app and closes the preview. Shift+Enter or right-click uses Open with.</p>
+<p>Alt+P toggles the preview pane. The wheel can move to the next or previous file when that option is on.</p>
+<div class="shot-grid"><figure class="shot"><img src="../../images-v3/preview.png" alt="Preview pane" loading="lazy"><figcaption>Preview pane</figcaption></figure><figure class="shot"><img src="../../images-v3/preview_peek.png" alt="Quick look" loading="lazy"><figcaption>Quick look</figcaption></figure></div>
+</section><section class="section-block" id="files" data-search="copy cut paste delete drag robocopy winmerge new folder">
+<h2>File operations</h2>
+<p class="ref-shortcuts">Keys are listed once in <a href="#shortcuts">Shortcuts</a>.</p>
+<p>Copy, cut, paste, rename, and delete match Explorer (see Shortcuts).</p>
+<p>Del follows the Windows default (usually Recycle Bin). Shift+Del deletes permanently. Settings can confirm Del and set the default delete.</p>
+<p>Drag between panes to copy or move. Same drive moves, other drives copy, unless Settings sets a default drag action. Drop on a folder row to put files inside it.</p>
+<p>Fast copy (Settings → File operations) uses robocopy for network paste and drag, with Maguro progress and Cancel. It does not delete extra files at the destination. Off uses the Windows copy window. Local-only copies stay with Windows.</p>
+<p>Ctrl+V with a picture on the clipboard saves a PNG in the current folder.</p>
+<p>New folder and New text file are in Shortcuts. The new-file name comes from Settings.</p>
+<p>Ctrl+Shift+O gathers the same selected names into the other panes.</p>
+<p>Ctrl+Alt+C compares the active pane’s folder with the next pane in WinMerge. The gear menu and file list can compare two selected files, or one file with the same name in another pane. Set the WinMerge path under Settings → General.</p>
+
+</section><section class="section-block" id="batch-rename" data-search="batch rename">
+<h2>Batch rename</h2>
+<p class="ref-shortcuts">Keys are listed once in <a href="#shortcuts">Shortcuts</a>.</p>
+<p>Ctrl+Shift+R opens batch rename for the selection.</p>
+<p>Add a prefix or suffix, replace text, and preview results before applying.</p>
+<div class="shot-grid"><figure class="shot"><img src="../../images-v3/rename.png" alt="Batch rename" loading="lazy"><figcaption>Batch rename</figcaption></figure></div>
+</section><section class="section-block" id="basket" data-search="basket">
+<h2>File Basket</h2>
+<p class="ref-shortcuts">Keys are listed once in <a href="#shortcuts">Shortcuts</a>.</p>
+<p>Ctrl+Shift+B opens the File Basket, a small always-on-top window.</p>
+<p>Drag items onto it, or Ctrl+Alt+B to add the active pane’s selection. Paths stay as originals.</p>
+<p>Copy and Move into the active pane use the Windows progress window. Dragging out copies; Shift-drag moves. Remove and Clear change the list only.</p>
+<div class="shot-grid"><figure class="shot"><img src="../../images-v3/feature_basket.png" alt="File Basket" loading="lazy"><figcaption>File Basket</figcaption></figure></div>
+</section><section class="section-block" id="watch" data-search="watch folder">
+<h2>Folder Watch</h2>
+<p class="ref-shortcuts">Keys are listed once in <a href="#shortcuts">Shortcuts</a>.</p>
+<p>Ctrl+Shift+W opens Folder Watch.</p>
+<p>Watch folders for changes and jump back when something appears or updates.</p>
+<div class="shot-grid"><figure class="shot"><img src="../../images-v3/feature_folder_watch.png" alt="Folder Watch" loading="lazy"><figcaption>Folder Watch</figcaption></figure></div>
+</section><section class="section-block" id="clipboard" data-search="clipboard path win+shift+v">
+<h2>Clipboard path</h2>
+<p class="ref-shortcuts">Keys are listed once in <a href="#shortcuts">Shortcuts</a>.</p>
+<p>Win+Shift+V opens a path that is on the clipboard in a new tab.</p>
+<p>Turn the hotkey on or off under Settings → General.</p>
+<div class="shot-grid"><figure class="shot"><img src="../../images-v3/feature_win_shift_v.png" alt="Open clipboard path" loading="lazy"><figcaption>Open clipboard path</figcaption></figure></div>
+</section><section class="section-block" id="workspaces" data-search="workspace slots">
+<h2>Workspaces</h2>
+<p class="ref-shortcuts">Keys are listed once in <a href="#shortcuts">Shortcuts</a>.</p>
+<p>Workspaces store up to nine named layouts (tabs, panes, folders).</p>
+<p>Ctrl+Alt+1…9 loads a slot. Ctrl+Alt+Shift+1…9 saves into that slot.</p>
+<p>The gear menu → Workspaces can save, load, rename, and clear slots. An empty slot shows a short message.</p>
+<p>Loading replaces the current tabs. Maguro asks first only when Ask before loading is on.</p>
+
+</section><section class="section-block" id="servers" data-search="smb webdav sftp ftp rclone">
+<h2>Server connections</h2>
+<p>Connect to SMB, WebDAV, SFTP, and FTP. Connected servers appear as folders you can open, copy, and preview.</p>
+<p>In the connection dialog pick the type, then enter address, port, user, and password. Passwords go to Windows credentials, not the settings file.</p>
+<p>SMB uses Windows shares. WebDAV may need HTTPS. FTP uses the host and port you enter. SFTP needs rclone and WinFsp; Maguro can prompt to install them.</p>
+<p>Disconnect when finished. Broken shares skip folder-size walks unless network folder sizes are on. If a network folder fails to open, press F5 and try again.</p>
+<div class="shot-grid"><figure class="shot"><img src="../../images-v3/servers.png" alt="Server connections" loading="lazy"><figcaption>Server connections</figcaption></figure></div>
+</section><section class="section-block" id="office" data-search="excel office readonly">
+<h2>Office files</h2>
+<p>Excel and other Office files can open read-only when another app already has them.</p>
+<p>Maguro keeps the list tidy so a locked workbook does not block browsing.</p>
+<div class="shot-grid"><figure class="shot"><img src="../../images-v3/feature_excel_readonly_tidy.png" alt="Office / Excel" loading="lazy"><figcaption>Office / Excel</figcaption></figure></div>
+</section><section class="section-block" id="ctxmenu" data-search="context menu right-click">
+<h2>Right-click menu</h2>
+<p>Settings → Right-click menu lists third-party items you can turn off.</p>
+<p>Classic and Windows 11 are the two menu shapes. Windows 11 packaged items start off; turn on only what you need.</p>
+<p>Refresh reads the menu again. Built-in Windows items such as Open, Copy, and Properties stay.</p>
+<div class="shot-grid"><figure class="shot"><img src="../../images-v3/settings_ctxmenu.png" alt="Right-click menu settings" loading="lazy"><figcaption>Right-click menu settings</figcaption></figure></div>
+</section><section class="section-block" id="theme" data-search="theme dark light accent">
+<h2>Theme &amp; appearance</h2>
+<p>Settings → Appearance sets theme, accent colour, toolbar, drive buttons, and status bar.</p>
+<p>Light and dark each keep their own accent. Follow Windows switches with the system.</p>
+<p>After a theme change, folder lists pick up new colours the next time Maguro starts. The rest of the window updates immediately.</p>
+<p>This Help page has its own Light / Dark / Auto control in the sidebar.</p>
+<div class="shot-grid"><figure class="shot"><img src="../../images-v3/settings.png" alt="Settings" loading="lazy"><figcaption>Settings</figcaption></figure></div>
+</section><section class="section-block" id="settings" data-search="settings general appearance panes file favourites shortcuts sessions advanced about portable">
+<h2>Settings</h2>
+<p>Ctrl+, opens Settings. Search jumps to a card whose title or description matches.</p>
+<p>General — display language, font, what opens on startup, default folder app, default layout, single instance, single window, folders in Open/Save dialogs, clipboard-path hotkey, double-click empty space for parent folder, Everything, WinMerge.</p>
+<p>Appearance — theme, accent, toolbar, drive buttons, status bar.</p>
+<p>Panes &amp; view — default view for a new pane, remember view per folder, default view for every folder, starting folder for a new pane, hidden files, extensions, folder sizes (including network), left panel and order, active pane border, preview pane, preview with Space, wheel next/previous.</p>
+<p>File operations — Windows copy window, fast copy for network folders, confirm delete, default delete, new-file name, default drag and drop.</p>
+<p>Favourites — left panel visibility and whether Favourites or the folder tree is on top.</p>
+<p>Shortcuts — double-click a row and press new keys; Esc cancels; Reset restores the default. Conflicts are reported.</p>
+<p>Sessions — session folder, save on exit, green-dot unsaved mark.</p>
+<p>Advanced — check for updates on startup, settings file location, reset all settings. A portable.txt next to maguro.exe keeps settings beside the exe instead of AppData. Reset restores preferences; layout, folders, and favourites stay.</p>
+<p>Right-click menu — third-party items and menu shape.</p>
+<p>About — version and links.</p>
+
+</section><section class="section-block" id="window-actions" data-search="bring front dialog jump focus hidden select pattern">
+<h2>Other window actions</h2>
+<p class="ref-shortcuts">Keys are listed once in <a href="#shortcuts">Shortcuts</a>.</p>
+<p>Win+Shift+E brings Maguro to the front.</p>
+<p>Ctrl+Alt+G jumps to a folder from a file dialog when that option is on.</p>
+<p>F6 / Shift+F6 move focus. Ctrl+H toggles hidden files.</p>
+<p>Select by pattern, Deselect by pattern, and Invert selection are in Shortcuts (Num+, Num−, Num*).</p>
+<p>Copy full path and Show in folder are in Shortcuts.</p>
+<p>Recent files is Ctrl+Alt+R. Recent folders is Alt+↓.</p>
+
+</section><section class="section-block" id="shortcuts" data-search="shortcut key chord hotkey keyboard">
+<h2>Shortcuts</h2>
+<p>Every Maguro chord is listed below. The same list opens in-app with Ctrl+/.</p>
+<p>Change a chord in Settings → Shortcuts: double-click the row and press new keys. Esc cancels. Reset restores the default.</p>
+<p>Changed chords show here after you rebuild or refresh this page from a build that reads live keys; the in-app list always follows Settings without a restart.</p>
+<table class="shortcuts-table"><thead><tr><th>Keys</th><th>Action</th></tr></thead><tbody>
+<tr><td class="cat" colspan="2">Tab</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>T</kbd></span></td><td>New tab</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>W</kbd></span></td><td>Close tab</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Tab</kbd></span></td><td>Next tab</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Tab</kbd></span></td><td>Previous tab</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd></span></td><td>Reopen closed tab</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>K</kbd></span></td><td>Duplicate tab</td></tr>
+<tr><td class="cat" colspan="2">Pane</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>PageDown</kbd></span></td><td>Next pane</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>PageUp</kbd></span></td><td>Previous pane</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>1…9</kbd></span></td><td>Go to pane 1–9</td></tr>
+<tr><td class="cat" colspan="2">Pane tab</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>T</kbd></span></td><td>New pane tab</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>W</kbd></span></td><td>Close pane tab</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>PageDown</kbd></span></td><td>Next pane tab</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>PageUp</kbd></span></td><td>Previous pane tab</td></tr>
+<tr><td class="cat" colspan="2">Move</td></tr>
+<tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>←</kbd></span></td><td>Pane to the left</td></tr>
+<tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>→</kbd></span></td><td>Pane to the right</td></tr>
+<tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>↑</kbd></span></td><td>Pane above</td></tr>
+<tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>↓</kbd></span></td><td>Pane below</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>←</kbd></span></td><td>Swap with the pane to the left</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>→</kbd></span></td><td>Swap with the pane to the right</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>↑</kbd></span></td><td>Swap with the pane above</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>↓</kbd></span></td><td>Swap with the pane below</td></tr>
+<tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>←</kbd></span></td><td>Back</td></tr>
+<tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>→</kbd></span></td><td>Forward</td></tr>
+<tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>↑</kbd></span></td><td>Parent folder</td></tr>
+<tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>↓</kbd></span></td><td>Recent folders</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>L</kbd></span> <span class="sep">/</span> <span class="chord"><kbd>Alt</kbd>+<kbd>D</kbd></span> <span class="sep">/</span> <span class="chord"><kbd>F4</kbd></span></td><td>Address bar</td></tr>
+<tr><td class="cat" colspan="2">View</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>F</kbd></span></td><td>Search this folder</td></tr>
+<tr><td><span class="chord"><kbd>F3</kbd></span></td><td>Quick look</td></tr>
+<tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>P</kbd></span></td><td>Preview pane</td></tr>
+<tr><td><span class="chord"><kbd>F6</kbd></span></td><td>Next focus</td></tr>
+<tr><td><span class="chord"><kbd>Shift</kbd>+<kbd>F6</kbd></span></td><td>Previous focus</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>H</kbd></span></td><td>Show hidden files</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd></span></td><td>Show the left panel</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd></span></td><td>Open Explorer folders</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>R</kbd></span></td><td>Recent files</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd></span></td><td>Maximise / restore the pane</td></tr>
+<tr><td class="cat" colspan="2">File</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd></span></td><td>Copy full path</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd></span></td><td>Batch rename</td></tr>
+<tr><td><span class="chord"><kbd>Num</kbd>+<kbd></kbd></span> <span class="sep">/</span> <span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd></span></td><td>Select by pattern</td></tr>
+<tr><td><span class="chord"><kbd>Num−</kbd></span></td><td>Deselect by pattern</td></tr>
+<tr><td><span class="chord"><kbd>Num*</kbd></span></td><td>Invert selection</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>N</kbd></span></td><td>New text file</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd></span></td><td>New folder</td></tr>
+<tr><td><span class="chord"><kbd>F7</kbd></span></td><td>New folder in this pane</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd></span></td><td>Compare folders in WinMerge</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd></span></td><td>File Basket</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>B</kbd></span></td><td>Add selection to basket</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Enter</kbd></span></td><td>Show in folder</td></tr>
+<tr><td class="cat" colspan="2">Session</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>S</kbd></span></td><td>Save this tab</td></tr>
+<tr><td class="cat" colspan="2">Workspaces</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>1…9</kbd></span></td><td>Load workspace</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>1…9</kbd></span></td><td>Save workspace</td></tr>
+<tr><td class="cat" colspan="2">Favourites</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>B</kbd></span></td><td>Favourites</td></tr>
+<tr><td class="cat" colspan="2">Help</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>,</kbd></span></td><td>Settings</td></tr>
+<tr><td><span class="chord"><kbd>F1</kbd></span></td><td>Shortcut help</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>/</kbd></span></td><td>Shortcut list</td></tr>
+<tr><td class="cat" colspan="2">Window</td></tr>
+<tr><td><span class="chord"><kbd>Win</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd></span></td><td>Bring Maguro to the front</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>G</kbd></span></td><td>Jump to a folder in a file dialog</td></tr>
+<tr><td><span class="chord"><kbd>Win</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd></span></td><td>Open clipboard path</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>N</kbd></span></td><td>New window</td></tr>
+<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>W</kbd></span></td><td>Folder Watch</td></tr>
+</tbody></table>
+<p>Mouse: layout button click/drag; address-bar chevrons; splitter double-click; pane-header right-click for colour; pane-tab middle-click to close.</p>
+
+</section><section class="section-block" id="troubleshoot" data-search="troubleshoot f5 everything robocopy crash update portable">
+<h2>Troubleshooting</h2>
+<p>Folder will not open — click the pane and press F5. F5 reloads the active pane from anywhere and retries a failed network folder.</p>
+<p>Subfolder search finds nothing — install Everything, start it, and check Settings → General.</p>
+<p>Network copy is slow or has no Maguro progress — turn on Fast copy for network folders. Off uses the Windows copy window. Fast copy does not run for a purely local copy.</p>
+<p>WinMerge does not start — set its path under Settings → General. The pane must be a real folder for folder compare.</p>
+<p>SFTP fails — install rclone and WinFsp when asked; check host, port, user, and password. WebDAV may need HTTPS. SMB uses a Windows share path. FTP uses the host and port from the connection.</p>
+<p>Window theme changed but folder lists did not — restart Maguro. Lists take the theme at startup.</p>
+<p>Crash last time — the next start shows where the report was written (crashes folder next to settings).</p>
+<p>Second launch exits immediately — single instance or single window is on; the first window stays. An installable update replaces maguro.exe and restarts. A zip-only release is not extracted; replace maguro.exe when the update window says so.</p>
+<p>Close with the window close button so Save on exit can write the session.</p>
+
+</section>
+</main>
+</div>
+<script>
+(function () {
+  var root = document.documentElement;
+  var q = document.getElementById('q');
+  var blocks = Array.prototype.slice.call(document.querySelectorAll('.section-block'));
+  var noMatch = document.getElementById('no-match');
+  var btns = {
+    light: document.getElementById('theme-light'),
+    dark: document.getElementById('theme-dark'),
+    auto: document.getElementById('theme-auto')
+  };
+  function applyTheme(mode) {
+    root.classList.remove('light', 'dark');
+    if (mode === 'light') root.classList.add('light');
+    if (mode === 'dark') root.classList.add('dark');
+    try { localStorage.setItem('maguro-help-theme', mode); } catch (e) {}
+    Object.keys(btns).forEach(function (k) {
+      btns[k].classList.toggle('active', k === mode);
+    });
+  }
+  var saved = 'auto';
+  try { saved = localStorage.getItem('maguro-help-theme') || 'auto'; } catch (e) {}
+  applyTheme(saved);
+  Object.keys(btns).forEach(function (k) {
+    btns[k].addEventListener('click', function () { applyTheme(k); });
+  });
+  function filter() {
+    var term = (q.value || '').trim().toLowerCase();
+    var shown = 0;
+    blocks.forEach(function (el) {
+      var hay = ((el.getAttribute('data-search') || '') + ' ' + el.textContent).toLowerCase();
+      var ok = !term || hay.indexOf(term) !== -1;
+      el.classList.toggle('hidden', !ok);
+      if (ok) shown++;
+    });
+    noMatch.classList.toggle('show', shown === 0);
+  }
+  q.addEventListener('input', filter);
+})();
+</script>
+</body>
+</html>
