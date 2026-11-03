@@ -50,6 +50,7 @@ pub unsafe fn redraw() {
     let h = hwnd();
     if !h.0.is_null() && IsWindow(Some(h)).as_bool() {
         let _ = InvalidateRect(Some(h), None, false);
+        crate::ui::combo::invalidate_in(h);
     }
 }
 
@@ -73,6 +74,7 @@ pub unsafe fn refresh() {
     cue(h, S_WM, tx(crate::Key::AutoDetect));
     layout(h);
     let _ = InvalidateRect(Some(h), None, true);
+    crate::ui::combo::invalidate_in(h);
 }
 
 /// The right-click page is open and a menu just learned new item names.
@@ -162,6 +164,10 @@ fn rebuild_fonts() {
 }
 
 unsafe fn theme_ctl(h: HWND) {
+    if crate::ui::combo::is_styled(h) {
+        crate::ui::combo::clear_theme(h);
+        return;
+    }
     let dark = crate::DARK_ON.load(Ordering::Relaxed);
     let name = if dark { w!("DarkMode_CFD") } else { w!("CFD") };
     let _ = SetWindowTheme(h, name, PCWSTR::null());
@@ -178,7 +184,11 @@ unsafe fn build_children(h: HWND) {
     let dis = 0x08000000u32;
     child_at(h, w!("EDIT"), "", 0x80 | tab, S_SEARCH, font);
     child_at(h, w!("EDIT"), "", 0x80 | tab, S_KEYQ, font);
-    let combo = |id, on| child_at(h, w!("COMBOBOX"), "", 3 | 0x200 | 0x00200000 | tab | if on { 0 } else { dis }, id, font);
+    let combo = |id, on| {
+        let c = child_at(h, w!("COMBOBOX"), "", crate::ui::combo::LIST | tab | if on { 0 } else { dis }, id, font);
+        crate::ui::combo::adopt(c, crate::ui::combo::card_face);
+        c
+    };
     combo(S_LANG, true);
     combo(S_FACE, true);
     combo(S_THEME, true);

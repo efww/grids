@@ -297,8 +297,10 @@ pub(crate) unsafe fn refresh() {
     layout(h);
     sync_buttons();
     let _ = InvalidateRect(Some(h), None, true);
+    crate::ui::combo::invalidate_in(h);
     if !host.0.is_null() {
         let _ = InvalidateRect(Some(host), None, true);
+        crate::ui::combo::invalidate_in(host);
     }
 }
 
@@ -500,13 +502,13 @@ unsafe fn build_shell(h: HWND) {
     btn(ID_SAVE, tx(crate::Key::Save));
     btn(ID_DELPRE, tx(crate::Key::DeletePreset));
     let list = |id| {
-        let c = child(h, w!("COMBOBOX"), "", 3 | 0x200 | 0x00200000 | tab, id, font);
-        theme_ctl(c);
+        let c = child(h, w!("COMBOBOX"), "", crate::ui::combo::LIST | tab, id, font);
+        crate::ui::combo::adopt(c, combo_face);
         c
     };
     let drop = |id| {
-        let c = child(h, w!("COMBOBOX"), "", 2 | 0x200 | 0x00200000 | tab, id, font);
-        theme_ctl(c);
+        let c = child(h, w!("COMBOBOX"), "", crate::ui::combo::DROPDOWN | tab, id, font);
+        crate::ui::combo::adopt(c, combo_face);
         c
     };
     list(ID_FILTER);
@@ -554,8 +556,8 @@ unsafe fn rebuild_rule_controls() {
 unsafe fn make_rule_controls(host: HWND, i: usize, font: HFONT) {
     let tab = 0x00010000u32;
     let combo = |f| {
-        let c = child(host, w!("COMBOBOX"), "", 3 | 0x200 | 0x00200000 | tab, id(i, f), font);
-        theme_ctl(c);
+        let c = child(host, w!("COMBOBOX"), "", crate::ui::combo::LIST | tab, id(i, f), font);
+        crate::ui::combo::adopt(c, combo_face);
         c
     };
     let edit = |f| {
@@ -1497,7 +1499,9 @@ fn recompute_keep_note() {
             let host = ST.with(|s| s.borrow().host);
             if !host.0.is_null() {
                 let _ = InvalidateRect(Some(host), None, false);
+                crate::ui::combo::invalidate_in(host);
             }
+            crate::ui::combo::invalidate_in(h);
         }
     }
 }
@@ -1737,6 +1741,14 @@ fn plate(on: bool) -> u32 {
 
 fn plate_line(on: bool) -> u32 {
     if on { crate::pal().line } else { crate::blend(crate::pal().bg, crate::pal().line, 0.55) }
+}
+
+/// Rule combos dim with the card. Filter and preset sit on the window and stay solid.
+unsafe fn combo_face(hwnd: HWND) -> crate::ui::combo::Face {
+    let off = control_rule(hwnd).is_some_and(|i| !rule_is_on(i));
+    let fill = plate(!off);
+    let ink = if off { crate::blend(fill, crate::pal().text, 0.55) } else { crate::pal().text };
+    crate::ui::combo::Face { fill, edge: plate_line(!off), ink, ground: fill }
 }
 
 fn primary_fill(hot: bool) -> u32 {
@@ -2229,34 +2241,47 @@ unsafe fn paint_marked(dc: HDC, rect: RECT, text: &str, span: Option<(usize, usi
         if s.is_empty() {
             return x;
         }
-        let w = text_w(dc, face, s).max(0);
-        let r = RECT { left: x, top: rect.top, right: x + w, bottom: rect.bottom };
+        // Same advance draw_line paints. DT_CALCRECT was short on Hangul and the wash cut the glyph.
+        let advance = text_w(dc, face, s).max(0);
         if let Some(bg) = bg {
-            let pad_y = sc(dpi, 8);
-            let pad_x = sc(dpi, 1);
-            let band = RECT { left: r.left - pad_x, top: r.top + pad_y, right: r.right + pad_x, bottom: r.bottom - pad_y };
+            let m = crate::line_metrics(dc, face);
+            let top = crate::ink_line_top(rect.top, (rect.bottom - rect.top).max(0), m, crate::ink_kind(s));
+            let raw = span_band(x, advance, top, m.height(), sc(dpi, 1));
+            let band = RECT {
+                left: raw.left.max(rect.left),
+                top: raw.top.max(rect.top),
+                right: raw.right.min(rect.right),
+                bottom: raw.bottom.min(rect.bottom),
+            };
             if band.bottom > band.top && band.right > band.left {
                 crate::rfill(dc, band, sc(dpi, 2).max(1), bg, None);
             }
         }
-        crate::text(dc, r, s, face, fg, DT_LEFT);
-        x + w
+        let r = RECT { left: x, top: rect.top, right: x + advance.max(1), bottom: rect.bottom };
+        crate::draw_ink_line(dc, r, s, face, fg, DT_LEFT | DT_NOCLIP);
+        x + advance
     };
     x = draw(dc, x, &pre, font, normal, None);
     x = draw(dc, x, &mid, mark_font, mark, Some(wash));
     let _ = draw(dc, x, &post, font, normal, None);
 }
 
+/// Wash around one changed run. `advance` is `GetTextExtentPoint32W` of that run.
+fn span_band(x: i32, advance: i32, ink_top: i32, ink_h: i32, pad: i32) -> RECT {
+    RECT { left: x - pad, top: ink_top, right: x + advance + pad, bottom: ink_top + ink_h.max(0) }
+}
+
+/// Advance width on `dc` with `font` selected. Matches the glyphs `draw_line` paints.
 unsafe fn text_w(dc: HDC, font: HFONT, s: &str) -> i32 {
-    if s.is_empty() || font.is_invalid() {
+    if s.is_empty() || font.is_invalid() || dc.is_invalid() {
         return 0;
     }
-    let mut w: Vec<u16> = s.encode_utf16().collect();
-    let mut r = RECT::default();
+    let w: Vec<u16> = s.encode_utf16().collect();
     let old = SelectObject(dc, font.into());
-    let _ = DrawTextW(dc, &mut w, &mut r, DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX);
+    let mut sz = SIZE::default();
+    let ok = GetTextExtentPoint32W(dc, &w, &mut sz).as_bool();
     SelectObject(dc, old);
-    r.right - r.left
+    if ok { sz.cx.max(0) } else { 0 }
 }
 
 fn is_check(field: i32) -> bool {
@@ -2775,6 +2800,10 @@ unsafe fn apply_font(parent: HWND, font: HFONT) {
 }
 
 unsafe fn theme_ctl(h: HWND) {
+    if crate::ui::combo::is_styled(h) {
+        crate::ui::combo::clear_theme(h);
+        return;
+    }
     let dark = crate::DARK_ON.load(std::sync::atomic::Ordering::Relaxed);
     let name = if dark { w!("DarkMode_CFD") } else { w!("CFD") };
     let _ = SetWindowTheme(h, name, PCWSTR::null());
@@ -2994,5 +3023,39 @@ mod tests {
         let off = crate::blend(0xF3F1EC, 0xFFFFFF, 0.55);
         assert_ne!(off, mint);
         assert_ne!(off, 0xFFFFFF);
+    }
+
+    #[test]
+    fn wash_covers_the_measured_advance() {
+        // pre ends at 30, the changed run is 48 wide, pad is 1. The wash contains that run.
+        let band = span_band(30, 48, 8, 18, 1);
+        assert_eq!(band.left, 29);
+        assert_eq!(band.right, 79);
+        assert!(band.left <= 30 && band.right >= 78);
+        assert_eq!(band.bottom - band.top, 18);
+    }
+
+    #[test]
+    fn changed_span_width_matches_get_text_extent() {
+        unsafe {
+            let dc = CreateCompatibleDC(None);
+            assert!(!dc.is_invalid());
+            let font = make_font("Segoe UI", 14, 400, 96);
+            let bold = make_font("Segoe UI", 14, 700, 96);
+            for (face, s) in [(font, "IMG_"), (bold, "여행_"), (font, "0012.jpg")] {
+                let got = text_w(dc, face, s);
+                let w: Vec<u16> = s.encode_utf16().collect();
+                let old = SelectObject(dc, face.into());
+                let mut sz = SIZE::default();
+                let ok = GetTextExtentPoint32W(dc, &w, &mut sz).as_bool();
+                SelectObject(dc, old);
+                assert!(ok, "{s}");
+                assert_eq!(got, sz.cx, "{s}");
+                assert!(got > 0, "{s}");
+            }
+            drop_font(font);
+            drop_font(bold);
+            let _ = DeleteDC(dc);
+        }
     }
 }

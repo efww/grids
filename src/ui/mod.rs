@@ -11,6 +11,7 @@ mod srvdlg;
 mod keys;
 mod ficons;
 mod font;
+pub(crate) mod combo;
 mod layout;
 mod panedrag;
 mod tabs;
