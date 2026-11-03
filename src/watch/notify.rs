@@ -407,10 +407,8 @@ fn toast_face() -> String {
 }
 
 fn drop_font(font: &mut HFONT) {
-    if !font.is_invalid() {
-        unsafe { let _ = DeleteObject((*font).into()); }
-        *font = HFONT::default();
-    }
+    unsafe { crate::delete_font(*font) };
+    *font = HFONT::default();
 }
 
 fn make_font(face: &str, px: i32, weight: i32, dpi: i32) -> HFONT {

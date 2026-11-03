@@ -741,6 +741,12 @@ unsafe fn paint_message(dc: HDC, r: RECT, msg: &str, font: HFONT) {
     if th > 0 && th < room {
         dest.top += (room - th) / 2;
         dest.bottom = dest.top + th;
+        // The block was centered on tmHeight. Shift it onto the same glyph box as text().
+        let nudge = optical_nudge(dc, font, msg);
+        if dest.top + nudge >= r.top && dest.bottom + nudge <= r.bottom {
+            dest.top += nudge;
+            dest.bottom += nudge;
+        }
     }
     DrawTextW(dc, &mut w, &mut dest, flags);
     SelectObject(dc, old);

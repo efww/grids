@@ -2587,9 +2587,7 @@ fn drop_fonts() {
 }
 
 unsafe fn drop_font(f: HFONT) {
-    if !f.is_invalid() {
-        let _ = DeleteObject(f.into());
-    }
+    crate::delete_font(f);
 }
 
 unsafe fn apply_font(parent: HWND, font: HFONT) {

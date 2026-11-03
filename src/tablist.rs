@@ -657,9 +657,7 @@ unsafe fn rebuild_fonts() {
         old
     });
     for f in [old.0, old.1, old.2, old.3, old.4] {
-        if !f.is_invalid() {
-            _ = DeleteObject(f.into());
-        }
+        delete_font(f);
     }
     let (edit, name, font, bold) = with_st(|s| (s.edit, s.name_edit, s.font, s.bold));
     if !edit.0.is_null() {
@@ -1524,9 +1522,7 @@ fn tablist_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                     old
                 });
                 for f in [old.0, old.1, old.2, old.3, old.4] {
-                    if !f.is_invalid() {
-                        _ = DeleteObject(f.into());
-                    }
+                    delete_font(f);
                 }
             }
             _ => return DefWindowProcW(h, msg, wp, lp),

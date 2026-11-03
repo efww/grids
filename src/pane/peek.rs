@@ -666,9 +666,7 @@ pub(crate) unsafe fn drop_peek_fonts() {
     });
     if let Some((_, fonts)) = old {
         for f in fonts {
-            if !f.is_invalid() {
-                _ = DeleteObject(f.into());
-            }
+            delete_font(f);
         }
     }
 }
@@ -1762,7 +1760,7 @@ unsafe fn fonts(dpi: i32, base: HFONT) -> [HFONT; 4] {
             return f;
         }
         for x in f {
-            _ = DeleteObject(x.into());
+            delete_font(x);
         }
     }
     let mut lf = LOGFONTW::default();
@@ -2572,6 +2570,14 @@ unsafe fn blit_scaled(dc: HDC, to: RECT, w: i32, h: i32, px: &[u8]) {
 
 // DrawTextW without text()'s single-line, end-ellipsis defaults.
 pub(crate) unsafe fn text_flags(dc: HDC, mut r: RECT, s: &str, font: HFONT, rgb: u32, flags: DRAW_TEXT_FORMAT) {
+    // A single line asked to sit in the middle of the rect uses the same glyph box as text().
+    let vcenter = flags.0 & DT_VCENTER.0 != 0;
+    let wrap = flags.0 & DT_WORDBREAK.0 != 0;
+    let calc = flags.0 & DT_CALCRECT.0 != 0;
+    if vcenter && !wrap && !calc {
+        draw_ink_line(dc, r, s, font, rgb, flags);
+        return;
+    }
     let mut w: Vec<u16> = s.encode_utf16().collect();
     if w.is_empty() {
         return; // see text()

@@ -34,6 +34,97 @@ pub(crate) unsafe fn text_path(dc: HDC, mut r: RECT, s: &str, font: HFONT, rgb: 
     draw_line(dc, &mut r, s, font, rgb, align | DT_PATH_ELLIPSIS);
 }
 
+/// Which ink box `ink_line_top` centers. Chosen from the string, because one face
+/// (and one cached `HFONT`) draws Hangul, kana, and Latin with different ink.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum InkKind {
+    /// Caps sit under the internal leading.
+    Latin,
+    /// Hangul, kana, and ideographs fill the top of the em and leave descent unused.
+    Cjk,
+    /// Icons, punctuation, and other marks that already fill the em square.
+    Em,
+}
+
+/// Square CJK ink: Hangul, kana, ideographs, and the halfwidth katakana block.
+fn is_cjk_ink(c: char) -> bool {
+    matches!(
+        c,
+        '\u{1100}'..='\u{11FF}'
+            | '\u{2E80}'..='\u{2FDF}'
+            | '\u{3040}'..='\u{30FF}'
+            | '\u{3130}'..='\u{318F}'
+            | '\u{31F0}'..='\u{31FF}'
+            | '\u{3200}'..='\u{4DBF}'
+            | '\u{4E00}'..='\u{9FFF}'
+            | '\u{A960}'..='\u{A97F}'
+            | '\u{AC00}'..='\u{D7FF}'
+            | '\u{F900}'..='\u{FAFF}'
+            | '\u{FF66}'..='\u{FF9D}'
+            | '\u{20000}'..='\u{3FFFD}'
+    )
+}
+
+/// CJK wins when a run mixes scripts: the square glyphs set the top of the ink.
+pub(crate) fn ink_kind(s: &str) -> InkKind {
+    let mut cjk = false;
+    let mut cap = false;
+    for c in s.chars() {
+        if is_cjk_ink(c) {
+            cjk = true;
+        } else if c.is_alphabetic() || c.is_ascii_digit() {
+            cap = true;
+        }
+    }
+    if cjk {
+        InkKind::Cjk
+    } else if cap {
+        InkKind::Latin
+    } else {
+        InkKind::Em
+    }
+}
+
+/// Top of a `DT_TOP | DT_SINGLELINE` rect that centers the visible glyph box in the cell.
+///
+/// `DT_VCENTER` centers `tmAscent + tmDescent`. Latin caps leave the internal leading
+/// empty, so that center sits about `internalLeading / 2` too low (Segoe UI at 11px).
+/// Hangul and kana fill the top of the em and leave the descent empty, so the same
+/// center sits about `descent / 2` too high (Malgun Gothic 11px in a 16px chip is
+/// 1–1.5px high; Yu Gothic UI is about half a pixel high). The shift is half of that
+/// unused metric, in the font's pixels, so 125% and 150% follow `GetTextMetrics`
+/// on the DPI-scaled face. Icons stay on the `tmHeight` center.
+pub(crate) fn ink_line_top(cell_top: i32, cell_h: i32, m: LineMetrics, kind: InkKind) -> i32 {
+    let tm_h = m.height();
+    if cell_h <= 0 || tm_h <= 0 {
+        return cell_top;
+    }
+    let vtop = cell_top + (cell_h - tm_h) / 2;
+    let leading = m.internal_leading.clamp(0, m.ascent);
+    let descent = m.descent.max(0);
+    let nudge = match kind {
+        InkKind::Latin => -(leading / 2),
+        InkKind::Cjk => descent / 2,
+        InkKind::Em => 0,
+    };
+    vtop + nudge
+}
+
+/// How far `ink_line_top` moves a line whose cell is exactly the font height.
+/// Positive moves the glyphs down. Used when a block is already centered on `tmHeight`.
+pub(crate) unsafe fn optical_nudge(dc: HDC, font: HFONT, s: &str) -> i32 {
+    let m = line_metrics(dc, font);
+    let h = m.height();
+    if h <= 0 {
+        return 0;
+    }
+    ink_line_top(0, h, m, ink_kind(s))
+}
+
+fn without_vertical(extra: DRAW_TEXT_FORMAT) -> DRAW_TEXT_FORMAT {
+    DRAW_TEXT_FORMAT(extra.0 & !(DT_TOP.0 | DT_VCENTER.0 | DT_BOTTOM.0))
+}
+
 unsafe fn draw_line(dc: HDC, r: &mut RECT, s: &str, font: HFONT, rgb: u32, extra: DRAW_TEXT_FORMAT) {
     let mut w: Vec<u16> = s.encode_utf16().collect();
     if w.is_empty() {
@@ -42,8 +133,35 @@ unsafe fn draw_line(dc: HDC, r: &mut RECT, s: &str, font: HFONT, rgb: u32, extra
     let old = SelectObject(dc, font.into());
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, cref(rgb));
-    DrawTextW(dc, &mut w, r, extra | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
+    paint_ink_words(dc, *r, &mut w, font, extra, s);
     SelectObject(dc, old);
+}
+
+/// Single line, font already selected, colours already set.
+unsafe fn paint_ink_words(dc: HDC, r: RECT, words: &mut [u16], font: HFONT, extra: DRAW_TEXT_FORMAT, source: &str) {
+    let m = line_metrics(dc, font);
+    let flags = without_vertical(extra) | DT_SINGLELINE | DT_NOPREFIX;
+    if m.ascent <= 0 {
+        let mut fallback = r;
+        DrawTextW(dc, words, &mut fallback, flags | DT_VCENTER);
+        return;
+    }
+    let top = ink_line_top(r.top, r.bottom - r.top, m, ink_kind(source));
+    let mut placed = RECT { top, bottom: top.saturating_add(m.height().max(1)), ..r };
+    let noclip = extra.0 & DT_NOCLIP.0 != 0;
+    let saved = if noclip { 0 } else { SaveDC(dc) };
+    if saved != 0 {
+        IntersectClipRect(dc, r.left, r.top, r.right, r.bottom);
+    }
+    DrawTextW(dc, words, &mut placed, flags | DT_TOP | if noclip { DT_NOCLIP } else { DRAW_TEXT_FORMAT(0) });
+    if saved != 0 {
+        let _ = RestoreDC(dc, saved);
+    }
+}
+
+/// One line with the caller's flags. `DT_VCENTER` uses the same glyph box as `text`.
+pub(crate) unsafe fn draw_ink_line(dc: HDC, mut r: RECT, s: &str, font: HFONT, rgb: u32, extra: DRAW_TEXT_FORMAT) {
+    draw_line(dc, &mut r, s, font, rgb, extra);
 }
 
 /// Settings checkbox. 16 DIP is the caller's box; the corner radius is 3 DIP.
@@ -1246,13 +1364,7 @@ pub(crate) unsafe fn paint_pane(h: HWND) {
                 if matches!(c, Crumb::Kids(..)) {
                     if wait {
                         // `…` is a little wider than the `›` slot, so it reaches into the neighbours' padding.
-                        let mut w: Vec<u16> = "…".encode_utf16().collect();
-                        let mut rr = r;
-                        let old = SelectObject(dc, font.into());
-                        SetBkMode(dc, TRANSPARENT);
-                        SetTextColor(dc, cref(pal().sub));
-                        DrawTextW(dc, &mut w, &mut rr, DT_CENTER | DT_NOCLIP | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
-                        SelectObject(dc, old);
+                        text(dc, r, "…", font, pal().sub, DT_CENTER | DT_NOCLIP);
                     } else {
                         text(dc, r, &label, font, pal().sub, DT_CENTER);
                     }
@@ -1349,6 +1461,90 @@ mod kids_tests {
         assert_eq!(kids_anchor(&wide, r"C:\"), Some(r(10)));
         let folded = vec![(r(0), "…".into(), Crumb::More(Vec::new())), (r(30), "›".into(), kids(r"C:\Users")), (r(40), "Users".into(), Crumb::Here)];
         assert_eq!(kids_anchor(&folded, r"C:\"), None);
+    }
+}
+
+#[cfg(test)]
+mod ink_tests {
+    use super::{ink_kind, ink_line_top, InkKind};
+    use crate::LineMetrics;
+
+    fn m(ascent: i32, descent: i32, internal_leading: i32) -> LineMetrics {
+        LineMetrics { ascent, descent, internal_leading }
+    }
+
+    /// 96 DPI text metrics from the chip/tab investigation.
+    fn malgun11() -> LineMetrics {
+        m(10, 3, 2)
+    }
+    fn yu11() -> LineMetrics {
+        m(11, 2, 2)
+    }
+    fn segoe11() -> LineMetrics {
+        m(11, 2, 2)
+    }
+    fn face12() -> LineMetrics {
+        m(12, 3, 3)
+    }
+
+    #[test]
+    fn script_picks_the_glyph_box() {
+        assert_eq!(ink_kind("2026 보고서"), InkKind::Cjk);
+        assert_eq!(ink_kind("보고서"), InkKind::Cjk);
+        assert_eq!(ink_kind("レポート"), InkKind::Cjk);
+        assert_eq!(ink_kind("報告"), InkKind::Cjk);
+        assert_eq!(ink_kind("File 파일"), InkKind::Cjk);
+        assert_eq!(ink_kind("Reports"), InkKind::Latin);
+        assert_eq!(ink_kind("Maguro"), InkKind::Latin);
+        assert_eq!(ink_kind("2026"), InkKind::Latin);
+        assert_eq!(ink_kind("…"), InkKind::Em);
+        assert_eq!(ink_kind("+"), InkKind::Em);
+        assert_eq!(ink_kind("×"), InkKind::Em);
+        assert_eq!(ink_kind("\u{E73E}"), InkKind::Em);
+        assert_eq!(ink_kind(""), InkKind::Em);
+    }
+
+    #[test]
+    fn chip_shift_follows_the_measured_faces() {
+        // 16px chip at 96 DPI. Positive moves the glyphs down from DT_VCENTER.
+        // Malgun Hangul was 1–1.5px high, Yu Gothic about 0.5px high, Segoe about 1px low.
+        let shift = |metrics: LineMetrics, kind| ink_line_top(0, 16, metrics, kind) - (16 - metrics.height()) / 2;
+        assert_eq!(shift(malgun11(), InkKind::Cjk), 1);
+        assert_eq!(shift(yu11(), InkKind::Cjk), 1);
+        assert_eq!(shift(segoe11(), InkKind::Latin), -1);
+        assert_eq!(shift(malgun11(), InkKind::Latin), -1);
+        assert_eq!(shift(segoe11(), InkKind::Em), 0);
+        // Same Yu/Segoe metrics, opposite boxes: a Korean string on a Latin face still drops.
+        assert_eq!(shift(segoe11(), InkKind::Cjk), 1);
+        assert_ne!(shift(segoe11(), InkKind::Cjk), shift(segoe11(), InkKind::Latin));
+    }
+
+    #[test]
+    fn twelve_px_rows_move_by_half_the_unused_metric() {
+        let shift = |kind| ink_line_top(0, 24, face12(), kind) - (24 - face12().height()) / 2;
+        assert_eq!(shift(InkKind::Cjk), 1);
+        assert_eq!(shift(InkKind::Latin), -1);
+        assert_eq!(shift(InkKind::Em), 0);
+        assert_eq!(ink_line_top(40, 16, malgun11(), InkKind::Cjk), 42);
+        assert_eq!(ink_line_top(40, 16, segoe11(), InkKind::Latin), 40);
+    }
+
+    #[test]
+    fn offset_scales_with_the_metrics_at_higher_dpi() {
+        // 16 DIP chip. The font is created at lfHeight = -(px * dpi / 96), so the
+        // cached TEXTMETRIC grows with DPI. These rows stand in for that growth:
+        // the shift is half the unused descent or leading, not a constant pixel.
+        let at_100 = m(10, 3, 2);
+        let at_125 = m(13, 4, 3);
+        let at_150 = m(15, 5, 3);
+        let at_200 = m(20, 6, 4);
+        let cjk = |cell: i32, metrics: LineMetrics| ink_line_top(0, cell, metrics, InkKind::Cjk) - (cell - metrics.height()) / 2;
+        let latin = |cell: i32, metrics: LineMetrics| ink_line_top(0, cell, metrics, InkKind::Latin) - (cell - metrics.height()) / 2;
+        assert_eq!((cjk(16, at_100), latin(16, at_100)), (1, -1));
+        assert_eq!((cjk(20, at_125), latin(20, at_125)), (2, -1));
+        assert_eq!((cjk(24, at_150), latin(24, at_150)), (2, -1));
+        assert_eq!((cjk(32, at_200), latin(32, at_200)), (3, -2));
+        assert_ne!(cjk(16, at_100), cjk(32, at_200));
     }
 }
 

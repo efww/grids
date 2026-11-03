@@ -1524,12 +1524,8 @@ unsafe fn drop_view(h: HWND) {
     }
     SetWindowLongPtrW(h, GWLP_USERDATA, 0);
     let v = Box::from_raw(p);
-    if !v.font.0.is_null() {
-        let _ = DeleteObject(v.font.into());
-    }
-    if !v.small.0.is_null() {
-        let _ = DeleteObject(v.small.into());
-    }
+    crate::delete_font(v.font);
+    crate::delete_font(v.small);
 }
 
 unsafe fn drop_ask(h: HWND) {
@@ -1539,12 +1535,8 @@ unsafe fn drop_ask(h: HWND) {
     }
     SetWindowLongPtrW(h, GWLP_USERDATA, 0);
     let v = Box::from_raw(p);
-    if !v.font.0.is_null() {
-        let _ = DeleteObject(v.font.into());
-    }
-    if !v.small.0.is_null() {
-        let _ = DeleteObject(v.small.into());
-    }
+    crate::delete_font(v.font);
+    crate::delete_font(v.small);
 }
 
 fn inside(r: RECT, x: i32, y: i32) -> bool {

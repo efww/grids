@@ -121,12 +121,8 @@ unsafe fn filter_hint_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM, _a1:
         let mut rc = RECT::default();
         _ = GetClientRect(h, &mut rc);
         rc.left += (SendMessageW(h, EM_GETMARGINS, None, None).0 & 0xffff) as i32;
-        let font = SelectObject(dc, HGDIOBJ(SendMessageW(h, WM_GETFONT, None, None).0 as _));
-        SetBkMode(dc, TRANSPARENT);
-        SetTextColor(dc, cref(blend(pal().sub, pal().text, 0.2)));
-        let mut hint: Vec<u16> = tr(crate::Key::SearchCtrlF).encode_utf16().collect();
-        DrawTextW(dc, &mut hint, &mut rc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
-        SelectObject(dc, font);
+        let font = HFONT(SendMessageW(h, WM_GETFONT, None, None).0 as _);
+        text(dc, rc, tr(crate::Key::SearchCtrlF), font, blend(pal().sub, pal().text, 0.2), DT_LEFT);
         _ = ReleaseDC(Some(h), dc);
     }
     r
@@ -816,12 +812,9 @@ pub(crate) unsafe fn draw_header_item(cd: &NMCUSTOMDRAW) {
         } else {
             DT_LEFT
         };
-        let mut r = RECT { left: rc.left + s(7), right: rc.right - s(7), ..rc };
-        let font = SelectObject(dc, HGDIOBJ(SendMessageW(hdr, WM_GETFONT, None, None).0 as _));
-        SetBkMode(dc, TRANSPARENT);
-        SetTextColor(dc, cref(pal().sub));
-        DrawTextW(dc, &mut text[..n], &mut r, align | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX | DT_END_ELLIPSIS);
-        SelectObject(dc, font);
+        let r = RECT { left: rc.left + s(7), right: rc.right - s(7), ..rc };
+        let font = HFONT(SendMessageW(hdr, WM_GETFONT, None, None).0 as _);
+        crate::text(dc, r, &String::from_utf16_lossy(&text[..n]), font, pal().sub, align);
     }
     // sort chevron along the top edge, centred, as Windows 11 draws it
     let up = item.fmt.0 & HDF_SORTUP.0 != 0;

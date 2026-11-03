@@ -156,9 +156,7 @@ fn rebuild_fonts() {
     });
     unsafe {
         for f in [old.0, old.1, old.2, old.3, old.4, old.5, old.6] {
-            if !f.is_invalid() {
-                let _ = DeleteObject(f.into());
-            }
+            crate::delete_font(f);
         }
     }
 }
@@ -2010,9 +2008,7 @@ fn settings_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                     old
                 });
                 for f in [old.0, old.1, old.2, old.3, old.4, old.5, old.6] {
-                    if !f.is_invalid() {
-                        let _ = DeleteObject(f.into());
-                    }
+                    crate::delete_font(f);
                 }
             }
             _ => return DefWindowProcW(h, msg, wp, lp),

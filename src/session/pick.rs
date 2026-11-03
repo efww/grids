@@ -527,9 +527,7 @@ unsafe fn rebuild_fonts(dpi: i32) {
         old
     });
     for f in [old.0, old.1, old.2, old.3] {
-        if !f.is_invalid() {
-            let _ = DeleteObject(f.into());
-        }
+        crate::delete_font(f);
     }
 }
 
@@ -1185,9 +1183,7 @@ unsafe fn pick_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT 
                 old
             });
             for f in [old.0, old.1, old.2, old.3] {
-                if !f.is_invalid() {
-                    let _ = DeleteObject(f.into());
-                }
+                crate::delete_font(f);
             }
         }
         _ => return DefWindowProcW(h, msg, wp, lp),

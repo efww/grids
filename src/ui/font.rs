@@ -146,6 +146,90 @@ pub(crate) unsafe fn installed_families() -> Vec<String> {
     family_names(&hits)
 }
 
+/// Ascent, descent, and internal leading for one `HFONT`. `draw` caches these and
+/// centers the visible glyph box from them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct LineMetrics {
+    pub ascent: i32,
+    pub descent: i32,
+    pub internal_leading: i32,
+}
+
+impl LineMetrics {
+    pub(crate) fn height(self) -> i32 {
+        self.ascent.saturating_add(self.descent).max(0)
+    }
+}
+
+struct MetricSlot {
+    font: usize,
+    metrics: LineMetrics,
+}
+
+/// Keyed by the `HFONT` value. `delete_font` drops the slot, because GDI recycles handle values.
+static LINE_METRICS: Mutex<Vec<MetricSlot>> = Mutex::new(Vec::new());
+
+fn font_key(font: HFONT) -> usize {
+    font.0 as usize
+}
+
+pub(crate) fn forget_line_metrics(font: HFONT) {
+    let key = font_key(font);
+    if key == 0 {
+        return;
+    }
+    if let Ok(mut slots) = LINE_METRICS.lock() {
+        slots.retain(|s| s.font != key);
+    }
+}
+
+/// Delete a UI font and drop its cached line metrics. Stock and null handles are left alone.
+pub(crate) unsafe fn delete_font(font: HFONT) {
+    if font.0.is_null() || font.is_invalid() {
+        return;
+    }
+    forget_line_metrics(font);
+    _ = DeleteObject(font.into());
+}
+
+/// `GetTextMetricsW` for `font`, remembered per `HFONT` until `delete_font`.
+/// The font is selected only on a cache miss, then the DC's previous object is restored.
+pub(crate) unsafe fn line_metrics(dc: HDC, font: HFONT) -> LineMetrics {
+    let key = font_key(font);
+    if key != 0 {
+        if let Ok(slots) = LINE_METRICS.lock() {
+            if let Some(slot) = slots.iter().find(|s| s.font == key) {
+                return slot.metrics;
+            }
+        }
+    }
+    let old = SelectObject(dc, font.into());
+    let mut tm = TEXTMETRICW::default();
+    let ok = GetTextMetricsW(dc, &mut tm).as_bool() && tm.tmAscent > 0;
+    if !old.is_invalid() {
+        SelectObject(dc, old);
+    }
+    let metrics = if ok {
+        LineMetrics { ascent: tm.tmAscent, descent: tm.tmDescent.max(0), internal_leading: tm.tmInternalLeading.max(0) }
+    } else {
+        LineMetrics { ascent: 0, descent: 0, internal_leading: 0 }
+    };
+    if ok && key != 0 {
+        if let Ok(mut slots) = LINE_METRICS.lock() {
+            if let Some(slot) = slots.iter_mut().find(|s| s.font == key) {
+                slot.metrics = metrics;
+            } else {
+                // A font deleted without delete_font would leak a slot. Cap the list.
+                if slots.len() >= 64 {
+                    slots.remove(0);
+                }
+                slots.push(MetricSlot { font: key, metrics });
+            }
+        }
+    }
+    metrics
+}
+
 // Windows' UI font metrics at this DPI, with the language default or the face chosen in Settings.
 // The MDL2 icon font stays on the buttons. Pushed to every edit; also used on DPI change.
 pub(crate) unsafe fn apply_font_all() {
@@ -178,7 +262,7 @@ pub(crate) unsafe fn apply_font() {
         a.fh = tm.tmHeight;
         let old_small = std::mem::replace(&mut a.small_font, small);
         if !old_small.is_invalid() {
-            unsafe { _ = DeleteObject(old_small.into()) };
+            unsafe { delete_font(old_small) };
         }
         let old = std::mem::replace(&mut a.font, font);
         let old_icon = std::mem::replace(&mut a.icon_font, icon_font);
@@ -205,7 +289,7 @@ pub(crate) unsafe fn apply_font() {
         }
     }
     for f in [old, old_icon, old_bold].into_iter().filter(|f| !f.is_invalid()) {
-        _ = DeleteObject(f.into());
+        delete_font(f);
     }
     // The folder tree takes this font, so its item height (and the favourites rows) follow DPI.
     // Preview headings were cloned from the previous face; the next paint builds them again.
@@ -334,7 +418,7 @@ pub(crate) unsafe fn bold_ui_font() -> HFONT {
         }
     });
     if stored != font {
-        _ = DeleteObject(font.into());
+        delete_font(font);
     }
     stored
 }

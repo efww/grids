@@ -226,9 +226,7 @@ fn rebuild_fonts() {
 }
 
 fn drop_font(font: HFONT) {
-    if !font.is_invalid() {
-        unsafe { let _ = DeleteObject(font.into()); }
-    }
+    unsafe { crate::delete_font(font) };
 }
 
 fn make_font(face: &str, px: i32, weight: i32, dpi: i32) -> HFONT {

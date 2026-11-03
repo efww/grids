@@ -618,9 +618,7 @@ pub(crate) fn drop_current_desk() -> (HFONT, HFONT, HFONT, HFONT, HMENU) {
 
 pub(crate) unsafe fn release_desk_handles(font: HFONT, icon: HFONT, small: HFONT, bold: HFONT, menu: HMENU) {
     for f in [font, icon, small, bold] {
-        if !f.0.is_null() {
-            _ = DeleteObject(f.into());
-        }
+        crate::delete_font(f);
     }
     if !menu.0.is_null() {
         _ = DestroyMenu(menu);

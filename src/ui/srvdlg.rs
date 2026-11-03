@@ -8,7 +8,7 @@ use crate::i18n::{title_style, tr, ui_face};
 use crate::imports::*;
 use crate::remote::{self, cred_target, cred_used, fields_from_link, fields_from_parsed, mount_key, normalize, still_used, Fail, Fields, Parsed, KINDS, KIND_LABELS};
 use crate::session::{append_node, node_ref, path_clash, write_server, FavNode, ServerLink};
-use super::{aa_rfill, blend, buffered, cref, fill, on_color, pal, text};
+use super::{aa_rfill, blend, buffered, cref, delete_font, fill, on_color, pal, text};
 
 const SAVE_MSG: u32 = WM_APP + 1;
 /// EC_LEFTMARGIN | EC_RIGHTMARGIN. Same message the settings search box and name prompt use.
@@ -648,12 +648,8 @@ fn make_font(face: &str, dip: i32, weight: i32, dpi: i32) -> HFONT {
 
 fn drop_fonts(dlg: &Dlg) {
     unsafe {
-        if !dlg.font.0.is_null() {
-            let _ = DeleteObject(dlg.font.into());
-        }
-        if !dlg.bold.0.is_null() {
-            let _ = DeleteObject(dlg.bold.into());
-        }
+        delete_font(dlg.font);
+        delete_font(dlg.bold);
         if !dlg.brush.0.is_null() {
             let _ = DeleteObject(dlg.brush.into());
         }
