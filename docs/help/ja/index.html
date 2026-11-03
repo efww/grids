@@ -190,292 +190,349 @@ kbd {
 <div class="layout">
 <aside class="sidebar" id="sidebar">
   <div class="brand"><img class="brand-mark" src="../maguro.png" alt="" width="32" height="32"><strong>Maguro</strong></div>
-  <p class="tagline">Windows 向けの速いマルチペイン ファイル マネージャー</p>
-  <div class="lang-switch" role="navigation" aria-label="Language"><a href="../" class="" hreflang="ko">한국어</a><a href="./" class="active" hreflang="ja">日本語</a><a href="../en/" class="" hreflang="en">English</a></div>
+  <p class="tagline">Windows 向けの高速マルチペイン ファイル マネージャー</p>
+  <div class="lang-switch" role="navigation" aria-label="言語"><a href="../" hreflang="ko">한국어</a><a href="./" class="active" hreflang="ja">日本語</a><a href="../en/" hreflang="en">English</a></div>
   <div class="search-wrap">
     <label class="visually-hidden" for="q">ヘルプを検索…</label>
     <input type="search" id="q" placeholder="ヘルプを検索…" autocomplete="off">
   </div>
   <nav class="toc" id="toc" aria-label="目次">
     <div class="toc-title">目次</div>
-    <a href="#overview">概要</a><a href="#address-toolbar">アドレス バーとツール バー</a><a href="#layouts">レイアウトとペイン</a><a href="#panedrag">ペインの移動と複製</a><a href="#tabs">ウィンドウ タブとセッション</a><a href="#pane-tabs">ペイン タブ</a><a href="#pane-colors">ペインの色</a><a href="#favorites">お気に入りとフォルダー ツリー</a><a href="#search">検索</a><a href="#preview">プレビューとクイックルック</a><a href="#files">ファイル操作</a><a href="#batch-rename">一括名前変更</a><a href="#basket">ファイル バスケット</a><a href="#watch">フォルダー監視</a><a href="#clipboard">クリップボードのパス</a><a href="#workspaces">ワークスペース</a><a href="#servers">サーバー接続</a><a href="#office">Office ファイル</a><a href="#ctxmenu">右クリック メニュー</a><a href="#theme">テーマと外観</a><a href="#settings">設定</a><a href="#window-actions">その他のウィンドウ操作</a><a href="#shortcuts">ショートカット</a><a href="#troubleshoot">トラブルシューティング</a>
+    <a href="#overview">概要</a><a href="#address-toolbar">アドレス バーとツール バー</a><a href="#layouts">レイアウトとペイン</a><a href="#panedrag">ペインの移動と複製</a><a href="#tabs">ウィンドウ タブとセッション</a><a href="#tab-list">タブ一覧</a><a href="#pane-tabs">ペイン タブ</a><a href="#pane-colors">ペインの色</a><a href="#favorites">お気に入りとフォルダー ツリー</a><a href="#search">検索</a><a href="#preview">プレビューとクイックルック</a><a href="#files">ファイル操作</a><a href="#batch-rename">一括リネーム</a><a href="#basket">ファイルバスケット</a><a href="#watch">フォルダー監視</a><a href="#clipboard">クリップボードのパス</a><a href="#workspaces">ワークスペース</a><a href="#servers">サーバー接続</a><a href="#office">Office ファイル</a><a href="#ctxmenu">右クリックメニュー</a><a href="#theme">テーマとスタイル付きコントロール</a><a href="#settings">設定</a><a href="#window-actions">Win+Shift+E とその他の操作</a><a href="#shortcuts">ショートカット</a><a href="#languages">言語</a><a href="#troubleshoot">トラブルシューティング</a>
   </nav>
 </aside>
 <main class="main">
   <header class="hero">
     <h1>Maguro ヘルプ</h1>
-    <p class="tag">Windows 向けの速いマルチペイン ファイル マネージャー</p>
+    <p class="tag">バージョン 0.2.3 · Windows · このサイトはライトテーマ</p>
   </header>
   <div id="no-match">一致する項目がありません。</div>
-  <section class="section-block" id="overview" data-search="開始 紹介 maguro .maguro">
-<h2>概要</h2>
-<p>Maguro は Windows 向けのマルチペイン ファイル マネージャーです。</p>
-<p>ペイン 1 つがフォルダー 1 つです。並べたり格子にしたりして、別のソフトなしでコピー・移動・比較できます。</p>
-<p>スタート メニューかコマンドラインから起動します。maguro.exe の後にフォルダーを書くか、.maguro セッションを開きます。</p>
-<p>F1 はこのヘルプをブラウザーで開きます。Ctrl+/ はアプリ内の短いショートカット一覧です。Ctrl+, は設定です。</p>
-<div class="shot-grid"><figure class="shot"><img src="../../images-v3/hero_light.ja.png" alt="メイン（ライト）" loading="lazy"><figcaption>メイン（ライト）</figcaption></figure><figure class="shot"><img src="../../images-v3/hero_dark.ja.png" alt="メイン（ダーク）" loading="lazy"><figcaption>メイン（ダーク）</figcaption></figure></div>
-</section><section class="section-block" id="address-toolbar" data-search="アドレス ツール ステータス ⇄">
-<h2>アドレス バーとツール バー</h2>
-<p class="ref-shortcuts">キー一覧は <a href="#shortcuts">ショートカット</a>.</p>
-<p>アドレス バーが現在のフォルダーです。パス名をクリックすると移動します。山括弧で中のフォルダーを一覧します。</p>
-<p>現在のフォルダーか余白をクリックするか、ショートカットのアドレス バーでパスを入力します。</p>
-<p>ツール バーにはレイアウト、保存、セッションを開く、お気に入りがあります。ドライブ文字はタブ列に出せます。</p>
-<p>ステータス バーは選択数と空き容量を出します。</p>
-<p>⇄ は選択フォルダー（なければ現在）を別ペインで開き、列と表示を引き継ぎます。または選択ファイルを別ペインへコピー／移動します（最大 10,000）。ペインが一つなら左右に分けます。選択がなければ現在フォルダーを複製します。</p>
 
-<div class="shot-grid"><figure class="shot"><img src="../../images-v3/address_toolbar.ja.png" alt="アドレスバー · ツールバー" loading="lazy"><figcaption>アドレスバー · ツールバー</figcaption></figure></div>
-</section><section class="section-block" id="layouts" data-search="レイアウト 格子 分割 最大化">
-<h2>レイアウトとペイン</h2>
-<p class="ref-shortcuts">キー一覧は <a href="#shortcuts">ショートカット</a>.</p>
-<p>ペインはフォルダー 1 つです。</p>
-<p>レイアウトをクリックで均等格子。押したままドラッグで列ごとの行数。方向キーと Enter も使えます。</p>
-<p>分割線のダブルクリックは均等分割、ドラッグはサイズ変更です。</p>
-<p>上限: 列 4、1 列の行 4、ペイン 16。</p>
-<p>Ctrl+Shift+M またはヘッダーのダブルクリックでそのペインを最大化し、もう一度で戻します。</p>
-<div class="shot-grid"><figure class="shot"><img src="../../images-v3/layout.ja.png" alt="レイアウト" loading="lazy"><figcaption>レイアウト</figcaption></figure><figure class="shot"><img src="../../images-v3/layout_2v.png" alt="2 ペイン" loading="lazy"><figcaption>2 ペイン</figcaption></figure><figure class="shot"><img src="../../images-v3/layout_4.png" alt="4 ペイン" loading="lazy"><figcaption>4 ペイン</figcaption></figure><figure class="shot"><img src="../../images-v3/layout_preset_31.png" alt="3+1" loading="lazy"><figcaption>3+1</figcaption></figure></div>
-</section><section class="section-block" id="panedrag" data-search="ドラッグ スワップ 複製">
-<h2>ペインの移動と複製</h2>
-<p>番号かヘッダーをドラッグして動かします。</p>
-<p>端に落とすと対象が分割され、中央は入れ替わります。</p>
-<p>Ctrl を押したままドラッグすると現在のペイン タブをコピーします。端は元を残して分割、中央はそのマスにペイン タブを追加します。</p>
-<p>赤いプレビューは上限超えです。Ctrl を離すと移動になります。</p>
-<div class="shot-grid"><figure class="shot"><img src="../../images-v3/panedrag_before.png" alt="ドラッグ前" loading="lazy"><figcaption>ドラッグ前</figcaption></figure><figure class="shot"><img src="../../images-v3/panedrag_after.png" alt="ドロップ後" loading="lazy"><figcaption>ドロップ後</figcaption></figure><figure class="shot"><img src="../../images-v3/panedrag_dup.png" alt="Ctrl ドラッグ複製" loading="lazy"><figcaption>Ctrl ドラッグ複製</figcaption></figure></div>
-</section><section class="section-block" id="tabs" data-search="タブ セッション 保存 .maguro">
-<h2>ウィンドウ タブとセッション</h2>
-<p class="ref-shortcuts">キー一覧は <a href="#shortcuts">ショートカット</a>.</p>
-<p>ウィンドウ タブはレイアウト全体（ペイン・フォルダー・表示・色ラベル）です。</p>
-<p>保存はこのタブを書き込みます。保存の緑の点はレイアウト未保存です（通常のファイルコピーとは別）。</p>
-<p>セッションを開くは保存したタブを隣に開きます。複数ならそれぞれタブになります。</p>
-<p>Ctrl+N は別ウィンドウです。単一ウィンドウ モードならこの窓を前面にし、パスはタブで開きます。単一インスタンスは次の起動をこのプロセスに入れます。</p>
-<p>新規／閉じる／次／前タブ、閉じたタブの再開、複製はショートカットを参照。</p>
-<div class="shot-grid"><figure class="shot"><img src="../../images-v3/tabs.ja.png" alt="ウィンドウ タブ" loading="lazy"><figcaption>ウィンドウ タブ</figcaption></figure></div>
-</section><section class="section-block" id="pane-tabs" data-search="ペイン タブ">
-<h2>ペイン タブ</h2>
-<p class="ref-shortcuts">キー一覧は <a href="#shortcuts">ショートカット</a>.</p>
-<p>ペイン タブは 1 ペイン内の追加フォルダーで、ウィンドウ タブとは別です。</p>
-<p>フォルダーが一つだと帯は隠れます。⇄ の右のボタンで追加します。</p>
-<p>中クリックや小さい閉じる印で閉じます。ペイン タブのショートカットはフォーカスがペイン内のときだけです。</p>
+  <section class="section-block" id="overview" data-search="start intro about maguro.exe version 0.2.3 efww grids fork 概要 起動">
+    <h2>概要</h2>
+    <p>Maguro は、Windows 向けのマルチペイン ファイル マネージャーです。各ペインは本物のエクスプローラーのビューです。右クリックメニュー、ドラッグ アンド ドロップ、サムネイル、Windows のコピー ダイアログが、そのまま使えます。</p>
+    <p>新規インストールでは、ペインひとつで開きます。別のプログラムを使わずにコピー、移動、比較したいときは、ペインを追加できます。最大は 4×4 の格子で 16 ペインです。</p>
+    <p>Maguro は、efww による <a href="https://github.com/efww/grids">efww/grids</a> のフォークです。実行ファイル名（<code>maguro.exe</code>）、ウィンドウ クラス、設定フォルダー、ホットキー（Win+Shift+E）は、独自のものです。</p>
+    <p>スタート メニュー、またはコマンド ラインから起動します。<code>maguro.exe C:\Work D:\Archive</code> は、それらのフォルダーを開きます。<code>.maguro</code> ファイルは、保存したセッションを開きます。<code>.grids</code>、<code>.qdr</code>、<code>grids.ini</code> はセッション ファイルではなく、インポートもされません。</p>
+    <p>F1 は、ブラウザーでこのヘルプを開きます。Ctrl+/ は、アプリ内の短いショートカット一覧を開きます。Ctrl+, は、設定を開きます。</p>
+    <div class="shot-grid"><figure class="shot"><img src="../../images-v3/hero_light.ja.png" alt="メイン ウィンドウ、ライトテーマ" loading="lazy"><figcaption>メイン ウィンドウ、ライト</figcaption></figure><figure class="shot"><img src="../../images-v3/hero_dark.ja.png" alt="メイン ウィンドウ、ダークテーマ" loading="lazy"><figcaption>メイン ウィンドウ、ダーク</figcaption></figure></div>
+  </section>
 
-<div class="shot-grid"><figure class="shot"><img src="../../images-v3/pane_tabs.ja.png" alt="パネルタブ" loading="lazy"><figcaption>パネルタブ</figcaption></figure></div>
-</section><section class="section-block" id="pane-colors" data-search="色 ラベル">
-<h2>ペインの色</h2>
-<p>ペイン ヘッダーを右クリックして色ラベルを付けます。</p>
-<p>セッションに保存され、ウィンドウ タブの色とは別です。</p>
-<div class="shot-grid"><figure class="shot"><img src="../../images-v3/pane_colors.ja.png" alt="ペイン色" loading="lazy"><figcaption>ペイン色</figcaption></figure></div>
-</section><section class="section-block" id="favorites" data-search="お気に入り ツリー 左">
-<h2>お気に入りとフォルダー ツリー</h2>
-<p class="ref-shortcuts">キー一覧は <a href="#shortcuts">ショートカット</a>.</p>
-<p>お気に入りとフォルダー ツリーは左パネルを共有します。区切りをドラッグします。上下は設定で決めます。</p>
-<p>お気に入りをクリックするとアクティブ ペインで開きます。グループは展開／折りたたみです。検索は親グループを残します。</p>
-<p>フォルダーでもファイルでも登録できます。無いフォルダーは空パスを開かず案内します。</p>
-<p>ツール バーのお気に入りは大きい一覧（検索・改名・削除・アクティブで開く）です。エクスプローラーのピンも出ることがあります。</p>
-<p>ツリーで Enter かダブルクリックでペインに開きます。Ctrl クリック／中クリックはペイン タブです。</p>
-<p>左パネルの表示はショートカットを参照。</p>
-<div class="shot-grid"><figure class="shot"><img src="../../images-v3/favorites.ja.png" alt="お気に入りとツリー" loading="lazy"><figcaption>お気に入りとツリー</figcaption></figure></div>
-</section><section class="section-block" id="search" data-search="検索 everything">
-<h2>検索</h2>
-<p>Ctrl+F でこのフォルダーを検索します。</p>
-<p>深い下位検索には Everything を入れ、起動したままにします。設定 → 全般で状態確認・インストール／起動ができます。</p>
-<p>Everything 実行中だけ Maguro が問い合わせます。</p>
-<div class="shot-grid"><figure class="shot"><img src="../../images-v3/search.ja.png" alt="検索" loading="lazy"><figcaption>検索</figcaption></figure></div>
-</section><section class="section-block" id="preview" data-search="プレビュー クイックルック">
-<h2>プレビューとクイックルック</h2>
-<p class="ref-shortcuts">キー一覧は <a href="#shortcuts">ショートカット</a>.</p>
-<p>F3 がクイックルックです。Space プレビューがオンなら Space も同じです（入力直後・IME 中の Space は名前の一部）。</p>
-<p>クイックルックで Enter は既定アプリで開いて閉じます。Shift+Enter か右クリックは別アプリで開くです。</p>
-<p>Alt+P はプレビュー ペインです。オプションがオンならホイールで前後のファイルへ。</p>
-<div class="shot-grid"><figure class="shot"><img src="../../images-v3/preview.ja.png" alt="プレビュー" loading="lazy"><figcaption>プレビュー</figcaption></figure><figure class="shot"><img src="../../images-v3/preview_peek.ja.png" alt="クイックルック" loading="lazy"><figcaption>クイックルック</figcaption></figure></div>
-</section><section class="section-block" id="files" data-search="コピー 削除 ドラッグ robocopy winmerge">
-<h2>ファイル操作</h2>
-<p class="ref-shortcuts">キー一覧は <a href="#shortcuts">ショートカット</a>.</p>
-<p>コピー・切り取り・貼り付け・名前の変更・削除はエクスプローラーと同じです（ショートカット参照）。</p>
-<p>Del は Windows 既定（多くはごみ箱）。Shift+Del は完全削除。設定で確認と既定削除を選べます。</p>
-<p>ペイン間ドラッグでコピー／移動。同じドライブは移動、別ドライブはコピー（設定で既定ドラッグ変更可）。フォルダー行に落とすとその中へ。</p>
-<p>高速コピー（設定 → ファイル操作）はネットワークの貼り付け／ドラッグに robocopy と Maguro 進行・キャンセルを使います。宛先の余分は消しません。オフは Windows コピー窓。ローカルのみは Windows のままです。</p>
-<p>クリップボードに画像があれば Ctrl+V で現在フォルダーへ PNG 保存します。</p>
-<p>新しいフォルダー／テキスト ファイルはショートカットにあります。新しいファイル名は設定からです。</p>
-<p>Ctrl+Shift+O は同じ選択名を他ペインに集めます。</p>
-<p>Ctrl+Alt+C はアクティブと次ペインを WinMerge で比較します。歯車や一覧からファイル同士、または他ペインの同名とも比較できます。パスは設定 → 全般です。</p>
+  <section class="section-block" id="address-toolbar" data-search="address toolbar status swap drive buttons アドレス ツールバー ステータス">
+    <h2>アドレス バーとツール バー</h2>
+    <p class="ref-shortcuts">キーは <a href="#shortcuts">ショートカット</a> に、一度だけ載せています。</p>
+    <p>アドレス バーは、現在のフォルダーです。パスの名前をクリックすると、そこへ移動します。山括弧をクリックすると、中のフォルダーが一覧されます。現在のフォルダーか、バーの空いている部分をクリックするか、アドレス バーのショートカット（Ctrl+L、Alt+D、または F4）で、パスを入力します。</p>
+    <p>ツール バーには、レイアウト、保存、セッションを開く、お気に入りがあります。ドライブ文字は、タブ列に置けます。ウィンドウが狭いときは、後ろの文字から先に隠れます。設定 → 外観では、ツール バー、ドライブ ボタン、ステータス バーを隠せます。</p>
+    <p>ステータス バーは、選択している項目の数と、空き容量を表示します。</p>
+    <p>⇄ ボタンは、選択したフォルダー（または現在のフォルダー）を別のペインで開き、このペインの列、並べ替え、表示を保ちます。ファイルが選択されているときは、そこへコピーまたは移動します。上限は 10,000 です。ペインがひとつのときは、左右に分割します。何も選択していないとき、またはフォルダーがなくファイルだけが選択されているときは、現在のフォルダーを複製し、それらのファイルはコピーしません。</p>
+    <div class="shot-grid"><figure class="shot"><img src="../../images-v3/address_toolbar.ja.png" alt="アドレス バーとツール バー" loading="lazy"><figcaption>アドレス バーとツール バー</figcaption></figure></div>
+  </section>
 
-<div class="shot-grid"><figure class="shot"><img src="../../images-v3/copy_progress.ja.png" alt="高速コピーの進行" loading="lazy"><figcaption>高速コピーの進行</figcaption></figure></div>
-</section><section class="section-block" id="batch-rename" data-search="一括 名前">
-<h2>一括名前変更</h2>
-<p class="ref-shortcuts">キー一覧は <a href="#shortcuts">ショートカット</a>.</p>
-<p>Ctrl+Shift+R で選択の一括名前変更です。</p>
-<p>接頭・接尾・置換を入れ、適用前にプレビューします。</p>
-<div class="shot-grid"><figure class="shot"><img src="../../images-v3/rename.ja.png" alt="一括名前変更" loading="lazy"><figcaption>一括名前変更</figcaption></figure></div>
-</section><section class="section-block" id="basket" data-search="バスケット">
-<h2>ファイル バスケット</h2>
-<p class="ref-shortcuts">キー一覧は <a href="#shortcuts">ショートカット</a>.</p>
-<p>Ctrl+Shift+B で常に手前の小さいバスケットを開きます。</p>
-<p>ドラッグするか Ctrl+Alt+B でアクティブ選択を追加します。元パスを保持します。</p>
-<p>アクティブへコピー／移動は Windows 進行窓。外へドラッグはコピー、Shift ドラッグは移動。削除とクリアは一覧だけ変えます。</p>
-<div class="shot-grid"><figure class="shot"><img src="../../images-v3/feature_basket.ja.png" alt="バスケット" loading="lazy"><figcaption>バスケット</figcaption></figure></div>
-</section><section class="section-block" id="watch" data-search="監視">
-<h2>フォルダー監視</h2>
-<p class="ref-shortcuts">キー一覧は <a href="#shortcuts">ショートカット</a>.</p>
-<p>Ctrl+Shift+W でフォルダー監視を開きます。</p>
-<p>変更を見て、新規や更新があればすぐ移ります。</p>
-<div class="shot-grid"><figure class="shot"><img src="../../images-v3/feature_folder_watch.ja.png" alt="フォルダー監視" loading="lazy"><figcaption>フォルダー監視</figcaption></figure></div>
-</section><section class="section-block" id="clipboard" data-search="クリップボード">
-<h2>クリップボードのパス</h2>
-<p class="ref-shortcuts">キー一覧は <a href="#shortcuts">ショートカット</a>.</p>
-<p>Win+Shift+V はクリップボードのパスを新しいタブで開きます。</p>
-<p>設定 → 全般でこのホットキーを切り替えられます。</p>
-<div class="shot-grid"><figure class="shot"><img src="../../images-v3/feature_win_shift_v.ja.png" alt="クリップボードのパス" loading="lazy"><figcaption>クリップボードのパス</figcaption></figure></div>
-</section><section class="section-block" id="workspaces" data-search="ワークスペース">
-<h2>ワークスペース</h2>
-<p class="ref-shortcuts">キー一覧は <a href="#shortcuts">ショートカット</a>.</p>
-<p>ワークスペースはタブ・ペイン・フォルダーを最大 9 スロットに保存します。</p>
-<p>Ctrl+Alt+1…9 で読み込み、Ctrl+Alt+Shift+1…9 で保存します。</p>
-<p>歯車 → ワークスペースで保存・読み込み・改名・クリア。空スロットは短い案内です。</p>
-<p>読み込みは現在のタブを置き換えます。確認はオプションがオンのときだけです。</p>
+  <section class="section-block" id="layouts" data-search="layout grid splitter maximise pane 4x4 sixteen レイアウト ペイン 格子">
+    <h2>レイアウトとペイン</h2>
+    <p class="ref-shortcuts">キーは <a href="#shortcuts">ショートカット</a> に、一度だけ載せています。</p>
+    <p>ペインは、フォルダーひとつです。レイアウトをクリックすると、均等な格子になります。その選択画面で押したままドラッグすると、各列の行数を決められます。方向キーと Enter も使えます。</p>
+    <p>スプリッターをドラッグすると、サイズが変わります。スプリッターをダブルクリックすると、均等に分割します。上限は、列 4、1 列の行 4、ペイン 16 です。赤いドロップ プレビューは、そのレイアウトが上限を超えるという意味です。</p>
+    <p>Ctrl+Shift+M、またはペイン ヘッダーのダブルクリックで、そのペインを最大化します。もう一度行うと、元に戻ります。</p>
+    <p>設定 → 一般 → 既定のレイアウトは、新しいタブ、新しいウィンドウ、初回起動のレイアウトです。新規インストールは、ペインひとつです。レイアウトを一度も保存していない古い <code>maguro.json</code> は、今も左右に二つのペインで開きます。別の起動から渡されたパスは、今もペインひとつのタブで開きます。保存した <code>.maguro</code> ファイルは、そのファイルに保存されたレイアウトを保ちます。</p>
+    <div class="shot-grid"><figure class="shot"><img src="../../images-v3/layout_1.png" alt="ペインひとつ" loading="lazy"><figcaption>ペインひとつ</figcaption></figure><figure class="shot"><img src="../../images-v3/layout_2v.png" alt="上下に二つのペイン" loading="lazy"><figcaption>上下に二つのペイン</figcaption></figure><figure class="shot"><img src="../../images-v3/layout_4.png" alt="四つのペイン" loading="lazy"><figcaption>四つのペイン</figcaption></figure><figure class="shot"><img src="../../images-v3/layout_preset_31.png" alt="三つとひとつのペイン" loading="lazy"><figcaption>3+1</figcaption></figure></div>
+  </section>
 
-<div class="shot-grid"><figure class="shot"><img src="../../images-v3/workspaces.ja.png" alt="ワークスペース名" loading="lazy"><figcaption>ワークスペース名</figcaption></figure></div>
-</section><section class="section-block" id="servers" data-search="smb webdav sftp ftp">
-<h2>サーバー接続</h2>
-<p>SMB、WebDAV、SFTP、FTP に接続します。接続先は開いてコピーやプレビューできるフォルダーとして見えます。</p>
-<p>ダイアログで種類・アドレス・ポート・ユーザー・パスワードを入れます。パスワードは Windows 資格情報のみで、設定ファイルには書きません。</p>
-<p>SMB は Windows 共有。WebDAV は HTTPS が必要なことがあります。FTP は入力したホストとポート。SFTP は rclone と WinFsp が必要で、Maguro がインストールを案内できます。</p>
-<p>終わったら切断します。切れた共有はネットワーク フォルダーサイズがオフならサイズを歩きません。開けないときは F5 で再試行します。</p>
-<div class="shot-grid"><figure class="shot"><img src="../../images-v3/servers.ja.png" alt="サーバー" loading="lazy"><figcaption>サーバー</figcaption></figure></div>
-</section><section class="section-block" id="office" data-search="excel office">
-<h2>Office ファイル</h2>
-<p>他アプリが開いている Excel などは読み取り専用になることがあります。</p>
-<p>ロックされたブックが閲覧を妨げないよう一覧を整えます。</p>
-<div class="shot-grid"><figure class="shot"><img src="../../images-v3/feature_excel_readonly_tidy.ja.png" alt="Office / Excel" loading="lazy"><figcaption>Office / Excel</figcaption></figure></div>
-</section><section class="section-block" id="ctxmenu" data-search="コンテキスト">
-<h2>右クリック メニュー</h2>
-<p>設定 → 右クリック メニューでサードパーティ項目をオフにできます。</p>
-<p>クラシックと Windows 11 の二形。Windows 11 パッケージ項目は既定オフで、必要なものだけオンにします。</p>
-<p>更新でメニューを再読込します。開く・コピー・プロパティなど Windows 標準は残ります。</p>
-<div class="shot-grid"><figure class="shot"><img src="../../images-v3/settings_ctxmenu.ja.png" alt="右クリック設定" loading="lazy"><figcaption>右クリック設定</figcaption></figure></div>
-</section><section class="section-block" id="theme" data-search="テーマ アクセント">
-<h2>テーマと外観</h2>
-<p>設定 → 外観でテーマ、アクセント、ツール バー、ドライブ ボタン、ステータス バーを決めます。</p>
-<p>ライトとダークはアクセントを別々に覚えます。Windows に従うはシステムと連動します。</p>
-<p>テーマ変更後、フォルダー一覧の色は次回起動で付き、他はすぐ変わります。</p>
-<p>このヘルプのサイドバーにもライト／ダーク／自動があります。</p>
-<div class="shot-grid"><figure class="shot"><img src="../../images-v3/settings.ja.png" alt="設定" loading="lazy"><figcaption>設定</figcaption></figure></div>
-</section><section class="section-block" id="settings" data-search="設定 全般 外観 ペイン ファイル お気に入り ショートカット セッション 詳細">
-<h2>設定</h2>
-<p>Ctrl+, で設定を開きます。検索はタイトルか説明が一致するカードへジャンプします。</p>
-<p>全般 — 表示言語、フォント、起動時、既定フォルダーアプリ、既定レイアウト、単一インスタンス、単一ウィンドウ、開く／保存ダイアログのフォルダー、クリップボードパスのホットキー、余白ダブルクリックで親、Everything、WinMerge。</p>
-<p>外観 — テーマ、アクセント、ツール バー、ドライブ ボタン、ステータス バー。</p>
-<p>ペインと表示 — 新しいペインの既定表示、フォルダーごとの表示記憶、全フォルダー既定、新しいペインの開始フォルダー、隠しファイル、拡張子、フォルダーサイズ（ネットワーク含む）、左パネルと順序、アクティブ枠、プレビュー ペイン、Space プレビュー、ホイール前後。</p>
-<p>ファイル操作 — Windows コピー窓、ネットワーク高速コピー、削除確認、既定削除、新しいファイル名、既定ドラッグ。</p>
-<p>お気に入り — 左パネル表示とお気に入り／ツリーの上下。</p>
-<p>ショートカット — 行をダブルクリックして新しいキー。Esc で取消、リセットで既定。衝突は通知します。</p>
-<p>セッション — セッションフォルダー、終了時保存、緑の点。</p>
-<p>詳細 — 起動時更新確認、設定ファイル位置、すべてリセット。maguro.exe 横の portable.txt は設定を AppData ではなく exe 横に置きます。リセットは設定のみ戻し、レイアウト・フォルダー・お気に入りは残します。</p>
-<p>右クリック メニュー — サードパーティとメニュー形。</p>
-<p>バージョン情報 — バージョンとリンク。</p>
+  <section class="section-block" id="panedrag" data-search="drag drop swap duplicate pane number badge ctrl ドラッグ 複製 入れ替え">
+    <h2>ペインの移動と複製</h2>
+    <p>ペインは、番号のバッジかヘッダーをドラッグして動かします。</p>
+    <p>端にドロップすると、対象のペインを分割します。中央にドロップすると、位置を入れ替えます。ドラッグ中に Ctrl を押したままにすると、現在のペイン タブをコピーします。端では分割してこのペインを残し、中央ではそのマスにペイン タブを追加します。Ctrl を離すと、コピーではなく移動になります。</p>
+    <p>同じ操作は、キーボードでもできます。Alt+Shift+方向キーはフォーカスを隣へ移し、Ctrl+Alt+Shift+方向キーはその隣と入れ替えます。</p>
+    <div class="shot-grid"><figure class="shot"><img src="../../images-v3/panedrag_before.png" alt="ペインをドラッグする前" loading="lazy"><figcaption>ドラッグの前</figcaption></figure><figure class="shot"><img src="../../images-v3/panedrag_after.png" alt="ペインを入れ替えたあと" loading="lazy"><figcaption>ドロップのあと</figcaption></figure><figure class="shot"><img src="../../images-v3/panedrag_dup.png" alt="Ctrl ドラッグでペインを複製" loading="lazy"><figcaption>Ctrl ドラッグで複製</figcaption></figure></div>
+  </section>
 
-<div class="shot-grid"><figure class="shot"><img src="../../images-v3/settings_general.ja.png" alt="設定 · 一般" loading="lazy"><figcaption>設定 · 一般</figcaption></figure><figure class="shot"><img src="../../images-v3/settings_panes.ja.png" alt="設定 · パネル・表示" loading="lazy"><figcaption>設定 · パネル・表示</figcaption></figure></div>
-</section><section class="section-block" id="window-actions" data-search="前面 ダイアログ フォーカス 隠し">
-<h2>その他のウィンドウ操作</h2>
-<p class="ref-shortcuts">キー一覧は <a href="#shortcuts">ショートカット</a>.</p>
-<p>Win+Shift+E は Maguro を前面にします。</p>
-<p>Ctrl+Alt+G はオプションがオンのとき、ファイルダイアログからフォルダーへジャンプします。</p>
-<p>F6 / Shift+F6 はフォーカス移動。Ctrl+H は隠しファイル切替。</p>
-<p>パターン選択・解除・反転はショートカット（Num+、Num−、Num*）にあります。</p>
-<p>フルパスコピーとフォルダーで表示もショートカットにあります。</p>
-<p>最近のファイルは Ctrl+Alt+R、最近のフォルダーは Alt+↓ です。</p>
+  <section class="section-block" id="tabs" data-search="tab session save .maguro green dot grids qdr grids.ini no import タブ セッション 保存">
+    <h2>ウィンドウ タブとセッション</h2>
+    <p class="ref-shortcuts">キーは <a href="#shortcuts">ショートカット</a> に、一度だけ載せています。</p>
+    <p>ウィンドウ タブは、レイアウト全体を持ちます。ペイン、フォルダー、表示、列、フィルター、ロック、色ラベルです。タブの名前は、名前を変えるまで、アクティブなフォルダーに従います。タブを右クリックすると、名前の変更、ロック、複製、新しいウィンドウへ移動、保存、色付け、タブ一覧を開けます。ロックしたタブは、ほかのタブを閉じるときも、すべてのタブを閉じるときも残ります。</p>
+    <p>Ctrl+T は新しいタブを開きます。Ctrl+W は現在のタブを閉じます。Ctrl+Shift+T は閉じたタブを開き直します。Ctrl+Alt+K はタブを複製します。Ctrl+Tab と Ctrl+Shift+Tab は、タブを切り替えます。</p>
+    <p>保存（Ctrl+S）は、このタブを書き込みます。一度も保存していないタブは、名前を尋ねます。保存ボタンの緑の点は、このタブのレイアウトが未保存という意味です。通常のファイルのコピーでは、その点は点灯しません。設定 → セッションでは、点をオフにでき、終了時にセッションを保存することもできます。終了時の保存が書き込めるよう、ウィンドウの閉じるボタンで閉じてください。</p>
+    <p>セッションを開くは、保存したタブを現在のタブの隣に開きます。複数のファイルを開くと、それぞれが自分のタブになります。</p>
+    <p>名前付きセッションは、<code>.maguro</code> ファイルだけです。設定ファイルの隣の <code>maguro-sessions</code> にあります（<code>%APPDATA%\Maguro\maguro-sessions</code>、ポータブル モードでは exe の隣）。ファイルには、レイアウト、ペインのパス、表示、列、色合い、ペイン タブ、ウィンドウ タブが入ります。お気に入り、ファイルバスケット、右クリックメニューの選択は入りません。それらは <code>maguro.json</code> に残ります。</p>
+    <p>Maguro は、<code>.grids</code>、<code>.qdr</code>、<code>grids.ini</code> をインポートしません。コマンド ラインで <code>old.qdr</code> を渡しても、セッションは開きません。設定 → 詳細では、Maguro の <code>maguro.json</code>、または Maguro 自身の古い ini テキストをインポートできます。その ini は Maguro のものであり、grids のファイルではありません。</p>
+    <p>Ctrl+N は、単一ウィンドウモードがオフのとき、別のウィンドウを開きます。新規インストールでは、そのモードはオンです。後からの起動、Ctrl+N、タブ列からタブをドラッグして外す操作、新しいウィンドウへ移動は、このウィンドウにタブを開きます。単一インスタンスも既定でオンで、後からの起動をこのプロセスに留めます。</p>
+    <div class="shot-grid"><figure class="shot"><img src="../../images-v3/tabs.ja.png" alt="ウィンドウ タブとペイン タブ" loading="lazy"><figcaption>ウィンドウ タブとペイン タブ</figcaption></figure></div>
+  </section>
 
-<div class="shot-grid"><figure class="shot"><img src="../../images-v3/dialog_jump.ja.png" alt="ダイアログのフォルダーへジャンプ" loading="lazy"><figcaption>ダイアログのフォルダーへジャンプ</figcaption></figure></div>
-</section><section class="section-block" id="shortcuts" data-search="ショートカット キー">
-<h2>ショートカット</h2>
-<p>Maguro のすべてのキーが下にあります。同じ一覧は Ctrl+/ でアプリ内にも開きます。</p>
-<p>設定 → ショートカットで行をダブルクリックし、新しいキーを押します。Esc で取消、リセットで既定です。</p>
-<p>アプリ内一覧は再起動なしで設定に従います。</p>
-<table class="shortcuts-table"><thead><tr><th>キー</th><th>操作</th></tr></thead><tbody>
-<tr><td class="cat" colspan="2"> タブ</td></tr>
-<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>T</kbd></span></td><td> 新しいタブ</td></tr>
-<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>W</kbd></span></td><td> タブを閉じる</td></tr>
-<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Tab</kbd></span></td><td> 次のタブ</td></tr>
-<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Tab</kbd></span></td><td> 前のタブ</td></tr>
-<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd></span></td><td> 閉じたタブを開き直す</td></tr>
-<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>K</kbd></span></td><td> タブを複製</td></tr>
-<tr><td class="cat" colspan="2"> ペイン</td></tr>
-<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>PageDown</kbd></span></td><td> 次のペイン</td></tr>
-<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>PageUp</kbd></span></td><td> 前のペイン</td></tr>
-<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>1…9</kbd></span></td><td> ペイン 1〜9 へ移動</td></tr>
-<tr><td class="cat" colspan="2"> ペイン タブ</td></tr>
-<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>T</kbd></span></td><td> 新しいペイン タブ</td></tr>
-<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>W</kbd></span></td><td> ペイン タブを閉じる</td></tr>
-<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>PageDown</kbd></span></td><td> 次のペイン タブ</td></tr>
-<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>PageUp</kbd></span></td><td> 前のペイン タブ</td></tr>
-<tr><td class="cat" colspan="2"> 移動</td></tr>
-<tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>←</kbd></span></td><td> 左のペイン</td></tr>
-<tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>→</kbd></span></td><td> 右のペイン</td></tr>
-<tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>↑</kbd></span></td><td> 上のペイン</td></tr>
-<tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>↓</kbd></span></td><td> 下のペイン</td></tr>
-<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>←</kbd></span></td><td> 左のペインと入れ替え</td></tr>
-<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>→</kbd></span></td><td> 右のペインと入れ替え</td></tr>
-<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>↑</kbd></span></td><td> 上のペインと入れ替え</td></tr>
-<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>↓</kbd></span></td><td> 下のペインと入れ替え</td></tr>
-<tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>←</kbd></span></td><td> 戻る</td></tr>
-<tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>→</kbd></span></td><td> 進む</td></tr>
-<tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>↑</kbd></span></td><td> 上のフォルダー</td></tr>
-<tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>↓</kbd></span></td><td> 最近のフォルダー</td></tr>
-<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>L</kbd></span> <span class="sep">/</span> <span class="chord"><kbd>Alt</kbd>+<kbd>D</kbd></span> <span class="sep">/</span> <span class="chord"><kbd>F4</kbd></span></td><td> アドレス バー</td></tr>
-<tr><td class="cat" colspan="2"> 表示</td></tr>
-<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>F</kbd></span></td><td> このフォルダーを検索</td></tr>
-<tr><td><span class="chord"><kbd>F3</kbd></span></td><td> クイックルック</td></tr>
-<tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>P</kbd></span></td><td> プレビュー ウィンドウ</td></tr>
-<tr><td><span class="chord"><kbd>F6</kbd></span></td><td> 次のフォーカス</td></tr>
-<tr><td><span class="chord"><kbd>Shift</kbd>+<kbd>F6</kbd></span></td><td> 前のフォーカス</td></tr>
-<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>H</kbd></span></td><td> 隠しファイルを表示</td></tr>
-<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd></span></td><td> 左のパネルを表示</td></tr>
-<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd></span></td><td> エクスプローラーのフォルダーを開く</td></tr>
-<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>R</kbd></span></td><td> 最近使ったファイル</td></tr>
-<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd></span></td><td> ペインを最大化 / 元に戻す</td></tr>
-<tr><td class="cat" colspan="2"> ファイル</td></tr>
-<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd></span></td><td> フルパスをコピー</td></tr>
-<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd></span></td><td> 一括リネーム</td></tr>
-<tr><td><span class="chord"><kbd>Num</kbd>+<kbd></kbd></span> <span class="sep">/</span> <span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd></span></td><td> パターンで選択</td></tr>
-<tr><td><span class="chord"><kbd>Num−</kbd></span></td><td> パターンで選択解除</td></tr>
-<tr><td><span class="chord"><kbd>Num*</kbd></span></td><td> 選択を反転</td></tr>
-<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>N</kbd></span></td><td> 新しいテキスト ファイル</td></tr>
-<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd></span></td><td> 新しいフォルダー</td></tr>
-<tr><td><span class="chord"><kbd>F7</kbd></span></td><td> このペインに新しいフォルダー</td></tr>
-<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd></span></td><td> WinMerge でフォルダーを比較</td></tr>
-<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd></span></td><td> ファイルバスケット</td></tr>
-<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>B</kbd></span></td><td> 選択をバスケットに追加</td></tr>
-<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Enter</kbd></span></td><td> フォルダーに表示</td></tr>
-<tr><td class="cat" colspan="2"> セッション</td></tr>
-<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>S</kbd></span></td><td> このタブを保存</td></tr>
-<tr><td class="cat" colspan="2"> ワークスペース</td></tr>
-<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>1…9</kbd></span></td><td> ワークスペースを開く</td></tr>
-<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>1…9</kbd></span></td><td> ワークスペースを保存</td></tr>
-<tr><td class="cat" colspan="2"> お気に入り</td></tr>
-<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>B</kbd></span></td><td> お気に入り</td></tr>
-<tr><td class="cat" colspan="2"> ヘルプ</td></tr>
-<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>,</kbd></span></td><td> 設定</td></tr>
-<tr><td><span class="chord"><kbd>F1</kbd></span></td><td> ショートカットのヘルプ</td></tr>
-<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>/</kbd></span></td><td> ショートカット一覧</td></tr>
-<tr><td class="cat" colspan="2"> ウィンドウ</td></tr>
-<tr><td><span class="chord"><kbd>Win</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd></span></td><td> Maguro を前面に</td></tr>
-<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>G</kbd></span></td><td> ファイル ダイアログのフォルダーへ移動</td></tr>
-<tr><td><span class="chord"><kbd>Win</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd></span></td><td> クリップボードのパスを開く</td></tr>
-<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>N</kbd></span></td><td> 新しいウィンドウ</td></tr>
-<tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>W</kbd></span></td><td> フォルダー監視</td></tr>
-</tbody></table>
-<p>マウス: レイアウトのクリック／ドラッグ、アドレスの山括弧、分割線ダブルクリック、ヘッダー右クリックで色、ペイン タブ中クリックで閉じる。</p>
+  <section class="section-block" id="tab-list" data-search="tab list ctrl+shift+l f2 rename tooltip filter path search タブ一覧 フィルター">
+    <h2>タブ一覧</h2>
+    <p>Ctrl+Shift+L は、<strong>このウィンドウ</strong>のタブ一覧を開きます。すでに開いていれば、閉じます。タブ列の右端にある一覧ボタンも、同じです。タブの右クリックメニューの <strong>タブ一覧…</strong> は、それを開くか、すでに開いていればそこにフォーカスします。Esc または閉じるで、消えます。</p>
+    <p>一行が、ウィンドウ タブひとつです。列は、タブ名、レイアウト（たとえば <code>2×2</code>、列が異なるときは <code>2 | 3</code>）、ペイン数、各ペインのフォルダーのチップです。現在のタブには、セルリアンのバーが付きます。ロックしたタブは、ロックを表示します。</p>
+    <p>フィルターは、大文字と小文字を区別せず、タブ名、フォルダーの表示名、またはフルパスに一致します。案内は「タブ名またはフォルダーで絞り込み」です。フォルダーのチップにカーソルを置くと、チップの下のツールチップにフルパスが出ます。PC の項目は、シェルの識別子ではなく、その言語に合わせた名前で出ます。</p>
+    <p>F2 は、選択したタブの名前をその場で変更します。Enter は新しい名前を残します。Esc は取り消します。テキストを変えずに離れると、自動のフォルダー名は固定されません。空の名前、または数字だけの名前は、カスタムのタイトルを消し、タブは再びフォルダーに従います。カスタムの名前は、80 文字まで保たれます。</p>
+    <p>Enter、移動ボタン、またはダブルクリックで、そのタブに切り替わり、一覧が閉じます。フィルター欄にフォーカスがあり、空でないとき、Del はフィルターを消します。それ以外では、そのタブを閉じてよいときに限り、選択したタブを閉じます。</p>
+    <p>フッターはタブの数を数え、Enter は移動、F2 は名前の変更、Del はタブを閉じる、Esc はウィンドウを閉じる、と知らせます。</p>
+    <div class="shot-grid"><figure class="shot"><img src="../../images-v3/tab_list.png" alt="フィルター、レイアウト、ペイン数、フォルダーのチップがあるタブ一覧" loading="lazy"><figcaption>タブ一覧。このスクリーンショットは韓国語の UI です。ウィンドウはどの言語でも同じです。</figcaption></figure></div>
+  </section>
 
-</section><section class="section-block" id="troubleshoot" data-search="トラブル F5 everything クラッシュ 更新">
-<h2>トラブルシューティング</h2>
-<p>フォルダーが開かない — ペインをクリックして F5。F5 はどこからでもアクティブを再読込し、失敗したネットワークを再試行します。</p>
-<p>下位検索が空 — Everything を入れて起動し、設定 → 全般を確認します。</p>
-<p>ネットワークコピーが遅い／Maguro 進行がない — ネットワーク高速コピーをオン。オフは Windows コピー窓。ローカルのみには高速コピーは使いません。</p>
-<p>WinMerge が起動しない — 設定 → 全般でパスを設定。フォルダー比較は実フォルダーが必要です。</p>
-<p>SFTP 失敗 — 案内どおり rclone と WinFsp を入れ、ホスト・ポート・ユーザー・パスワードを確認。WebDAV は HTTPS が必要なことがあります。SMB は Windows 共有パス、FTP は接続のホストとポートです。</p>
-<p>窓の色だけ変わり一覧はそのまま — Maguro を再起動。一覧色は起動時に付きます。</p>
-<p>前回クラッシュ — 次回起動でレポート位置（設定横の crashes）を知らせます。</p>
-<p>二回目起動がすぐ終わる — 単一インスタンス／単一ウィンドウがオンで最初の窓が残ります。インストール可能な更新は maguro.exe を差し替えて再起動します。zip のみのリリースは展開しないので、案内どおり exe を差し替えます。</p>
-<p>終了時保存のため、窓の閉じるボタンで終了します。</p>
+  <section class="section-block" id="pane-tabs" data-search="pane tab strip ctrl+alt+t ペインタブ">
+    <h2>ペイン タブ</h2>
+    <p class="ref-shortcuts">キーは <a href="#shortcuts">ショートカット</a> に、一度だけ載せています。</p>
+    <p>ペイン タブは、ひとつのペインの中の追加フォルダーです。ウィンドウ タブではありません。フォルダーがひとつのとき、タブ列は隠れたままです。⇄ の隣のボタンが、ペイン タブを追加します。</p>
+    <p>中クリック、または小さな閉じる印で、ペイン タブを閉じます。Ctrl+Alt+T、Ctrl+Alt+W、Ctrl+Alt+Page Down、Ctrl+Alt+Page Up は、ペイン タブの作成、閉じる、移動です。この四つは、フォーカスがペインにあるときだけ動くので、ウィンドウ タブのショートカットを奪いません。</p>
+    <div class="shot-grid"><figure class="shot"><img src="../../images-v3/pane_tabs.ja.png" alt="ひとつのペインの中のペイン タブ" loading="lazy"><figcaption>ペイン タブ</figcaption></figure></div>
+  </section>
 
-</section>
+  <section class="section-block" id="pane-colors" data-search="colour color label header tint accent sky gray lavender sage peach rose ペインの色 色ラベル セルリアン">
+    <h2>ペインの色</h2>
+    <p>ペイン ヘッダーを右クリックすると、色ラベルを設定できます。ラベルはセッションと一緒に保存され、ウィンドウ タブの色とは別です。</p>
+    <p>六つの色見本は、空、グレー、ラベンダー、セージ、ピーチ、ローズです。ライトとダークは、それぞれ独自の濃淡を持ちます。これはペインのラベルであり、ウィンドウのアクセントではありません。アクセントは既定でセルリアン <code>#0A9BD6</code> で、設定 → 外観で設定します。</p>
+    <div class="shot-grid"><figure class="shot"><img src="../../images-v3/pane_colors.ja.png" alt="色の付いたペイン ヘッダー" loading="lazy"><figcaption>右のペインに色ラベルが付いています</figcaption></figure></div>
+  </section>
+
+  <section class="section-block" id="favorites" data-search="favourites favorites pins tree left panel groups ctrl+b missing お気に入り フォルダーツリー">
+    <h2>お気に入りとフォルダー ツリー</h2>
+    <p class="ref-shortcuts">キーは <a href="#shortcuts">ショートカット</a> に、一度だけ載せています。</p>
+    <p>お気に入りとフォルダー ツリーは、左のパネルを共有します。間の区切りをドラッグします。設定 → ペインと表示で、どちらを上にするかを選びます。既定は、お気に入りが上です。Ctrl+Shift+E は、パネル全体の表示と非表示を切り替えます。</p>
+    <p>お気に入りは、フォルダーとファイルを、入れ子にできるグループに入れます。エクスプローラーのクイック アクセスのピンと、エクスプローラーのお気に入りファイルも、パネルに出ることがあります。お気に入りをクリックすると、アクティブなペインで開きます。グループをクリックすると、展開または折りたたみます。検索は親グループを残すので、一致した項目がどこにあるか分かります。ファイルやフォルダーをパネルにドロップすると、ピン留めされます。ドラッグで並べ替えます。</p>
+    <p>無いフォルダーは、空のパスとしては開きません。Maguro は、お気に入りから削除するか、場所を変えるかを提案します。</p>
+    <p>Ctrl+B は、クイックのお気に入り一覧を開きます。検索、名前の変更、削除、アクティブなペインで開く、ができます。ペインの星は、そのペインのフォルダーを追加または削除します。</p>
+    <p>右クリックメニューには独自の行があり、<strong>Maguro のお気に入りに追加</strong> または <strong>Maguro のお気に入りから削除</strong> です。その行は Maguro のものです。エクスプローラーのお気に入りコマンドではなく、右クリックメニューの設定ページでも隠せません。</p>
+    <p>フォルダー ツリーでは、Enter またはダブルクリックで、そのフォルダーをペインに開きます。Ctrl クリックまたは中クリックは、ペイン タブとして開きます。</p>
+    <div class="shot-grid"><figure class="shot"><img src="../../images-v3/favorites.ja.png" alt="フォルダー ツリーの上のお気に入り" loading="lazy"><figcaption>お気に入りとフォルダー ツリー</figcaption></figure></div>
+  </section>
+
+  <section class="section-block" id="search" data-search="search everything ctrl+f subfolders 300 検索 サブフォルダー">
+    <h2>検索</h2>
+    <p>Ctrl+F は、入力に合わせてこのフォルダーを絞り込みます。</p>
+    <p>サブフォルダーにチェックを入れると、深い検索になります。<strong>検索に Everything を使う</strong> がオン（既定）で、<a href="https://www.voidtools.com/">voidtools Everything</a> が実行中のとき、Maguro は Everything に問い合わせます。そうでなければ、ディスクをたどります。一覧は最大 300 件です。並べ替えは <code>maguro.json</code> に記憶されます。</p>
+    <p>設定 → 一般は、Everything がインストールされ、実行中かどうかを示し、起動するか、winget でインストールできます。Everything がインストールされていないときの、最初のサブフォルダー検索は、一度だけ尋ねます。</p>
+    <div class="shot-grid"><figure class="shot"><img src="../../images-v3/search.ja.png" alt="サブフォルダーにチェックを入れたフォルダーのフィルター" loading="lazy"><figcaption>検索、サブフォルダー付き</figcaption></figure></div>
+  </section>
+
+  <section class="section-block" id="preview" data-search="preview quick look space f3 zoom pdf office hwp zip csv プレビュー クイックルック">
+    <h2>プレビューとクイックルック</h2>
+    <p class="ref-shortcuts">キーは <a href="#shortcuts">ショートカット</a> に、一度だけ載せています。</p>
+    <p>F3 はクイックルックを開きます。スペースでプレビューがオンのとき（既定はオン）は、Space も同じです。名前を入力してから 1 秒以内のスペース、または韓国語や日本語の IME で文字を変換しているあいだのスペースは、その名前の一部のままです。Ctrl+Space と Shift+Space は、そのまま通します。</p>
+    <p>クイックルックは、一般的なカメラの RAW を含む画像、動画のサムネイル、音声用のカード、PDF のページ、Markdown、プレーン テキスト、コード、CSV と TSV の表、ZIP の一覧、HWP、HWPX、HWPT を表示します。Office、HTML、Outlook のメール、フォント、PDF は、ファイルが 10 MB 以下のとき、エクスプローラーと同じ仕組みである Windows のプレビュー ハンドラーも使えます。それより大きいその種のファイルは、待たずにカードを出します。描けないものは、事実を短くまとめたカードになり、アイコンだけにはなりません。</p>
+    <p>クイックルックでは、Enter が既定のアプリでファイルを開き、プレビューを閉じます。Shift+Enter または右クリックは、別のアプリで開くを使います。Esc、Space、または F3 は、ウィンドウを閉じます。F2 は、プレビュー中のファイルの名前を変更します。Del は削除します。Ctrl+ホイールは、10% から 800% まで拡大します。ドラッグで表示位置を動かせます。ホイールは、長いページをスクロールします。左と右は、常に前のファイルか次のファイルへ移ります。上と下はスクロールし、ページの端で新たに押すと、別のファイルへ移ります。ホイールが次のファイルへ移るのは、設定 → ペインと表示 → ホイールで次/前のファイルへ がオンのときだけです。そのオプションは、既定でオフです。</p>
+    <p>Alt+P は、右側のプレビュー ウィンドウの表示と非表示を切り替えます。アクティブなペインでフォーカスしているファイルを表示し、Windows のプレビュー ハンドラーがあればそれで描き、なければサムネイルか短い案内です。名前付きの <code>.maguro</code> ファイルは、このペインが開いているかどうかを変えません。スプリッターをダブルクリックすると、既定の幅に戻ります。</p>
+    <div class="shot-grid"><figure class="shot"><img src="../../images-v3/preview.ja.png" alt="プレビュー ウィンドウ" loading="lazy"><figcaption>プレビュー ウィンドウ</figcaption></figure><figure class="shot"><img src="../../images-v3/preview_peek.ja.png" alt="クイックルック" loading="lazy"><figcaption>クイックルック</figcaption></figure></div>
+  </section>
+
+  <section class="section-block" id="files" data-search="copy cut paste delete drag ifileoperation robocopy fast paste winmerge new folder コピー 貼り付け 削除">
+    <h2>ファイル操作</h2>
+    <p class="ref-shortcuts">キーは <a href="#shortcuts">ショートカット</a> に、一度だけ載せています。</p>
+    <p>コピー、切り取り、貼り付け、名前の変更（F2）、削除は、エクスプローラーに従います。F5 は、どこからでもアクティブなペインを再読み込みし、失敗したネットワーク フォルダーをもう一度試します。Ctrl+Shift+C は、フルパスをコピーします。</p>
+    <p><strong>貼り付けとドラッグは IFileOperation</strong>、つまり Windows のコピー エンジンを使います。Windows の進行ウィンドウ、元に戻す、いつもの確認が出ます。Maguro は、通常のローカル コピーでは、そのダイアログを置き換えません。</p>
+    <p>Del は Windows の既定に従い、通常はごみ箱です。Shift+Del は、完全に削除します。設定 → ファイル操作では、Del を確認でき、既定の削除をごみ箱か完全削除にできます。確認は、既定でオンです。</p>
+    <p>ペインのあいだのドラッグは、コピーまたは移動です。既定は Windows の規則（同じドライブ = 移動）です。設定で、常にコピー、または常に確認にできます。常に確認は、コピー、移動、キャンセルを出します。フォルダーの行にドロップすると、ファイルはその中に入ります。</p>
+    <p><strong>高速コピー</strong>（設定 → ファイル操作）は、既定でオフです。オンのとき、UNC パスや rclone のマウントを含むネットワーク パスに触れる貼り付けまたはドラッグは、robocopy と Maguro 自身の進行ウィンドウを使い、キャンセルできます。右クリックメニューの <strong>高速貼り付け</strong> は、ローカル コピーでも常にその経路を使い、設定は見ません。ローカルからローカルへの貼り付けは、高速貼り付けを選ばない限り、IFileOperation のままです。ここでの robocopy は、宛先をミラーしたり、宛先を消去したりしません。移動はコピーのあと、すべての手順が成功してから、元だけを削除します。</p>
+    <p>クリップボードに画像があるときの Ctrl+V は、現在のフォルダーに PNG を保存します。</p>
+    <p>Ctrl+Shift+N または F7 は、フォルダーを作ります。Ctrl+Alt+N は、テキスト ファイルを作ります。新しいファイルの名前は、設定から来ます。</p>
+    <p>Ctrl+Shift+O は、選択した同じ名前を、ほかのペインに集めます。</p>
+    <p>Ctrl+Alt+C は、アクティブなペインのフォルダーを、次のペインと WinMerge で比較します。歯車メニューとファイル一覧では、選択した二つのファイル、または別のペインにある同じ名前のファイルを比較できます。WinMerge のパスは、設定 → 一般で指定します。空のパスは、自動検出です。右クリックメニューの WinMerge の行は、設定 → 右クリックメニュー項目でオンにするまで、オフのままです。</p>
+    <div class="shot-grid"><figure class="shot"><img src="../../images-v3/copy_progress.ja.png" alt="Maguro の高速コピーの進行" loading="lazy"><figcaption>高速コピーの進行。通常のコピーは Windows のダイアログを使います。</figcaption></figure></div>
+  </section>
+
+  <section class="section-block" id="batch-rename" data-search="batch rename rules preview regex undo preset ctrl+shift+r 一括リネーム">
+    <h2>一括リネーム</h2>
+    <p>Ctrl+Shift+R、または右クリックメニューの <strong>一括リネーム</strong> は、選択に対する一括リネームのウィンドウを開きます。最近使ったファイルのペインでは開きません。ウィンドウは設定と同じスタイルです。平らなキャプション、カード、同じチェックボックスです。ルールは左、ライブ プレビューは右です。ルールを追加は右上、元に戻すは左下、「閉じる」と「名前の変更」は右下です。</p>
+    <p>ツール バーは、対象をファイル、フォルダー、または両方に絞り、拡張子の一覧でも絞ります。フォルダーは、拡張子の一覧を無視します。プリセットは <code>%APPDATA%\Maguro\rename-presets</code> から読み込み、そこへ保存します。<code>maguro.json</code> には入りません。</p>
+    <p>ルールは、上から下へ実行されます。各ルールには独自のチェックがあり、上下に移動できます。種類は次のとおりです。</p>
+    <p><strong>置換</strong>は、検索と置換です。大文字と小文字の区別と、拡張子を含めるかを選べます。<strong>接頭辞</strong>と<strong>接尾辞</strong>は、拡張子ではなく語幹に付きます。<strong>大文字小文字</strong>は、小文字、大文字、単語の先頭、文頭のみで、拡張子を含めることもできます。<strong>拡張子</strong>は、新しい拡張子です。フォルダーはこのルールを飛ばします。<strong>連番</strong>は、開始、間隔、ゼロ埋め、位置（名前の前、名前の後、または文字の位置）です。カウンタは、その項目がバッチの何番目かに従い、飛ばした行は数えません。<strong>日付</strong>は、更新日時、作成日時、またはアクセス日時で、年、月、日、時、分、秒のパターンです。接頭辞、接尾辞、または語幹の置き換えとして置けます。EXIF は読みません。<strong>挿入</strong>、<strong>削除</strong>、<strong>トリム</strong>は、文字の編集です。空のトリムは、空白を取り除きます。<strong>正規表現</strong>は、Rust の正規表現です。<code>$1</code> は最初のキャプチャです。空のパターンは何もしません。不正なパターンは、その行に示されます。</p>
+    <p>プレビューは、現在の名前、新しい名前、変わった範囲を示します。絞り込まれた項目は表示されたまま、対象外と印が付きます。適用できない行は、最初の問題を、この順で示します。空の名前、使えない文字、予約された名前、末尾の空白またはドット、長すぎる名前、バッチ内の重複、すでに存在する名前、不正なパターンです。</p>
+    <p>名前の変更は、変化があり、問題のない行だけに適用されます。名前の変更そのものは、元に戻せる IFileOperation を通ります。あとに実行した分が失敗すると、そのバッチで先に終わった分は巻き戻されます。Maguro は、独自の元に戻す履歴も、最大 20 バッチまで <code>rename-undo.json</code> に残します。元に戻すボタンと Ctrl+Z は、直前のバッチを戻し、もう無いファイルは飛ばします。名前の変更が成功したあと、ルール一覧は、空の置換ルールひとつに戻せます。</p>
+    <p>このウィンドウと設定のドロップダウンは、スタイル付きのコンボ ボックスです。<a href="#theme">テーマとスタイル付きコントロール</a>を参照してください。</p>
+    <div class="shot-grid"><figure class="shot"><img src="../../images-v3/rename.ja.png" alt="一括リネーム。左にルール、右にライブ プレビュー" loading="lazy"><figcaption>一括リネーム</figcaption></figure></div>
+  </section>
+
+  <section class="section-block" id="basket" data-search="basket always on top ctrl+shift+b copy move send ファイルバスケット">
+    <h2>ファイルバスケット</h2>
+    <p>Ctrl+Shift+B は、ファイルバスケットを切り替えます。常に手前に出る、小さなウィンドウです。ファイルやフォルダーをドロップするか、Ctrl+Alt+B でアクティブな選択を追加します。一覧が覚えるのはパスであり、コピーではありません。パスは <code>.maguro</code> のセッションではなく、<code>maguro.json</code> にあります。一覧から項目を外しても、元のファイルはその場所に残ります。</p>
+    <p><strong>アクティブペインにコピー</strong>と<strong>アクティブペインへ移動</strong>は、ペインの貼り付けと同じエンジンである IFileOperation を使います。<strong>アクティブペインへ送る</strong>はコピーしません。その項目のフォルダーを、アクティブなペインで開きます。ファイルは親を開き、フォルダーは自分自身を開きます。バスケットの外へドラッグすると、コピーです。Shift を押してドラッグすると、移動です。「取り除く」と「クリア」は、一覧だけを変えます。</p>
+    <p>無い元は、取り除くまで、見つからないと印を付けたまま一覧に残ります。コピーと移動は、無い項目を飛ばします。</p>
+    <div class="shot-grid"><figure class="shot"><img src="../../images-v3/feature_basket.ja.png" alt="無いファイルがまだ一覧に残るファイルバスケット" loading="lazy"><figcaption>ファイルバスケット。無いファイルも一覧に残ります。</figcaption></figure></div>
+  </section>
+
+  <section class="section-block" id="watch" data-search="watch folder file ctrl+shift+w tray 32 フォルダー監視">
+    <h2>フォルダー監視</h2>
+    <p>Ctrl+Shift+W は、フォルダー監視を開きます。フォルダーの追加、ファイルの追加、またはアクティブなペインの追加ができます。フォルダーの行は、サブフォルダーを含められます。各行は、設定と同じチェックを使います。</p>
+    <p>Maguro は、何かが変わったとき、かつ Maguro が実行中のときにだけ知らせます。トレイ アイコンも、バックグラウンド サービスもありません。一覧は <code>maguro.json</code> に保存されます。監視できるフォルダーとファイルは、合わせて最大 32 です。消えた監視中のファイルは、行を削除するまで、見つからないとして一覧に残ります。すでに監視しているフォルダーや、すでに監視しているファイルは、二重には追加されません。</p>
+    <div class="shot-grid"><figure class="shot"><img src="../../images-v3/feature_folder_watch.ja.png" alt="フォルダーの行とファイルの行があるフォルダー監視" loading="lazy"><figcaption>フォルダーとファイル</figcaption></figure></div>
+  </section>
+
+  <section class="section-block" id="clipboard" data-search="clipboard path win+shift+v hdrop クリップボード">
+    <h2>クリップボードのパス</h2>
+    <p>Maguro の実行中は、<strong>Win+Shift+V</strong> がクリップボードのパスを新しいタブで開きます。別のウィンドウが前面でも開きます。フォルダーは、そのタブになります。ファイルは親フォルダーを開き、そのファイルを選択します。名前の変更は始まりません。</p>
+    <p>コピーしたファイル（CF_HDROP）は、プレーン テキストより優先されます。テキストは前後を削り、引用符を外し、<code>file:</code> URL を受け付け、環境変数を展開し、最初の行だけを使います。クリップボードにフォルダーもファイルも無ければ、Maguro はその旨を示します。パスが無ければ、その旨を示します。</p>
+    <p>ホットキーは、既定でオンです。設定 → 一般でオフにすると、登録が解除されます。設定 → ショートカットで、キーの組み合わせを変えられます。別のアプリのファイル ダイアログが前面にあるときは、ホットキーはタブを開かず、そのダイアログに渡されます。</p>
+    <div class="shot-grid"><figure class="shot"><img src="../../images-v3/feature_win_shift_v.ja.png" alt="クリップボードからタブとして開いたフォルダー" loading="lazy"><figcaption>タブとして開いたクリップボードのパス</figcaption></figure></div>
+  </section>
+
+  <section class="section-block" id="workspaces" data-search="workspace slots ctrl+alt+1 nine ワークスペース">
+    <h2>ワークスペース</h2>
+    <p>ワークスペースは、名前付きのレイアウトを最大 9 つ保存します。各スロットは、名前と <code>.maguro</code> のスナップショットを持ちます。中身は、タブ、ペイン、フォルダーです。スロットは別ファイルではなく、<code>maguro.json</code> にあります。これらのキーは、グローバル ホットキーではありません。</p>
+    <p>Ctrl+Alt+1 から 9 は、スロットを開きます。Ctrl+Alt+Shift+1 から 9 は、現在のレイアウトをそのスロットに保存します。歯車メニュー → ワークスペースでは、保存、読み込み、名前の変更、消去ができます。空のスロットは、短いメッセージを出します。読み込むと、現在のタブが置き換わります。Maguro が先に尋ねるのは、開く前に確認がオンのときだけです。</p>
+    <div class="shot-grid"><figure class="shot"><img src="../../images-v3/workspaces.ja.png" alt="ワークスペースに名前を付ける" loading="lazy"><figcaption>ワークスペースに名前を付ける</figcaption></figure></div>
+  </section>
+
+  <section class="section-block" id="servers" data-search="smb webdav sftp ftp rclone winfsp credential manager サーバー接続">
+    <h2>サーバー接続</h2>
+    <p>お気に入りパネル、またはグループを右クリックし、<strong>サーバー接続を追加…</strong> を選びます。SMB、WebDAV、SFTP、FTP が、開く、コピー、プレビューできるフォルダーとして現れます。</p>
+    <p>種類を選び、表示名、アドレス、ポート、リモート パス、ユーザー名、パスワードを入力します。パスワードは Windows 資格情報マネージャーに入ります。<code>maguro.json</code> には、決して書き込まれません。</p>
+    <p>SMB は、Windows の共有を使います。WebDAV は、HTTPS が必要なことがあります。FTP は、入力したホストとポートを使います。SFTP と FTP は、rclone と WinFsp でマウントされ、そのあと、プレビュー、コンテキスト メニュー、高速コピーを含め、ほかのフォルダーと同じようにブラウズできます。その種の接続を追加するとき、Maguro は rclone と WinFsp のインストールを尋ねることができます。</p>
+    <p>終わったら、切断します。壊れた共有は、ネットワーク フォルダーのサイズがオンでない限り、フォルダー サイズの走査を飛ばします。ネットワーク フォルダーが開けないときは、F5 を押します。</p>
+    <div class="shot-grid"><figure class="shot"><img src="../../images-v3/servers.ja.png" alt="サーバー接続を追加、SFTP を選択" loading="lazy"><figcaption>サーバー接続を追加</figcaption></figure></div>
+  </section>
+
+  <section class="section-block" id="office" data-search="excel office readonly tidy a1 100 xlsx xlsm csv bak 読み取り専用 Excel">
+    <h2>Office ファイル</h2>
+    <p><strong>読み取り専用で開く</strong>は、選択した項目がすべて <code>.xls</code>、<code>.xlsx</code>、<code>.xlsm</code>、または <code>.csv</code> のときに出ます。<code>.xlsb</code>、フォルダー、混在した選択では出ません。Maguro は、そのパスで <code>excel.exe /r</code> を起動するので、Excel はブックを読み取り専用で開き、ほかの人はまだ保存できます。</p>
+    <p><strong>A1・100%に整える</strong>は、選択した項目がすべて <code>.xlsx</code> または <code>.xlsm</code> のときに出ます。ダイアログは四つを提示し、そのセッションのあいだ覚えます。選択を A1 に移す、ズームを 100% にする、最初のシートを選ぶ、<code>.bak.xlsx</code> のバックアップを作る、の四つです。別のプログラムが開いているファイルは飛ばされます。ロックされたコピーの報告と同じです。要約は、終わったものと飛ばしたものの数を数えます。</p>
+    <p>Office ファイルのプレビューは、別です。<a href="#preview">プレビューとクイックルック</a>を参照してください。</p>
+    <div class="shot-grid"><figure class="shot"><img src="../../images-v3/feature_excel_readonly_tidy.ja.png" alt="A1 と 100% に整える" loading="lazy"><figcaption>A1・100%に整える</figcaption></figure></div>
+  </section>
+
+  <section class="section-block" id="ctxmenu" data-search="context menu right-click favourites fast paste winmerge packaged 右クリックメニュー">
+    <h2>右クリックメニュー</h2>
+    <p>ファイル一覧は、エクスプローラーのメニューです。Maguro は、そのメニューの上に独自の行を足します。それらの行は、常に使えます。設定 → 右クリックメニュー項目には、載りません。</p>
+    <p>選択、またはフォルダーの背景に対する <strong>Maguro のお気に入りに追加</strong> または <strong>Maguro のお気に入りから削除</strong>。最近使ったファイルを除く <strong>一括リネーム</strong>。エクスプローラーの貼り付けのあとに置かれ、常に robocopy を使う <strong>高速貼り付け</strong>。ファイルがちょうどひとつのときの <strong>このファイルを使用中のプログラム</strong>。最近使ったファイルで、項目がひとつのときの <strong>フォルダーに表示</strong>。選択が条件に合うときの <strong>読み取り専用で開く</strong> と <strong>A1・100%に整える</strong>。Windows 10 がプロパティを省くフォルダーの背景では、Maguro がプロパティを足します。</p>
+    <p>設定 → 右クリックメニュー項目は、別の一覧です。オフにできる他社のシェル ハンドラーと、メニューの形（クラシックまたは Windows 11）を示します。Windows 11 のパッケージ コマンドは、オフから始まります。必要なものだけオンにしてください。WinMerge の比較コマンドは、この一覧にあり、オフから始まります。更新は、メニューを読み直します。開く、コピー、プロパティなどの Windows 組み込みの項目は残ります。選択は <code>maguro.json</code> だけに保存されます。Maguro の外のエクスプローラーは、変わりません。</p>
+    <p>設定 → 詳細では、Maguro が読み込まない DLL の名前も指定できます。たとえば、ペインを異常終了させるコーデックです。その一覧は Maguro の中だけに適用され、レジストリには書き込まれず、Windows のシステム DLL は決してブロックされません。編集したあとは、再起動してください。</p>
+  </section>
+
+  <section class="section-block" id="theme" data-search="theme dark light accent cerulean 0A9BD6 combo styled dropdown mint テーマ セルリアン">
+    <h2>テーマとスタイル付きコントロール</h2>
+    <p>設定 → 外観は、テーマ、アクセント、ツール バー、ドライブ ボタン、ステータス バーを設定します。テーマは、Windows の設定に従う、ライト、ダークです。ライトとダークは、それぞれ独自のアクセントを保ちます。両方の既定のアクセントは、セルリアン <code>#0A9BD6</code> です。六つの色見本と、カスタム…が提示されます。廃止されたミントのアクセント <code>#2EC4A6</code> が残っている古い設定ファイルは、次に読み込まれたとき、セルリアンへ移されます。ミントは選択肢ではありません。</p>
+    <p>テーマを変えたあと、フォルダー一覧は、次に Maguro が起動したときに新しい色を受け取ります。ウィンドウのほかの部分は、すぐに更新されます。</p>
+    <p>設定と一括リネームのすべてのドロップダウンは、スタイル付きのコンボです。今もネイティブのコンボ ボックスなので、F4、Alt+Down、文字入力による選択、マウス ホイールは、今までどおりに動きます。閉じた面は、隣のテキスト欄に合います。カードの塗り、極細の境界、少し丸い角、塗りつぶした三角です。ライトテーマで有効な矢印は <code>#444444</code> なので、白い面の上で読めます。ダークテーマの矢印は、テーマの文字色を使います。フォーカス、ホバー、開いた一覧は、その境界をセルリアンで描きます。一覧で選択された行は、セルリアンに白い文字です。無効なコンボと、オフにしたリネームのルールは、薄い文字色を使います。</p>
+    <p>このヘルプ サイトは、ライトだけです。アプリのテーマには従いません。</p>
+    <div class="shot-grid"><figure class="shot"><img src="../../images-v3/settings.ja.png" alt="設定の一般ページ" loading="lazy"><figcaption>設定</figcaption></figure></div>
+  </section>
+
+  <section class="section-block" id="settings" data-search="settings general appearance panes file favourites shortcuts sessions advanced about portable maguro.json 設定">
+    <h2>設定</h2>
+    <p>Ctrl+, は、設定を開きます。検索ボックスは、タイトルまたは説明が一致するページ、カード、ショートカットへ移ります。変更は、すぐに適用されます。ファイルは <code>%APPDATA%\Maguro\maguro.json</code>、または exe の隣に <code>portable.txt</code> があるときは、exe の隣の <code>maguro.json</code> です。ファイルが無いときは、既定から始まります。書き込みに失敗すると、5 秒後にもう一度試します。読めないファイルは、そのままにします。未知のキーは残します。キーの説明は <a href="https://github.com/Samek86/maguro/blob/main/docs/settings.md">docs/settings.md</a> にあります。</p>
+    <p><strong>一般。</strong> 表示言語（自動は、言語ファイルが一致するとき Windows に従い、そうでなければ英語です）。フォントは、ウィンドウ全体に適用されます。フォント サイズはありません。起動時は、前回の状態を復元する、保存したセッションをひとつ開く、または既定のレイアウトです。既定のフォルダーアプリとして使用は、ファイル システムのフォルダーとドライブだけに Maguro を登録します。Win+E、タスク バー、<code>shell:</code> などの仮想フォルダーは、エクスプローラーのままです。既定のレイアウト。単一インスタンス。単一ウィンドウモード。開くダイアログと保存ダイアログのフォルダー。クリップボードのパスのホットキー。空白のダブルクリックで上のフォルダー。Everything。WinMerge のパス。</p>
+    <p><strong>外観。</strong> テーマ、アクセント、ツール バー、ドライブ ボタン、ステータス バー。</p>
+    <p><strong>ペインと表示。</strong> 新しいペインの既定の表示。フォルダーごとの表示の記憶は、設定ファイルの隣の <code>folder-views.json</code> に入り、並べ替え、列、表示モード、アイコン サイズ、グループ化を覚えます。すべてのフォルダーの既定の表示は、アクティブなペインから取ります。加えて、「このフォルダーの表示を消す」と「すべて消す」があります。新しいペインの開始フォルダーは、PC、デスクトップ、または選んだフォルダーです。隠しファイル。ファイルの拡張子。これは Windows 自身の設定で、エクスプローラーが使うものと同じです。フォルダー サイズ。ネットワーク フォルダー向けのオプションを含み、それは既定でオフです。左のパネルと、お気に入りとツリーのどちらを上にするか。アクティブなペインの枠を強調。プレビュー ウィンドウ。スペースでプレビュー。ホイールで次/前のファイルへ。</p>
+    <p><strong>ファイル操作。</strong> 通常の貼り付けの経路は、常に Windows のコピー ウィンドウです。ネットワーク フォルダーの高速コピー。削除の確認。既定の削除方法。新しいファイル名。ドラッグ アンド ドロップの既定は、Windows の規則、常にコピー、または常に確認です。</p>
+    <p><strong>お気に入り。</strong> グループ、フォルダー、ファイルのツリーです。</p>
+    <p><strong>ショートカット。</strong> 行をダブルクリックするか、変更を押してから、新しいショートカットを押します。Esc は取り消します。衝突しているキーは、入れ替えできます。「戻す」は、その行を既定に戻します。変えたキーは、次のキーから適用され、再起動は要りません。保存されるのは、既定と異なるキーだけです。</p>
+    <p><strong>セッション。</strong> セッション フォルダー、終了時に自動保存（既定はオフ）、緑の未保存の点（既定はオン）です。</p>
+    <p><strong>詳細。</strong> 起動時に GitHub で、新しいリリースを確認します。アップデーターがダウンロードするのは、<code>maguro.exe</code> と <code>maguro.exe.sha256</code> だけです。zip だけのリリースは、展開しません。設定ファイルの場所、Maguro の JSON または Maguro の ini のエクスポートとインポート。すべての設定を初期化は、設定を戻します。レイアウト、フォルダー、お気に入りは残ります。ブロックするシェル拡張 DLL の名前。</p>
+    <p><strong>右クリックメニュー項目。</strong> 他社のハンドラー、メニューの形、パッケージ コマンド、WinMerge です。<a href="#ctxmenu">右クリックメニュー</a>を参照してください。</p>
+    <p><strong>情報。</strong> バージョンと、クレジットです。Maguro は、efww による efww/grids のフォークです。</p>
+    <div class="shot-grid"><figure class="shot"><img src="../../images-v3/settings_panes.ja.png" alt="設定のペインと表示" loading="lazy"><figcaption>ペインと表示</figcaption></figure></div>
+  </section>
+
+  <section class="section-block" id="window-actions" data-search="win+shift+e bring front dialog jump ctrl+alt+g focus hidden select pattern hotkey 前面">
+    <h2>Win+Shift+E とその他の操作</h2>
+    <p class="ref-shortcuts">キーは <a href="#shortcuts">ショートカット</a> に、一度だけ載せています。</p>
+    <p><strong>Win+Shift+E</strong> は、ホットキーの設定がオンのとき（既定はオン）、Maguro の実行中はグローバルです。Maguro を前面に出し、ファイル一覧にフォーカスします。Maguro のダイアログが所有者を無効にしているときは、代わりにそのダイアログが前面に出ます。Maguro がすでに前面のときにもう一度押すと、単一ウィンドウモードがオンなら新しいタブが開き、そのモードがオフなら Maguro は最小化します。このキーは「既定のフォルダーアプリとして使用」ではなく、Ctrl+Shift+E でもありません。Ctrl+Shift+E は、左のパネルの表示と非表示だけで、しかも Maguro にフォーカスがあるときだけです。Win+E は、エクスプローラーのままです。</p>
+    <p><strong>Ctrl+Alt+G</strong> は、フォルダーを、別のアプリの開くダイアログまたは保存ダイアログへ移します。このキーが登録されるのは、そのようなダイアログ（<code>#32770</code>）が前面にあるとき、かつ設定がオンのときだけです。Maguro で開いているフォルダーを一覧し、選んだものへダイアログを移動します。仮想フォルダーは飛ばします。Win+Shift+E は、変わりません。</p>
+    <p>F6 と Shift+F6 は、フォーカスを移します。Ctrl+H は、隠しファイルの表示を切り替えます。Num+、または Ctrl+Shift+A は、パターンで選択します。Num− は、パターンで選択解除します。Num* は、選択を反転します。Alt+Left、Alt+Right、Alt+Up は、戻る、進む、上のフォルダーです。Alt+Down は、最近のフォルダーを開きます。Ctrl+Alt+R は、最近使ったファイルを、新しい順に開きます。Ctrl+Enter は、選択した最近のファイルをそのフォルダーに表示し、しかもそのペインの中だけです。ほかの場所では、そのキーはそのまま渡されます。</p>
+  </section>
+
+  <section class="section-block" id="shortcuts" data-search="shortcut key chord hotkey keyboard defaults ショートカット">
+    <h2>ショートカット</h2>
+    <p>これらは既定です。設定 → ショートカットで、どれでも変えられます。アプリ内の一覧（Ctrl+/）は、再起動なしで、変更にすぐ従います。このページに載るのは、0.2.3 に同梱される既定です。</p>
+    <p>Win+Shift+E と Win+Shift+V は、Maguro が実行しているあいだ、ずっと登録されます。Ctrl+Alt+G は、別のアプリの開くダイアログまたは保存ダイアログが前面にあるときだけ登録されます。ワークスペースのキーは、グローバルではありません。ペイン タブのキーは、フォーカスがペインにあるときだけ動きます。</p>
+    <table class="shortcuts-table"><thead><tr><th>キー</th><th>操作</th></tr></thead><tbody>
+      <tr><td class="cat" colspan="2">タブ</td></tr>
+      <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>T</kbd></span></td><td>新しいタブ</td></tr>
+      <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>W</kbd></span></td><td>タブを閉じる</td></tr>
+      <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Tab</kbd></span></td><td>次のタブ</td></tr>
+      <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Tab</kbd></span></td><td>前のタブ</td></tr>
+      <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd></span></td><td>閉じたタブを開き直す</td></tr>
+      <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>K</kbd></span></td><td>タブを複製</td></tr>
+      <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd></span></td><td>タブ一覧</td></tr>
+      <tr><td class="cat" colspan="2">ペイン</td></tr>
+      <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Page Down</kbd></span></td><td>次のペイン</td></tr>
+      <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Page Up</kbd></span></td><td>前のペイン</td></tr>
+      <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>1</kbd>…<kbd>9</kbd></span></td><td>ペイン 1–9 へ移動</td></tr>
+      <tr><td class="cat" colspan="2">ペイン タブ</td></tr>
+      <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>T</kbd></span></td><td>新しいペイン タブ</td></tr>
+      <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>W</kbd></span></td><td>ペイン タブを閉じる</td></tr>
+      <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Page Down</kbd></span></td><td>次のペイン タブ</td></tr>
+      <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Page Up</kbd></span></td><td>前のペイン タブ</td></tr>
+      <tr><td class="cat" colspan="2">移動</td></tr>
+      <tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>←</kbd></span></td><td>左のペイン</td></tr>
+      <tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>→</kbd></span></td><td>右のペイン</td></tr>
+      <tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>↑</kbd></span></td><td>上のペイン</td></tr>
+      <tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>↓</kbd></span></td><td>下のペイン</td></tr>
+      <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>←</kbd></span></td><td>左のペインと入れ替え</td></tr>
+      <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>→</kbd></span></td><td>右のペインと入れ替え</td></tr>
+      <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>↑</kbd></span></td><td>上のペインと入れ替え</td></tr>
+      <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>↓</kbd></span></td><td>下のペインと入れ替え</td></tr>
+      <tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>←</kbd></span></td><td>戻る</td></tr>
+      <tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>→</kbd></span></td><td>進む</td></tr>
+      <tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>↑</kbd></span></td><td>上のフォルダー</td></tr>
+      <tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>↓</kbd></span></td><td>最近のフォルダー</td></tr>
+      <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>L</kbd></span> <span class="sep">/</span> <span class="chord"><kbd>Alt</kbd>+<kbd>D</kbd></span> <span class="sep">/</span> <span class="chord"><kbd>F4</kbd></span></td><td>アドレス バー</td></tr>
+      <tr><td class="cat" colspan="2">表示</td></tr>
+      <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>F</kbd></span></td><td>このフォルダーを検索</td></tr>
+      <tr><td><span class="chord"><kbd>F3</kbd></span></td><td>クイックルック</td></tr>
+      <tr><td><span class="chord"><kbd>Alt</kbd>+<kbd>P</kbd></span></td><td>プレビュー ウィンドウ</td></tr>
+      <tr><td><span class="chord"><kbd>F6</kbd></span></td><td>次のフォーカス</td></tr>
+      <tr><td><span class="chord"><kbd>Shift</kbd>+<kbd>F6</kbd></span></td><td>前のフォーカス</td></tr>
+      <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>H</kbd></span></td><td>隠しファイルを表示</td></tr>
+      <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd></span></td><td>左のパネルを表示</td></tr>
+      <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd></span></td><td>エクスプローラーのフォルダーを開く</td></tr>
+      <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>R</kbd></span></td><td>最近使ったファイル</td></tr>
+      <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd></span></td><td>ペインを最大化 / 元に戻す</td></tr>
+      <tr><td class="cat" colspan="2">ファイル</td></tr>
+      <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd></span></td><td>フルパスをコピー</td></tr>
+      <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd></span></td><td>一括リネーム</td></tr>
+      <tr><td><span class="chord"><kbd>Num+</kbd></span> <span class="sep">/</span> <span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd></span></td><td>パターンで選択</td></tr>
+      <tr><td><span class="chord"><kbd>Num−</kbd></span></td><td>パターンで選択解除</td></tr>
+      <tr><td><span class="chord"><kbd>Num*</kbd></span></td><td>選択を反転</td></tr>
+      <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>N</kbd></span></td><td>新しいテキスト ファイル</td></tr>
+      <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd></span></td><td>新しいフォルダー</td></tr>
+      <tr><td><span class="chord"><kbd>F7</kbd></span></td><td>このペインに新しいフォルダー</td></tr>
+      <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd></span></td><td>WinMerge でフォルダーを比較</td></tr>
+      <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd></span></td><td>ファイルバスケット</td></tr>
+      <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>B</kbd></span></td><td>選択をバスケットに追加</td></tr>
+      <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Enter</kbd></span></td><td>フォルダーに表示（最近使ったファイルのみ）</td></tr>
+      <tr><td class="cat" colspan="2">セッション</td></tr>
+      <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>S</kbd></span></td><td>このタブを保存</td></tr>
+      <tr><td class="cat" colspan="2">ワークスペース</td></tr>
+      <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>1</kbd>…<kbd>9</kbd></span></td><td>ワークスペースを開く</td></tr>
+      <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>1</kbd>…<kbd>9</kbd></span></td><td>ワークスペースを保存</td></tr>
+      <tr><td class="cat" colspan="2">お気に入り</td></tr>
+      <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>B</kbd></span></td><td>お気に入り</td></tr>
+      <tr><td class="cat" colspan="2">ヘルプ</td></tr>
+      <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>,</kbd></span></td><td>設定</td></tr>
+      <tr><td><span class="chord"><kbd>F1</kbd></span></td><td>ブラウザーでこのヘルプを開く</td></tr>
+      <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>/</kbd></span></td><td>ショートカット一覧</td></tr>
+      <tr><td class="cat" colspan="2">ウィンドウ</td></tr>
+      <tr><td><span class="chord"><kbd>Win</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd></span></td><td>Maguro を前面に</td></tr>
+      <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>G</kbd></span></td><td>ファイル ダイアログのフォルダーへ移動</td></tr>
+      <tr><td><span class="chord"><kbd>Win</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd></span></td><td>クリップボードのパスを開く</td></tr>
+      <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>N</kbd></span></td><td>新しいウィンドウ</td></tr>
+      <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>W</kbd></span></td><td>フォルダー監視</td></tr>
+    </tbody></table>
+    <p>Maguro が割り当て直さないエクスプローラーのキーは、F2 の名前の変更、Del と Shift+Del、Ctrl+C、Ctrl+X、Ctrl+V、F5 の更新です。</p>
+    <p>マウスでは、レイアウト ボタン、アドレス バーの山括弧、スプリッターのダブルクリック、色のためのペイン ヘッダーの右クリック、閉じるためのペイン タブの中クリック、入れ替えのためのペイン番号のドラッグ、Ctrl を押したときは複製です。</p>
+  </section>
+
+  <section class="section-block" id="languages" data-search="language korean japanese french german ini user font 言語">
+    <h2>言語</h2>
+    <p>英語はプログラムに組み込まれており、ほかの言語が無いときの戻り先です。韓国語、日本語、フランス語、ドイツ語は、<code>lang/lang.ko.ini</code>、<code>lang/lang.ja.ini</code>、<code>lang/lang.fr.ini</code>、<code>lang/lang.de.ini</code> として同梱されます。初回起動時と、バージョンが変わるたびに、Maguro はこの四つのファイルを、設定ファイルの隣の <code>lang</code> フォルダーへ書き込みます。この四つは、常に上書きします。<code>lang.xx.user.ini</code> や、自分で追加したほかの <code>lang.xx.ini</code> は、書き込みも、上書きも、削除もしません。</p>
+    <p>ファイルは UTF-8 です。先頭の BOM は無視されます。行は <code>key = text</code> です。<code>[meta]</code> の <code>name</code> は、言語一覧のラベルです。<code>[meta]</code> の <code>font</code> は、任意の UI フォントです。無いキーは、英語のテキストを使います。<code>lang.xx.user.ini</code> はその上に読み込まれ、そちらが優先されます。</p>
+    <p>自動は、一致するファイルがあるとき Windows の表示言語に従い、なければ英語です。各ペインの中のエクスプローラー部分、たとえば列名や、シェル自身の右クリック項目は、Windows の表示言語に従います。フォントの既定は、その言語の書体です。韓国語は Malgun Gothic、日本語は Yu Gothic UI、それ以外は Segoe UI、またはファイルに書かれた書体です。選んだ書体は、ウィンドウ全体に一度に適用されます。</p>
+  </section>
+
+  <section class="section-block" id="troubleshoot" data-search="troubleshoot f5 everything robocopy crash update portable administrator smartscreen uipi トラブルシューティング">
+    <h2>トラブルシューティング</h2>
+    <p>フォルダーが開きません。ペインをクリックして、F5 を押してください。F5 はアクティブなペインを再読み込みし、失敗したネットワーク フォルダーをもう一度試します。</p>
+    <p>サブフォルダー検索が、何も見つけません。Everything をインストールして起動し、設定 → 一般を確認してください。Everything が無いとき、Maguro はディスクをたどります。それは、サブフォルダーにチェックを入れてからです。</p>
+    <p>ネットワークのコピーが遅い、または Maguro の進行ウィンドウを期待していました。ネットワーク フォルダーの高速コピーをオンにするか、高速貼り付けを使ってください。オフのときは、Windows のコピー ウィンドウを使います。高速コピーは、高速貼り付けを選ばない限り、純粋にローカルなコピーでは動きません。</p>
+    <p>WinMerge が起動しません。設定 → 一般で、パスを指定してください。フォルダーの比較には、本物のフォルダーが必要です。右クリックの WinMerge コマンドは、有効にするまで隠れたままです。</p>
+    <p>SFTP が失敗します。尋ねられたら rclone と WinFsp をインストールし、ホスト、ポート、ユーザー、パスワードを確認してください。WebDAV は、HTTPS が必要なことがあります。SMB は、Windows の共有を使います。FTP は、接続のホストとポートを使います。</p>
+    <p>ウィンドウのテーマは変わったのに、フォルダー一覧は変わりません。Maguro を再起動してください。一覧は、起動時にテーマを受け取ります。</p>
+    <p>前回、Maguro が予期せず閉じました。次の起動では、レポートがどこに書かれたかを示します。場所は、設定ファイルの隣の <code>crashes</code> フォルダーです。そのフォルダーを開くことも提案します。レポートには、バージョン、スレッド、例外、障害を起こしたモジュール、最後のフォルダー、読み込まれたシェル拡張 DLL が含まれます。</p>
+    <p>二度目の起動が、何もしないように見えます。単一インスタンスまたは単一ウィンドウモードがオンなので、最初のウィンドウが残り、パスはタブとして届きます。インストールできる更新は <code>maguro.exe</code> を置き換えて再起動します。zip だけのリリースは、展開しません。更新ウィンドウがそう言うときは、自分で exe を置き換えてください。</p>
+    <p>Maguro を管理者として実行しないでください。PowerToys のマウス十字線のようなツールは、昇格したウィンドウの上ではカーソルを追えません（UIPI）。Maguro は通常どおり実行するか、両方を管理者として実行してください。</p>
+    <p>SmartScreen は、exe がコード署名されていないため、初回に警告します。詳細情報 → 実行 を選んでください。</p>
+    <p>古い <code>.grids</code>、<code>.qdr</code>、<code>grids.ini</code> は開きません。現在のウィンドウから、新しい <code>.maguro</code> セッションを保存してください。</p>
+  </section>
 </main>
 </div>
 <script>
