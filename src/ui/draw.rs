@@ -87,13 +87,15 @@ pub(crate) fn ink_kind(s: &str) -> InkKind {
 
 /// Top of a `DT_TOP | DT_SINGLELINE` rect that centers the visible glyph box in the cell.
 ///
-/// `DT_VCENTER` centers `tmAscent + tmDescent`. Latin caps leave the internal leading
-/// empty, so that center sits about `internalLeading / 2` too low (Segoe UI at 11px).
-/// Hangul and kana fill the top of the em and leave the descent empty, so the same
-/// center sits about `descent / 2` too high (Malgun Gothic 11px in a 16px chip is
-/// 1–1.5px high; Yu Gothic UI is about half a pixel high). The shift is half of that
-/// unused metric, in the font's pixels, so 125% and 150% follow `GetTextMetrics`
-/// on the DPI-scaled face. Icons stay on the `tmHeight` center.
+/// `DT_VCENTER` centers `tmAscent + tmDescent` and gives the extra pixel to the bottom,
+/// so an odd leftover leaves the ink half a pixel high. Latin caps leave the internal
+/// leading empty, so that center sits about `internalLeading / 2` too low (Segoe UI
+/// at 11px). CJK ink on Malgun Gothic at 100% is only that leftover pixel high in a
+/// 16 DIP chip (top gap 1, bottom gap 2). Shifting by the whole `descent / 2` (1px
+/// for these faces) flips the chip to top 2 / bottom 1 and drops a centered button
+/// from 4/4 to 5/3. The CJK step is about half of that, truncated toward zero so it
+/// does not cross the cell center, and it is kept only when the gaps get strictly
+/// closer. An even split stays even. Icons stay on the `tmHeight` center.
 pub(crate) fn ink_line_top(cell_top: i32, cell_h: i32, m: LineMetrics, kind: InkKind) -> i32 {
     let tm_h = m.height();
     if cell_h <= 0 || tm_h <= 0 {
@@ -104,10 +106,26 @@ pub(crate) fn ink_line_top(cell_top: i32, cell_h: i32, m: LineMetrics, kind: Ink
     let descent = m.descent.max(0);
     let nudge = match kind {
         InkKind::Latin => -(leading / 2),
-        InkKind::Cjk => descent / 2,
+        // Half of the old `descent / 2` step, truncated toward the unshifted
+        // center. That half is 0 for descent 2 or 3 (100% and 12px faces). A
+        // taller face would offer 1px or more, but `DT_VCENTER` is already
+        // within half a pixel, so the step is not taken: it would only swap
+        // the leftover pixel on a chip or open an even split on a button.
+        InkKind::Cjk => cjk_nudge(descent, cell_h, tm_h),
         InkKind::Em => 0,
     };
     vtop + nudge
+}
+
+/// Half of `descent / 2`, kept only when the tm box is off by more than that.
+/// The centered gap error is 0 or 1, so this is 0 whenever the line fits.
+fn cjk_nudge(descent: i32, cell_h: i32, tm_h: i32) -> i32 {
+    let half = (descent.max(0) / 2) / 2;
+    let slack = cell_h - tm_h;
+    let top = slack / 2;
+    let bottom = slack - top;
+    let error = (bottom - top).abs();
+    if error > half { half } else { 0 }
 }
 
 /// How far `ink_line_top` moves a line whose cell is exactly the font height.
@@ -1504,47 +1522,88 @@ mod ink_tests {
         assert_eq!(ink_kind(""), InkKind::Em);
     }
 
+    /// Gaps above and below a tmHeight ink block placed by `ink_line_top`.
+    fn gaps(cell: i32, metrics: LineMetrics, kind: InkKind) -> (i32, i32) {
+        let top = ink_line_top(0, cell, metrics, kind);
+        let bottom = cell - metrics.height() - top;
+        (top, bottom)
+    }
+
     #[test]
     fn chip_shift_follows_the_measured_faces() {
-        // 16px chip at 96 DPI. Positive moves the glyphs down from DT_VCENTER.
-        // Malgun Hangul was 1–1.5px high, Yu Gothic about 0.5px high, Segoe about 1px low.
+        // 16px chip at 96 DPI. Positive would move the glyphs down from DT_VCENTER.
+        // Malgun/Yu CJK ink is only the odd leftover pixel high there, so the CJK
+        // step rounds to 0. Segoe caps are still about 1px low and move up.
         let shift = |metrics: LineMetrics, kind| ink_line_top(0, 16, metrics, kind) - (16 - metrics.height()) / 2;
-        assert_eq!(shift(malgun11(), InkKind::Cjk), 1);
-        assert_eq!(shift(yu11(), InkKind::Cjk), 1);
+        assert_eq!(shift(malgun11(), InkKind::Cjk), 0);
+        assert_eq!(shift(yu11(), InkKind::Cjk), 0);
         assert_eq!(shift(segoe11(), InkKind::Latin), -1);
         assert_eq!(shift(malgun11(), InkKind::Latin), -1);
         assert_eq!(shift(segoe11(), InkKind::Em), 0);
-        // Same Yu/Segoe metrics, opposite boxes: a Korean string on a Latin face still drops.
-        assert_eq!(shift(segoe11(), InkKind::Cjk), 1);
+        // Korean on the Segoe metrics no longer takes the full descent step.
+        assert_eq!(shift(segoe11(), InkKind::Cjk), 0);
         assert_ne!(shift(segoe11(), InkKind::Cjk), shift(segoe11(), InkKind::Latin));
     }
 
     #[test]
-    fn twelve_px_rows_move_by_half_the_unused_metric() {
+    fn malgun_chip_stays_within_half_a_pixel() {
+        // PC measurement, 100% Malgun Gothic, 16 DIP chip. Before the descent/2
+        // shift the ink was top 1 / bottom 2 (0.5px high). After, top 2 / bottom 1
+        // (0.5px low). Half of that 1px step rounds back toward the center.
+        let (top, bottom) = gaps(16, malgun11(), InkKind::Cjk);
+        assert_eq!((top, bottom), (1, 2));
+        assert!(bottom.abs_diff(top) <= 1);
+        assert_ne!((top, bottom), (2, 1));
+        let (yu_top, yu_bottom) = gaps(16, yu11(), InkKind::Cjk);
+        assert_eq!((yu_top, yu_bottom), (1, 2));
+    }
+
+    #[test]
+    fn centered_button_keeps_equal_gaps() {
+        // PC measurement, 100% Malgun Gothic. A 19px ink box with 11px ink was
+        // top 4 / bottom 4, then the 1px descent shift made it top 5 / bottom 3.
+        let button = m(8, 3, 2);
+        assert_eq!(button.height(), 11);
+        assert_eq!(gaps(19, button, InkKind::Cjk), (4, 4));
+        // The same face, already centered: Malgun 11 (tmHeight 13) in slack 8.
+        assert_eq!(gaps(21, malgun11(), InkKind::Cjk), (4, 4));
+        // 12px row (tmHeight 15) with an even split.
+        assert_eq!(gaps(23, face12(), InkKind::Cjk), (4, 4));
+    }
+
+    #[test]
+    fn twelve_px_rows_keep_cjk_on_the_metric_center() {
         let shift = |kind| ink_line_top(0, 24, face12(), kind) - (24 - face12().height()) / 2;
-        assert_eq!(shift(InkKind::Cjk), 1);
+        assert_eq!(shift(InkKind::Cjk), 0);
         assert_eq!(shift(InkKind::Latin), -1);
         assert_eq!(shift(InkKind::Em), 0);
-        assert_eq!(ink_line_top(40, 16, malgun11(), InkKind::Cjk), 42);
+        // 40 + (16 - 13) / 2, with no CJK step.
+        assert_eq!(ink_line_top(40, 16, malgun11(), InkKind::Cjk), 41);
         assert_eq!(ink_line_top(40, 16, segoe11(), InkKind::Latin), 40);
     }
 
     #[test]
     fn offset_scales_with_the_metrics_at_higher_dpi() {
         // 16 DIP chip. The font is created at lfHeight = -(px * dpi / 96), so the
-        // cached TEXTMETRIC grows with DPI. These rows stand in for that growth:
-        // the shift is half the unused descent or leading, not a constant pixel.
+        // cached TEXTMETRIC grows with DPI. Latin still moves by internalLeading/2.
+        // The old CJK shift was descent/2 (1, 2, 2, 3 at these rows). Half of that
+        // is 0 or 1, and 1px cannot beat a gap error of at most 1, so CJK stays on
+        // the DT_VCENTER center: within 0.5px when the slack is odd, equal when even.
         let at_100 = m(10, 3, 2);
         let at_125 = m(13, 4, 3);
         let at_150 = m(15, 5, 3);
         let at_200 = m(20, 6, 4);
         let cjk = |cell: i32, metrics: LineMetrics| ink_line_top(0, cell, metrics, InkKind::Cjk) - (cell - metrics.height()) / 2;
         let latin = |cell: i32, metrics: LineMetrics| ink_line_top(0, cell, metrics, InkKind::Latin) - (cell - metrics.height()) / 2;
-        assert_eq!((cjk(16, at_100), latin(16, at_100)), (1, -1));
-        assert_eq!((cjk(20, at_125), latin(20, at_125)), (2, -1));
-        assert_eq!((cjk(24, at_150), latin(24, at_150)), (2, -1));
-        assert_eq!((cjk(32, at_200), latin(32, at_200)), (3, -2));
-        assert_ne!(cjk(16, at_100), cjk(32, at_200));
+        assert_eq!((cjk(16, at_100), latin(16, at_100)), (0, -1));
+        assert_eq!((cjk(20, at_125), latin(20, at_125)), (0, -1));
+        assert_eq!((cjk(24, at_150), latin(24, at_150)), (0, -1));
+        assert_eq!((cjk(32, at_200), latin(32, at_200)), (0, -2));
+        assert_eq!(gaps(16, at_100, InkKind::Cjk), (1, 2));
+        assert_eq!(gaps(20, at_125, InkKind::Cjk), (1, 2));
+        assert_eq!(gaps(24, at_150, InkKind::Cjk), (2, 2));
+        assert_eq!(gaps(32, at_200, InkKind::Cjk), (3, 3));
+        assert_ne!(latin(16, at_100), latin(32, at_200));
     }
 }
 
