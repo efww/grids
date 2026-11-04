@@ -110,6 +110,10 @@ pub(crate) struct Pane {
     pub(crate) nav_busy: bool,
     /// At most one folder path waiting to browse when `nav_busy` clears.
     pub(crate) nav_pending: Option<String>,
+    /// Folder still on screen when a pane-tab switch stored the destination in `paths`
+    /// before the browse. `on_nav` records the visit from here. Empty for an ordinary browse,
+    /// where `paths` still names the folder being left.
+    pub(crate) tab_left: Option<String>,
 }
 
 pub(crate) struct Desk {

@@ -2,7 +2,7 @@ use crate::imports::*;
 use crate::app::*;
 use crate::session::*;
 use crate::ui::*;
-use super::{apply_pane_tab_chrome, commit_layout, focus_view, go_near, pick_pane_tab, redraw_all, relayout, rename_fields, save_view, set_active, update_status, NAV_GEN, SEL_REV};
+use super::{apply_pane_tab_chrome, arm_tab_left, commit_layout, focus_view, go_near, pick_pane_tab, redraw_all, relayout, rename_fields, save_view, set_active, update_status, NAV_GEN, SEL_REV};
 
 // Grab a pane by its header or pane-tab strip and drop it on another pane.
 // The file list is not a grab: OLE drag-and-drop from the view is untouched.
@@ -376,7 +376,10 @@ unsafe fn commit_split_copy(from: usize, heights: Vec<usize>, colr: Vec<f64>, ro
 /// The folder on display becomes a pane tab on `dst`. That cell keeps its view. A failed browse puts the tabs back.
 unsafe fn commit_tab_copy(src: usize, dst: usize) {
     save_view(src);
-    let Some((before_n, before_f, before_c, to)) = app(|a| {
+    // The destination cell is the one leaving its folder. Save it before `copy_pane_tab`
+    // points `paths` at the copied folder.
+    save_view(dst);
+    let Some((before_n, before_f, before_c, before_p, armed, to)) = app(|a| {
         if src >= a.s.panes() || dst >= a.s.panes() {
             return None;
         }
@@ -384,10 +387,12 @@ unsafe fn commit_tab_copy(src: usize, dst: usize) {
         let before_n = a.s.pane_tab_list(dst).len();
         let before_f = a.s.pane_folders[dst].clone();
         let before_c = a.s.pane_cur[dst];
+        let before_p = a.s.paths.get(dst).cloned().unwrap_or_default();
         let to = a.s.copy_pane_tab(src, dst);
+        let armed = to.is_some() && a.panes.get_mut(dst).and_then(|p| p.as_mut()).is_some_and(|p| arm_tab_left(p, &before_p));
         a.s.anchor();
         let _ = pull_dirty(a);
-        Some((before_n, before_f, before_c, to))
+        Some((before_n, before_f, before_c, before_p, armed, to))
     }) else {
         return;
     };
@@ -399,6 +404,14 @@ unsafe fn commit_tab_copy(src: usize, dst: usize) {
                 }
                 if dst < a.s.pane_cur.len() {
                     a.s.pane_cur[dst] = before_c;
+                }
+                if dst < a.s.paths.len() {
+                    a.s.paths[dst] = before_p;
+                }
+                if armed {
+                    if let Some(p) = a.panes.get_mut(dst).and_then(|p| p.as_mut()) {
+                        p.tab_left = None;
+                    }
                 }
                 a.s.anchor();
                 let _ = pull_dirty(a);

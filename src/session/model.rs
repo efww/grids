@@ -257,7 +257,10 @@ pub(crate) struct Session {
     /// The maximized rect is not stored. `peek_doc` is text and PDF together.
     pub(crate) peek_image: Option<(i32, i32)>,
     pub(crate) peek_doc: Option<(i32, i32)>,
-    /// Per pane, for the window tab on screen: its pane tabs' folders. The current entry is stale; `paths[i]` is the truth.
+    /// Per pane, for the window tab on screen: its pane tabs' folders. After a browse
+    /// inside the current tab, that entry is stale and `paths[i]` is the truth.
+    /// A switch updates `paths[i]` together with `pane_cur`, so the strip never paints
+    /// the folder just left on the tab just selected.
     /// A pane tab is one folder inside one pane, not a window tab (`tabs` / `tab`). The strip shows from the second folder on.
     pub(crate) pane_folders: Vec<Vec<String>>,
     pub(crate) pane_cur: Vec<usize>,
@@ -1123,7 +1126,11 @@ impl Session {
         self.pane_cur = pad_pane_cur(std::mem::take(&mut self.pane_cur));
     }
 
-    /// Pane i's pane tabs as they are now. The current one is the folder on display. One entry when it has none.
+    /// Pane i's pane tabs as they are now. The current one is the folder on display (`paths[i]`).
+    /// One entry when it has none. The current slot of `pane_folders` is replaced by `paths[i]`,
+    /// so a switch has to move `paths[i]` in the same step as `pane_cur`. Doing only the index
+    /// writes the folder just left into the newly selected slot, and the strip paints that name
+    /// until the browse lands.
     pub(crate) fn pane_tab_list(&self, i: usize) -> Vec<String> {
         if i >= MAXP {
             return Vec::new();
@@ -1156,7 +1163,14 @@ impl Session {
         t.insert(at, path.clone());
         let showing = self.paths.get(dst).is_some_and(|p| p == &path);
         (self.pane_folders[dst], self.pane_cur[dst]) = (t, at);
-        if showing { None } else { Some(path) }
+        if showing {
+            None
+        } else {
+            // `t` already has the folder that was on display in the previous slot.
+            // Point `paths` at the new tab before anyone reads the list back.
+            self.land_pane_path(dst, &path);
+            Some(path)
+        }
     }
 
     /// A copy of the current pane tab, placed just after it and made current. Same folder, so nothing browses.
@@ -1183,7 +1197,11 @@ impl Session {
             return None;
         }
         let to = t[k].clone();
+        // `t[cur]` is the folder we are leaving. Move the live path with the index:
+        // the next `pane_tab_list` (the strip's paint) would otherwise stamp that
+        // folder onto tab `k` until navigation replaces `paths[i]`.
         (self.pane_folders[i], self.pane_cur[i]) = (t, k);
+        self.land_pane_path(i, &to);
         Some(to)
     }
 
@@ -1213,7 +1231,18 @@ impl Session {
             self.pane_folders[i].clear();
             self.pane_cur[i] = 0;
         }
+        if let Some(ref to) = go {
+            self.land_pane_path(i, to);
+        }
         go
+    }
+
+    /// `paths[i]` is the folder the current pane tab is showing. Call this in the same
+    /// step that changes `pane_cur`, after the outgoing folder has been stored in its own slot.
+    fn land_pane_path(&mut self, i: usize, path: &str) {
+        if let Some(slot) = self.paths.get_mut(i) {
+            *slot = path.to_string();
+        }
     }
 }
 
@@ -2465,6 +2494,29 @@ mod crumb_tests {
     }
 
     #[test]
+    fn switching_pane_tabs_keeps_each_label() {
+        let mut s = Session::default();
+        s.paths[0] = r"C:\A".into();
+        s.pane_folders[0] = vec![r"C:\A".into(), r"C:\B".into(), r"C:\C".into()];
+        s.pane_cur[0] = 0;
+        // Browsing inside the current tab leaves that slot stale. The label follows paths.
+        s.paths[0] = r"C:\A\inside".into();
+        let labels = |s: &Session| s.pane_tab_list(0).iter().map(|p| crate::short_name(p)).collect::<Vec<_>>();
+        assert_eq!(labels(&s), vec!["inside".to_string(), "B".into(), "C".into()]);
+
+        // Click B while the shell has not finished. B must not show the folder we left.
+        assert_eq!(s.pick_pane_tab(0, 1).as_deref(), Some(r"C:\B"));
+        assert_eq!((s.pane_cur[0], s.paths[0].as_str()), (1, r"C:\B"));
+        assert_eq!(s.pane_folders[0][0], r"C:\A\inside");
+        assert_eq!(labels(&s), vec!["inside".to_string(), "B".into(), "C".into()]);
+
+        // Closing the current tab moves to C. C must not wear B's name before the browse.
+        assert_eq!(s.close_pane_tab(0, 1).as_deref(), Some(r"C:\C"));
+        assert_eq!((s.pane_cur[0], s.paths[0].as_str()), (1, r"C:\C"));
+        assert_eq!(labels(&s), vec!["inside".to_string(), "C".into()]);
+    }
+
+    #[test]
     fn pane_tabs_follow_the_pane_and_round_trip() {
         let mut s = Session::default();
         s.paths[0] = r"C:\a".into();
@@ -2537,9 +2589,12 @@ mod crumb_tests {
         s.pane_folders[2] = vec!["keep".into(), "me".into()];
         s.pane_cur[2] = 1;
         assert_eq!(s.copy_pane_tab(0, 1).as_deref(), Some(r"C:\src"));
-        // The list shows the folder on display in the current tab, which stays D:\dst until the browse.
+        // The previous tab keeps the folder that was on display. The new tab is the copied
+        // folder immediately, so a paint before the browse does not label it D:\dst.
         assert_eq!(s.pane_folders[1], vec![r"D:\dst".to_string(), r"C:\src".into()]);
         assert_eq!(s.pane_cur[1], 1);
+        assert_eq!(s.paths[1], r"C:\src");
+        assert_eq!(s.pane_tab_list(1), vec![r"D:\dst".to_string(), r"C:\src".into()]);
         // The source's other pane tabs stay, and so does every other slot.
         assert_eq!(s.pane_tab_list(0), vec![r"C:\old".to_string(), r"C:\src".into(), r"C:\later".into()]);
         assert_eq!((s.views[1], s.cols[1].as_str()), ((1, 16), "size"));

@@ -71,7 +71,7 @@ pub(crate) unsafe fn create_pane(i: usize) -> Result<Pane> {
     let pending = Some(app(|a| a.s.cols[i].clone())); // the session's, for the first folder
     // Born under the theme that is current now, so a later switch is the only reason to rebuild.
     let themed = THEME_EPOCH.load(Ordering::Relaxed);
-    Ok(Pane { hwnd: h, eb, cookie, disp: String::new(), pending, settle: None, view_writes: 0, user_width: false, view_watch: None, recover: None, icon: -1, ticket: 0, net: None, slot, themed, theme_keep: None, theme_scroll: None, nav_busy: false, nav_pending: None })
+    Ok(Pane { hwnd: h, eb, cookie, disp: String::new(), pending, settle: None, view_writes: 0, user_width: false, view_watch: None, recover: None, icon: -1, ticket: 0, net: None, slot, themed, theme_keep: None, theme_scroll: None, nav_busy: false, nav_pending: None, tab_left: None })
 }
 
 const EM_GETMARGINS: u32 = 0xD4;

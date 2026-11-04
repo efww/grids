@@ -6,7 +6,7 @@ use crate::imports::*;
 use crate::app::*;
 use crate::ui::*;
 use crate::session::*;
-use super::{focus_view, go_near, layout_pane, set_active};
+use super::{focus_view, go_near, layout_pane, save_view, set_active};
 
 /// The bar and the list move when the strip appears or disappears. Otherwise only the strip repaints.
 pub(crate) unsafe fn apply_pane_tab_chrome(i: usize, before: usize) {
@@ -30,21 +30,45 @@ pub(crate) unsafe fn repaint_pane_tabs(i: usize) {
     }
 }
 
+/// Remember the folder still on screen when a pane-tab switch stores the destination in `paths`
+/// before the browse. False when one is already remembered: a second click must not replace
+/// the folder the view is actually showing.
+pub(crate) fn arm_tab_left(pane: &mut Pane, from: &str) -> bool {
+    if pane.tab_left.is_some() {
+        return false;
+    }
+    pane.tab_left = Some(from.to_string());
+    true
+}
+
 /// A change that browses. Undone when the folder cannot be opened (go_near already tried its parent).
 unsafe fn pane_tab_go(i: usize, change: impl FnOnce(&mut Session) -> Option<String>) {
-    let (before_n, before_f, before_c, to) = app(|a| {
+    // Columns belong to the folder still on screen. `change` points `paths` at the
+    // destination, and the pending callback then skips the save because the watch key no longer matches.
+    save_view(i);
+    let (before_n, before_f, before_c, before_p, armed, to) = app(|a| {
         a.s.ensure_pane_tabs();
         let before_n = a.s.pane_tab_list(i).len();
         let before_f = a.s.pane_folders[i].clone();
         let before_c = a.s.pane_cur[i];
+        let before_p = a.s.paths.get(i).cloned().unwrap_or_default();
         let to = change(&mut a.s);
-        (before_n, before_f, before_c, to)
+        let armed = to.is_some() && a.panes.get_mut(i).and_then(|p| p.as_mut()).is_some_and(|p| arm_tab_left(p, &before_p));
+        (before_n, before_f, before_c, before_p, armed, to)
     });
     if let Some(to) = to {
         if !go_near(i, &to) {
             app(|a| {
                 a.s.pane_folders[i] = before_f;
                 a.s.pane_cur[i] = before_c;
+                if i < a.s.paths.len() {
+                    a.s.paths[i] = before_p;
+                }
+                if armed {
+                    if let Some(p) = a.panes.get_mut(i).and_then(|p| p.as_mut()) {
+                        p.tab_left = None;
+                    }
+                }
             });
             _ = MessageBeep(MB_ICONWARNING);
         }

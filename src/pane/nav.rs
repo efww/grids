@@ -1131,7 +1131,11 @@ pub(crate) unsafe fn go_near(i: usize, path: &str) -> bool {
             return false;
         }
         a.s.recent.retain(|r| !r.eq_ignore_ascii_case(path));
-        let hit = a.s.paths[i].eq_ignore_ascii_case(path);
+        // A pane-tab switch already stored this path and kept the folder still on
+        // screen in `tab_left`. Blanking `paths` would paint an empty name on the
+        // tab just selected. The view has not left the previous folder.
+        let switching = a.panes.get(i).and_then(|p| p.as_ref()).is_some_and(|p| p.tab_left.is_some());
+        let hit = !switching && a.s.paths[i].eq_ignore_ascii_case(path);
         if hit {
             a.s.paths[i].clear();
         }
@@ -2944,9 +2948,17 @@ unsafe fn on_nav_impl(i: usize, pidl: *const ITEMIDLIST) {
     }
     let Some((h, eb, view, cols, group, ticket)) = app(|a| {
         let fs = is_fs(&parse);
+        // A pane-tab click stores the destination in `paths` before this browse.
+        // The folder that was on screen is `tab_left`; visiting from `paths` would
+        // see the destination twice and record nothing.
+        let left = if theme_same {
+            None
+        } else {
+            a.panes.get_mut(i).and_then(|p| p.as_mut()).and_then(|p| p.tab_left.take())
+        };
         let old = std::mem::replace(&mut a.s.paths[i], parse.clone());
         let path = a.s.paths[i].clone();
-        visit(&mut a.s.recent, &old, &path);
+        visit(&mut a.s.recent, left.as_deref().unwrap_or(&old), &path);
         let remember = a.s.remember_views;
         let choice = if remember { crate::folderview::choose(&path) } else { crate::folderview::Choice::None };
         let (pane_view, own) = (a.s.views[i], a.s.cols[i].clone());
