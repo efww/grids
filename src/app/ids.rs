@@ -86,6 +86,7 @@ pub(crate) const TIMER_RECENT: usize = 21; // recent files: sort newest-first, t
 pub(crate) const TIMER_PREVIEW: usize = 22; // load the preview pane after the selection rests
 pub(crate) const TIMER_CLIPSEL: usize = 23; // pane: select a file opened from the clipboard path hotkey
 pub(crate) const TIMER_RESUME: usize = 24; // pane: wait before the next automatic share reconnect
+pub(crate) const TIMER_TAB_HOVER: usize = 25; // file drag resting on a window tab or pane tab
 pub(crate) const FVIEW_SAVE_MS: u32 = 700;
 pub(crate) const WM_FIND: u32 = WM_APP + 50; // search results arrived for this pane
 pub(crate) const WM_EV: u32 = WM_APP + 51; // Everything status changed in the settings window

@@ -4,6 +4,7 @@ mod excelro;
 pub(crate) mod blockext;
 pub(crate) mod warmup;
 mod askdrop;
+mod tabdrop;
 mod fastcopy;
 mod fav;
 mod fileop;
@@ -12,6 +13,7 @@ pub(crate) mod inuse;
 mod pins;
 
 pub(crate) use askdrop::*;
+pub(crate) use tabdrop::*;
 pub(crate) use fav::*;
 pub(crate) use fileop::*;
 pub(crate) use gather::*;

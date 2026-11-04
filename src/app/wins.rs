@@ -329,6 +329,7 @@ pub(crate) unsafe fn open_window(mut s: Session) -> Result<HWND> {
     let tab_edit = child(tabs_hwnd, w!("EDIT"), w!(""), ES_AUTOHSCROLL as u32, WINDOW_EX_STYLE(0), ID_TAB_EDIT, HFONT::default());
     _ = ShowWindow(tab_edit, SW_HIDE);
     app(|a| (a.tabs_hwnd, a.tab_edit) = (tabs_hwnd, tab_edit));
+    crate::register_tab_drop(tabs_hwnd);
     let bar_ex = WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
     let mut bars = [HWND::default(); 2];
     for b in &mut bars {

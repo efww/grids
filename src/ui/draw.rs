@@ -1336,6 +1336,7 @@ pub(crate) unsafe fn paint_pane(h: HWND) {
     let focused = |id: i32| GetDlgItem(Some(h), id).is_ok_and(|e| e == focus);
     let (addr_on, filt_on) = (focused(ID_EDIT), focused(ID_FILTER));
     let crumbs_on = GetDlgItem(Some(h), ID_EDIT).is_ok_and(|e| !IsWindowVisible(e).as_bool());
+    let file_hot = i.and_then(|pane| crate::pane_file_hot(pane, h));
     buffered(h, |dc, rc| {
         let s = |v: i32| v * dpi / 96;
         let pg = pane_geo_of(h, rc.right, rc.bottom, dpi);
@@ -1403,7 +1404,7 @@ pub(crate) unsafe fn paint_pane(h: HWND) {
                     let cur = if list.len() > 1 { a.s.pane_cur.get(i).copied().unwrap_or(0).min(list.len() - 1) } else { 0 };
                     (list, cur)
                 });
-                paint_pane_tabs(dc, &pg, &list, cur, dpi, font, accent);
+                paint_pane_tabs(dc, &pg, &list, cur, dpi, font, accent, file_hot);
             }
         }
         if pg.filt.right - pg.filt.left < s(24) {

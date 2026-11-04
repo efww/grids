@@ -79,6 +79,8 @@ Named sessions are **`.maguro` files** in `maguro-sessions`. Maguro does not ope
 
 Drag a pane by its number to swap it with another. Hold **Ctrl** while you drag to duplicate that pane instead. A colour on the pane header keeps source and destination obvious.
 
+Drag files or folders from a pane, the file basket, or Explorer, and rest on another window tab or on a pane tab for about half a second. That tab opens, the way a browser tab does. Drop on a pane there to copy or move: the same drive moves, another drive copies, Ctrl copies, Shift moves. The Windows progress window runs on its own thread. Dropping on the tab itself puts the items in that tab's active folder when the drop is a plain set of files and the folder is a real one. Otherwise the tab only opens. Dragging a window tab along the row still reorders it.
+
 ## Find, preview, rename
 
 **Ctrl+F** filters the folder as you type. Tick Subfolders and Maguro asks [voidtools Everything](https://www.voidtools.com/) when it is running, or walks the disk when it is not. Everything results are a table of name, path, size and date modified: drag a column border to resize it (kept in maguro.json; double-click that border to restore the column's default width) and hover a row for the full name, folder, exact size and date, in the same tooltip as the rest of Maguro.

@@ -159,7 +159,7 @@ pub(crate) unsafe fn pane_tab_mouse(h: HWND, i: usize, x: i32, y: i32, middle: b
 
 /// The strip under the header: the current folder raised on the list colour with an accent edge,
 /// the others as plain names, a × on the current one when there are several, and '+' after the last.
-pub(crate) unsafe fn paint_pane_tabs(dc: HDC, pg: &PaneGeo, tabs: &[String], cur: usize, dpi: i32, font: HFONT, accent: u32) {
+pub(crate) unsafe fn paint_pane_tabs(dc: HDC, pg: &PaneGeo, tabs: &[String], cur: usize, dpi: i32, font: HFONT, accent: u32, hot: Option<usize>) {
     let s = |v: i32| v * dpi / 96;
     if pg.tabs.bottom <= pg.tabs.top || tabs.is_empty() {
         return;
@@ -176,6 +176,8 @@ pub(crate) unsafe fn paint_pane_tabs(dc: HDC, pg: &PaneGeo, tabs: &[String], cur
         if on {
             fill(dc, *r, pal().card);
             fill(dc, RECT { bottom: r.top + s(2), ..*r }, accent);
+        } else if hot == Some(k) {
+            fill(dc, *r, blend(pal().card, pal().bg, 0.45));
         } else if k + 1 != cur && k + 1 < tabs.len() {
             fill(dc, RECT { left: r.right - 1, top: r.top + s(5), right: r.right, bottom: r.bottom - s(5) }, pal().line);
         }

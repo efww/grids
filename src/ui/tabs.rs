@@ -1139,7 +1139,7 @@ fn tab_text(a: &App, i: usize) -> (String, String) {
 }
 
 pub(crate) unsafe fn paint_tabs(h: HWND) {
-    let (active, names, colors, hot, hot_close, hot_plus, hot_over, hot_list, dpi, font, icon, accent) = app(|a| {
+    let (active, names, colors, mut hot, mut hot_close, hot_plus, hot_over, hot_list, dpi, font, icon, accent) = app(|a| {
         (
             a.s.tab,
             (0..a.s.tabs.len()).map(|i| tab_text(a, i).0).collect::<Vec<_>>(),
@@ -1155,6 +1155,11 @@ pub(crate) unsafe fn paint_tabs(h: HWND) {
             a.s.accent_now(),
         )
     });
+    // A file drag warms the tab under the pointer without touching mouse-hover state.
+    if let Some(i) = crate::file_window_hot(h) {
+        hot = Some(i);
+        hot_close = false;
+    }
     let lay = current_tab_lay();
     buffered(h, |dc, rc| {
         let s = |v: i32| v * dpi / 96;
@@ -1356,6 +1361,10 @@ fn tabs_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
         bind_hwnd(h);
         match msg {
             WM_PAINT => paint_tabs(h),
+            WM_DESTROY => {
+                crate::revoke_tab_drop(h);
+                return DefWindowProcW(h, msg, wp, lp);
+            }
             WM_SIZE => place_tab_edit(),
             WM_ERASEBKGND => return LRESULT(1),
             WM_MOUSEMOVE => {

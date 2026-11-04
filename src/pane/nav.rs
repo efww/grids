@@ -4208,11 +4208,15 @@ impl IDropTarget_Impl for PaneDrop_Impl {
         unsafe {
             let basket = d.as_ref().is_some_and(|obj| crate::basket::is_basket_data(obj));
             self.basket.set(basket);
-            if basket {
-                self.ok.set(true);
+            self.ok.set(if basket { true } else { drop_items(&d).is_some() });
+            // A pane tab under the pointer opens that tab. The rest of the pane still
+            // takes a basket drop, or opens a dropped folder.
+            let on_tab = pane_tab_drag_enter(self.hwnd, &d, key, pt, effect);
+            if on_tab {
+                self.hover(false);
+            } else if basket {
                 self.offer_basket(key, effect);
             } else {
-                self.ok.set(drop_items(&d).is_some());
                 self.pick(effect);
             }
             if let Some(hp) = &self.helper {
@@ -4223,7 +4227,10 @@ impl IDropTarget_Impl for PaneDrop_Impl {
     }
     fn DragOver(&self, key: MODIFIERKEYS_FLAGS, pt: &POINTL, effect: *mut DROPEFFECT) -> Result<()> {
         unsafe {
-            if self.basket.get() {
+            let on_tab = pane_tab_drag_over(self.hwnd, key, pt, effect);
+            if on_tab {
+                self.hover(false);
+            } else if self.basket.get() {
                 self.offer_basket(key, effect);
             } else {
                 self.pick(effect);
@@ -4238,6 +4245,7 @@ impl IDropTarget_Impl for PaneDrop_Impl {
         unsafe {
             self.basket.set(false);
             self.hover(false);
+            pane_tab_drag_leave(self.hwnd);
             if let Some(hp) = &self.helper {
                 _ = hp.DragLeave();
             }
@@ -4248,6 +4256,13 @@ impl IDropTarget_Impl for PaneDrop_Impl {
         unsafe {
             let basket = self.basket.get();
             self.basket.set(false);
+            if pane_tab_drop(self.hwnd, &d, key, pt, effect) {
+                self.hover(false);
+                if let Some(hp) = &self.helper {
+                    _ = hp.Drop(d.as_ref(), &POINT { x: pt.x, y: pt.y }, *effect);
+                }
+                return Ok(());
+            }
             if basket {
                 *effect = DROPEFFECT_NONE;
                 self.hover(false);
