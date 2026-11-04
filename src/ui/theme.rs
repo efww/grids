@@ -13,22 +13,22 @@ pub(crate) struct Palette {
 }
 
 pub(crate) const LIGHT: Palette = Palette {
-    bg: 0xF3F1EC,
-    card: 0xFFFFFF,
-    line: 0xE4E0D8,
+    bg: super::tokens::BG_LIGHT,
+    card: super::tokens::CARD_LIGHT,
+    line: super::tokens::LINE_LIGHT,
     pill: 0xF4F2EE,
-    text: 0x2A2825,
-    sub: 0x7C776F,
+    text: super::tokens::TEXT_LIGHT,
+    sub: super::tokens::SUB_LIGHT,
     accents: [("하늘", 0x8DB5E8), ("그레이", 0xC5C5C5), ("라벤더", 0xA99BE0), ("세이지", 0x8CC5A8), ("피치", 0xEFAE92), ("로즈", 0xE7A1B5)],
 };
 
 pub(crate) const DARK: Palette = Palette {
-    bg: 0x1C1D20,
-    card: 0x26282C,
-    line: 0x36393E,
+    bg: super::tokens::BG_DARK,
+    card: super::tokens::CARD_DARK,
+    line: super::tokens::LINE_DARK,
     pill: 0x303338,
-    text: 0xE6E8EB,
-    sub: 0x9AA0A8,
+    text: super::tokens::TEXT_DARK,
+    sub: super::tokens::SUB_DARK,
     accents: [("하늘", 0x4C6FA8), ("그레이", 0x4B4B4B), ("라벤더", 0x6A5AA8), ("세이지", 0x3E8676), ("피치", 0xA8624A), ("로즈", 0xA65A78)],
 };
 
@@ -75,8 +75,8 @@ pub(crate) fn group_tint(accent: u32, ground: u32, dark: bool) -> u32 {
 // Text/icons on a coloured fill: near-black on light colours, white on dark ones (black accent -> white text).
 /// Pre-#222 mint brand (#2EC4A6). Saved settings that still use it follow the cerulean rebrand.
 pub(crate) const OLD_MINT_BRAND: u32 = 0x2EC4A6;
-/// Current brand accent (#0A9BD6).
-pub(crate) const CERULEAN_BRAND: u32 = 0x0A9BD6;
+/// Current brand accent (#0A9BD6). The button tokens own the value.
+pub(crate) const CERULEAN_BRAND: u32 = super::tokens::ACCENT;
 
 /// Map the retired mint brand to cerulean. Any other chosen swatch is left alone.
 pub(crate) fn brand_accent(c: u32) -> u32 {

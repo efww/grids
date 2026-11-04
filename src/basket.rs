@@ -16,10 +16,10 @@ use crate::session::*;
 use crate::shell::*;
 use crate::ui::*;
 
-/// Cerulean #0A9BD6. Primary buttons only. The basket does not follow the retired mint brand.
-pub(crate) const CERULEAN: u32 = 0x0A9BD6;
-/// Pressed and hover fill, #0786BC.
-pub(crate) const CERULEAN_DEEP: u32 = 0x0786BC;
+/// Cerulean #0A9BD6. Primary buttons and the tab-list accent bar. The basket does not follow the retired mint brand.
+pub(crate) const CERULEAN: u32 = ACCENT;
+/// Pressed primary fill, #0786BC. Hover is a separate step in the shared button tokens.
+pub(crate) const CERULEAN_DEEP: u32 = ACCENT_PRESSED;
 /// Selection wash, #9BE3FA.
 pub(crate) const CERULEAN_MIST: u32 = 0x9BE3FA;
 const MINT: u32 = 0x2EC4A6;
@@ -48,8 +48,7 @@ struct State {
     sel: Vec<usize>,
     anchor: usize,
     press: Option<(i32, i32)>,
-    btn_down: Option<u8>,
-    hot: Option<u8>,
+    track: Tracker<u8>,
     hot_row: Option<usize>,
     buttons: Vec<(u8, RECT)>,
     list: RECT,
@@ -68,8 +67,7 @@ impl State {
             sel: Vec::new(),
             anchor: 0,
             press: None,
-            btn_down: None,
-            hot: None,
+            track: Tracker::new(),
             hot_row: None,
             buttons: Vec::new(),
             list: RECT::default(),
@@ -217,19 +215,6 @@ pub(crate) fn drag_effect(shift: bool) -> u32 {
         DROPEFFECT_MOVE.0
     } else {
         DROPEFFECT_COPY.0
-    }
-}
-
-/// Cerulean fill for the primary button. Secondary buttons stay on the theme card.
-pub(crate) fn primary_fill(hot: bool) -> u32 {
-    if hot { CERULEAN_DEEP } else { CERULEAN }
-}
-
-pub(crate) fn button_ink(fill: u32) -> u32 {
-    if fill == CERULEAN || fill == CERULEAN_DEEP {
-        0xFFFFFF
-    } else {
-        0x2A2825
     }
 }
 
@@ -1039,10 +1024,9 @@ fn basket_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
             }
             WM_MOUSELEAVE => {
                 let changed = with_st(|s| {
-                    let changed = s.hot.is_some() || s.hot_row.is_some();
-                    s.hot = None;
-                    s.hot_row = None;
-                    changed
+                    let row = s.hot_row.take().is_some();
+                    let effect = s.track.pointer_leave();
+                    row || !matches!(effect, TrackEffect::None)
                 });
                 if changed {
                     _ = InvalidateRect(Some(h), None, false);
@@ -1067,11 +1051,13 @@ fn basket_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                 LRESULT(0)
             }
             WM_CAPTURECHANGED => {
-                with_st(|s| {
+                let effect = with_st(|s| {
                     s.press = None;
-                    s.btn_down = None;
+                    s.track.capture_lost()
                 });
-                _ = InvalidateRect(Some(h), None, false);
+                if !matches!(effect, TrackEffect::None) {
+                    _ = InvalidateRect(Some(h), None, false);
+                }
                 LRESULT(0)
             }
             WM_CLOSE => {
@@ -1107,7 +1093,9 @@ fn xy(lp: LPARAM) -> (i32, i32) {
 unsafe fn on_down(h: HWND, at: (i32, i32), ctrl: bool) {
     layout(h);
     if let Some(id) = hit_button(at.0, at.1) {
-        with_st(|s| s.btn_down = Some(id));
+        with_st(|s| {
+            s.track.pointer_down(id);
+        });
         _ = SetCapture(h);
         _ = InvalidateRect(Some(h), None, false);
         return;
@@ -1124,7 +1112,7 @@ unsafe fn on_down(h: HWND, at: (i32, i32), ctrl: bool) {
 }
 
 unsafe fn on_move(h: HWND, at: (i32, i32)) {
-    let (press, down) = with_st(|s| (s.press, s.btn_down));
+    let (press, down) = with_st(|s| (s.press, s.track.down()));
     if let Some((x, y)) = press {
         let dx = at.0 - x;
         let dy = at.1 - y;
@@ -1136,13 +1124,13 @@ unsafe fn on_move(h: HWND, at: (i32, i32)) {
             return;
         }
     }
-    let hot = if down.is_some() { down } else { hit_button(at.0, at.1) };
+    let over = hit_button(at.0, at.1);
     let row = if down.is_some() { None } else { hit_row(at.0, at.1) };
     let changed = with_st(|s| {
-        let changed = s.hot != hot || s.hot_row != row;
-        s.hot = hot;
+        let row_changed = s.hot_row != row;
         s.hot_row = row;
-        changed
+        let effect = s.track.pointer_move(over);
+        row_changed || !matches!(effect, TrackEffect::None)
     });
     if changed {
         _ = InvalidateRect(Some(h), None, false);
@@ -1157,17 +1145,14 @@ unsafe fn on_move(h: HWND, at: (i32, i32)) {
 }
 
 unsafe fn on_up(h: HWND, at: (i32, i32)) {
-    let down = with_st(|s| {
-        let d = s.btn_down;
-        s.btn_down = None;
+    let over = hit_button(at.0, at.1);
+    let effect = with_st(|s| {
         s.press = None;
-        d
+        s.track.pointer_up(over)
     });
     _ = ReleaseCapture();
-    if let Some(id) = down {
-        if hit_button(at.0, at.1) == Some(id) {
-            act(id);
-        }
+    if let TrackEffect::Click(id) = effect {
+        act(id);
     }
     _ = InvalidateRect(Some(h), None, false);
 }
@@ -1241,27 +1226,25 @@ fn entry_is_file(path: &str, gone: bool) -> bool {
 
 unsafe fn paint(h: HWND, dc: HDC, rc: RECT) {
     layout(h);
-    let (list, scroll, row_h, buttons, hot, down, hot_row, hint, frame_r, head, status) =
-        with_st(|s| (s.list, s.scroll, s.row_h, s.buttons.clone(), s.hot, s.btn_down, s.hot_row, s.hint, s.frame, s.head, s.status));
+    let (list, scroll, row_h, buttons, track, hot_row, hint, frame_r, head, status) =
+        with_st(|s| (s.list, s.scroll, s.row_h, s.buttons.clone(), s.track, s.hot_row, s.hint, s.frame, s.head, s.status));
     let list_paths = paths();
     let sel = with_st(|s| s.sel.clone());
     let (font, small) = app(|a| (a.font, a.small_font));
     let dpi = GetDpiForWindow(h).max(96) as i32;
     let pal = pal();
     let dark = DARK_ON.load(Ordering::Relaxed);
-    fill(dc, rc, pal.bg);
+    paint_window(dc, rc);
     let hint_r = RECT { left: hint.left + sc(dpi, PAD_DIP), right: hint.right - sc(dpi, PAD_DIP), ..hint };
     text(dc, hint_r, tr(Key::BasketHint), small, pal.sub, DT_LEFT);
     for (id, r) in &buttons {
         let on = enabled(*id);
         let label = actions().iter().find(|(k, _)| k == id).map(|(_, key)| tr(*key)).unwrap_or("");
-        let primary = *id == ACT_COPY;
-        let pressed = hot == Some(*id) || down == Some(*id);
-        draw_tool(dc, *r, label, font, primary, on, pressed, dpi);
+        let kind = if *id == ACT_COPY { ButtonKind::Primary } else { ButtonKind::Secondary };
+        paint_button(dc, *r, kind, track.visual(*id, !on), label, font, dpi, pal.bg, FocusRing::Outside);
     }
     if frame_r.bottom > frame_r.top {
-        fill(dc, frame_r, pal.card);
-        frame(dc, frame_r, 1, pal.line);
+        crate::ui::paint_card(dc, frame_r, dpi);
     }
     if head.bottom > head.top {
         fill(dc, head, pal.pill);
@@ -1332,26 +1315,6 @@ unsafe fn paint(h: HWND, dc: HDC, rc: RECT) {
     }
 }
 
-unsafe fn draw_tool(dc: HDC, r: RECT, label: &str, font: HFONT, primary: bool, on: bool, hot: bool, dpi: i32) {
-    if r.right <= r.left {
-        return;
-    }
-    let pal = pal();
-    let rad = sc(dpi, 2).max(1);
-    if primary && on {
-        let fill_c = primary_fill(hot);
-        // A border that differs from the fill takes the same 1px inset as the other buttons.
-        let edge = if hot { 0x056A96 } else { CERULEAN_DEEP };
-        aa_rfill(dc, r, rad, fill_c, Some(edge), pal.bg);
-        text(dc, r, label, font, 0xFFFFFF, DT_CENTER);
-    } else {
-        let fill_c = if hot && on { blend(pal.card, pal.text, 0.06) } else { pal.card };
-        let ink = if on { pal.text } else { pal.sub };
-        aa_rfill(dc, r, rad, fill_c, Some(pal.line), pal.bg);
-        text(dc, r, label, font, ink, DT_CENTER);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1393,16 +1356,19 @@ mod tests {
 
     #[test]
     fn cerulean_palette_never_uses_mint() {
-        for c in [CERULEAN, CERULEAN_DEEP, CERULEAN_MIST, primary_fill(false), primary_fill(true)] {
+        let hover = button_colors(ButtonKind::Primary, ButtonState::Hover, false, BG_LIGHT).fill;
+        let pressed = button_colors(ButtonKind::Primary, ButtonState::Pressed, false, BG_LIGHT).fill;
+        for c in [CERULEAN, CERULEAN_DEEP, CERULEAN_MIST, hover.unwrap_or(0), pressed.unwrap_or(0)] {
             assert_ne!(c, MINT, "{c:#08X}");
             assert_ne!(c, 0x2EC4A6);
         }
         assert_eq!(CERULEAN, 0x0A9BD6);
         assert_eq!(CERULEAN_DEEP, 0x0786BC);
         assert_eq!(CERULEAN_MIST, 0x9BE3FA);
-        assert_eq!(primary_fill(false), CERULEAN);
-        assert_eq!(primary_fill(true), CERULEAN_DEEP);
-        assert_eq!(button_ink(CERULEAN), 0xFFFFFF);
+        assert_eq!(hover, Some(0x0890C7));
+        assert_eq!(pressed, Some(CERULEAN_DEEP));
+        assert_ne!(hover, pressed);
+        assert_eq!(button_colors(ButtonKind::Primary, ButtonState::Normal, false, BG_LIGHT).ink, 0xFFFFFF);
         let (name, path, bg) = row_colors(true, true, false);
         assert_eq!(bg, CERULEAN_MIST);
         assert_eq!(name, 0x9F1C14);

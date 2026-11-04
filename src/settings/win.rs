@@ -802,7 +802,7 @@ unsafe fn draw_card(dc: HDC, c: &CardItem, sn: &Snap, accent: u32) {
         crate::text(dc, RECT { top: title_line.bottom, ..text_r }, tx(c.spec.desc), sn.small, crate::pal().sub, DT_LEFT);
     }
     match c.spec.ctl {
-        Ctl::Toggle(id) => draw_toggle(dc, c.ctl, toggle_on(id), c.spec.live, accent, dpi),
+        Ctl::Toggle(id) => crate::draw_toggle(dc, c.ctl, toggle_on(id), c.spec.live, accent, dpi),
         Ctl::CopyEng => crate::text(dc, c.ctl, "IFileOperation", sn.small, crate::pal().sub, DT_RIGHT),
         Ctl::Accent => {
             let colors = crate::pal().accents;
@@ -902,34 +902,6 @@ unsafe fn draw_ctx_sub(dc: HDC, rect: RECT, mark: RECT, bit: u8, tick: crate::sh
     crate::text(dc, RECT { left: mark.right + sc(dpi, 8), ..rect }, crate::shell::ctxmenu::target_label(bit), sn.font, crate::pal().text, DT_LEFT);
 }
 
-fn toggle_knob_rect(r: RECT, on: bool, dpi: i32) -> RECT {
-    let k = sc(dpi, 12);
-    let pad = sc(dpi, 3);
-    let x = if on { r.right - pad - k } else { r.left + pad };
-    let y = r.top + (r.bottom - r.top - k) / 2;
-    RECT { left: x, top: y, right: x + k, bottom: y + k }
-}
-
-unsafe fn draw_toggle(dc: HDC, r: RECT, on: bool, enabled: bool, accent: u32, dpi: i32) {
-    // 40×20 pill. Off and disabled stay an outlined gray track on the white card.
-    let (fill, border, knob) = if !enabled || !on {
-        (crate::pal().card, crate::pal().sub, crate::pal().sub)
-    } else {
-        (accent, accent, on_chrome(accent))
-    };
-    let rad = (r.bottom - r.top).max(1);
-    let knob_r = toggle_knob_rect(r, on, dpi);
-    // One pass so the knob's edge blends into the pill, not into a second square blit.
-    let painted = crate::aa_blit(dc, r, crate::pal().card, |mem, scale, ox, oy| unsafe {
-        crate::paint_round(mem, crate::scaled_from(r, r, scale, ox, oy), rad * scale, fill, Some(border), scale);
-        crate::ellipse(mem, crate::scaled_from(r, knob_r, scale, ox, oy), knob, None);
-    });
-    if !painted {
-        crate::rfill(dc, r, rad, fill, Some(border));
-        crate::ellipse(dc, knob_r, knob, None);
-    }
-}
-
 unsafe fn draw_fav_row(dc: HDC, row: Option<&crate::FavRow>, r: RECT, sn: &Snap, empty: bool) {
     crate::paint_fav_row(dc, row, r, sn.dpi.max(96), sn.font, sn.small, sn.icon, empty, false);
 }
@@ -1009,6 +981,8 @@ unsafe fn draw_field(dc: HDC, r: RECT, dpi: i32, ground: u32) {
 }
 
 
+/// Settings footer and in-card buttons. The name prompt, About, and Excel still share
+/// this painter. The next batch switches those windows to [`crate::paint_button`].
 pub(crate) unsafe fn draw_btn(d: &DRAWITEMSTRUCT) {
     let id = d.CtlID as i32;
     let dis = d.itemState.0 & 4 != 0;
@@ -2762,7 +2736,7 @@ mod tests {
             let h = sc(dpi, 20);
             let r = RECT { left: 0, top: 0, right: w, bottom: h };
             for on in [false, true] {
-                let k = toggle_knob_rect(r, on, dpi);
+                let k = crate::toggle_knob_rect(r, on, dpi);
                 assert_eq!(k.right - k.left, sc(dpi, 12));
                 assert_eq!(k.bottom - k.top, sc(dpi, 12));
                 assert!(k.left >= r.left && k.right <= r.right && k.top >= r.top && k.bottom <= r.bottom);

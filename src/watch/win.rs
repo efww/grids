@@ -16,7 +16,7 @@ use windows::Win32::UI::Shell::{DragQueryFileW, HDROP};
 use super::model::{format_civil, status_color, Row, Status, CHROME};
 use crate::imports::*;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Hover {
     None,
     Add,
@@ -38,6 +38,7 @@ struct WatchWin {
     scroll: i32,
     drag: bool,
     hover: Hover,
+    track: crate::Tracker<Hover>,
     banner: String,
 }
 
@@ -53,6 +54,7 @@ impl WatchWin {
             scroll: 0,
             drag: false,
             hover: Hover::None,
+            track: crate::Tracker::new(),
             banner: String::new(),
         }
     }
@@ -297,13 +299,35 @@ unsafe extern "system" fn watch_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             LRESULT(0)
         }
         WM_MOUSELEAVE => {
-            WATCH.with(|w| w.borrow_mut().hover = Hover::None);
+            WATCH.with(|w| {
+                let mut u = w.borrow_mut();
+                u.hover = Hover::None;
+                u.track.pointer_leave();
+            });
             let _ = InvalidateRect(Some(h), None, false);
+            LRESULT(0)
+        }
+        WM_LBUTTONDOWN => {
+            let (x, y) = crate::xy(lp);
+            let rows = super::snapshot();
+            let lay = layout(h, &rows);
+            if let Some(id) = button_of(hover_at(&lay, x, y)) {
+                WATCH.with(|w| w.borrow_mut().track.pointer_down(id));
+                let _ = SetCapture(h);
+                let _ = InvalidateRect(Some(h), None, false);
+            }
             LRESULT(0)
         }
         WM_LBUTTONUP => {
             let (x, y) = crate::xy(lp);
             on_click(h, x, y);
+            LRESULT(0)
+        }
+        WM_CAPTURECHANGED => {
+            let effect = WATCH.with(|w| w.borrow_mut().track.capture_lost());
+            if !matches!(effect, crate::TrackEffect::None) {
+                let _ = InvalidateRect(Some(h), None, false);
+            }
             LRESULT(0)
         }
         WM_KEYDOWN if wp.0 == VK_ESCAPE.0 as usize => {
@@ -391,11 +415,22 @@ unsafe fn on_scroll(h: HWND, wp: WPARAM) {
 unsafe fn on_move(h: HWND, x: i32, y: i32) {
     let rows = super::snapshot();
     let lay = layout(h, &rows);
-    let hover = hover_at(&lay, x, y);
+    let at = hover_at(&lay, x, y);
+    let btn = button_of(at);
     let changed = WATCH.with(|w| {
         let mut u = w.borrow_mut();
-        let changed = u.hover != hover;
-        u.hover = hover;
+        let row = if btn.is_some() || u.track.down().is_some() {
+            Hover::None
+        } else {
+            match at {
+                Hover::Row(id) => Hover::Row(id),
+                Hover::Sub(id) => Hover::Sub(id),
+                _ => Hover::None,
+            }
+        };
+        let effect = u.track.pointer_move(btn);
+        let changed = u.hover != row || !matches!(effect, crate::TrackEffect::None);
+        u.hover = row;
         changed
     });
     if changed {
@@ -408,6 +443,13 @@ unsafe fn on_move(h: HWND, x: i32, y: i32) {
         dwHoverTime: 0,
     };
     let _ = TrackMouseEvent(&mut track);
+}
+
+fn button_of(hover: Hover) -> Option<Hover> {
+    match hover {
+        Hover::Add | Hover::File | Hover::Active | Hover::Run(_) | Hover::Del(_) => Some(hover),
+        _ => None,
+    }
 }
 
 fn hover_at(lay: &Lay, x: i32, y: i32) -> Hover {
@@ -440,37 +482,43 @@ fn hover_at(lay: &Lay, x: i32, y: i32) -> Hover {
 unsafe fn on_click(h: HWND, x: i32, y: i32) {
     let rows = super::snapshot();
     let lay = layout(h, &rows);
-    if inside(lay.add, x, y) {
-        if let Some(path) = crate::pick_folder(h) {
-            add_paths(&[path]);
-        }
-        return;
+    let at = hover_at(&lay, x, y);
+    let effect = WATCH.with(|w| w.borrow_mut().track.pointer_up(button_of(at)));
+    if GetCapture() == h {
+        let _ = ReleaseCapture();
     }
-    if inside(lay.file, x, y) {
-        let paths = crate::pick_files(h);
-        if !paths.is_empty() {
-            add_paths(&paths);
+    match effect {
+        crate::TrackEffect::Click(id) => press_button(h, id),
+        crate::TrackEffect::None => {
+            if let Hover::Sub(id) = at {
+                super::toggle_subfolders(id);
+            }
         }
-        return;
+        _ => {}
     }
-    if inside(lay.active, x, y) {
-        set_banner(super::add_active());
-        redraw();
-        return;
-    }
-    for hit in &lay.rows {
-        if inside(hit.sub, x, y) {
-            super::toggle_subfolders(hit.id);
-            return;
+    let _ = InvalidateRect(Some(h), None, false);
+}
+
+unsafe fn press_button(h: HWND, id: Hover) {
+    match id {
+        Hover::Add => {
+            if let Some(path) = crate::pick_folder(h) {
+                add_paths(&[path]);
+            }
         }
-        if inside(hit.run, x, y) {
-            super::toggle_run(hit.id);
-            return;
+        Hover::File => {
+            let paths = crate::pick_files(h);
+            if !paths.is_empty() {
+                add_paths(&paths);
+            }
         }
-        if inside(hit.del, x, y) {
-            super::delete(hit.id);
-            return;
+        Hover::Active => {
+            set_banner(super::add_active());
+            redraw();
         }
+        Hover::Run(id) => super::toggle_run(id),
+        Hover::Del(id) => super::delete(id),
+        _ => {}
     }
 }
 
@@ -576,25 +624,24 @@ unsafe fn paint(h: HWND, dc: HDC, rc: RECT) {
     let rows = super::snapshot();
     let lay = layout(h, &rows);
     sync_scroll(h, &lay);
-    let (font, bold, small, icon, drag, hover, banner) = WATCH.with(|w| {
+    let (font, bold, small, icon, drag, hover, track, banner) = WATCH.with(|w| {
         let u = w.borrow();
-        (u.font, u.bold, u.small, u.icon, u.drag, u.hover, u.banner.clone())
+        (u.font, u.bold, u.small, u.icon, u.drag, u.hover, u.track, u.banner.clone())
     });
     let dpi = WATCH.with(|w| w.borrow().dpi.max(96));
     let pal = crate::pal();
     let dark = crate::DARK_ON.load(Ordering::Relaxed);
-    crate::fill(dc, rc, pal.bg);
+    crate::paint_window(dc, rc);
     crate::text(dc, lay.hint, crate::tr(crate::Key::FolderWatchHint), small, pal.sub, DT_LEFT);
-    tool_btn(dc, lay.add, crate::tr(crate::Key::AddFolder), font, true, hover == Hover::Add, dpi);
-    tool_btn(dc, lay.file, crate::tr(crate::Key::AddFile), font, false, hover == Hover::File, dpi);
-    tool_btn(dc, lay.active, crate::tr(crate::Key::AddActivePane), font, false, hover == Hover::Active, dpi);
+    crate::paint_button(dc, lay.add, crate::ButtonKind::Primary, track.visual(Hover::Add, false), crate::tr(crate::Key::AddFolder), font, dpi, pal.bg, crate::FocusRing::Outside);
+    crate::paint_button(dc, lay.file, crate::ButtonKind::Secondary, track.visual(Hover::File, false), crate::tr(crate::Key::AddFile), font, dpi, pal.bg, crate::FocusRing::Outside);
+    crate::paint_button(dc, lay.active, crate::ButtonKind::Secondary, track.visual(Hover::Active, false), crate::tr(crate::Key::AddActivePane), font, dpi, pal.bg, crate::FocusRing::Outside);
     if !banner.is_empty() {
         let ink = if dark { 0xF07167 } else { 0x9F1C14 };
         crate::text(dc, lay.banner, &banner, small, ink, DT_LEFT);
     }
     if lay.frame.bottom > lay.frame.top {
-        crate::fill(dc, lay.frame, pal.card);
-        crate::frame(dc, lay.frame, 1, pal.line);
+        crate::ui::paint_card(dc, lay.frame, dpi);
     }
     if lay.head.bottom > lay.head.top {
         crate::fill(dc, lay.head, pal.pill);
@@ -656,8 +703,8 @@ unsafe fn paint(h: HWND, dc: HDC, rc: RECT) {
         crate::text(dc, last_r, &last_line(row), small, pal.sub, DT_LEFT);
         let running = !row.paused;
         let run_label = if running { crate::tr(crate::Key::WatchStop) } else { crate::tr(crate::Key::WatchResume) };
-        mini_btn(dc, hit.run, run_label, small, false, hover == Hover::Run(row.id), dpi, bg);
-        mini_btn(dc, hit.del, crate::tr(crate::Key::Delete), small, true, hover == Hover::Del(row.id), dpi, bg);
+        crate::paint_button(dc, hit.run, crate::ButtonKind::Secondary, track.visual(Hover::Run(row.id), false), run_label, small, dpi, bg, crate::FocusRing::Outside);
+        crate::paint_button(dc, hit.del, crate::ButtonKind::Danger, track.visual(Hover::Del(row.id), false), crate::tr(crate::Key::Delete), small, dpi, bg, crate::FocusRing::Outside);
         crate::fill(dc, RECT { top: hit.row.bottom - 1, bottom: hit.row.bottom, left: hit.row.left, right: hit.row.right }, pal.line);
     }
     if saved != 0 {
@@ -749,42 +796,6 @@ fn civil_from_unix(ms: i64) -> String {
         }
         format_civil(local.wYear as i32, local.wMonth as u32, local.wDay as u32, local.wHour as u32, local.wMinute as u32)
     }
-}
-
-unsafe fn tool_btn(dc: HDC, r: RECT, label: &str, font: HFONT, primary: bool, hot: bool, dpi: i32) {
-    if r.right <= r.left {
-        return;
-    }
-    let pal = crate::pal();
-    let rad = sc(dpi, 2).max(1);
-    if primary {
-        let fill = if hot { 0x0786BC } else { CHROME };
-        // Same 1px inset as the secondary buttons, so the toolbar heights match.
-        let edge = if hot { 0x056A96 } else { 0x0786BC };
-        crate::aa_rfill(dc, r, rad, fill, Some(edge), pal.bg);
-        crate::text(dc, r, label, font, crate::on_color(fill), DT_CENTER);
-    } else {
-        let fill = if hot { crate::blend(pal.card, pal.text, 0.06) } else { pal.card };
-        crate::aa_rfill(dc, r, rad, fill, Some(pal.line), pal.bg);
-        crate::text(dc, r, label, font, pal.text, DT_CENTER);
-    }
-}
-
-unsafe fn mini_btn(dc: HDC, r: RECT, label: &str, font: HFONT, danger: bool, hot: bool, dpi: i32, ground: u32) {
-    if r.right <= r.left || r.bottom <= r.top {
-        return;
-    }
-    let pal = crate::pal();
-    let dark = crate::DARK_ON.load(Ordering::Relaxed);
-    let ink = if danger {
-        if dark { 0xF07167 } else { 0x9F1C14 }
-    } else {
-        pal.text
-    };
-    let border = if danger { crate::blend(pal.line, ink, 0.55) } else { pal.line };
-    let fill = if hot { crate::blend(pal.card, pal.text, 0.06) } else { pal.card };
-    crate::aa_rfill(dc, r, sc(dpi, 2).max(1), fill, Some(border), ground);
-    crate::text(dc, r, label, font, ink, DT_CENTER);
 }
 
 unsafe fn checkbox(dc: HDC, r: RECT, on: bool, font: HFONT, icon: HFONT, dpi: i32, hot: bool, ground: u32) {

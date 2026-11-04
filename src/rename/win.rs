@@ -52,10 +52,10 @@ const ROW_GAP_DIP: i32 = 8;
 const TICK_DIP: i32 = 16;
 const KIND_W_DIP: i32 = 150;
 const MINI_W_DIP: i32 = 28;
-/// Cerulean brand (#0A9BD6 / #0786BC). Changed text on the dark theme is #7FD4F5.
-/// Mint (#2EC4A6) is not part of this window.
-const CERULEAN: u32 = 0x0A9BD6;
-const CERULEAN_DEEP: u32 = 0x0786BC;
+/// Cerulean brand (#0A9BD6). Pressed primary is #0786BC. Changed text on the dark theme is #7FD4F5.
+/// Mint (#2EC4A6) is not part of this window. Hover is a separate step in the shared button tokens.
+const CERULEAN: u32 = crate::ACCENT;
+const CERULEAN_DEEP: u32 = crate::ACCENT_PRESSED;
 const MARK_INK_DARK: u32 = 0x7FD4F5;
 const ROW_HOVER_LIGHT: u32 = 0xF7F5F1;
 const ROW_HOVER_DARK: u32 = 0x2A2C30;
@@ -1751,14 +1751,6 @@ unsafe fn combo_face(hwnd: HWND) -> crate::ui::combo::Face {
     crate::ui::combo::Face { fill, edge: plate_line(!off), ink, ground: fill }
 }
 
-fn primary_fill(hot: bool) -> u32 {
-    if hot { CERULEAN_DEEP } else { CERULEAN }
-}
-
-fn primary_edge() -> u32 {
-    CERULEAN_DEEP
-}
-
 /// Changed-span wash. Light is 28% cerulean on white. Dark is 32% cerulean on the card.
 fn mark_wash(dark: bool, card: u32) -> u32 {
     if dark { crate::blend(card, CERULEAN, 0.32) } else { crate::blend(0xFFFFFF, CERULEAN, 0.28) }
@@ -2294,9 +2286,6 @@ unsafe fn draw_btn(d: &DRAWITEMSTRUCT) {
         draw_check(d);
         return;
     }
-    let dis = d.itemState.0 & ODS_DISABLED.0 != 0;
-    let pressed = d.itemState.0 & ODS_SELECTED.0 != 0;
-    let hot = !dis && crate::app(|a| a.hover) == d.hwndItem;
     let dpi = ST.with(|s| s.borrow().dpi.max(96));
     let in_card = id >= ID_BASE;
     let rule_on = if in_card { rule_is_on(((id - ID_BASE) / STRIDE) as usize) } else { true };
@@ -2311,27 +2300,16 @@ unsafe fn draw_btn(d: &DRAWITEMSTRUCT) {
             (st.font, st.bold)
         })
     };
+    let mut visual = crate::visual_from_item(d.itemState.0, crate::app(|a| a.hover) == d.hwndItem);
+    if in_card && !rule_on {
+        visual.state = crate::ButtonState::Disabled;
+        visual.focus = false;
+    }
+    let kind = if id == ID_APPLY { crate::ButtonKind::Primary } else { crate::ButtonKind::Secondary };
+    let face = if kind == crate::ButtonKind::Primary && visual.state != crate::ButtonState::Disabled && !bold.is_invalid() { bold } else { font };
     let ground = if in_card { plate(rule_on) } else { crate::pal().bg };
-    crate::fill(d.hDC, d.rcItem, ground);
-    let accent_btn = id == ID_APPLY && !dis;
-    let (fill, border, ink) = if accent_btn {
-        (primary_fill(hot || pressed), primary_edge(), 0xFFFFFFu32)
-    } else if dis {
-        (crate::blend(ground, crate::pal().sub, 0.12), crate::pal().line, crate::pal().sub)
-    } else if pressed {
-        (crate::blend(ground, crate::pal().text, 0.08), crate::pal().line, crate::pal().text)
-    } else if hot {
-        (crate::blend(ground, CERULEAN, 0.12), CERULEAN, crate::pal().text)
-    } else if !rule_on {
-        (ground, plate_line(false), crate::blend(ground, crate::pal().text, 0.55))
-    } else {
-        (ground, crate::pal().line, crate::pal().text)
-    };
-    let rad = if matches!(id, ID_UNDO | ID_CLOSE | ID_APPLY) { sc(dpi, 6) } else { sc(dpi, 4) };
-    crate::aa_rfill(d.hDC, d.rcItem, rad, fill, Some(border), ground);
     let label = crate::text_of(d.hwndItem);
-    let label_font = if accent_btn && !bold.is_invalid() { bold } else { font };
-    crate::text(d.hDC, d.rcItem, &label, label_font, ink, DT_CENTER);
+    crate::paint_button(d.hDC, d.rcItem, kind, visual, &label, face, dpi, ground, crate::FocusRing::Inside);
 }
 
 unsafe fn draw_check(d: &DRAWITEMSTRUCT) {
@@ -3005,14 +2983,16 @@ mod tests {
     #[test]
     fn cerulean_mark_and_primary_never_use_mint() {
         let mint = 0x2EC4A6u32;
-        for c in [CERULEAN, CERULEAN_DEEP, MARK_INK_DARK, primary_fill(false), primary_fill(true), primary_edge(), mark_ink(false), mark_ink(true), mark_wash(false, 0xFFFFFF), mark_wash(true, 0x26282C), row_hover(false), row_hover(true)] {
+        let hover = crate::button_colors(crate::ButtonKind::Primary, crate::ButtonState::Hover, false, 0xF3F1EC).fill;
+        let pressed = crate::button_colors(crate::ButtonKind::Primary, crate::ButtonState::Pressed, false, 0xF3F1EC).fill;
+        for c in [CERULEAN, CERULEAN_DEEP, MARK_INK_DARK, hover.unwrap_or(0), pressed.unwrap_or(0), mark_ink(false), mark_ink(true), mark_wash(false, 0xFFFFFF), mark_wash(true, 0x26282C), row_hover(false), row_hover(true)] {
             assert_ne!(c, mint, "{c:#08X}");
         }
         assert_eq!(CERULEAN, 0x0A9BD6);
         assert_eq!(CERULEAN_DEEP, 0x0786BC);
-        assert_eq!(primary_fill(false), CERULEAN);
-        assert_eq!(primary_fill(true), CERULEAN_DEEP);
-        assert_eq!(primary_edge(), CERULEAN_DEEP);
+        assert_eq!(hover, Some(0x0890C7));
+        assert_eq!(pressed, Some(CERULEAN_DEEP));
+        assert_ne!(hover, pressed);
         assert_eq!(mark_ink(false), CERULEAN_DEEP);
         assert_eq!(mark_ink(true), 0x7FD4F5);
         // Light wash is 28% cerulean on white. Dark wash is 32% cerulean on the card.

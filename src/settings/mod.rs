@@ -119,7 +119,7 @@ fn chrome() -> u32 {
     }
 }
 
-fn on_chrome(c: u32) -> u32 {
+pub(crate) fn on_chrome(c: u32) -> u32 {
     if c == CHROME_LIGHT {
         WHITE
     } else {

@@ -952,34 +952,19 @@ unsafe fn paint(h: HWND) {
 
 unsafe fn draw_btn(d: &DRAWITEMSTRUCT) {
     let id = d.CtlID as i32;
-    let dis = d.itemState.0 & 4 != 0;
-    let pressed = d.itemState.0 & 1 != 0;
-    let hot = app(|a| a.hover) == d.hwndItem;
     let dpi = UI.with(|u| u.borrow().dpi.max(96));
     let (font, bold) = UI.with(|u| {
         let ui = u.borrow();
         (ui.font, ui.bold)
     });
-    let accent = crate::settings::chrome_color();
-    let ground = crate::pal().bg;
-    crate::fill(d.hDC, d.rcItem, ground);
-    let accent_btn = id == ID_OPEN && !dis;
-    let (fill, border, ink) = if accent_btn {
-        (accent, accent, crate::on_color(accent))
-    } else if dis {
-        (crate::blend(ground, crate::pal().sub, 0.12), crate::pal().line, crate::pal().sub)
-    } else if pressed {
-        (crate::blend(ground, crate::pal().text, 0.08), crate::pal().line, crate::pal().text)
-    } else if hot {
-        (crate::blend(ground, accent, 0.12), accent, crate::pal().text)
-    } else if id == ID_DELETE {
-        (ground, crate::pal().line, 0xC42B1C)
-    } else {
-        (ground, crate::pal().line, crate::pal().text)
+    let visual = crate::visual_from_item(d.itemState.0, app(|a| a.hover) == d.hwndItem);
+    let kind = match id {
+        ID_OPEN => crate::ButtonKind::Primary,
+        ID_DELETE => crate::ButtonKind::Danger,
+        _ => crate::ButtonKind::Secondary,
     };
-    crate::aa_rfill(d.hDC, d.rcItem, dip(dpi, 4), fill, Some(border), ground);
-    let label_font = if accent_btn && !bold.is_invalid() { bold } else { font };
-    crate::text(d.hDC, d.rcItem, &crate::text_of(d.hwndItem), label_font, ink, DT_CENTER);
+    let face = if kind == crate::ButtonKind::Primary && visual.state != crate::ButtonState::Disabled && !bold.is_invalid() { bold } else { font };
+    crate::paint_button(d.hDC, d.rcItem, kind, visual, &crate::text_of(d.hwndItem), face, dpi, crate::pal().bg, crate::FocusRing::Inside);
 }
 
 unsafe fn on_click(h: HWND, x: i32, y: i32, dbl: bool, ctrl: bool, shift: bool) {

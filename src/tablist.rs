@@ -81,8 +81,7 @@ struct State {
     rename_skip: bool,
     scroll: i32,
     hot_row: Option<usize>,
-    hot_btn: Option<u8>,
-    down_btn: Option<u8>,
+    track: Tracker<u8>,
     chip_tip: bool,
     dpi: i32,
     font: HFONT,
@@ -119,8 +118,7 @@ impl State {
             rename_skip: false,
             scroll: 0,
             hot_row: None,
-            hot_btn: None,
-            down_btn: None,
+            track: Tracker::new(),
             chip_tip: false,
             dpi: 96,
             font: HFONT::default(),
@@ -1091,7 +1089,7 @@ unsafe fn paint(dc: HDC, _rc: RECT) {
         scroll: s.scroll,
         sel: s.sel,
         hot_row: s.hot_row,
-        hot_btn: s.hot_btn,
+        track: s.track,
         query: s.query.clone(),
         renaming: s.renaming,
         font: s.font,
@@ -1099,23 +1097,24 @@ unsafe fn paint(dc: HDC, _rc: RECT) {
         small: s.small,
         mono: s.mono,
         icon: s.icon,
+        search_focus: !s.edit.0.is_null() && unsafe { GetFocus() } == s.edit,
     });
     let p = pal();
     let dpi = st.dpi;
-    fill(dc, _rc, p.bg);
+    paint_window(dc, _rc);
     text(dc, st.hint, tr(Key::TabListHint), st.small, p.sub, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
-    fill(dc, st.search, p.card);
-    frame(dc, st.search, 1, p.line);
+    paint_field(dc, st.search, dpi, st.search_focus);
     let glyph = RECT { left: st.search.left + sc(dpi, 6), top: st.search.top, right: st.search.left + sc(dpi, 22), bottom: st.search.bottom };
     text(dc, glyph, ICON_SEARCH, st.icon, p.sub, DT_CENTER);
     if st.chord.right > st.chord.left {
-        aa_rfill(dc, st.chord, sc(dpi, 2).max(1), p.pill, Some(p.line), p.card);
+        aa_rfill(dc, st.chord, sc(dpi, 2).max(1), p.pill, Some(p.line), ui_tokens().field_bg);
         // Heavier bottom edge, same as the status key chips.
         fill(dc, RECT { top: st.chord.bottom - sc(dpi, 2).max(2), ..st.chord }, p.line);
         text(dc, st.chord, &chord_label(), st.mono, p.sub, DT_CENTER);
     }
-    fill(dc, st.frame, p.card);
-    frame(dc, st.frame, 1, p.line);
+    if st.frame.bottom > st.frame.top {
+        crate::ui::paint_card(dc, st.frame, dpi);
+    }
     fill(dc, st.head, p.bg);
     fill(dc, RECT { top: st.head.bottom - 1, bottom: st.head.bottom, ..st.head }, p.line);
     let (x0, x1, x2, x3, x4) = cols(st.head, dpi);
@@ -1161,7 +1160,14 @@ unsafe fn paint(dc: HDC, _rc: RECT) {
     let _ = RestoreDC(dc, saved);
 
     for (id, rect, on) in &st.buttons {
-        paint_btn(dc, *rect, *id, *on, st.hot_btn == Some(*id), &st);
+        let kind = if *id == GO { ButtonKind::Primary } else { ButtonKind::Secondary };
+        let label = match *id {
+            GO => tr(Key::TabListGo),
+            CLOSE_TAB => tr(Key::CloseTab),
+            _ => tr(Key::Close),
+        };
+        let font = if *id == GO && *on { st.bold } else { st.font };
+        paint_button(dc, *rect, kind, st.track.visual(*id, !on), label, font, st.dpi, p.bg, FocusRing::Outside);
     }
     paint_footer(dc, st.status, &status_caption(st.shown.len(), &st.query), &st);
 }
@@ -1182,7 +1188,7 @@ struct PaintSnap {
     scroll: i32,
     sel: usize,
     hot_row: Option<usize>,
-    hot_btn: Option<u8>,
+    track: Tracker<u8>,
     query: String,
     renaming: Option<usize>,
     font: HFONT,
@@ -1190,6 +1196,7 @@ struct PaintSnap {
     small: HFONT,
     mono: HFONT,
     icon: HFONT,
+    search_focus: bool,
 }
 
 unsafe fn kbd_piece_widths(dc: HDC, small: HFONT, mono: HFONT, dpi: i32) -> Vec<i32> {
@@ -1335,29 +1342,6 @@ unsafe fn paint_chips(dc: HDC, row: &Row, st: &PaintSnap, ground: u32) {
     }
 }
 
-unsafe fn paint_btn(dc: HDC, r: RECT, id: u8, on: bool, hot: bool, st: &PaintSnap) {
-    let p = pal();
-    let primary = id == GO;
-    let (fill_c, ink, border) = if !on {
-        (p.card, blend(p.card, p.text, 0.45), blend(p.card, p.line, 0.65))
-    } else if primary {
-        let c = crate::basket::primary_fill(hot);
-        (c, 0xFFFFFFu32, crate::basket::CERULEAN_DEEP)
-    } else if hot {
-        (p.card, p.text, p.sub)
-    } else {
-        (p.card, p.text, p.line)
-    };
-    aa_rfill(dc, r, sc(st.dpi, 2).max(1), fill_c, Some(border), p.bg);
-    let label = match id {
-        GO => tr(Key::TabListGo),
-        CLOSE_TAB => tr(Key::CloseTab),
-        _ => tr(Key::Close),
-    };
-    let font = if primary && on { st.bold } else { st.font };
-    text(dc, r, label, font, ink, DT_CENTER);
-}
-
 unsafe extern "system" fn edit_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM, _id: usize, _data: usize) -> LRESULT {
     if msg == WM_MOUSEWHEEL {
         let parent = GetParent(h).unwrap_or_default();
@@ -1398,10 +1382,10 @@ fn tablist_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                 let row = hit_row(x, y);
                 let btn = hit_btn(x, y);
                 let changed = with_st(|s| {
-                    let changed = s.hot_row != row || s.hot_btn != btn;
+                    let row_changed = s.hot_row != row;
                     s.hot_row = row;
-                    s.hot_btn = btn;
-                    changed
+                    let effect = s.track.pointer_move(btn);
+                    row_changed || !matches!(effect, TrackEffect::None)
                 });
                 show_chip_tip(x, y);
                 if changed {
@@ -1413,10 +1397,9 @@ fn tablist_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
             WM_MOUSELEAVE => {
                 hide_chip_tip();
                 let changed = with_st(|s| {
-                    let changed = s.hot_row.is_some() || s.hot_btn.is_some();
-                    s.hot_row = None;
-                    s.hot_btn = None;
-                    changed
+                    let row = s.hot_row.take().is_some();
+                    let effect = s.track.pointer_leave();
+                    row || !matches!(effect, TrackEffect::None)
                 });
                 if changed {
                     _ = InvalidateRect(Some(h), None, false);
@@ -1425,8 +1408,11 @@ fn tablist_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
             WM_LBUTTONDOWN => {
                 let (x, y) = xy(lp);
                 if let Some(id) = hit_btn(x, y) {
-                    with_st(|s| s.down_btn = Some(id));
+                    with_st(|s| {
+                        s.track.pointer_down(id);
+                    });
                     SetCapture(h);
+                    _ = InvalidateRect(Some(h), None, false);
                 } else if let Some(tab) = hit_row(x, y) {
                     with_st(|s| s.sel = tab);
                     _ = InvalidateRect(Some(h), None, false);
@@ -1438,24 +1424,28 @@ fn tablist_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
             }
             WM_LBUTTONUP => {
                 let (x, y) = xy(lp);
-                let down = with_st(|s| s.down_btn.take());
+                let over = hit_btn(x, y);
+                let effect = with_st(|s| s.track.pointer_up(over));
                 if GetCapture() == h {
                     _ = ReleaseCapture();
                 }
-                if let Some(id) = down {
-                    if hit_btn(x, y) == Some(id) {
-                        match id {
-                            GO => go(),
-                            CLOSE_TAB => close_selected(),
-                            DISMISS => close(),
-                            _ => {}
-                        }
-                    }
+                match effect {
+                    TrackEffect::Click(GO) => go(),
+                    TrackEffect::Click(CLOSE_TAB) => close_selected(),
+                    TrackEffect::Click(DISMISS) => close(),
+                    _ => {}
                 }
+                _ = InvalidateRect(Some(h), None, false);
             }
             WM_LBUTTONDBLCLK => {
                 if hit_row(xy(lp).0, xy(lp).1).is_some() {
                     go();
+                }
+            }
+            WM_CAPTURECHANGED => {
+                let effect = with_st(|s| s.track.capture_lost());
+                if !matches!(effect, TrackEffect::None) {
+                    _ = InvalidateRect(Some(h), None, false);
                 }
             }
             WM_COMMAND => {
