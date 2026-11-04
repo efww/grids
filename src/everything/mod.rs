@@ -10,7 +10,7 @@ mod run;
 mod setup;
 
 pub(crate) use locate::Presence;
-pub(crate) use ipc::{ev_sort_click, ev_sort_col, ev_sort_ok, MAX_RESULTS};
+pub(crate) use ipc::{ev_cols_ok, ev_cols_quant, ev_sort_click, ev_sort_col, ev_sort_ok, MAX_RESULTS};
 pub(crate) use query::{forces_everywhere, search_text, without_scope_prefix};
 pub(crate) use run::{running, search};
 pub(crate) use setup::{not_installed, action, activity, bind_settings, busy, install_async, probe_async, shown, start_async, Activity, EvAction, Shown};

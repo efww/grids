@@ -310,7 +310,9 @@ pub(crate) unsafe fn open_window(mut s: Session) -> Result<HWND> {
     s.anchor();
     let ntabs = s.tabs.len().max(1);
     let view_menu = make_menus().unwrap_or_default();
-    let tip_style = WS_POPUP | WINDOW_STYLE(0x01 | 0x02);
+    // TTS_ALWAYSTIP | TTS_NOPREFIX | TTS_NOANIMATE | TTS_NOFADE.
+    // Tracking tips (tabs, address, favourites, search rows) show and hide at once.
+    let tip_style = WS_POPUP | WINDOW_STYLE(0x01 | 0x02 | 0x10 | 0x20);
     let tip = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, None, tip_style, 0, 0, 0, 0, Some(main), None, None, None).map_err(fail)?;
     app(|a| {
         (a.s, a.main, a.dpi, a.view_menu, a.tip) = (s, main, dpi, view_menu, tip);

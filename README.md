@@ -81,7 +81,7 @@ Drag a pane by its number to swap it with another. Hold **Ctrl** while you drag 
 
 ## Find, preview, rename
 
-**Ctrl+F** filters the folder as you type. Tick Subfolders and Maguro asks [voidtools Everything](https://www.voidtools.com/) when it is running, or walks the disk when it is not.
+**Ctrl+F** filters the folder as you type. Tick Subfolders and Maguro asks [voidtools Everything](https://www.voidtools.com/) when it is running, or walks the disk when it is not. Everything results are a table of name, path, size and date modified: drag a column border to resize it (kept in maguro.json; double-click that border to restore the column's default width) and hover a row for the full name, folder, exact size and date, in the same tooltip as the rest of Maguro.
 
 **Space** or **F3** opens Quick Look: pictures, PDF, Office, HTML, Markdown, code, CSV, ZIP, HWP, and more. Ctrl+wheel zooms from 10% to 800%. Left and Right step through the files. From the preview, **F2** renames and **Del** deletes.
 

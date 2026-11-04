@@ -82,6 +82,28 @@ fn sort_by_name() -> u32 {
 fn is_name_sort(v: &u32) -> bool {
     *v == 1
 }
+
+/// A bad `ev_cols` (wrong type, wrong length, out of order) is the default widths.
+/// The rest of maguro.json still loads.
+fn de_ev_cols<'de, D>(d: D) -> Result<Option<[f64; 3]>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let v = Value::deserialize(d)?;
+    Ok(ev_cols_json(&v))
+}
+
+fn ev_cols_json(v: &Value) -> Option<[f64; 3]> {
+    let a = v.as_array()?;
+    if a.len() != 3 {
+        return None;
+    }
+    let mut c = [0.0; 3];
+    for (i, n) in a.iter().enumerate() {
+        c[i] = n.as_f64()?;
+    }
+    crate::everything::ev_cols_ok(c)
+}
 fn files_open() -> bool {
     true
 }
@@ -342,6 +364,11 @@ struct SettingsFile {
     /// Everything result sort code. Missing means name A→Z. A named session file does not store this.
     #[serde(default = "sort_by_name", skip_serializing_if = "is_name_sort")]
     ev_sort: u32,
+    /// Everything column borders as fractions of the row (name|path, path|size, size|date).
+    /// Missing, or any value that is not three increasing fractions inside (0, 1), means the default widths.
+    /// maguro.json only. A .maguro file does not store this.
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "de_ev_cols")]
+    ev_cols: Option<[f64; 3]>,
     /// The one-time rclone and WinFsp install question was shown. Missing means not yet.
     #[serde(default, skip_serializing_if = "is_off")]
     remote_asked: bool,
@@ -483,6 +510,7 @@ impl SettingsFile {
             peek: None,
             ev_asked: false,
             ev_sort: 1,
+            ev_cols: None,
             remote_asked: false,
             winmerge_path: String::new(),
             session: String::new(),
@@ -596,6 +624,7 @@ impl SettingsFile {
             peek: peek_json(s),
             ev_asked: s.ev_asked,
             ev_sort: crate::everything::ev_sort_ok(s.ev_sort),
+            ev_cols: s.ev_cols.and_then(crate::everything::ev_cols_ok),
             remote_asked: s.remote_asked,
             winmerge_path: s.winmerge_path.trim().to_string(),
             session: s.file.clone(),
@@ -659,6 +688,7 @@ impl SettingsFile {
         self.extra.remove("clip_hotkey");
         self.extra.remove("ev_asked");
         self.extra.remove("ev_sort");
+        self.extra.remove("ev_cols");
         self.extra.remove("remote_asked");
         self.extra.remove("winmerge_path");
         self.extra.remove("space_preview");
@@ -786,6 +816,7 @@ impl SettingsFile {
         s.peek_doc = self.peek.as_ref().and_then(|p| peek_pair(p.doc));
         s.ev_asked = self.ev_asked;
         s.ev_sort = crate::everything::ev_sort_ok(self.ev_sort);
+        s.ev_cols = self.ev_cols.and_then(crate::everything::ev_cols_ok);
         s.remote_asked = self.remote_asked;
         s.winmerge_path = self.winmerge_path.trim().to_string();
         s.ctx_off = clean_ctx(&self.ctx_menu);
@@ -1901,6 +1932,42 @@ mod tests {
         file.merge_forward(&file.clone());
         let saved: Value = serde_json::from_str(&pretty(&file)).unwrap();
         assert_eq!(saved["ev_sort"], 6);
+        assert!(saved.get("extra").is_none());
+    }
+
+    #[test]
+    fn everything_column_widths_live_in_maguro_json_only() {
+        assert!(Session::default().ev_cols.is_none());
+        assert!(adopt(r#"{"version":1}"#).unwrap().ev_cols.is_none());
+        let cols = [0.3, 0.65, 0.8];
+        assert_eq!(adopt(r#"{"ev_cols":[0.3,0.65,0.8]}"#).unwrap().ev_cols, Some(cols));
+        // A bad value is the default widths. The file still loads.
+        for bad in [
+            r#"{"ev_cols":[0.5,0.4,0.8]}"#,
+            r#"{"ev_cols":[0,0.5,0.8]}"#,
+            r#"{"ev_cols":[0.1,0.5,1]}"#,
+            r#"{"ev_cols":[0.1,0.2]}"#,
+            r#"{"ev_cols":[0.1,0.2,0.3,0.4]}"#,
+            r#"{"ev_cols":"0.3,0.65,0.8"}"#,
+            r#"{"ev_cols":null}"#,
+        ] {
+            let s = adopt(bad).unwrap();
+            assert!(s.ev_cols.is_none(), "{bad}");
+        }
+        let mut s = Session::default();
+        s.ev_cols = Some(cols);
+        assert!(!s.to_ini().contains("ev_cols"), "{}", s.to_ini());
+        assert!(Session::parse(&s.to_ini()).ev_cols.is_none());
+        assert!(Session::parse("ev_cols=0.30,0.65,0.80\n").ev_cols.is_none());
+        let text = pretty(&SettingsFile::from_session(&s));
+        assert!(text.contains("\"ev_cols\""), "{text}");
+        assert_eq!(adopt(&text).unwrap().ev_cols, Some(cols));
+        assert!(!pretty(&SettingsFile::from_session(&Session::default())).contains("ev_cols"));
+        let mut file = SettingsFile::from_session(&s);
+        file.extra.insert("ev_cols".into(), serde_json::json!([0.1, 0.2, 0.3]));
+        file.merge_forward(&file.clone());
+        let saved: Value = serde_json::from_str(&pretty(&file)).unwrap();
+        assert_eq!(saved["ev_cols"], serde_json::json!(cols));
         assert!(saved.get("extra").is_none());
     }
 

@@ -81,7 +81,7 @@
 
 ## 찾기, 미리 보기, 이름 바꾸기
 
-**Ctrl+F**는 입력하는 대로 이 폴더를 거릅니다. 하위 폴더를 켜면 Maguro가 실행 중인 [voidtools Everything](https://www.voidtools.com/)에 묻고, Everything이 없으면 디스크를 직접 훑습니다.
+**Ctrl+F**는 입력하는 대로 이 폴더를 거릅니다. 하위 폴더를 켜면 Maguro가 실행 중인 [voidtools Everything](https://www.voidtools.com/)에 묻고, Everything이 없으면 디스크를 직접 훑습니다. Everything 결과는 이름·경로·크기·수정한 날짜 표입니다. 열 경계를 끌면 폭이 바뀌고 maguro.json에 남습니다. 그 경계를 두 번 누르면 그 열이 기본 폭으로 돌아갑니다. 결과에 마우스를 올리면 전체 이름·폴더·정확한 크기·날짜가 다른 툴팁과 같이 바로 나타납니다.
 
 **Space** 또는 **F3**는 빠른 보기를 엽니다. 그림, PDF, Office, HTML, Markdown, 코드, CSV, ZIP, HWP 등을 봅니다. Ctrl+휠은 10%에서 800%까지 확대합니다. 왼쪽·오른쪽 화살표로 파일을 넘깁니다. 미리 보기에서 **F2**는 이름을 바꾸고 **Del**은 삭제합니다.
 

@@ -284,6 +284,10 @@ pub(crate) struct Session {
     /// Everything result order. Everything's own sort code (1 name A→Z … 14 newest first).
     /// maguro.json only. A .maguro file does not carry this.
     pub(crate) ev_sort: u32,
+    /// Everything column borders dragged by the user, as fractions of the row width
+    /// (name|path, path|size, size|date). None is the default widths.
+    /// maguro.json only. A .maguro file does not carry this, and grids.ini is never read.
+    pub(crate) ev_cols: Option<[f64; 3]>,
     /// The one-time "install rclone and WinFsp?" question was already shown. Never asked again.
     pub(crate) remote_asked: bool,
     pub(crate) cols: Vec<String>,      // per pane: columns and sort of its view (cols_text)
@@ -454,6 +458,7 @@ impl Default for Session {
             winmerge_path: String::new(),
             ev_asked: false,
             ev_sort: 1,
+            ev_cols: None,
             remote_asked: false,
             cols: vec![String::new(); MAXP],
             tints: vec![0; MAXP],
@@ -545,6 +550,7 @@ impl PartialEq for Session {
             && self.winmerge_path == o.winmerge_path
             && self.ev_asked == o.ev_asked
             && self.ev_sort == o.ev_sort
+            && self.ev_cols == o.ev_cols
             && self.remote_asked == o.remote_asked
             && self.cols == o.cols
             && self.tints == o.tints

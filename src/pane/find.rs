@@ -2,7 +2,9 @@
 // A result list streams from one background walker. A subfolder search asks Everything
 // when that setting is on and Everything is running; otherwise it walks. A new query or Esc drops the previous one.
 // Everything results are a table: name, path, size, date modified. A column title asks Everything
-// to sort every match, not only the rows on screen. The choice is kept in maguro.json.
+// to sort every match, not only the rows on screen. Drag a column border to resize it; double-click
+// that border and the column returns to its default width. The widths and the sort live in maguro.json.
+// Hovering a result shows the full name, folder, exact size and date in the same tooltip as the rest of Maguro.
 
 use std::collections::HashMap;
 use std::sync::{Condvar, Mutex, Once};
@@ -11,7 +13,7 @@ use std::time::{Duration, Instant};
 use windows::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime};
 
 use crate::app::*;
-use crate::everything::{self, ev_sort_click, ev_sort_col, ev_sort_ok, forces_everywhere, search_text, without_scope_prefix, MAX_RESULTS};
+use crate::everything::{self, ev_cols_ok, ev_cols_quant, ev_sort_click, ev_sort_col, ev_sort_ok, forces_everywhere, search_text, without_scope_prefix, MAX_RESULTS};
 use crate::i18n::*;
 use crate::imports::*;
 use crate::session::*;
@@ -259,6 +261,10 @@ struct FindUi {
     engine: FindEngine,
     searched_sort: u32,
     hot_col: Option<usize>,
+    /// Column border being dragged. 0 is name|path, 1 path|size, 2 size|date.
+    drag: Option<usize>,
+    /// The result tooltip tool is installed on the shared tooltip window.
+    tip: bool,
     sel: usize,
     scroll: i32,
     list: isize,
@@ -310,13 +316,21 @@ pub(crate) unsafe fn drop_find(hwnd: HWND) {
     if hwnd.0.is_null() {
         return;
     }
-    let mut map = find_map();
-    if let Some(u) = map.get_mut(&(hwnd.0 as isize)) {
-        u.gen = u.gen.wrapping_add(1);
-        u.running = false;
-        u.show = false;
+    let list = {
+        let mut map = find_map();
+        let list = map.get(&(hwnd.0 as isize)).map(|u| hwnd_of(u.list)).unwrap_or_default();
+        if let Some(u) = map.get_mut(&(hwnd.0 as isize)) {
+            u.gen = u.gen.wrapping_add(1);
+            u.running = false;
+            u.show = false;
+            u.drag = None;
+        }
+        map.remove(&(hwnd.0 as isize));
+        list
+    };
+    if !list.0.is_null() {
+        tip_drop(list, FIND_TIP);
     }
-    map.remove(&(hwnd.0 as isize));
 }
 
 pub(crate) unsafe fn find_cancel(i: usize) {
@@ -344,6 +358,7 @@ pub(crate) unsafe fn find_clear(i: usize) {
         hwnd_of(u.list)
     };
     if !list.0.is_null() {
+        hide_find_tip(list, hwnd);
         _ = ShowWindow(list, SW_HIDE);
     }
 }
@@ -357,6 +372,7 @@ pub(crate) unsafe fn hide_find(i: usize) {
         hwnd_of(u.list)
     };
     if !list.0.is_null() {
+        hide_find_tip(list, hwnd);
         _ = ShowWindow(list, SW_HIDE);
     }
 }
@@ -507,6 +523,8 @@ unsafe fn refresh_find_in(i: usize, force: bool) {
             engine: FindEngine::Walk,
             searched_sort: 1,
             hot_col: None,
+            drag: None,
+            tip: false,
             sel: 0,
             scroll: 0,
             list: 0,
@@ -674,9 +692,14 @@ pub(crate) unsafe fn nudge_find(i: usize, delta: i32) -> bool {
     }
     u.sel = clamp_sel(u.sel as i32 + delta, u.hits.len());
     let view_h = list_view_h(hwnd_of(u.list), dpi, sticky_rows(u.engine));
+    let prev = u.scroll;
     u.scroll = scroll_to_sel(u.sel, u.scroll, view_h, row_h(dpi));
+    let scrolled = u.scroll != prev;
     let list = hwnd_of(u.list);
     drop(map);
+    if scrolled && !list.0.is_null() {
+        hide_find_tip(list, hwnd);
+    }
     if !list.0.is_null() {
         _ = InvalidateRect(Some(list), None, false);
     }
@@ -757,7 +780,24 @@ pub(crate) unsafe fn on_find_msg(pane: HWND) {
     };
     if !list.0.is_null() {
         _ = InvalidateRect(Some(list), None, false);
+        // Results can change under a pointer that has not moved. Refresh the tip, or hide it.
+        match cursor_in_list(list) {
+            Some((x, y)) => hover_find_tip(list, pane, x, y),
+            None => hide_find_tip(list, pane),
+        }
     }
+}
+
+unsafe fn cursor_in_list(h: HWND) -> Option<(i32, i32)> {
+    let mut pt = POINT::default();
+    if GetCursorPos(&mut pt).is_err() || !ScreenToClient(h, &mut pt).as_bool() {
+        return None;
+    }
+    let mut rc = RECT::default();
+    if GetClientRect(h, &mut rc).is_err() {
+        return None;
+    }
+    (pt.x >= rc.left && pt.x < rc.right && pt.y >= rc.top && pt.y < rc.bottom).then_some((pt.x, pt.y))
 }
 
 fn pane_hwnd(i: usize) -> Option<HWND> {
@@ -963,15 +1003,41 @@ unsafe fn find_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT 
     match msg {
         WM_PAINT => paint_find(h, pane),
         WM_ERASEBKGND => return LRESULT(1),
+        WM_SETCURSOR => {
+            if (lp.0 & 0xffff) as u32 != HTCLIENT {
+                return DefWindowProcW(h, msg, wp, lp);
+            }
+            let drag = find_map().get(&(pane.0 as isize)).is_some_and(|u| u.drag.is_some());
+            let on_border = !drag && {
+                let mut p = POINT::default();
+                GetCursorPos(&mut p).is_ok() && ScreenToClient(h, &mut p).as_bool() && title_border(h, pane, p.x, p.y).is_some()
+            };
+            if find_cursor(drag, on_border) == FindCursor::SizeWe {
+                _ = SetCursor(Some(LoadCursorW(None, IDC_SIZEWE).unwrap_or_default()));
+                return LRESULT(1);
+            }
+            return DefWindowProcW(h, msg, wp, lp);
+        }
         WM_MOUSEMOVE => {
             let (x, y) = crate::xy(lp);
-            hover_find_col(h, pane, x, y);
+            let mut t = TRACKMOUSEEVENT { cbSize: size_of::<TRACKMOUSEEVENT>() as u32, dwFlags: TME_LEAVE, hwndTrack: h, dwHoverTime: 0 };
+            _ = TrackMouseEvent(&mut t);
+            let drag = find_map().get(&(pane.0 as isize)).and_then(|u| u.drag);
+            if let Some(k) = drag {
+                resize_border(h, k, x);
+                _ = SetCursor(Some(LoadCursorW(None, IDC_SIZEWE).unwrap_or_default()));
+                hide_find_tip(h, pane);
+            } else {
+                hover_find_col(h, pane, x, y);
+                hover_find_tip(h, pane, x, y);
+            }
         }
         WM_MOUSELEAVE => {
             let changed = {
                 let mut map = find_map();
                 map.get_mut(&(pane.0 as isize)).and_then(|u| u.hot_col.take()).is_some()
             };
+            hide_find_tip(h, pane);
             if changed {
                 _ = InvalidateRect(Some(h), None, false);
             }
@@ -982,18 +1048,58 @@ unsafe fn find_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT 
         }
         WM_LBUTTONDOWN | WM_LBUTTONDBLCLK => {
             let (x, y) = crate::xy(lp);
-            let row = click_find(h, pane, x, y, msg == WM_LBUTTONDBLCLK);
-            if row && msg != WM_LBUTTONDBLCLK {
-                // A result row takes keyboard focus. The header, its checkbox, and empty space
-                // leave the caret in the search box. Space and F3 are read in the key loop
-                // once this window is focused, and preview the selected row.
-                _ = SetFocus(Some(h));
-            } else if !row {
-                if let Ok(e) = GetDlgItem(Some(pane), ID_FILTER) {
-                    _ = SetFocus(Some(e));
+            if let Some(k) = title_border(h, pane, x, y) {
+                // A border resizes. It does not sort, and it does not move the caret.
+                hide_find_tip(h, pane);
+                if msg == WM_LBUTTONDBLCLK {
+                    if let Some(u) = find_map().get_mut(&(pane.0 as isize)) {
+                        u.drag = None;
+                    }
+                    reset_border(h, k);
+                } else {
+                    let started = {
+                        let mut map = find_map();
+                        match map.get_mut(&(pane.0 as isize)) {
+                            Some(u) => {
+                                u.drag = Some(k);
+                                true
+                            }
+                            None => false,
+                        }
+                    };
+                    if started {
+                        SetCapture(h);
+                    }
+                }
+            } else {
+                let row = click_find(h, pane, x, y, msg == WM_LBUTTONDBLCLK);
+                if row && msg != WM_LBUTTONDBLCLK {
+                    // A result row takes keyboard focus. The header, its checkbox, and empty space
+                    // leave the caret in the search box. Space and F3 are read in the key loop
+                    // once this window is focused, and preview the selected row.
+                    _ = SetFocus(Some(h));
+                } else if !row {
+                    if let Ok(e) = GetDlgItem(Some(pane), ID_FILTER) {
+                        _ = SetFocus(Some(e));
+                    }
                 }
             }
         }
+        WM_LBUTTONUP => {
+            let ended = find_map().get_mut(&(pane.0 as isize)).and_then(|u| u.drag.take()).is_some();
+            if ended {
+                _ = ReleaseCapture();
+                note_save();
+            }
+        }
+        WM_CAPTURECHANGED => {
+            // Alt-tab and the like. The widths already moved with the pointer; keep them.
+            let ended = find_map().get_mut(&(pane.0 as isize)).and_then(|u| u.drag.take()).is_some();
+            if ended {
+                note_save();
+            }
+        }
+        WM_DESTROY => tip_drop(h, FIND_TIP),
         // DefWindowProc turns a right-button up into this. Keyboard (Shift+F10) passes lp = -1.
         WM_CONTEXTMENU => {
             let screen = if lp.0 == -1 {
@@ -1009,6 +1115,7 @@ unsafe fn find_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT 
                 let mut p = screen;
                 ScreenToClient(h, &mut p).as_bool().then_some(p.y)
             };
+            hide_find_tip(h, pane);
             find_context(pane, y, screen);
         }
         // Up and Down move the row. Enter opens it. Esc clears the search, as in the box.
@@ -1051,9 +1158,14 @@ unsafe fn scroll_find(pane: HWND, dy: i32) {
     let rows = u.hits.len() as i32 + if u.more { 1 } else { 0 };
     let view = list_view_h(hwnd_of(u.list), dpi, sticky_rows(u.engine));
     let max = (rows * row_h(dpi) - view).max(0);
+    let prev = u.scroll;
     u.scroll = (u.scroll + dy).clamp(0, max);
+    let scrolled = u.scroll != prev;
     let list = hwnd_of(u.list);
     drop(map);
+    if scrolled && !list.0.is_null() {
+        hide_find_tip(list, pane);
+    }
     if !list.0.is_null() {
         _ = InvalidateRect(Some(list), None, false);
     }
@@ -1123,28 +1235,174 @@ fn sticky_rows(engine: FindEngine) -> i32 {
     if engine == FindEngine::Everything { 2 } else { 1 }
 }
 
+/// Narrowest column, at 96 DPI. A drag cannot close a column past this.
+const EV_COL_MIN_DIP: i32 = 40;
+
 /// X edges of Name, Path, Size, Date modified inside a list `width` px wide.
 /// A wide list uses Everything's own proportions. A narrow pane keeps the four columns
 /// in order and gives each a share of the width, so the table still fits.
 pub(crate) fn ev_col_edges(width: i32, dpi: i32) -> [i32; 5] {
+    ev_col_edges_saved(width, dpi, None)
+}
+
+/// Same edges when the user has dragged the borders. `cols` is three fractions of the row.
+/// A value that does not fit, or a pane too narrow for the 40 DIP minimum, uses the defaults.
+pub(crate) fn ev_col_edges_saved(width: i32, dpi: i32, cols: Option<[f64; 3]>) -> [i32; 5] {
     let s = |v: i32| v.saturating_mul(dpi.max(1)) / 96;
     let width = width.max(0);
     let pad = s(6);
     let x0 = pad.min(width);
     let xr = width.saturating_sub(pad).saturating_sub(s(6)).max(x0);
     let span = (xr - x0).max(0);
+    let [b0, b1, b2] = ev_borders(span, dpi, cols);
+    let x1 = x0.saturating_add(b0).min(xr).max(x0);
+    let x2 = x0.saturating_add(b1).min(xr).max(x1);
+    let x3 = x0.saturating_add(b2).min(xr).max(x2);
+    [x0, x1, x2, x3, xr]
+}
+
+fn default_borders(span: i32, dpi: i32) -> [i32; 3] {
+    let s = |v: i32| v.saturating_mul(dpi.max(1)) / 96;
     let date_w = s(126).max(span.saturating_mul(16) / 100);
     let size_w = s(80).max(span.saturating_mul(10) / 100);
     if date_w.saturating_add(size_w).saturating_add(s(48)) <= span && span > 0 {
-        let x3 = xr - date_w;
-        let x2 = x3 - size_w;
-        let x1 = x0 + (x2 - x0).saturating_mul(42) / 100;
-        return [x0, x1.max(x0), x2.max(x1), x3.max(x2), xr.max(x3)];
+        let b2 = span - date_w;
+        let b1 = b2 - size_w;
+        let b0 = b1.saturating_mul(42) / 100;
+        return [b0, b1, b2];
     }
-    let x1 = x0 + span.saturating_mul(34) / 100;
-    let x2 = x0 + span.saturating_mul(62) / 100;
-    let x3 = x0 + span.saturating_mul(78) / 100;
-    [x0, x1, x2, x3, xr]
+    [span.saturating_mul(34) / 100, span.saturating_mul(62) / 100, span.saturating_mul(78) / 100]
+}
+
+/// 40 DIP, or 0 when the row is too narrow for four columns of that width.
+fn col_min_px(span: i32, dpi: i32) -> i32 {
+    let want = (EV_COL_MIN_DIP.saturating_mul(dpi.max(1)) / 96).max(1);
+    if span >= want.saturating_mul(4) { want } else { 0 }
+}
+
+fn clamp_borders(b: [i32; 3], span: i32, m: i32) -> [i32; 3] {
+    let b0 = b[0].min(span - 3 * m).max(m);
+    let b1 = b[1].min(span - 2 * m).max(b0 + m);
+    [b0, b1, b[2].min(span - m).max(b1 + m)]
+}
+
+/// The three borders, in px from the left of the row. Saved fractions are kept; every column
+/// stays at least 40 DIP wide. A narrow row, or a bad fraction, uses the default widths.
+pub(crate) fn ev_borders(span: i32, dpi: i32, cols: Option<[f64; 3]>) -> [i32; 3] {
+    if span <= 0 {
+        return [0, 0, 0];
+    }
+    let defaults = default_borders(span, dpi);
+    let Some(cols) = cols.and_then(ev_cols_ok) else { return defaults };
+    let m = col_min_px(span, dpi);
+    if m == 0 {
+        return defaults;
+    }
+    let raw = cols.map(|f| (f * span as f64).round() as i32);
+    clamp_borders(raw, span, m)
+}
+
+/// Border `k` dragged to `x` px from the row's left. The neighbours stay. None when the row
+/// cannot hold four minimum columns, or the new fractions would not be a legal save.
+pub(crate) fn ev_drag_cols(cur: [i32; 3], k: usize, x: i32, span: i32, dpi: i32) -> Option<[f64; 3]> {
+    if k >= 3 || span <= 0 {
+        return None;
+    }
+    let m = col_min_px(span, dpi);
+    if m == 0 {
+        return None;
+    }
+    let mut b = cur;
+    let lo = if k == 0 { m } else { b[k - 1].saturating_add(m) };
+    let hi = if k == 2 { span.saturating_sub(m) } else { b[k + 1].saturating_sub(m) };
+    if hi < lo {
+        return None;
+    }
+    b[k] = x.clamp(lo, hi);
+    ev_cols_quant(b.map(|v| v as f64 / span as f64))
+}
+
+/// Double-click border `k`: that border goes back to the default layout, so the column it closes
+/// returns to its default width. The other borders stay. None when the table is back to the defaults
+/// and nothing needs to be stored.
+pub(crate) fn ev_reset_border(cols: Option<[f64; 3]>, k: usize, span: i32, dpi: i32) -> Option<[f64; 3]> {
+    let defaults = ev_borders(span, dpi, None);
+    let Some(cols) = cols.and_then(ev_cols_ok) else { return None };
+    if k >= 3 || span <= 0 {
+        return Some(cols);
+    }
+    let m = col_min_px(span, dpi);
+    if m == 0 {
+        return None;
+    }
+    let mut cur = ev_borders(span, dpi, Some(cols));
+    let lo = if k == 0 { m } else { cur[k - 1].saturating_add(m) };
+    let hi = if k == 2 { span.saturating_sub(m) } else { cur[k + 1].saturating_sub(m) };
+    if hi < lo {
+        return Some(cols);
+    }
+    cur[k] = defaults[k].clamp(lo, hi);
+    if cur == defaults {
+        return None;
+    }
+    let stored = ev_cols_quant(cur.map(|v| v as f64 / span as f64))?;
+    (ev_borders(span, dpi, Some(stored)) != defaults).then_some(stored)
+}
+
+/// The border under the pointer in the column-title row, within 4 DIP of the line.
+pub(crate) fn ev_border_at(edges: [i32; 5], x: i32, y: i32, top: i32, bottom: i32, dpi: i32) -> Option<usize> {
+    if y < top || y >= bottom {
+        return None;
+    }
+    let slop = (4 * dpi.max(1) / 96).max(1);
+    (0..3).find(|&k| (x - edges[k + 1]).abs() <= slop)
+}
+
+/// A press in the column-title row. A border wins over the sort click it sits on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ColPress {
+    Border(usize),
+    Sort(usize),
+    Miss,
+}
+
+pub(crate) fn col_press(x: i32, y: i32, width: i32, edges: [i32; 5], top: i32, bottom: i32, dpi: i32) -> ColPress {
+    if let Some(k) = ev_border_at(edges, x, y, top, bottom, dpi) {
+        return ColPress::Border(k);
+    }
+    if y >= top && y < bottom {
+        if let Some(c) = col_at(width, edges, x) {
+            return ColPress::Sort(c);
+        }
+    }
+    ColPress::Miss
+}
+
+/// Resize cursor while a border is dragged or the pointer is on one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FindCursor {
+    Arrow,
+    SizeWe,
+}
+
+pub(crate) fn find_cursor(dragging: bool, on_border: bool) -> FindCursor {
+    if dragging || on_border { FindCursor::SizeWe } else { FindCursor::Arrow }
+}
+
+/// What a result tooltip says. Lines are `\r\n`, the same break the other tracking tips use.
+/// Size under 1024 bytes is the short form. A larger size adds the exact byte count.
+pub(crate) fn ev_tip_text(name: &str, folder: &str, size: Option<u64>, date: &str) -> String {
+    let mut t = format!("{name}\r\n{folder}");
+    let size = size.map(|b| match b {
+        0..=1023 => human(b),
+        _ => format!("{} ({} B)", human(b), super::preview::group_digits(b)),
+    });
+    let facts: Vec<String> = size.into_iter().chain((!date.is_empty()).then(|| date.to_string())).collect();
+    if !facts.is_empty() {
+        t.push_str("\r\n");
+        t.push_str(&facts.join("  ·  "));
+    }
+    t
 }
 
 /// Column under `x`, including the padding at either side of the titles. `None` outside the list.
@@ -1218,16 +1476,138 @@ unsafe fn header_now(h: HWND, dc: Option<HDC>, dpi: i32, header_h: i32, width: i
     header_geom(dpi, width, header_h, sub_w, scope_w, recursive)
 }
 
-unsafe fn hover_find_col(h: HWND, pane: HWND, x: i32, y: i32) {
+/// Result-row tooltip. Same id space as the other tracking tips (lock 7 … list 12).
+const FIND_TIP: usize = 13;
+
+unsafe fn saved_edges(h: HWND) -> (i32, i32, [i32; 5]) {
+    let (dpi, cols) = app(|a| (a.dpi, a.s.ev_cols));
+    let mut rc = RECT::default();
+    _ = GetClientRect(h, &mut rc);
+    let width = rc.right.max(0);
+    (dpi, width, ev_col_edges_saved(width, dpi, cols))
+}
+
+/// Column border in the title row, or None on the subfolder row, a result, or a walk list.
+unsafe fn title_border(h: HWND, pane: HWND, x: i32, y: i32) -> Option<usize> {
     let dpi = app(|a| a.dpi);
+    let rh = row_h(dpi);
+    let engine = find_map().get(&(pane.0 as isize)).map(|u| u.engine);
+    if engine != Some(FindEngine::Everything) {
+        return None;
+    }
+    let (_, width, edges) = saved_edges(h);
+    match col_press(x, y, width, edges, rh, rh * 2, dpi) {
+        ColPress::Border(k) => Some(k),
+        _ => None,
+    }
+}
+
+unsafe fn resize_border(h: HWND, k: usize, x: i32) {
+    let (dpi, cols) = app(|a| (a.dpi, a.s.ev_cols));
+    let mut rc = RECT::default();
+    _ = GetClientRect(h, &mut rc);
+    let edges = ev_col_edges_saved(rc.right.max(0), dpi, cols);
+    let span = edges[4] - edges[0];
+    if span <= 0 {
+        return;
+    }
+    let cur = [edges[1] - edges[0], edges[2] - edges[0], edges[3] - edges[0]];
+    let Some(next) = ev_drag_cols(cur, k, x - edges[0], span, dpi) else { return };
+    if cols == Some(next) {
+        return;
+    }
+    app(|a| a.s.ev_cols = Some(next));
+    _ = InvalidateRect(Some(h), None, false);
+}
+
+unsafe fn reset_border(h: HWND, k: usize) {
+    let (dpi, cols) = app(|a| (a.dpi, a.s.ev_cols));
+    let mut rc = RECT::default();
+    _ = GetClientRect(h, &mut rc);
+    let edges = ev_col_edges_saved(rc.right.max(0), dpi, cols);
+    let span = (edges[4] - edges[0]).max(0);
+    let next = ev_reset_border(cols, k, span, dpi);
+    if next == cols {
+        return;
+    }
+    app(|a| a.s.ev_cols = next);
+    note_save();
+    _ = InvalidateRect(Some(h), None, false);
+}
+
+fn find_tip_key(row: usize, path: &str) -> u64 {
+    let mut h = 0xcbf29ce484222325u64 ^ ((row as u64) << 32);
+    for b in path.as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h
+}
+
+unsafe fn hide_find_tip(list: HWND, pane: HWND) {
+    if tip_pumping() || list.0.is_null() || pane.0.is_null() {
+        return;
+    }
+    let installed = find_map().get(&(pane.0 as isize)).is_some_and(|u| u.tip);
+    let (now, _) = tip_leave(list, FIND_TIP, installed);
+    if let Some(u) = find_map().get_mut(&(pane.0 as isize)) {
+        u.tip = now;
+    }
+}
+
+/// Full name, folder, exact size and date for the Everything row under the pointer.
+/// Same tracking tip as the other lists: anchored once, no messages while the row stays, hidden on leave.
+unsafe fn hover_find_tip(list: HWND, pane: HWND, _x: i32, y: i32) {
+    if tip_pumping() {
+        return;
+    }
+    let dpi = app(|a| a.dpi);
+    let rh = row_h(dpi);
+    let snap = {
+        let map = find_map();
+        let Some(u) = map.get(&(pane.0 as isize)) else { return };
+        if u.drag.is_some() || u.engine != FindEngine::Everything {
+            None
+        } else {
+            let head = rh * 2;
+            let idx = row_under(y, u.scroll, head, rh, u.hits.len());
+            let hit = idx.and_then(|i| u.hits.get(i).cloned());
+            Some((idx, hit, u.scroll, u.tip, head))
+        }
+    };
+    let Some((idx, hit, scroll, installed, head)) = snap else {
+        hide_find_tip(list, pane);
+        return;
+    };
+    let Some((idx, hit)) = idx.zip(hit) else {
+        hide_find_tip(list, pane);
+        return;
+    };
+    let mut rc = RECT::default();
+    _ = GetClientRect(list, &mut rc);
+    let top = head + idx as i32 * rh - scroll;
+    let row = RECT { left: 0, top, right: rc.right.max(0), bottom: top + rh };
+    let screen = tip_screen_rect(list, row);
+    let date = hit.modified.map(modified_text).unwrap_or_default();
+    let text = ev_tip_text(&hit.name, &hit_dir(&hit.path), hit.size, &date);
+    let (now, _) = tip_enter(list, FIND_TIP, find_tip_key(idx, &hit.path), &text, screen, TipSide::Right, installed);
+    if let Some(u) = find_map().get_mut(&(pane.0 as isize)) {
+        u.tip = now;
+    }
+}
+
+unsafe fn hover_find_col(h: HWND, pane: HWND, x: i32, y: i32) {
+    let (dpi, width, edges) = saved_edges(h);
     let rh = row_h(dpi);
     let hot = {
         let map = find_map();
         let engine = map.get(&(pane.0 as isize)).map(|u| u.engine);
-        if engine == Some(FindEngine::Everything) && y >= rh && y < rh * 2 {
-            let mut rc = RECT::default();
-            _ = GetClientRect(h, &mut rc);
-            col_at(rc.right, ev_col_edges(rc.right, dpi), x)
+        // A border is a resize handle, not a column title.
+        if engine == Some(FindEngine::Everything) && !matches!(col_press(x, y, width, edges, rh, rh * 2, dpi), ColPress::Border(_)) {
+            match col_press(x, y, width, edges, rh, rh * 2, dpi) {
+                ColPress::Sort(c) => Some(c),
+                _ => None,
+            }
         } else {
             None
         }
@@ -1286,10 +1666,10 @@ unsafe fn click_find(list: HWND, pane: HWND, x: i32, y: i32, dbl: bool) -> bool 
         return false;
     }
     if engine == FindEngine::Everything && y < rh * 2 {
-        if !dbl {
-            let mut rc = RECT::default();
-            _ = GetClientRect(list, &mut rc);
-            if let Some(c) = col_at(rc.right, ev_col_edges(rc.right, dpi), x) {
+        // A border is resized by the window proc. The rest of the title row sorts.
+        if !dbl && title_border(list, pane, x, y).is_none() {
+            let (_, width, edges) = saved_edges(list);
+            if let ColPress::Sort(c) = col_press(x, y, width, edges, rh, rh * 2, dpi) {
                 sort_find_col(i, c);
             }
         }
@@ -1350,7 +1730,7 @@ unsafe fn find_context(pane: HWND, y: Option<i32>, screen: POINT) {
 }
 
 unsafe fn paint_find(h: HWND, pane: HWND) {
-    let (dpi, font, icon_font, small, accent, sort) = app(|a| (a.dpi, a.font, a.icon_font, a.small_font, a.s.accent_now(), a.s.ev_sort));
+    let (dpi, font, icon_font, small, accent, sort, cols) = app(|a| (a.dpi, a.font, a.icon_font, a.small_font, a.s.accent_now(), a.s.ev_sort, a.s.ev_cols));
     let snap = {
         let map = find_map();
         map.get(&(pane.0 as isize)).map(|u| (u.query.clone(), u.root.clone(), u.recursive, u.everywhere, u.engine, u.hits.clone(), u.more, u.running, u.sel, u.scroll, u.hot_col))
@@ -1367,7 +1747,7 @@ unsafe fn paint_find(h: HWND, pane: HWND) {
         let s = |v: i32| v * dpi / 96;
         let head_px = rh * sticky_rows(engine);
         fill(dc, rc, pal().card);
-        let edges = ev_col_edges(rc.right, dpi);
+        let edges = ev_col_edges_saved(rc.right, dpi, cols);
         let mut y = head_px - scroll;
         if hits.is_empty() && !running {
             text(dc, RECT { left: s(8), top: head_px, right: rc.right - s(8), bottom: head_px + rh }, tr(crate::Key::NoMatches), font, pal().sub, DT_LEFT);
@@ -1653,6 +2033,75 @@ mod tests {
         assert_eq!(hit_dir(r"C:\Work\a.txt"), r"C:\Work");
         assert_eq!(hit_dir(r"C:\a.txt"), r"C:\");
         assert_eq!(hit_dir(r"D:\サンプル\📄.txt"), r"D:\サンプル");
+    }
+
+    #[test]
+    fn column_borders_drag_reset_and_the_row_tip_lists_the_facts() {
+        let span = {
+            let e = ev_col_edges(860, 96);
+            e[4] - e[0]
+        };
+        assert_eq!(span, 842);
+        let d = ev_borders(span, 96, None);
+        assert_eq!(ev_col_edges(860, 96)[1], 6 + d[0]);
+        // A dragged border is kept as a fraction of the width. Neighbours stay. 40px is the floor.
+        let dragged = ev_drag_cols(d, 0, 500, span, 96).unwrap();
+        assert_eq!(ev_borders(span, 96, Some(dragged)), [500, d[1], d[2]]);
+        assert_eq!(ev_borders(span, 96, ev_drag_cols(d, 0, 9999, span, 96))[0], d[1] - 40);
+        assert_eq!(ev_borders(span, 96, ev_drag_cols(d, 2, 9999, span, 96))[2], span - 40);
+        assert_eq!(ev_borders(span, 96, ev_drag_cols(d, 0, -50, span, 96))[0], 40);
+        // 192 DPI doubles the floor and the hit slop.
+        let hi_span = ev_col_edges(1720, 192);
+        let hs = hi_span[4] - hi_span[0];
+        let hd = ev_borders(hs, 192, None);
+        assert_eq!(ev_borders(hs, 192, ev_drag_cols(hd, 0, -10, hs, 192))[0], 80);
+        assert_eq!(ev_borders(hs, 192, ev_drag_cols(hd, 2, 99999, hs, 192))[2], hs - 80);
+        // Too narrow for four 40px columns: the saved fractions wait, and the proportional layout is used.
+        let squeezed = ev_col_edges_saved(100, 96, Some([0.2, 0.5, 0.8]));
+        assert_eq!(squeezed, ev_col_edges(100, 96));
+        // A wide pane keeps the fractions, and every column stays at least 40px.
+        let wide = ev_col_edges_saved(860, 96, Some(dragged));
+        assert_eq!(wide[1], 6 + 500);
+        assert!(wide.windows(2).all(|p| p[1] - p[0] >= 40), "{wide:?}");
+        // The same fractions on a wider row.
+        let again = ev_borders(hs, 96, Some(dragged));
+        assert_eq!(again[0], (dragged[0] * hs as f64).round() as i32);
+        assert!(again.windows(2).all(|p| p[1] - p[0] >= 40) && hs - again[2] >= 40);
+        // Double-click the border that moved: that column returns to its default width.
+        assert_eq!(ev_reset_border(Some(dragged), 0, span, 96), None);
+        assert_eq!(ev_borders(span, 96, ev_reset_border(Some(dragged), 0, span, 96)), d);
+        // Another border that was also dragged stays where it is.
+        let both_px = ev_borders(span, 96, ev_drag_cols(d, 0, 200, span, 96));
+        let both = ev_drag_cols(both_px, 2, 780, span, 96).unwrap();
+        let kept = ev_reset_border(Some(both), 0, span, 96).unwrap();
+        let back = ev_borders(span, 96, Some(kept));
+        assert_eq!(back[0], d[0]);
+        assert_eq!(back[2], 780);
+        assert_eq!(ev_reset_border(None, 1, span, 96), None);
+        // A bad fraction is the default layout.
+        assert_eq!(ev_borders(span, 96, Some([0.9, 0.4, 0.2])), d);
+        // The border, not the column title, owns the press. Only the title row hits.
+        let edges = ev_col_edges_saved(860, 96, Some(dragged));
+        assert_eq!(col_press(edges[1], 30, 860, edges, 22, 44, 96), ColPress::Border(0));
+        assert_eq!(col_press(edges[1] + 3, 22, 860, edges, 22, 44, 96), ColPress::Border(0));
+        assert_eq!(col_press(edges[3] - 4, 43, 860, edges, 22, 44, 96), ColPress::Border(2));
+        assert_eq!(col_press(edges[1] + 20, 30, 860, edges, 22, 44, 96), ColPress::Sort(1));
+        assert_eq!(col_press(edges[1], 10, 860, edges, 22, 44, 96), ColPress::Miss); // subfolder row
+        assert_eq!(col_press(edges[1], 44, 860, edges, 22, 44, 96), ColPress::Miss); // a result row
+        let hi_edges = ev_col_edges(1720, 192);
+        assert_eq!(ev_border_at(hi_edges, hi_edges[1] + 8, 50, 44, 88, 192), Some(0));
+        assert_eq!(ev_border_at(hi_edges, hi_edges[1] + 9, 50, 44, 88, 192), None);
+        assert_eq!(find_cursor(false, false), FindCursor::Arrow);
+        assert_eq!(find_cursor(true, false), FindCursor::SizeWe);
+        assert_eq!(find_cursor(false, true), FindCursor::SizeWe);
+        // The tip: whole name, folder, exact bytes, date. Same line break as the other tips.
+        assert_eq!(
+            ev_tip_text("아주 긴 보고서 이름.pdf", r"D:\문서", Some(1_234_567), "2026-11-03 09:00"),
+            "아주 긴 보고서 이름.pdf\r\nD:\\문서\r\n1.2 MB (1,234,567 B)  ·  2026-11-03 09:00"
+        );
+        assert_eq!(ev_tip_text("아주 긴 보고서 이름.pdf", r"D:\문서", Some(10), ""), "아주 긴 보고서 이름.pdf\r\nD:\\문서\r\n10 B");
+        assert_eq!(ev_tip_text("レポート.txt", r"C:\", None, ""), "レポート.txt\r\nC:\\");
+        assert_eq!(ev_tip_text("a.bin", r"E:\data", Some(1024), ""), "a.bin\r\nE:\\data\r\n1.0 KB (1,024 B)");
     }
 
     #[test]

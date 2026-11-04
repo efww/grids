@@ -70,6 +70,17 @@ pub(crate) fn ev_sort_click(cur: u32, col: usize) -> u32 {
     SORT_ASC[col] + u32::from(desc)
 }
 
+/// Three column borders as fractions of the row width, strictly inside (0, 1) and increasing.
+/// Anything else (a bad file, an empty value) means the default widths.
+pub(crate) fn ev_cols_ok(c: [f64; 3]) -> Option<[f64; 3]> {
+    (c.iter().copied().all(f64::is_finite) && c[0] > 0.0 && c[0] < c[1] && c[1] < c[2] && c[2] < 1.0).then_some(c)
+}
+
+/// A drag stores four decimal places. A fraction that no longer increases is refused.
+pub(crate) fn ev_cols_quant(c: [f64; 3]) -> Option<[f64; 3]> {
+    ev_cols_ok(c.map(|x| (x * 10_000.0).round() / 10_000.0))
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct IpcList {
     pub(crate) hits: Vec<IpcHit>,
@@ -486,6 +497,12 @@ mod tests {
         assert_eq!((ev_sort_click(14, 3), ev_sort_click(13, 3), ev_sort_click(6, 2), ev_sort_click(14, 0)), (13, 14, 5, 1));
         assert_eq!((ev_sort_col(14), ev_sort_col(3), ev_sort_col(0), ev_sort_col(9)), ((3, true), (1, false), (0, false), (0, false)));
         assert_eq!([0, 2, 5, 7, 13, 15].map(ev_sort_ok), [1, 2, 5, 1, 13, 1]);
+        assert_eq!(ev_cols_ok([0.42, 0.7, 0.84]), Some([0.42, 0.7, 0.84]));
+        assert!(ev_cols_ok([0.5, 0.4, 0.8]).is_none());
+        assert!(ev_cols_ok([0.0, 0.5, 0.8]).is_none());
+        assert!(ev_cols_ok([0.1, 0.5, 1.0]).is_none());
+        assert!(ev_cols_ok([f64::NAN, 0.5, 0.8]).is_none());
+        assert_eq!(ev_cols_quant([500.0 / 842.0, 624.0 / 842.0, 708.0 / 842.0]).unwrap()[0], 0.5938);
 
         let flags = REQUEST_RESULT | REQUEST_EXT | REQUEST_DATE_CREATED;
         let mut bytes = Vec::new();

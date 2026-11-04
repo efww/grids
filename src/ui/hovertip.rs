@@ -10,7 +10,7 @@ use windows::Win32::Graphics::Gdi::{
     ClientToScreen, GetMonitorInfoW, MonitorFromRect, MONITORINFO, MONITOR_DEFAULTTONEAREST,
 };
 use windows::Win32::UI::Controls::{
-    TTF_ABSOLUTE, TTF_TRACK, TTM_ADDTOOLW, TTM_GETBUBBLESIZE, TTM_POP, TTM_SETMAXTIPWIDTH,
+    TTF_ABSOLUTE, TTF_TRACK, TTM_ADDTOOLW, TTM_DELTOOLW, TTM_GETBUBBLESIZE, TTM_POP, TTM_SETMAXTIPWIDTH,
     TTM_TRACKACTIVATE, TTM_TRACKPOSITION, TTM_UPDATETIPTEXTW, TTTOOLINFOW,
 };
 use windows::Win32::UI::WindowsAndMessaging::SendMessageW;
@@ -293,6 +293,28 @@ pub(crate) unsafe fn tip_leave(owner: HWND, tool: usize, installed: bool) -> (bo
         SendMessageW(tip, TTM_POP, None, None);
     }
     (installed, true)
+}
+
+/// The owner window is going away. Take `tool` off the shared tooltip.
+pub(crate) unsafe fn tip_drop(owner: HWND, tool: usize) {
+    let (tip, live) = app(|a| {
+        let live = a.hover_tip.as_ref().is_some_and(|l| l.tool == tool);
+        if live {
+            a.hover_tip = None;
+        }
+        (a.tip, live)
+    });
+    if tip.0.is_null() || owner.0.is_null() {
+        return;
+    }
+    let label = HSTRING::from("");
+    let ti = tip_info(owner, tool, &label);
+    let lp = LPARAM(&ti as *const _ as isize);
+    if live {
+        SendMessageW(tip, TTM_TRACKACTIVATE, Some(WPARAM(0)), Some(lp));
+        SendMessageW(tip, TTM_POP, None, None);
+    }
+    SendMessageW(tip, TTM_DELTOOLW, None, Some(lp));
 }
 
 

@@ -684,6 +684,7 @@ fn copy_shared(dst: &mut Session, src: &Session) {
     dst.excel_tidy_zoom = src.excel_tidy_zoom;
     dst.excel_tidy_first = src.excel_tidy_first;
     dst.excel_tidy_backup = src.excel_tidy_backup;
+    dst.ev_cols = src.ev_cols;
 }
 
 /// Copy process-wide preferences from the current window onto the others.
