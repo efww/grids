@@ -7,7 +7,12 @@ use crate::ui::*;
 use crate::session::*;
 use crate::shell::*;
 use crate::i18n::*;
+use windows::Win32::NetworkManagement::WNet::{
+    WNetAddConnection3W, WNetGetConnectionW, CONNECT_INTERACTIVE, NETRESOURCEW, RESOURCETYPE_DISK,
+};
 use windows::Win32::Storage::FileSystem::{GetDriveTypeW, GetFileAttributesW, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT, INVALID_FILE_ATTRIBUTES};
+
+use super::reconnect::{cached_kind, folder_is_share, needs_credentials, next_resume_wait, share_root_of, RESUME_RETRIES};
 
 // ---------- navigation ----------
 
@@ -135,14 +140,18 @@ pub(crate) fn pidl_browse_ok(pidl_null: bool, flags: u32) -> bool {
 /// UNC, or a mapped network drive. `GetDriveTypeW` is only asked about a drive root:
 /// calling it on `\\server\share` itself can sit on the redirector.
 pub(crate) unsafe fn share_path(path: &str) -> bool {
-    if crate::remote::path_on_live_mount(path) {
+    if crate::remote::path_on_live_mount(path) || unc_path(path) {
         return true;
     }
-    if unc_path(path) {
-        return true;
+    let Some(root) = drive_root(path) else { return false };
+    // A known letter uses the drive-button cache. GetDriveTypeW on a dead mapped root
+    // can sit on the redirector, which is the freeze F5 and resume are avoiding.
+    // `app_try` skips the lookup when this call is already inside `app()`.
+    let letter = root.as_bytes()[0];
+    if let Some(kind) = app_try(|a| a.drives.iter().find(|d| d.0 == letter).map(|d| d.1)).flatten() {
+        return share_kind(false, Some(kind));
     }
-    let kind = drive_root(path).map(|root| GetDriveTypeW(&HSTRING::from(root)));
-    share_kind(false, kind)
+    share_kind(false, Some(GetDriveTypeW(&HSTRING::from(root))))
 }
 
 /// The address bar may treat `path` as the current folder. A share skips the stat.
@@ -300,12 +309,13 @@ fn fail_draw_text(msg: &str) -> String {
 fn clear_net_notes(a: &mut App, path: &str) {
     let wait = net_wait_text();
     let fail = net_fail_text();
+    let again = tr(Key::Reconnecting);
     // Another pane may still be on the same short line. Leave it until that pane finishes.
     let other = a.panes.iter().flatten().any(|p| p.net.as_ref().is_some_and(|n| n.path != path));
     if other {
         return;
     }
-    if a.note.as_ref().is_some_and(|(t, _)| t == wait || t == fail) {
+    if a.note.as_ref().is_some_and(|(t, _)| t == wait || t == fail || t == again) {
         a.note = None;
     }
 }
@@ -327,6 +337,8 @@ struct NetSlot {
     pidl: usize,
     sfgao: u32,
     ready: bool,
+    /// A credential dialog is up. The wait must not drop the slot out from under it.
+    hold: bool,
 }
 
 pub(crate) struct NetStop {
@@ -349,6 +361,8 @@ pub(crate) enum NetWait {
     Idle,
     Early(u32),
     Ready,
+    /// The worker is in an interactive reconnect. Leave the slot for `WM_NET`.
+    Hold,
     Stop(NetStop),
 }
 
@@ -362,8 +376,23 @@ impl NetBook {
     pub(crate) fn begin(&mut self, open: NetOpen) -> Option<usize> {
         let hwnd = open.hwnd;
         let old = self.slots.iter().position(|s| s.open.hwnd == hwnd).map(|i| self.slots.remove(i).pidl).filter(|p| *p != 0);
-        self.slots.push(NetSlot { open, pidl: 0, sfgao: 0, ready: false });
+        self.slots.push(NetSlot { open, pidl: 0, sfgao: 0, ready: false, hold: false });
         old
+    }
+
+    /// The pane is still waiting on this id. A timed-out or replaced request is false.
+    pub(crate) fn alive(&self, hwnd: isize, id: usize) -> bool {
+        self.slots.iter().any(|s| s.open.hwnd == hwnd && s.open.id == id && !s.ready)
+    }
+
+    /// Keep the slot past `NET_WAIT_MS` while `WNetAddConnection3W` may be showing a dialog.
+    /// False when this id is no longer the pane's request.
+    pub(crate) fn hold(&mut self, hwnd: isize, id: usize) -> bool {
+        let Some(s) = self.slots.iter_mut().find(|s| s.open.hwnd == hwnd && s.open.id == id && !s.ready) else {
+            return false;
+        };
+        s.hold = true;
+        true
     }
 
     /// False when this id is no longer the pane's request. The caller frees `pidl`.
@@ -389,6 +418,9 @@ impl NetBook {
         };
         if self.slots[i].ready {
             return NetWait::Ready;
+        }
+        if self.slots[i].hold {
+            return NetWait::Hold;
         }
         let elapsed = now.saturating_duration_since(self.slots[i].open.at);
         if elapsed < wait {
@@ -441,6 +473,9 @@ fn free_pidl(p: usize) {
 /// Posted when a share resolve finishes. wParam is the request id. The PIDL stays in `NET`
 /// until the UI thread takes it, so a stale message frees nothing that is still in use.
 pub(crate) const WM_NET: u32 = WM_APP + 55;
+/// The worker is about to call `WNetAddConnection3W`. wParam is the request id.
+/// The pane drops its short timer so a password dialog is not treated as a timeout.
+pub(crate) const WM_NET_HOLD: u32 = WM_APP + 57;
 
 unsafe fn pane_hwnd(i: usize) -> Option<HWND> {
     app(|a| a.panes.get(i).and_then(|p| p.as_ref()).map(|p| p.hwnd))
@@ -456,6 +491,7 @@ unsafe fn repaint_link(h: HWND) {
 /// Drop a share resolve for this pane. A local navigation, Back, or a destroyed pane.
 pub(crate) unsafe fn end_share(i: usize, h: HWND) {
     _ = KillTimer(Some(h), TIMER_NET);
+    _ = KillTimer(Some(h), TIMER_RESUME);
     let pidl = net_book().cancel(h.0 as isize);
     free_pidl(pidl.unwrap_or(0));
     let cleared = app(|a| {
@@ -473,7 +509,7 @@ pub(crate) unsafe fn end_share(i: usize, h: HWND) {
     }
 }
 
-unsafe fn show_link(i: usize, h: HWND, id: usize, path: &str) {
+unsafe fn show_link(i: usize, h: HWND, id: usize, path: &str, resume_left: Option<u8>) {
     // The address edit stays up while its text isn't the folder on display. Put the current
     // folder back first, so hiding it (and the focus loss that follows) does not pop it open
     // again over the "Connecting…" line.
@@ -486,16 +522,19 @@ unsafe fn show_link(i: usize, h: HWND, id: usize, path: &str) {
             _ = ShowWindow(e, SW_HIDE);
         }
     }
+    // A previous resume countdown must not fire under this new attempt.
+    _ = KillTimer(Some(h), TIMER_RESUME);
+    let note = if resume_left.is_some() { tr(Key::Reconnecting).to_string() } else { net_wait_text().to_string() };
     let armed = app(|a| {
         let Some(p) = a.panes.get_mut(i).and_then(|p| p.as_mut()) else { return false };
         if p.hwnd != h {
             return false;
         }
-        p.net = Some(NetUi { id, path: path.to_string(), bad: false, timed_out: false });
+        p.net = Some(NetUi { id, path: path.to_string(), bad: false, timed_out: false, resume_left });
         // The folder we were in stays painted until a new icon arrives. Drop it for the wait.
         retire_folder_icon(p);
         a.lost = 0;
-        a.note = Some((net_wait_text().to_string(), Instant::now() + std::time::Duration::from_millis(u64::from(NET_WAIT_MS) + 1000)));
+        a.note = Some((note, Instant::now() + std::time::Duration::from_millis(u64::from(NET_WAIT_MS) + 1000)));
         true
     });
     if armed {
@@ -539,6 +578,7 @@ pub(crate) fn net_failed(i: usize) -> bool {
 /// Put the failed path back in the address and cover the list. The browser is not moved:
 /// the last good folder stays the current history entry.
 unsafe fn show_link_fail(i: usize, h: HWND, id: usize, path: &str, timed_out: bool) {
+    let mut arm: Option<u32> = None;
     let shown = app(|a| {
         let Some(p) = a.panes.get_mut(i).and_then(|p| p.as_mut()) else { return None };
         if p.hwnd != h {
@@ -546,14 +586,24 @@ unsafe fn show_link_fail(i: usize, h: HWND, id: usize, path: &str, timed_out: bo
         }
         match p.net.as_mut() {
             Some(n) if n.id == id => {
+                let first = !n.bad;
                 n.bad = true;
                 n.timed_out = timed_out;
                 if n.path.is_empty() {
                     n.path = path.to_string();
                 }
+                // Resume only. F5 and a typed path leave `resume_left` empty and stay on Retry.
+                if first {
+                    if let Some(left) = n.resume_left {
+                        if let Some(ms) = next_resume_wait(left) {
+                            n.resume_left = Some(left.saturating_sub(1));
+                            arm = Some(ms);
+                        }
+                    }
+                }
             }
             Some(_) => return None,
-            None => p.net = Some(NetUi { id, path: path.to_string(), bad: true, timed_out }),
+            None => p.net = Some(NetUi { id, path: path.to_string(), bad: true, timed_out, resume_left: None }),
         }
         let path = p.net.as_ref().map(|n| n.path.clone()).unwrap_or_default();
         retire_folder_icon(p);
@@ -567,10 +617,16 @@ unsafe fn show_link_fail(i: usize, h: HWND, id: usize, path: &str, timed_out: bo
         _ = SetWindowTextW(e, &HSTRING::from(path.as_str()));
         _ = ShowWindow(e, SW_SHOWNA);
     }
+    if let Some(ms) = arm {
+        SetTimer(Some(h), TIMER_RESUME, ms, None);
+        let until = Instant::now() + std::time::Duration::from_millis(u64::from(ms)) + std::time::Duration::from_secs(2);
+        app(|a| a.note = Some((tr(Key::Reconnecting).to_string(), until)));
+    }
     sync_net_fail(h);
     repaint_link(h);
-    // The active pane's address is ready to edit. Enter retries. Another pane keeps the focus it has.
-    if app(|a| a.s.active == i) {
+    // The active pane's address is ready to edit. Enter retries. A countdown keeps the focus
+    // the user already has; yanking it every few seconds would fight them after wake.
+    if arm.is_none() && app(|a| a.s.active == i) {
         if let Some(e) = pane_ctl(i, ID_EDIT) {
             _ = SetFocus(Some(e));
             SendMessageW(e, EM_SETSEL, Some(WPARAM(0)), Some(LPARAM(-1)));
@@ -881,25 +937,15 @@ unsafe fn finish_stop(h: HWND, id: usize, stop: NetStop) {
     show_link_fail(i, h, id, &stop.path, true);
 }
 
-/// `SHParseDisplayName` off the UI thread. The PIDL is cloned (`ILClone`) before it is posted,
+/// Reachability off the UI thread. The PIDL is cloned (`ILClone`) before it is posted,
 /// so the worker can drop COM. The UI thread browses only after that clone is in hand.
-unsafe fn resolve_share(hwnd: isize, id: usize, path: &str) {
+/// `owner` is the main hwnd: `WNetAddConnection3W` may show a password dialog on it.
+unsafe fn resolve_share(owner: isize, hwnd: isize, id: usize, path: &str) {
     let com = CoInitializeEx(None, COINIT_MULTITHREADED).is_ok();
-    let mut pidl = std::ptr::null_mut();
-    let mut sfgao = 0u32;
-    let parsed = com && SHParseDisplayName(&HSTRING::from(path), None, &mut pidl, SFGAO_FOLDER.0, Some(&mut sfgao)).is_ok() && !pidl.is_null();
-    let owned = if parsed {
-        let cloned = ILClone(pidl);
-        CoTaskMemFree(Some(pidl as _));
-        cloned as usize
-    } else {
-        if !pidl.is_null() {
-            CoTaskMemFree(Some(pidl as _));
-        }
-        0
-    };
-    let flags = if owned == 0 { 0 } else { sfgao };
-    if net_book().publish(hwnd, id, owned, flags) {
+    // Without COM the parse cannot return a PIDL. Publishing 0 is the failure the pane already knows.
+    let (owned, flags) = if com { probe_share(owner, hwnd, id, path) } else { (0, 0) };
+    let posted = net_book().publish(hwnd, id, owned, flags);
+    if posted {
         _ = PostMessageW(Some(HWND(hwnd as _)), WM_NET, WPARAM(id), LPARAM(0));
     } else {
         free_pidl(owned);
@@ -909,13 +955,115 @@ unsafe fn resolve_share(hwnd: isize, id: usize, path: &str) {
     }
 }
 
-fn spawn_share(hwnd: isize, id: usize, path: String) -> bool {
+/// Access denied or a logon error reconnects the share root. Anything else is the parse probe.
+/// A slot the timer already dropped is left alone, so a dead redirector is not probed twice.
+unsafe fn probe_share(owner: isize, hwnd: isize, id: usize, path: &str) -> (usize, u32) {
+    if !net_book().alive(hwnd, id) {
+        return (0, 0);
+    }
+    let err = file_attr_error(path);
+    if !net_book().alive(hwnd, id) {
+        return (0, 0);
+    }
+    if needs_credentials(err) {
+        if let Some(root) = connect_root(path) {
+            // Drop the book lock before the dialog. CONNECT_INTERACTIVE can pump messages
+            // for a long time, and the UI thread takes the same lock on WM_NET.
+            let held = net_book().hold(hwnd, id);
+            if held {
+                _ = PostMessageW(Some(HWND(hwnd as _)), WM_NET_HOLD, WPARAM(id), LPARAM(0));
+                _ = add_interactive(owner, &root);
+            }
+        }
+        if !net_book().alive(hwnd, id) {
+            return (0, 0);
+        }
+        // The dialog restored the session. The PIDL is what the UI re-browses.
+        return parse_pidl(path);
+    }
+    parse_pidl(path)
+}
+
+unsafe fn file_attr_error(path: &str) -> u32 {
+    let attr = GetFileAttributesW(&HSTRING::from(path));
+    if attr == INVALID_FILE_ATTRIBUTES {
+        GetLastError().0
+    } else {
+        0
+    }
+}
+
+/// UNC root from the path, or the remote name of a mapped drive. Worker thread only.
+unsafe fn connect_root(path: &str) -> Option<String> {
+    if let Some(root) = share_root_of(path) {
+        return Some(root);
+    }
+    let remote = mapped_unc(path)?;
+    share_root_of(&remote).or(Some(remote))
+}
+
+unsafe fn mapped_unc(path: &str) -> Option<String> {
+    let root = drive_root(path)?;
+    let local = root.trim_end_matches(['\\', '/']);
+    if local.len() < 2 {
+        return None;
+    }
+    let name = HSTRING::from(local);
+    let mut buf = vec![0u16; 512];
+    let mut n = buf.len() as u32;
+    let err = WNetGetConnectionW(PCWSTR(name.as_ptr()), Some(PWSTR(buf.as_mut_ptr())), &mut n);
+    if err.0 == ERROR_MORE_DATA.0 {
+        let want = n as usize;
+        if want == 0 || want > 32_768 {
+            return None;
+        }
+        buf.resize(want, 0);
+        n = buf.len() as u32;
+        if WNetGetConnectionW(PCWSTR(name.as_ptr()), Some(PWSTR(buf.as_mut_ptr())), &mut n).0 != 0 {
+            return None;
+        }
+    } else if err.0 != 0 {
+        return None;
+    }
+    let end = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+    let s = String::from_utf16_lossy(&buf[..end]);
+    (!s.is_empty()).then_some(s)
+}
+
+unsafe fn add_interactive(owner: isize, share: &str) -> u32 {
+    let remote = HSTRING::from(share);
+    let nr = NETRESOURCEW {
+        dwType: RESOURCETYPE_DISK,
+        lpRemoteName: PWSTR(remote.as_ptr() as *mut _),
+        ..Default::default()
+    };
+    let hwnd = (owner != 0).then(|| HWND(owner as *mut std::ffi::c_void));
+    WNetAddConnection3W(hwnd, &nr, PCWSTR::null(), PCWSTR::null(), CONNECT_INTERACTIVE).0
+}
+
+unsafe fn parse_pidl(path: &str) -> (usize, u32) {
+    let mut pidl = std::ptr::null_mut();
+    let mut sfgao = 0u32;
+    let parsed = SHParseDisplayName(&HSTRING::from(path), None, &mut pidl, SFGAO_FOLDER.0, Some(&mut sfgao)).is_ok() && !pidl.is_null();
+    if parsed {
+        let cloned = ILClone(pidl);
+        CoTaskMemFree(Some(pidl as _));
+        (cloned as usize, sfgao)
+    } else {
+        if !pidl.is_null() {
+            CoTaskMemFree(Some(pidl as _));
+        }
+        (0, 0)
+    }
+}
+
+fn spawn_share(owner: isize, hwnd: isize, id: usize, path: String) -> bool {
     if NET_BUSY.fetch_add(1, Ordering::Relaxed) >= NET_CAP {
         NET_BUSY.fetch_sub(1, Ordering::Relaxed);
         return false;
     }
     let spawned = std::thread::Builder::new().name("maguro-net".into()).spawn(move || {
-        unsafe { resolve_share(hwnd, id, &path) };
+        unsafe { resolve_share(owner, hwnd, id, &path) };
         NET_BUSY.fetch_sub(1, Ordering::Relaxed);
     });
     if spawned.is_err() {
@@ -929,12 +1077,21 @@ fn spawn_share(hwnd: isize, id: usize, path: String) -> bool {
 /// An unreachable path shows this pane's network error view (Retry / Previous folder).
 /// False only when the pane is not open. The favourite itself is left in place.
 pub(crate) unsafe fn open_share(i: usize, path: &str, file: bool) -> bool {
-    start_share(i, path, file, None, None, false)
+    start_share(i, path, file, None, None, false, None)
+}
+
+/// F5 on a share. One background probe, then a PIDL re-browse or the existing error view.
+/// `IShellView::Refresh` is not called: on a dead UNC it blocks the UI thread.
+pub(crate) unsafe fn refresh_share(i: usize, path: &str) -> bool {
+    start_share(i, path, false, None, None, false, None)
 }
 
 /// Start a share resolve. True when the pane is showing the wait (or the immediate error).
-unsafe fn start_share(i: usize, path: &str, edit: bool, run: Option<(String, String)>, dir: Option<String>, dir_share: bool) -> bool {
+/// `resume_left` is `Some` only for a wake-from-sleep cycle. `Some(n)` still has `n` automatic retries.
+unsafe fn start_share(i: usize, path: &str, edit: bool, run: Option<(String, String)>, dir: Option<String>, dir_share: bool, resume_left: Option<u8>) -> bool {
     let Some(h) = pane_hwnd(i) else { return false };
+    // Taken before any Win32 that can re-enter. The worker, not this thread, calls WNet.
+    let owner = app(|a| a.main.0 as isize);
     let id = next_net_id();
     let old = net_book().begin(NetOpen {
         hwnd: h.0 as isize,
@@ -947,9 +1104,9 @@ unsafe fn start_share(i: usize, path: &str, edit: bool, run: Option<(String, Str
         at: Instant::now(),
     });
     free_pidl(old.unwrap_or(0));
-    show_link(i, h, id, path);
+    show_link(i, h, id, path, resume_left);
     SetTimer(Some(h), TIMER_NET, NET_WAIT_MS, None);
-    if spawn_share(h.0 as isize, id, path.to_string()) {
+    if spawn_share(owner, h.0 as isize, id, path.to_string()) {
         return true;
     }
     _ = KillTimer(Some(h), TIMER_NET);
@@ -957,6 +1114,78 @@ unsafe fn start_share(i: usize, path: &str, edit: bool, run: Option<(String, Str
         finish_stop(h, id, stop);
     }
     true
+}
+
+/// After wake: every pane whose folder is a share gets one background probe.
+/// A second resume broadcast (automatic, then user) does not start a second job.
+pub(crate) unsafe fn resume_shares(main: HWND) {
+    let jobs = app(|a| {
+        if a.main != main {
+            return Vec::new();
+        }
+        let drives: Vec<(u8, u32)> = a.drives.iter().map(|d| (d.0, d.1)).collect();
+        let paths = a.s.paths.clone();
+        let mut jobs = Vec::new();
+        for (i, slot) in a.panes.iter_mut().enumerate() {
+            let Some(p) = slot.as_mut() else { continue };
+            let path = if let Some(n) = p.net.as_ref().filter(|n| n.bad && !n.path.is_empty()) {
+                n.path.clone()
+            } else {
+                paths.get(i).cloned().unwrap_or_default()
+            };
+            if path.is_empty() {
+                continue;
+            }
+            let live = crate::remote::path_on_live_mount(&path);
+            if !folder_is_share(&path, cached_kind(&drives, &path), live) {
+                continue;
+            }
+            if let Some(n) = p.net.as_mut() {
+                if !n.bad {
+                    // Already probing. A failure of that probe may retry; don't queue another.
+                    if n.resume_left.is_none() {
+                        n.resume_left = Some(RESUME_RETRIES);
+                    }
+                    continue;
+                }
+                if n.resume_left.unwrap_or(0) > 0 {
+                    continue;
+                }
+            }
+            jobs.push((i, path));
+        }
+        jobs
+    });
+    for (i, path) in jobs {
+        let _ = start_share(i, &path, false, None, None, false, Some(RESUME_RETRIES));
+    }
+}
+
+/// `TIMER_RESUME`. The borrow ends before the next probe is queued.
+pub(crate) unsafe fn resume_tick(h: HWND) {
+    _ = KillTimer(Some(h), TIMER_RESUME);
+    let job = app(|a| {
+        let i = pane_at(a, h)?;
+        let p = a.panes.get(i)?.as_ref()?;
+        if p.hwnd != h {
+            return None;
+        }
+        let n = p.net.as_ref().filter(|n| n.bad)?;
+        Some((i, n.path.clone(), n.resume_left))
+    });
+    let Some((i, path, left)) = job else { return };
+    if path.is_empty() {
+        return;
+    }
+    let _ = start_share(i, &path, false, None, None, false, left);
+}
+
+/// `WM_NET_HOLD`. Drop the short timer; the result still arrives on `WM_NET`.
+pub(crate) unsafe fn net_hold(h: HWND, id: usize) {
+    let on = app(|a| a.panes.iter().flatten().any(|p| p.hwnd == h && p.net.as_ref().is_some_and(|n| n.id == id && !n.bad)));
+    if on {
+        _ = KillTimer(Some(h), TIMER_NET);
+    }
 }
 
 /// Give up the share named by the pane's current wait. A result that already arrived is left for `WM_NET`.
@@ -971,7 +1200,7 @@ pub(crate) unsafe fn net_timeout(h: HWND) {
             SetTimer(Some(h), TIMER_NET, ms, None);
         }
         NetWait::Stop(stop) => finish_stop(h, id, stop),
-        NetWait::Idle | NetWait::Ready => {}
+        NetWait::Hold | NetWait::Idle | NetWait::Ready => {}
     }
 }
 
@@ -979,6 +1208,9 @@ pub(crate) unsafe fn net_timeout(h: HWND) {
 pub(crate) unsafe fn net_done(h: HWND, id: usize) {
     _ = KillTimer(Some(h), TIMER_NET);
     let Some(done) = net_book().take(h.0 as isize, id) else { return };
+    // This attempt finished. A countdown from an older failure must not also fire.
+    // A failure below arms a new one after this.
+    _ = KillTimer(Some(h), TIMER_RESUME);
     let Some(i) = pane_of(h) else {
         free_pidl(done.pidl);
         return;
@@ -1057,7 +1289,7 @@ unsafe fn browse_id(eb: &IExplorerBrowser, pidl: *mut ITEMIDLIST, flags: u32) ->
 pub(crate) unsafe fn try_nav(i: usize, path: &str) -> Result<()> {
     if share_path(path) {
         // Accepted: BrowseToIDList runs on WM_NET, after the worker has a PIDL or the wait ends.
-        return if start_share(i, path, false, None, None, false) { Ok(()) } else { Err(Error::from(E_FAIL)) };
+        return if start_share(i, path, false, None, None, false, None) { Ok(()) } else { Err(Error::from(E_FAIL)) };
     }
     if let Some(h) = pane_hwnd(i) {
         end_share(i, h);
@@ -1436,7 +1668,7 @@ pub(crate) unsafe fn go_edit(i: usize) {
                     (prog.to_string(), args.to_string())
                 });
                 let cwd = cur.clone();
-                if start_share(i, &target, true, run, cwd, cur_share || full_share) {
+                if start_share(i, &target, true, run, cwd, cur_share || full_share, None) {
                     resolved = true;
                     break 'go Some(true);
                 }
@@ -4186,6 +4418,24 @@ mod missing_tests {
             None => panic!("force stop"),
         }
         assert!(b.force_stop(2, id3).is_none());
+    }
+
+    #[test]
+    fn a_credential_dialog_holds_the_slot_past_the_wait() {
+        let mut b = NetBook { slots: Vec::new() };
+        let t0 = Instant::now();
+        let wait = std::time::Duration::from_millis(u64::from(NET_WAIT_MS));
+        let id = 4usize;
+        b.begin(open(1, id, r"\\server\share\docs", None, None, false, t0));
+        assert!(b.alive(1, id));
+        assert!(!b.hold(1, 99));
+        assert!(b.hold(1, id));
+        assert!(matches!(b.poll(1, id, t0 + wait + wait, wait), NetWait::Hold));
+        assert!(b.alive(1, id));
+        assert!(b.publish(1, id, 0x11, 0));
+        assert!(matches!(b.poll(1, id, t0 + wait, wait), NetWait::Ready));
+        assert_eq!(b.take(1, id).unwrap().pidl, 0x11);
+        assert!(!b.alive(1, id));
     }
 
     #[test]

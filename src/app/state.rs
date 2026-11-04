@@ -22,6 +22,9 @@ pub(crate) struct NetUi {
     pub(crate) bad: bool,
     /// The wait hit `NET_WAIT_MS`. The message names that many seconds.
     pub(crate) timed_out: bool,
+    /// Automatic resume retries still unused after this attempt fails.
+    /// `None` is a normal open or F5. `Some(0)` is a resume attempt with nothing left to try.
+    pub(crate) resume_left: Option<u8>,
 }
 
 /// Child PIDLs and view state held while a pane's shell view is rebuilt for a theme change.

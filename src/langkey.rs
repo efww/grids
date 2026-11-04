@@ -795,11 +795,12 @@ pub(crate) enum Key {
     TabListStatusFilter,
     TabListKeys,
     CloseAllTabs,
+    Reconnecting,
 }
 
-pub(crate) const KEY_COUNT: usize = 792;
+pub(crate) const KEY_COUNT: usize = 793;
 
-const _: () = assert!((Key::CloseAllTabs as usize) + 1 == KEY_COUNT);
+const _: () = assert!((Key::Reconnecting as usize) + 1 == KEY_COUNT);
 
 pub(crate) const EN: [&str; KEY_COUNT] = [
     "About",
@@ -1593,6 +1594,7 @@ pub(crate) const EN: [&str; KEY_COUNT] = [
     "{n} tabs · filter “{q}”",
     "{Enter} go · {F2} rename · {Del} close tab · {Esc} close",
     "Close all tabs",
+    "Reconnecting…",
 
 ];
 
@@ -2389,6 +2391,7 @@ pub(crate) const KEY_ID: [&str; KEY_COUNT] = [
     "tab_list_status_filter",
     "tab_list_keys",
     "close_all_tabs",
+    "reconnecting",
 
 ];
 

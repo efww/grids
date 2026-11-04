@@ -153,17 +153,39 @@ pub(crate) fn f5_act(plain: bool, repeat: bool, failed: bool, bound: bool) -> F5
 }
 
 /// F5: reload the active pane and sum selected folders again. Missing icons are rechecked.
+/// A share is probed off this thread. `IShellView::Refresh` on a dead UNC blocks until the
+/// redirector times out, so that call is only for a folder that is not a share.
 unsafe fn refresh_pane(a: usize) {
     resum_sizes();
     crate::ui::forget_missing();
-    if let Some(side) = app(|x| (!x.side_hwnd.is_invalid()).then_some(x.side_hwnd)) {
+    let (side, share) = app(|x| {
+        let side = (!x.side_hwnd.is_invalid()).then_some(x.side_hwnd);
+        (side, share_folder(x, a))
+    });
+    if let Some(side) = side {
         _ = InvalidateRect(Some(side), None, false);
+    }
+    if let Some(path) = share {
+        let _ = refresh_share(a, &path);
+        return;
     }
     // The view leaves F5 to its frame, as Explorer's does, so this works when the list
     // does not have focus (address bar, filter, folder tree, favourites).
     if let Some(sv) = view_of::<IShellView>(a) {
         _ = sv.Refresh();
     }
+}
+
+/// Current folder when it must be refreshed off the UI thread. The drive type is the
+/// cached button, not `GetDriveTypeW`.
+fn share_folder(a: &App, i: usize) -> Option<String> {
+    let path = a.s.paths.get(i).cloned().unwrap_or_default();
+    if path.is_empty() {
+        return None;
+    }
+    let drives: Vec<(u8, u32)> = a.drives.iter().map(|d| (d.0, d.1)).collect();
+    let live = crate::remote::path_on_live_mount(&path);
+    folder_is_share(&path, cached_kind(&drives, &path), live).then_some(path)
 }
 
 /// Korean and Japanese IMEs keep a composition string while a syllable or a reading is open.

@@ -79,6 +79,14 @@ fn main_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                 redraw_all();
                 note_save();
             }
+            // Wake from sleep or hibernate. Both resume broadcasts arrive; the second finds
+            // the probe already queued. Return immediately: the redirector is not touched here.
+            msg if msg == crate::pane::WM_POWERBROADCAST => {
+                if power_resume(wp.0 as u32) {
+                    resume_shares(h);
+                }
+                return LRESULT(1);
+            }
             // A drive came or went. Only queued: no disk call while the system waits on the reply,
             // and TRUE grants a removal query.
             WM_DEVICECHANGE => {
@@ -641,7 +649,9 @@ fn pane_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
             }
             WM_KIDS => kids_show(h, wp.0),
             WM_NET => net_done(h, wp.0),
+            WM_NET_HOLD => net_hold(h, wp.0),
             WM_TIMER if wp.0 == TIMER_NET => net_timeout(h),
+            WM_TIMER if wp.0 == TIMER_RESUME => resume_tick(h),
             WM_TIMER if wp.0 == TIMER_KIDS => kids_timeout(h),
             WM_LBUTTONDOWN => {
                 hide_addr_tip();
