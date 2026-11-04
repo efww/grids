@@ -965,9 +965,25 @@ unsafe fn insert_who(menu: HMENU) {
     _ = InsertMenuW(menu, at, MF_STRING | MF_BYPOSITION, ID_CTX_WHO as usize, &label);
 }
 
+unsafe fn insert_term_admin_idx(menu: HMENU, verbs: &VerbIndex) {
+    super::termadmin::insert(menu, |id| verbs.verb(id).to_string());
+}
+
+unsafe fn insert_term_admin(menu: HMENU, cm: &IContextMenu) {
+    super::termadmin::insert(menu, |id| {
+        if id == u32::MAX || id < 1 || id >= ID_CTX_FAV {
+            String::new()
+        } else {
+            cmd_verb(cm, (id - 1) as usize)
+        }
+    });
+}
+
 unsafe fn popup_ctx(owner: HWND, cm: IContextMenu, paths: &[String], items: &[(String, bool)], background: bool, pane_selection: bool, props_folder: &str, pt: POINT, pane: usize, t_pre: std::time::Instant) -> bool {
     super::excelro::arm(background, items);
     let _clear_excel = ClearExcel;
+    super::termadmin::arm(super::termadmin::terminal_folder(background, props_folder, items));
+    let _clear_term = super::termadmin::ClearTerm;
     let _pack_ids = ClearPackIds;
     let _clear_who = ClearWho;
     WHO_PATH.with(|p| *p.borrow_mut() = who_path(items, background));
@@ -1063,6 +1079,8 @@ unsafe fn popup_ctx(owner: HWND, cm: IContextMenu, paths: &[String], items: &[(S
         }
     }
     insert_excel_idx(menu, &verbs);
+    // Directly under Open in Terminal, with that row's enabled state.
+    insert_term_admin_idx(menu, &verbs);
     super::ctxmenu::dump_menu_items(if background { "background" } else if items.first().is_some_and(|(_, f)| !*f) { "folder" } else { "file" }, menu);
     super::ctxmenu::log_phase("total-pre", t_pre);
     MENU_BRIDGE.with(|b| {
@@ -1087,6 +1105,10 @@ unsafe fn popup_ctx(owner: HWND, cm: IContextMenu, paths: &[String], items: &[(S
         crate::excel::run(owner, items);
     } else if cmd == ID_CTX_EXCEL as i32 {
         super::excelro::open_readonly(owner);
+    } else if cmd == super::termadmin::ID_CTX_TERM as i32 {
+        if let Some(folder) = super::termadmin::folder() {
+            super::termadmin::launch(owner, &folder);
+        }
     } else if cmd == ID_CTX_BATCH as i32 {
         // The pane's own menu can re-read the selection in view order. Search results pass their paths.
         if pane_selection {
@@ -1175,9 +1197,11 @@ unsafe fn ctx_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM, _a1: usize, 
             if let Some(verbs) = VERB_INDEX.with(|v| v.borrow().clone()) {
                 insert_fast_paste_idx(popup, &verbs);
                 insert_excel_idx(popup, &verbs);
+                insert_term_admin_idx(popup, &verbs);
             } else if let Some(cm) = open_cm() {
                 insert_fast_paste(popup, &cm);
                 insert_excel(popup, &cm);
+                insert_term_admin(popup, &cm);
             }
         }
         if let Some(lr) = lr {

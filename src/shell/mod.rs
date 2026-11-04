@@ -7,6 +7,7 @@ mod askdrop;
 mod tabdrop;
 mod fastcopy;
 mod fav;
+mod termadmin;
 mod fileop;
 mod gather;
 pub(crate) mod inuse;
