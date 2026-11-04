@@ -161,9 +161,21 @@ With Maguro running, **Win+Alt+V** opens the clipboard path even when another ap
 
 ### 16. Tab list
 
-**Ctrl+Shift+L**, the list button at the right end of the tab row, or **Tab list…** on the tab menu shows every tab's layout, panes, and folders. Filter by name, jump with Enter or a double-click, and rename with F2.
+**Ctrl+Shift+L**, the list button at the right end of the tab row, or **Tab list…** on the tab menu shows every tab's layout, panes, and folders. Filter by name, jump with Enter or a double-click, and rename with F2. Each tab starts as one summary row with the representative folder and a `+N` for the rest; **Right** expands, **Left** collapses. The current tab starts open. A filter expands only the tabs that match.
 
 <p align="center"><img width="560" alt="Tab list of each tab's layout, panes, and folders" src="docs/images-v4/tab_list.png"></p>
+
+### 17. Workspaces
+
+Up to nine named layouts. **Ctrl+Alt+1…9** loads a slot; **Ctrl+Alt+Shift+1…9** saves the current tabs, panes, and folders into that slot. Gear menu → **Workspaces** can save, load, rename, or clear. Slots live in `maguro.json`.
+
+<p align="center"><img width="420" alt="Naming a workspace" src="docs/images-v4/workspaces.png"></p>
+
+### 18. Dialog Jump
+
+While another app's Open or Save dialog is in front, **Ctrl+Alt+G** lists folders already open in Maguro and jumps the dialog to the one you pick. Virtual folders are skipped. The chord is registered only while such a dialog is front.
+
+<p align="center"><img width="420" alt="Dialog Jump picking a Maguro folder" src="docs/images-v4/dialog_jump.png"></p>
 
 ### Themes & accent
 
@@ -226,6 +238,8 @@ Defaults; every one can be changed in Settings → Shortcuts.
 |  | Ctrl+, | Settings |
 |  | F1 / Ctrl+/ | Online help / shortcut list |
 |  | Ctrl+N | New window |
+|  | Ctrl+Alt+1…9 | Load workspace |
+|  | Ctrl+Alt+Shift+1…9 | Save workspace |
 |  | Ctrl+Alt+G | Jump to a Maguro folder in another app's Open or Save dialog |
 |  | Win+Shift+E | Bring Maguro to the front (global) |
 
