@@ -118,6 +118,136 @@ pub(crate) fn space_opens(typed_ago: Option<Duration>, composing: bool, enabled:
     enabled && !composing && space_peeks(typed_ago)
 }
 
+/// Explorer's in-place rename box. "Edit" is the list-view label edit. RichEdit shows up on some builds.
+pub(crate) fn rename_edit_class(class: &str) -> bool {
+    let c = class.as_bytes();
+    c.eq_ignore_ascii_case(b"edit") || (c.len() >= 8 && c[..8].eq_ignore_ascii_case(b"richedit"))
+}
+
+/// The key is aimed at a shell label edit.
+/// An Edit inside the shell view is the rename box (the address and filter edits are not in that view).
+/// DirectUI keeps focus on the items window while the edit is open, so that surface counts too.
+pub(crate) fn label_edit_target(edit_class: bool, in_shell_view: bool, edit_open: bool, on_shell_surface: bool) -> bool {
+    (edit_class && in_shell_view) || (edit_open && on_shell_surface)
+}
+
+/// `true` when this key must reach the rename edit and must not run a file or pane command.
+/// Delete and Shift+Delete otherwise delete the file. Backspace, Enter, F2, arrows,
+/// Home/End, and Ctrl+A/C/V/X otherwise hit the shell accelerator or a pane handler.
+pub(crate) fn rename_edit_keeps_key(vk: VIRTUAL_KEY, ctrl: bool, shift: bool, alt: bool) -> bool {
+    if alt {
+        return false;
+    }
+    match vk {
+        VK_BACK | VK_DELETE => true,
+        VK_SPACE | VK_RETURN | VK_ESCAPE | VK_F2 => !ctrl,
+        VK_LEFT | VK_RIGHT | VK_UP | VK_DOWN | VK_HOME | VK_END => true,
+        VK_A | VK_C | VK_V | VK_X if ctrl && !shift => true,
+        _ => false,
+    }
+}
+
+/// `editing` is [`label_edit_target`]. `true` means hand the key to the edit and skip accelerators.
+pub(crate) fn route_label_key(editing: bool, vk: VIRTUAL_KEY, ctrl: bool, shift: bool, alt: bool) -> bool {
+    editing && rename_edit_keeps_key(vk, ctrl, shift, alt)
+}
+
+const LVM_GETEDITCONTROL: u32 = 0x1018;
+
+/// Focus window belongs to the shell view: a child, or a popup the view owns.
+unsafe fn under_shell_view(root: HWND, h: HWND) -> bool {
+    if root.0.is_null() || h.0.is_null() {
+        return false;
+    }
+    if h == root || IsChild(root, h).as_bool() {
+        return true;
+    }
+    let mut p = GetParent(h).unwrap_or_default();
+    for _ in 0..8 {
+        if p.0.is_null() {
+            return false;
+        }
+        if p == root || IsChild(root, p).as_bool() {
+            return true;
+        }
+        p = GetParent(p).unwrap_or_default();
+    }
+    false
+}
+
+unsafe fn visible_label_edit(parent: HWND, depth: u8) -> HWND {
+    if parent.0.is_null() || depth > 6 {
+        return HWND::default();
+    }
+    let mut after = None;
+    loop {
+        let Ok(c) = FindWindowExW(Some(parent), after, PCWSTR::null(), PCWSTR::null()) else { break };
+        if c.0.is_null() {
+            break;
+        }
+        if IsWindowVisible(c).as_bool() && rename_edit_class(&wnd_class(c)) {
+            return c;
+        }
+        let nested = visible_label_edit(c, depth + 1);
+        if !nested.0.is_null() {
+            return nested;
+        }
+        after = Some(c);
+    }
+    HWND::default()
+}
+
+unsafe fn label_edit_hwnd(svh: HWND) -> HWND {
+    let lv = list_under(svh);
+    if is_sys_list(lv) {
+        let e = HWND(SendMessageW(lv, LVM_GETEDITCONTROL, None, None).0 as _);
+        if !e.0.is_null() && IsWindowVisible(e).as_bool() {
+            return e;
+        }
+    }
+    visible_label_edit(svh, 0)
+}
+
+unsafe fn label_edit_open(svh: HWND) -> bool {
+    !label_edit_hwnd(svh).0.is_null()
+}
+
+unsafe fn shell_label_edit(pane: usize) -> HWND {
+    let Some(sv) = view_of::<IShellView>(pane) else { return HWND::default() };
+    let svh = sv.GetWindow().unwrap_or_default();
+    if svh.0.is_null() {
+        HWND::default()
+    } else {
+        label_edit_hwnd(svh)
+    }
+}
+
+/// Esc cancels a shell rename. It does not save.
+/// Deactivate still commits: the shell treats focus loss the way Explorer does, and this is not that path.
+pub(crate) fn label_esc_cancels(editing: bool, vk: VIRTUAL_KEY, ctrl: bool, alt: bool) -> bool {
+    editing && !ctrl && !alt && vk == VK_ESCAPE
+}
+
+unsafe fn msg_label_editing(msg: HWND, pane: usize) -> bool {
+    let Some(sv) = view_of::<IShellView>(pane) else { return false };
+    let svh = sv.GetWindow().unwrap_or_default();
+    if svh.0.is_null() {
+        return false;
+    }
+    let in_view = under_shell_view(svh, msg);
+    let edit_class = rename_edit_class(&wnd_class(msg));
+    let on_surface = msg == svh || ctx_surface(msg);
+    let edit_open = !edit_class && in_view && on_surface && label_edit_open(svh);
+    label_edit_target(edit_class, in_view, edit_open, on_surface && in_view)
+}
+
+/// A shell label edit is open under `anchor` (the edit itself, or the items window).
+/// List activation (Enter, double-click) must not run while that box has the name.
+pub(crate) unsafe fn pane_label_editing(anchor: HWND) -> bool {
+    let Some(i) = pane_of(anchor) else { return false };
+    msg_label_editing(anchor, i)
+}
+
 /// What a plain F5 does. A failed network folder is retried before any binding.
 /// A hold is eaten so the refresh or the retry does not run again.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -290,13 +420,35 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
         }
         return true;
     }
-    if m.hwnd == app(|a| a.side_edit) && !app(|a| a.side_edit_at.is_empty()) {
-        match VIRTUAL_KEY(vk) {
-            VK_RETURN => end_side_rename(true),
-            VK_ESCAPE => end_side_rename(false),
-            _ => return false,
+    // Favourites rename. A real Esc/Enter is often taken by a dialog filter before this
+    // loop when the edit does not ask for those keys; the edit subclass handles that copy.
+    // A key that lands on the panel (right-click never used to focus it) is posted to the
+    // edit, including VK_PROCESSKEY. Eating the process key here would stop Japanese IME.
+    if let Some((edit, host)) = side_rename_windows() {
+        // Resolve VK_PROCESSKEY first so an IME F6 is not typed into the edit.
+        let aim = side_aim_key(m.hwnd, vk);
+        if m.hwnd == host && m.hwnd != edit && side_key_belongs_to_edit(aim, ctrl, alt) {
+            focus_side_edit(edit);
+            // A posted VK_PROCESSKEY does not compose. Translate a copy aimed at the edit
+            // so WM_CHAR and WM_IME_* are queued for the edit, not the panel.
+            let mut copy = *m;
+            copy.hwnd = edit;
+            _ = TranslateMessage(&copy);
+            DispatchMessageW(&copy);
+            return true;
         }
-        return true;
+        if m.hwnd == edit {
+            let ch = VIRTUAL_KEY(vk);
+            if ch == VK_PROCESSKEY || side_ime_busy() {
+                return false;
+            }
+            match side_rename_key(vk, false, false) {
+                SideRenameKey::Commit => end_side_rename(true),
+                SideRenameKey::Cancel => end_side_rename(false),
+                SideRenameKey::Pass => return false,
+            }
+            return true;
+        }
     }
     // The tab list keeps arrows, Enter, Esc, and F2 (rename the selected row). Typing stays in its filter. Ctrl+Shift+L toggles it.
     if crate::tablist::captures(m.hwnd) {
@@ -372,6 +524,25 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
         }
         pane_of(m.hwnd) == Some(a)
     });
+    // The rename edit is a child of the pane, so `list` above is true while it is focused.
+    // Delete would then delete the file, and TranslateAccelerator would take Enter, F2,
+    // arrows, Home/End, and Ctrl+A/C/V/X. Those keys belong to the edit.
+    // Only those keys look for the box, so a normal letter does not walk the view.
+    let ch = VIRTUAL_KEY(vk);
+    let label_editing = rename_edit_keeps_key(ch, ctrl, shift, alt) && msg_label_editing(m.hwnd, a);
+    if label_esc_cancels(label_editing, ch, ctrl, alt) {
+        // Cancel. Do not move focus first: focus loss commits the name.
+        let edit = shell_label_edit(a);
+        if !edit.0.is_null() && m.hwnd != edit {
+            _ = SendMessageW(edit, WM_KEYDOWN, Some(WPARAM(VK_ESCAPE.0 as usize)), Some(m.lParam));
+            return true;
+        }
+        return false;
+    }
+    if route_label_key(label_editing, ch, ctrl, shift, alt) {
+        return false;
+    }
+    let list = list && !label_editing;
     // A failed share keeps its path. F5 retries that path; the shell's refresh would reload the
     // previous folder and leave the failure behind. The error view's Retry button does the same.
     // A hold does not retry again. This runs before key bindings, so a rebound F5 still retries.
@@ -1133,9 +1304,12 @@ mod focus_tests {
 
 #[cfg(test)]
 mod tests {
-    use super::{space_opens, space_peeks, types_char};
+    use super::{label_edit_target, label_esc_cancels, rename_edit_class, route_label_key, space_opens, space_peeks, types_char};
     use std::time::Duration;
-    use windows::Win32::UI::Input::KeyboardAndMouse::{VK_7, VK_A, VK_DOWN, VK_F3, VK_RETURN, VK_SPACE, VIRTUAL_KEY};
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        VK_7, VK_A, VK_BACK, VK_C, VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_F2, VK_F3, VK_F5, VK_HOME, VK_LEFT, VK_RETURN, VK_RIGHT, VK_SPACE, VK_UP, VK_V, VK_X,
+        VIRTUAL_KEY,
+    };
 
     #[test]
     fn space_previews() {
@@ -1147,6 +1321,68 @@ mod tests {
         assert!(!space_opens(Some(Duration::from_millis(300)), false, true));
         assert!(!space_opens(None, true, true)); // IME composition: the space stays in the name
         assert!(!space_opens(None, false, false)); // space_preview off
+    }
+
+    #[test]
+    fn rename_edit_class_is_the_label_box_not_the_list() {
+        assert!(rename_edit_class("Edit"));
+        assert!(rename_edit_class("edit"));
+        assert!(rename_edit_class("RichEdit20W"));
+        assert!(rename_edit_class("RICHEDIT50W"));
+        assert!(!rename_edit_class("SysListView32"));
+        assert!(!rename_edit_class("DirectUIHWND"));
+        assert!(!rename_edit_class("SHELLDLL_DefView"));
+        assert!(!rename_edit_class(""));
+    }
+
+    #[test]
+    fn label_edit_target_is_the_box_or_the_items_window_while_it_is_open() {
+        assert!(label_edit_target(true, true, false, false)); // focused Edit inside the shell view
+        assert!(!label_edit_target(true, false, false, false)); // address or filter edit
+        assert!(label_edit_target(false, true, true, true)); // DirectUI focus, edit open
+        assert!(!label_edit_target(false, true, false, true)); // list, not renaming
+        assert!(!label_edit_target(false, false, true, false));
+    }
+
+    #[test]
+    fn rename_keys_reach_the_edit_and_do_not_hit_file_commands() {
+        let edit = |vk, ctrl, shift, alt| route_label_key(true, vk, ctrl, shift, alt);
+        let idle = |vk, ctrl, shift, alt| route_label_key(false, vk, ctrl, shift, alt);
+        // Delete and Shift+Delete must not delete the file. Backspace must not go up.
+        assert!(edit(VK_DELETE, false, false, false));
+        assert!(edit(VK_DELETE, false, true, false));
+        assert!(edit(VK_BACK, false, false, false));
+        assert!(edit(VK_BACK, true, false, false));
+        assert!(edit(VK_F2, false, false, false));
+        assert!(edit(VK_RETURN, false, false, false));
+        assert!(edit(VK_ESCAPE, false, false, false));
+        assert!(edit(VK_SPACE, false, false, false));
+        assert!(edit(VK_LEFT, false, false, false) && edit(VK_RIGHT, false, true, false));
+        assert!(edit(VK_UP, false, false, false) && edit(VK_DOWN, true, false, false));
+        assert!(edit(VK_HOME, false, false, false) && edit(VK_END, true, true, false));
+        assert!(edit(VK_A, true, false, false));
+        assert!(edit(VK_C, true, false, false));
+        assert!(edit(VK_V, true, false, false));
+        assert!(edit(VK_X, true, false, false));
+        // Not an edit chord: file commands and navigation stay with the pane.
+        assert!(!edit(VK_A, true, true, false)); // Ctrl+Shift+A select by pattern
+        assert!(!edit(VK_C, true, true, false)); // Ctrl+Shift+C copy path
+        assert!(!edit(VK_LEFT, false, false, true)); // Alt+Left back
+        assert!(!edit(VK_UP, false, false, true)); // Alt+Up parent
+        assert!(!edit(VK_F5, false, false, false));
+        assert!(!edit(VK_F2, true, false, false));
+        // Idle list: the same Delete still deletes the file.
+        assert!(!idle(VK_DELETE, false, false, false));
+        assert!(!idle(VK_DELETE, false, true, false));
+        assert!(!idle(VK_BACK, false, false, false));
+        assert!(!idle(VK_A, true, false, false));
+        assert!(!idle(VK_RETURN, false, false, false));
+        // Esc cancels the shell rename. It is not a save. Focus loss still commits in the shell.
+        assert!(label_esc_cancels(true, VK_ESCAPE, false, false));
+        assert!(!label_esc_cancels(false, VK_ESCAPE, false, false));
+        assert!(!label_esc_cancels(true, VK_RETURN, false, false));
+        assert!(!label_esc_cancels(true, VK_ESCAPE, true, false));
+        assert!(!label_esc_cancels(true, VK_ESCAPE, false, true));
     }
 
     #[test]

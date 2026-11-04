@@ -1221,14 +1221,15 @@ unsafe fn ctx_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM, _a1: usize, 
         // NM_DBLCLK (-3) and LVN_ITEMACTIVATE (-114). A header click auto-sizes a column and is not an open.
         let activate = hdr.code == (-3i32 as u32) || hdr.code == (-114i32 as u32);
         let background = hdr.code == (-3i32 as u32) && from == "SysListView32" && list_notify_item(lp) < 0;
-        if activate && from != "SysHeader32" && !background && eat_list_activation(h, data) {
+        if activate && from != "SysHeader32" && !background && !pane_label_editing(h) && eat_list_activation(h, data) {
             return LRESULT(0);
         }
     }
-    if msg == WM_LBUTTONDBLCLK && wnd_class(h) != "SHELLDLL_DefView" && ctx_surface(h) && !dblclick_on_background(h, msg, wp, lp) && eat_list_activation(h, data) {
+    if msg == WM_LBUTTONDBLCLK && wnd_class(h) != "SHELLDLL_DefView" && ctx_surface(h) && !pane_label_editing(h) && !dblclick_on_background(h, msg, wp, lp) && eat_list_activation(h, data) {
         return LRESULT(0);
     }
-    if msg == WM_KEYDOWN && wp.0 as u16 == VK_RETURN.0 && ctx_surface(h) && eat_list_activation(h, data) {
+    // Enter commits the rename. Eating it here opens the file instead.
+    if msg == WM_KEYDOWN && wp.0 as u16 == VK_RETURN.0 && ctx_surface(h) && !pane_label_editing(h) && eat_list_activation(h, data) {
         return LRESULT(1);
     }
     if matches!(msg, WM_MBUTTONDOWN | WM_MBUTTONDBLCLK) && ctx_surface(h) {

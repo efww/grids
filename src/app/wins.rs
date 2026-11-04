@@ -345,7 +345,8 @@ pub(crate) unsafe fn open_window(mut s: Session) -> Result<HWND> {
         // The tree view can register its target after Initialize returns.
         crate::schedule_tree_drop();
     }
-    let side = CreateWindowExW(WINDOW_EX_STYLE(0), w!("MaguroSide"), w!(""), WS_CHILD | WS_CLIPSIBLINGS | WS_VSCROLL, 0, 0, 0, 0, Some(main), None, Some(hinst), None).unwrap_or_default();
+    // CLIPCHILDREN keeps a hover blit off the rename edit, so an IME composition is not painted over.
+    let side = CreateWindowExW(WINDOW_EX_STYLE(0), w!("MaguroSide"), w!(""), WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS | WS_VSCROLL, 0, 0, 0, 0, Some(main), None, Some(hinst), None).unwrap_or_default();
     app(|a| a.side_hwnd = side);
     let preview = CreateWindowExW(
         WINDOW_EX_STYLE(0),
