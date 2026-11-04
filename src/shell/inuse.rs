@@ -320,7 +320,7 @@ unsafe fn on_close(owner: HWND, holder: &Holder) {
     }
     let name = display_name(holder);
     let text = tf(Key::CloseProgramAsk, &[("app", &name)]);
-    if MessageBoxW(Some(owner), &HSTRING::from(text), w!("Maguro"), MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES {
+    if !crate::ask_confirm(owner, crate::Confirm::danger("Maguro", text).affirm_label(tr(Key::Close)).default_cancel()) {
         return;
     }
     match plan_close(true, holder.pid == std::process::id(), holder.kind, windows.len()) {

@@ -74,7 +74,7 @@ pub(crate) unsafe fn open_download(owner: HWND) {
 
 pub(crate) unsafe fn prompt_missing(owner: HWND) {
     let text = tr(crate::Key::WinmergeIsNotInstalledSoFoldersAnd);
-    if ask(owner, text, MB_YESNO | MB_ICONINFORMATION) == IDYES {
+    if crate::ask_confirm(owner, crate::Confirm::ok(tr(crate::Key::VendorWinmerge), text)) {
         open_download(owner);
     }
 }

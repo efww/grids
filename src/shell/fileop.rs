@@ -660,9 +660,9 @@ pub(crate) unsafe fn delete_selection(i: usize, shift: bool) {
         } else {
             tr(crate::Key::MoveRecycleBin)
         };
-        let text = HSTRING::from(format!("{verb} ({n})"));
+        let text = format!("{verb} ({n})");
         let owner = app(|a| a.main);
-        if MessageBoxW(Some(owner), &text, w!("Maguro"), MB_YESNO | MB_ICONQUESTION) != IDYES {
+        if !ask_confirm(owner, Confirm::danger("Maguro", text)) {
             return;
         }
     }

@@ -1284,10 +1284,9 @@ pub(crate) unsafe fn delete_peek(shift: bool) {
         } else {
             name
         };
-        let text = HSTRING::from(format!("{verb}\n{label}"));
         // Own on main (same as delete_selection) so the dialog is not a child of the peek surface.
         let owner = app(|a| a.main);
-        if MessageBoxW(Some(owner), &text, w!("Maguro"), MB_YESNO | MB_ICONQUESTION) != IDYES {
+        if !ask_confirm(owner, Confirm::danger("Maguro", verb).detail(label)) {
             HOLD_PEEK.store(false, Ordering::SeqCst);
             if IsWindow(Some(h)).as_bool() {
                 _ = SetActiveWindow(h);

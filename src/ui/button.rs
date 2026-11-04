@@ -5,7 +5,8 @@
 //! clicks. Release outside cancels. A lost capture cancels and does not leave hover stuck.
 //!
 //! Later batches call [`paint_button`] from the name prompt, favourites, About, Excel,
-//! popups, notices, and the custom confirm. Those windows still have their own painters.
+//! popups, and notices. The custom confirm already calls it. Those other windows still
+//! have their own painters.
 
 use super::tokens::*;
 use crate::imports::*;

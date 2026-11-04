@@ -1,5 +1,6 @@
 mod aa;
 mod button;
+mod confirm;
 mod draw;
 mod drives;
 mod sicon;
@@ -30,6 +31,7 @@ pub(crate) use srvdlg::*;
 pub(crate) use ficons::*;
 pub(crate) use aa::*;
 pub(crate) use button::*;
+pub(crate) use confirm::{ask_confirm, Confirm};
 pub(crate) use draw::*;
 pub(crate) use drives::*;
 pub(crate) use sicon::*;

@@ -752,12 +752,9 @@ unsafe fn do_rename(h: HWND) {
 unsafe fn do_delete(h: HWND) {
     let Some(path) = selected_path() else { return };
     let name = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-    let q = format!(
-        "{}\n\"{name}\"\n{}",
-        tr(crate::Key::DeleteThisSession),
-        tr(crate::Key::ItWillGoRecycleBin)
-    );
-    if MessageBoxW(Some(h), &HSTRING::from(q), &HSTRING::from(tr(crate::Key::DeleteSession)), MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES {
+    let message = format!("{}\n\"{name}\"", tr(crate::Key::DeleteThisSession));
+    let ask = crate::Confirm::danger(tr(crate::Key::DeleteSession), message).detail(tr(crate::Key::ItWillGoRecycleBin)).default_cancel();
+    if !crate::ask_confirm(h, ask) {
         return;
     }
     let owner = GetWindow(h, GW_OWNER).unwrap_or_default();

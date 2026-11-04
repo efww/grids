@@ -383,7 +383,7 @@ pub(crate) unsafe fn on_update(h: HWND, stage: usize) {
             .replace("{new}", tag)
             .replace("{cur}", &format!("v{APP_VERSION}"));
             let title = tr(crate::Key::MaguroUpdate);
-            if MessageBoxW(Some(h), &HSTRING::from(text), &HSTRING::from(title), MB_YESNO | MB_ICONINFORMATION | MB_DEFBUTTON2) != IDYES {
+            if !ask_confirm(h, Confirm::ok(title, text).default_cancel()) {
                 return;
             }
             if INSTALLING.swap(true, Ordering::SeqCst) {

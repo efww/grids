@@ -100,7 +100,7 @@ pub(crate) unsafe fn launch_server(owner: HWND, link: crate::session::ServerLink
                 app(|a| a.s.remote_asked = true);
                 save_session();
                 let q = tr(crate::Key::InstallRcloneAndWinfspToConnectToSftp);
-                if MessageBoxW(Some(owner), &HSTRING::from(q), w!("Maguro"), MB_YESNO | MB_ICONQUESTION) == IDYES {
+                if ask_confirm(owner, Confirm::ok("Maguro", q)) {
                     crate::remote::install_then_connect(owner.0 as isize, link, open);
                 }
                 return;

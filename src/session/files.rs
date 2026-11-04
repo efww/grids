@@ -214,7 +214,7 @@ pub(crate) fn session_target(dir: &Path, input: &str) -> std::result::Result<(Pa
 }
 
 /// Name-only save prompt for the sessions folder. A bad name is explained and asked again; a taken name
-/// is replaced only after a Yes (No is the default). None means cancel.
+/// is replaced only after OK (Cancel is the default). None means cancel.
 pub(crate) unsafe fn ask_session_path(title: &str) -> Option<PathBuf> {
     let main = app(|a| a.main);
     let dir = sessions_dir();
@@ -235,13 +235,9 @@ pub(crate) unsafe fn ask_session_path(title: &str) -> Option<PathBuf> {
                 MessageBoxW(Some(main), &HSTRING::from(why), &caption, MB_OK | MB_ICONWARNING);
             }
             Ok((path, true)) => {
-                let q = format!(
-                    "{} \"{}\"\n{}",
-                    tr(crate::Key::SessionWithThisNameAlreadyExists),
-                    name.trim(),
-                    tr(crate::Key::ReplaceIt)
-                );
-                if MessageBoxW(Some(main), &HSTRING::from(q), &caption, MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) == IDYES {
+                let message = format!("{} \"{}\"", tr(crate::Key::SessionWithThisNameAlreadyExists), name.trim());
+                let replace = Confirm::ok(title, message).detail(tr(crate::Key::ReplaceIt)).default_cancel();
+                if ask_confirm(main, replace) {
                     return Some(path);
                 }
             }

@@ -2165,7 +2165,7 @@ unsafe fn ask_install_everything_once(owner: HWND) {
     app(|a| a.s.ev_asked = true);
     crate::save_session();
     let q = tr(crate::Key::InstallEverythingMakeSubfolderSearchMuch);
-    if MessageBoxW(Some(owner), &HSTRING::from(q), w!("Maguro"), MB_YESNO | MB_ICONQUESTION) == IDYES {
+    if ask_confirm(owner, Confirm::ok("Maguro", q)) {
         everything::install_async();
     }
 }

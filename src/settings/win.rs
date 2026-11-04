@@ -1534,7 +1534,7 @@ unsafe fn import_settings(h: HWND) {
         return;
     };
     let q = tx(crate::Key::ReplaceCurrentSettingsWithThisFile);
-    if MessageBoxW(Some(h), &HSTRING::from(q), w!("Maguro"), MB_YESNO | MB_ICONQUESTION) != IDYES {
+    if !crate::ask_confirm(h, crate::Confirm::ok("Maguro", q)) {
         return;
     }
     if !crate::import_settings(&text) {
@@ -1544,7 +1544,7 @@ unsafe fn import_settings(h: HWND) {
 
 unsafe fn reset_ini(h: HWND) {
     let q = tx(crate::Key::ResetEveryPreferenceItsDefaultLayoutFold);
-    if MessageBoxW(Some(h), &HSTRING::from(q), w!("Maguro"), MB_YESNO | MB_ICONQUESTION) != IDYES {
+    if !crate::ask_confirm(h, crate::Confirm::danger("Maguro", q).affirm_label(tx(crate::Key::Reset3))) {
         return;
     }
     crate::reset_prefs();
@@ -1572,7 +1572,7 @@ unsafe fn rename_fav(h: HWND, k: usize) {
 
 unsafe fn reset_keys(h: HWND) {
     let q = tx(crate::Key::ResetEveryShortcutItsDefault);
-    if !confirm_box(h, q) {
+    if !crate::ask_confirm(h, crate::Confirm::danger("Maguro", q).affirm_label(tx(crate::Key::Reset3))) {
         return;
     }
     crate::keys::reset_all();
@@ -1621,10 +1621,7 @@ pub(crate) unsafe fn confirm_swap(chord: &str, other: &str) -> bool {
 }
 
 unsafe fn confirm_box(owner: HWND, q: &str) -> bool {
-    crate::keys::set_modal(true);
-    let ans = MessageBoxW(Some(owner), &HSTRING::from(q), w!("Maguro"), MB_YESNO | MB_ICONWARNING);
-    crate::keys::set_modal(false);
-    ans == IDYES
+    crate::ask_confirm(owner, crate::Confirm::ok("Maguro", q))
 }
 
 unsafe fn on_click(h: HWND, x: i32, y: i32) {

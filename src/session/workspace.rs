@@ -298,7 +298,7 @@ pub(crate) unsafe fn load_workspace(slot: usize) {
     if workspaces_confirm() {
         let q = tf(crate::Key::ReplaceCurrentTabs, &[("name", &workspace_label(slot))]);
         let main = app(|a| a.main);
-        if MessageBoxW(Some(main), &HSTRING::from(q), &HSTRING::from(tr(crate::Key::Workspaces)), MB_YESNO | MB_ICONQUESTION) != IDYES {
+        if !ask_confirm(main, Confirm::ok(tr(crate::Key::Workspaces), q)) {
             return;
         }
     }
