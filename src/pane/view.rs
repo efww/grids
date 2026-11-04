@@ -1014,8 +1014,8 @@ pub(crate) unsafe fn prime_theme(dark: bool) {
     }
 }
 
-/// Title-bar icon follows the theme. Light is group 3 (`app.ico`). Dark is group 2
-/// (`assets/maguro-dark-bg.ico`). Group 1 is the Explorer file icon and stays off this window.
+/// Title-bar icon follows the theme. Light is group 3 and dark is group 2.
+/// Both groups embed `assets/Maguro.ico`. Group 1 is the Explorer file icon and stays off this window.
 /// LoadImageW picks the real 16/32 (etc.) frames from the kit .ico instead of stretching one size.
 /// ICON_BIG and ICON_SMALL are the class big icon and the small title-bar / taskbar icon.
 pub(crate) unsafe fn apply_window_icon(hwnd: HWND) {

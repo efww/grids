@@ -1,14 +1,13 @@
 // Embeds app.manifest (common controls v6 + per-monitor DPI) and three icon groups.
-// Group 1 is assets/maguro-exe.ico. Explorer shows the lowest-numbered RT_GROUP_ICON, so that
-// file is the maguro.exe icon. Group 2 is assets/maguro-dark-bg.ico. Group 3 is app.ico.
-// In-app windows load groups 2 and 3 (see ICON_GROUP_* in src/app/ids.rs).
+// Every group embeds assets/Maguro.ico, the cerulean three-panel mark.
+// Explorer shows the lowest-numbered RT_GROUP_ICON, so group 1 is the maguro.exe icon.
+// Groups 2 and 3 are the same mark for dark and light in-app windows
+// (see ICON_GROUP_* in src/app/ids.rs). RT_ICON ids stay unique across groups.
 // Writes a binary .res by hand and lets windres only convert it to COFF, so no C preprocessor is needed.
 fn main() {
     emit_git_hash();
     println!("cargo:rerun-if-changed=app.manifest");
-    println!("cargo:rerun-if-changed=assets/maguro-exe.ico");
-    println!("cargo:rerun-if-changed=app.ico");
-    println!("cargo:rerun-if-changed=assets/maguro-dark-bg.ico");
+    println!("cargo:rerun-if-changed=assets/Maguro.ico");
     println!("cargo:rerun-if-changed=build.rs");
     let out = std::env::var("OUT_DIR").unwrap();
     let entry = |size: usize, typ: u16, id: u16, lang: u16| {
@@ -32,11 +31,12 @@ fn main() {
     add(24, 1, manifest.as_bytes()); // RT_MANIFEST, assembly version follows Cargo.toml
 
     // Group 1 is embedded first and has the lowest id, so Explorer uses it for the exe.
-    // RT_ICON ids stay unique across groups. Group ids match ICON_GROUP_* in src/app/ids.rs.
+    // The same Maguro.ico bytes are embedded three times so each group keeps its own RT_ICON ids.
+    let ico = std::fs::read("assets/Maguro.ico").unwrap();
     let mut icon_id = 1u16;
-    icon_id = embed_group(&mut add, &std::fs::read("assets/maguro-exe.ico").unwrap(), 1, icon_id);
-    icon_id = embed_group(&mut add, &std::fs::read("assets/maguro-dark-bg.ico").unwrap(), 2, icon_id);
-    embed_group(&mut add, &std::fs::read("app.ico").unwrap(), 3, icon_id);
+    icon_id = embed_group(&mut add, &ico, 1, icon_id);
+    icon_id = embed_group(&mut add, &ico, 2, icon_id);
+    embed_group(&mut add, &ico, 3, icon_id);
     add(16, 1, &version_info()); // RT_VERSION
     std::fs::write(format!("{out}/app.res"), res).unwrap();
 

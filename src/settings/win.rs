@@ -2031,7 +2031,7 @@ pub(crate) fn about_body(c: &AboutCopy) -> String {
     format!("{}\n{}\n{}\n{}\n{}", c.title, c.version, c.desc, c.license, c.repo)
 }
 
-/// Light About fallback is `app.ico` (group 3). Dark is `assets/maguro-dark-bg.ico` (group 2).
+/// About fallback icon. Light is group 3 and dark is group 2. Both embed `assets/Maguro.ico`.
 /// The painted logo is the theme PNG; this group is the DrawIconEx fallback and matches the title bar.
 pub(crate) fn about_icon_group(dark: bool) -> usize {
     crate::window_icon_group(dark)
