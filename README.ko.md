@@ -19,11 +19,14 @@
   <a href="README.md">English</a> | <a href="README.ja.md">日本語</a> | 한국어
 </p>
 
+<br>
+
 <p align="center">
-  <a href="https://samek86.github.io/maguro/help/">온라인 도움말</a>
-  · <a href="https://samek86.github.io/maguro/help/ja/">日本語</a>
-  · <a href="https://samek86.github.io/maguro/help/en/">English</a>
+  <a href="https://samek86.github.io/maguro/help/"><img alt="온라인 도움말 열기" src="https://img.shields.io/badge/%EC%98%A8%EB%9D%BC%EC%9D%B8%20%EB%8F%84%EC%9B%80%EB%A7%90%20%EC%97%B4%EA%B8%B0-0A9BD6?style=for-the-badge&logo=bookstack&logoColor=white"></a>
+  <br><sub>사용법 전체와 단축키는 온라인 도움말에 있습니다.</sub>
 </p>
+
+<br>
 
 <p align="center">
   <picture>

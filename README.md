@@ -19,11 +19,14 @@
   English | <a href="README.ja.md">日本語</a> | <a href="README.ko.md">한국어</a>
 </p>
 
+<br>
+
 <p align="center">
-  <a href="https://samek86.github.io/maguro/help/en/">Online help</a>
-  · <a href="https://samek86.github.io/maguro/help/ja/">日本語</a>
-  · <a href="https://samek86.github.io/maguro/help/">한국어</a>
+  <a href="https://samek86.github.io/maguro/help/en/"><img alt="Open the online help" src="https://img.shields.io/badge/Open%20the%20online%20help-0A9BD6?style=for-the-badge&logo=bookstack&logoColor=white"></a>
+  <br><sub>The full guide and every shortcut are in the online help.</sub>
 </p>
+
+<br>
 
 <p align="center">
   <picture>
