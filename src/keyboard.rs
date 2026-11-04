@@ -137,6 +137,7 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
             if let Some(sv) = view_of::<IShellView>(a) {
                 _ = sv.Refresh();
             }
+            spin_refresh(a);
         }
         _ if addr || filt => return false,
         VK_C if ctrl && shift && !alt && list() => copy_paths(a),

@@ -108,6 +108,10 @@ pub(crate) unsafe fn draw_button(d: &DRAWITEMSTRUCT) {
         return draw_star(dc, rc, fg, Star::Plus, dpi);
     }
     if !on_main {
+        if let Some(turn) = (id == ID_UP).then(|| spin_turn(parent)).flatten() {
+            let back = if pressed || hot { blend(bg, ink, press_tint(tinted, pressed)) } else { bg };
+            return draw_spin(dc, rc, back, fg, icon_font, turn);
+        }
         return text(dc, rc, glyph(id), icon_font, fg, DT_CENTER);
     }
     let s = |v: i32| v * dpi / 96;
@@ -139,6 +143,89 @@ pub(crate) unsafe fn draw_button(d: &DRAWITEMSTRUCT) {
     if dirty {
         fill(dc, RECT { left: rc.right - s(10), top: rc.top + s(4), right: rc.right - s(4), bottom: rc.top + s(10) }, GREEN);
     }
+}
+
+// ---------- F5: the pane's up arrow turns into ↻ and spins ----------
+// One turn per second, steady. A press while it spins keeps it going at least half a turn more, and it always
+// stops on a whole turn, where ↑ comes back: pressed at 0 s, 0.9 s and 1.5 s, it stops at 2 s.
+const SPIN_TURN: Duration = Duration::from_millis(1000);
+
+pub(crate) unsafe fn spin_refresh(i: usize) {
+    let now = Instant::now();
+    let h = app(|a| {
+        let p = a.panes.get_mut(i)?.as_mut()?;
+        let start = match p.spin {
+            Some((start, end)) if now < end => start,
+            _ => now,
+        };
+        let need = (now + SPIN_TURN / 2 - start).as_nanos();
+        let turns = need.div_ceil(SPIN_TURN.as_nanos()).max(1) as u32;
+        p.spin = Some((start, start + SPIN_TURN * turns));
+        Some(p.hwnd)
+    });
+    if let Some(h) = h {
+        SetTimer(Some(h), TIMER_SPIN, 15, None);
+        spin_redraw(h);
+    }
+}
+
+pub(crate) unsafe fn spin_tick(h: HWND) {
+    let now = Instant::now();
+    let going = app(|a| {
+        let p = a.panes.iter_mut().flatten().find(|p| p.hwnd == h)?;
+        p.spin = p.spin.filter(|&(_, end)| now < end);
+        p.spin.map(|_| ())
+    });
+    if going.is_none() {
+        _ = KillTimer(Some(h), TIMER_SPIN);
+    }
+    spin_redraw(h);
+}
+
+unsafe fn spin_redraw(h: HWND) {
+    if let Ok(b) = GetDlgItem(Some(h), ID_UP) {
+        _ = InvalidateRect(Some(b), None, false);
+    }
+}
+
+// how far round the pane's spin is (0..1), None when it isn't spinning
+fn spin_turn(pane: HWND) -> Option<f32> {
+    let now = Instant::now();
+    let (start, end) = app(|a| a.panes.iter().flatten().find(|p| p.hwnd == pane)?.spin)?;
+    (now < end).then(|| (now - start).as_secs_f32() / SPIN_TURN.as_secs_f32() % 1.0)
+}
+
+// ↻ turned clockwise about its own ink centre (not its cell's, or it wobbles), drawn off-screen in one go
+unsafe fn draw_spin(dc: HDC, rc: RECT, back: u32, ink: u32, font: HFONT, turn: f32) {
+    let (w, h) = (rc.right - rc.left, rc.bottom - rc.top);
+    let mem = CreateCompatibleDC(Some(dc));
+    let bmp = CreateCompatibleBitmap(dc, w, h);
+    let old_bmp = SelectObject(mem, bmp.into());
+    fill(mem, RECT { left: 0, top: 0, right: w, bottom: h }, back);
+    let old_font = SelectObject(mem, font.into());
+    let g: Vec<u16> = ICON_REFRESH.encode_utf16().collect();
+    let one = FIXED { fract: 0, value: 1 };
+    let unit = MAT2 { eM11: one, eM22: one, ..Default::default() };
+    let mut gm = GLYPHMETRICS::default();
+    GetGlyphOutlineW(mem, g[0] as u32, GGO_METRICS, &mut gm, 0, None, &unit);
+    // ink centre from the pen at the baseline (y down)
+    let cx = gm.gmptGlyphOrigin.x as f32 + gm.gmBlackBoxX as f32 / 2.0;
+    let cy = -(gm.gmptGlyphOrigin.y as f32) + gm.gmBlackBoxY as f32 / 2.0;
+    let (sn, cs) = (turn * std::f32::consts::TAU).sin_cos();
+    let (ox, oy) = (w as f32 / 2.0, h as f32 / 2.0);
+    SetGraphicsMode(mem, GM_ADVANCED);
+    let xf = XFORM { eM11: cs, eM12: sn, eM21: -sn, eM22: cs, eDx: ox - cx * cs + cy * sn, eDy: oy - cx * sn - cy * cs };
+    _ = SetWorldTransform(mem, &xf);
+    SetTextAlign(mem, TA_BASELINE | TA_LEFT);
+    SetBkMode(mem, TRANSPARENT);
+    SetTextColor(mem, cref(ink));
+    _ = TextOutW(mem, 0, 0, &g);
+    _ = ModifyWorldTransform(mem, None, MWT_IDENTITY);
+    _ = BitBlt(dc, rc.left, rc.top, w, h, Some(mem), 0, 0, SRCCOPY);
+    SelectObject(mem, old_font);
+    SelectObject(mem, old_bmp);
+    _ = DeleteObject(bmp.into());
+    _ = DeleteDC(mem);
 }
 
 // A chubby five-point star (inner radius 0.56 of the outer one) with softly rounded tips, as 0..=255

@@ -46,6 +46,7 @@ pub(crate) const TIMER_STATUS: usize = 1;
 pub(crate) const TIMER_FILTER: usize = 2;
 pub(crate) const TIMER_REVEAL: usize = 3;
 pub(crate) const TIMER_SETTLE: usize = 4; // on a pane: narrow column widths going back on after a folder change
+pub(crate) const TIMER_SPIN: usize = 6; // on a pane: next frame of the F5 spin
 pub(crate) const TIMER_FOCUS: usize = 5; // after a click brought Grids back: that click is handled, focus still nowhere?
 // tree-view messages (the sidebar's SysTreeView32)
 pub(crate) const TVM_GETNEXTITEM: u32 = 0x110A;
@@ -153,6 +154,7 @@ pub(crate) const ICON_FILTER: &str = "\u{E71C}";
 pub(crate) const ICON_CLOSE: &str = "\u{E711}";
 pub(crate) const ICON_PREV: &str = "\u{E76B}";
 pub(crate) const ICON_NEXT: &str = "\u{E76C}";
+pub(crate) const ICON_REFRESH: &str = "\u{E72C}";
 
 pub(crate) fn glyph(id: i32) -> &'static str {
     match id {

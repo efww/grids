@@ -14,6 +14,7 @@ pub(crate) struct Pane {
     pub(crate) icon: i32,   // current folder's icon in the system image list, -1 = none (yet)
     pub(crate) ticket: u32, // its lookup (WM_PANE_ICON); 0 = none asked
     pub(crate) slot: Arc<AtomicUsize>, // where it is now (swap_panes moves it); its Explorer callbacks read it
+    pub(crate) spin: Option<(Instant, Instant)>, // F5: its up arrow spins as ↻ from .0, stopping on a whole turn at .1
 }
 
 pub(crate) struct App {
