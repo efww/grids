@@ -820,11 +820,16 @@ pub(crate) enum Key {
     OpenInEditor,
     OpenInTerminalAdministrator,
     CloseTabsToTheRight,
+    FavMgrHint,
+    FavExpandAll,
+    FavManage,
+    FavMoveUp,
+    FavMoveDown,
 }
 
-pub(crate) const KEY_COUNT: usize = 817;
+pub(crate) const KEY_COUNT: usize = 822;
 
-const _: () = assert!((Key::CloseTabsToTheRight as usize) + 1 == KEY_COUNT);
+const _: () = assert!((Key::FavMoveDown as usize) + 1 == KEY_COUNT);
 
 pub(crate) const EN: [&str; KEY_COUNT] = [
     "About",
@@ -1643,6 +1648,11 @@ pub(crate) const EN: [&str; KEY_COUNT] = [
     "Open in editor",
     "Open in Terminal (Administrator)",
     "Close tabs to the right",
+    "Add a folder or a group from the toolbar. Removing a row leaves the original folder in place.",
+    "Expand all",
+    "Manage favourites\u{2026}",
+    "Move up",
+    "Move down",
 
 ];
 
@@ -2464,6 +2474,11 @@ pub(crate) const KEY_ID: [&str; KEY_COUNT] = [
     "open_in_editor",
     "open_in_terminal_administrator",
     "close_tabs_to_the_right",
+    "fav_mgr_hint",
+    "fav_expand_all",
+    "fav_manage",
+    "fav_move_up",
+    "fav_move_down",
 
 ];
 

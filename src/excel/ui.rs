@@ -444,17 +444,25 @@ unsafe fn paint(h: HWND) {
     let hot = HOT.with(|c| c.get());
     let font = dialog_font();
     let icon = icon_font();
-    let accent = crate::settings::chrome_color();
     crate::buffered(h, |dc, rc| {
-        crate::fill(dc, rc, crate::pal().card);
+        crate::paint_window(dc, rc);
         let l = lay(rc.right - rc.left, rc.bottom - rc.top, dpi);
+        let ground = crate::ui_tokens().bg;
         for (i, id) in check_ids().into_iter().enumerate() {
             let on = pref_get(prefs, id);
             let tick = if on { crate::shell::ctxmenu::Tick::On } else { crate::shell::ctxmenu::Tick::Off };
-            crate::draw_tick(dc, l.marks[i], tick, accent, dpi, icon, crate::pal().card, hot == id);
+            crate::draw_tick(dc, l.marks[i], tick, crate::ACCENT, dpi, icon, ground, hot == id);
             crate::text(dc, l.labels[i], check_label(id), font, crate::pal().text, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         }
     });
+}
+
+unsafe fn draw_btn(d: &DRAWITEMSTRUCT) {
+    let parent = GetParent(d.hwndItem).unwrap_or(d.hwndItem);
+    let dpi = GetDpiForWindow(parent).max(96) as i32;
+    let kind = if d.CtlID as i32 == ID_OK { crate::ButtonKind::Primary } else { crate::ButtonKind::Secondary };
+    let visual = crate::visual_from_item(d.itemState.0, crate::app(|a| a.hover) == d.hwndItem);
+    crate::paint_button(d.hDC, d.rcItem, kind, visual, &crate::text_of(d.hwndItem), dialog_font(), dpi, crate::ui_tokens().bg, crate::FocusRing::Inside);
 }
 
 fn hit_check(l: &Lay, x: i32, y: i32) -> i32 {
@@ -560,7 +568,7 @@ unsafe fn proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
         }
         WM_ERASEBKGND => return LRESULT(1),
         WM_DRAWITEM => {
-            crate::settings::draw_btn(&*(lp.0 as *const DRAWITEMSTRUCT));
+            draw_btn(&*(lp.0 as *const DRAWITEMSTRUCT));
             return LRESULT(1);
         }
         WM_MOUSEMOVE => {

@@ -45,10 +45,11 @@ pub(crate) unsafe fn set_entries(items: &[(String, bool)], add: bool) {
 /// The tree changed. Every window, the Ctrl+B list, and the settings page read it.
 pub(crate) unsafe fn favs_changed() {
     publish_shared();
-    let (pop, dpi, n) = app(|a| (a.fav_popup, a.dpi, visible_rows(&a.s.tree).len()));
+    let (pop, dpi, rows) = app(|a| (a.fav_popup, a.dpi, visible_rows(&a.s.tree)));
     if !pop.0.is_null() && IsWindow(Some(pop)).as_bool() {
-        let g = fav_geo(n.max(1), dpi);
+        let g = fav_geo(&rows, dpi);
         _ = SetWindowPos(pop, None, 0, 0, g.w, g.h, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+        clip_fav_popup(pop, g.w, g.h, dpi);
         _ = InvalidateRect(Some(pop), None, false);
     }
     settings::refresh();
@@ -1388,19 +1389,66 @@ pub(crate) fn shell_parse(it: &IShellItem) -> String {
 pub(crate) struct FavGeo {
     pub(crate) w: i32,
     pub(crate) h: i32,
-    pub(crate) rows: Vec<(RECT, RECT)>, // (row, remove ✕)
+    /// Visible row and its remove control. Index matches [`fav_rows`].
+    pub(crate) rows: Vec<(RECT, RECT)>,
+    /// Hairline before a group that is not the first row.
+    pub(crate) seps: Vec<RECT>,
+    /// Hairline above the manage item.
+    pub(crate) rule: RECT,
+    pub(crate) manage: RECT,
+    /// Shown when the tree has nothing visible. The manage item stays under it.
+    pub(crate) empty: Option<RECT>,
 }
 
-pub(crate) fn fav_geo(n: usize, dpi: i32) -> FavGeo {
+/// Compact list. A group is shorter than a folder row. The manage item is one past the last row.
+pub(crate) fn fav_geo(rows: &[FavRow], dpi: i32) -> FavGeo {
+    let dpi = dpi.max(96);
     let s = |v: i32| v * dpi / 96;
-    let (pad, rh, w) = (s(6), s(40), s(380));
-    let rows = (0..n as i32)
-        .map(|k| {
-            let row = RECT { left: pad, top: pad + k * rh, right: w - pad, bottom: pad + (k + 1) * rh };
-            (row, RECT { left: row.right - s(32), ..row })
-        })
-        .collect();
-    FavGeo { w, h: 2 * pad + n.max(1) as i32 * rh, rows }
+    let w = s(280);
+    let pad = s(6);
+    let mut y = pad;
+    let empty = if rows.is_empty() {
+        let r = RECT { left: pad, top: y, right: w - pad, bottom: y + s(26) };
+        y = r.bottom;
+        Some(r)
+    } else {
+        None
+    };
+    let mut placed = Vec::with_capacity(rows.len());
+    let mut seps = Vec::new();
+    for (k, row) in rows.iter().enumerate() {
+        if row.group && k > 0 {
+            y += s(4);
+            let sep = RECT { left: pad, top: y, right: w - pad, bottom: y + 1 };
+            seps.push(sep);
+            y = sep.bottom + s(4);
+        }
+        let rh = if row.group { s(20) } else { s(26) };
+        let rect = RECT { left: pad, top: y, right: w - pad, bottom: y + rh };
+        let remove = RECT { left: rect.right - s(28), top: rect.top, right: rect.right, bottom: rect.bottom };
+        placed.push((rect, remove));
+        y = rect.bottom;
+    }
+    y += s(4);
+    let rule = RECT { left: pad, top: y, right: w - pad, bottom: y + 1 };
+    y = rule.bottom + s(2);
+    let manage = RECT { left: pad, top: y, right: w - pad, bottom: y + s(28) };
+    y = manage.bottom + pad;
+    FavGeo { w, h: y, rows: placed, seps, rule, manage, empty }
+}
+
+/// Win11 would otherwise replace this popup's corners. The region keeps a 4 DIP radius.
+unsafe fn clip_fav_popup(h: HWND, w: i32, hgt: i32, dpi: i32) {
+    let rad = (4 * dpi.max(96) / 96).max(1);
+    let rgn = CreateRoundRectRgn(0, 0, w.saturating_add(1), hgt.saturating_add(1), rad.saturating_mul(2), rad.saturating_mul(2));
+    if rgn.is_invalid() {
+        return;
+    }
+    // Non-zero means the system owns the region. Zero leaves it with us.
+    if SetWindowRgn(h, Some(rgn), true) != 0 {
+        return;
+    }
+    let _ = DeleteObject(rgn.into());
 }
 
 fn fav_rows() -> Vec<FavRow> {
@@ -1430,15 +1478,15 @@ unsafe fn fav_popup_anchor(main: HWND) -> RECT {
 }
 
 pub(crate) unsafe fn open_favs() {
-    let (main, dpi, open, closed, n) = app(|a| {
+    let (main, dpi, open, closed, rows) = app(|a| {
         a.s.ensure_fav_tree();
-        (a.main, a.dpi, a.fav_popup, a.fav_closed, visible_rows(&a.s.tree).len())
+        (a.main, a.dpi, a.fav_popup, a.fav_closed, visible_rows(&a.s.tree))
     });
     // a click on the button first deactivates (closes) the popup; don't reopen it right away
     if !open.0.is_null() || closed.is_some_and(|t| t.elapsed().as_millis() < 300) {
         return;
     }
-    let g = fav_geo(n, dpi);
+    let g = fav_geo(&rows, dpi);
     let rc = fav_popup_anchor(main);
     let prev = GetFocus();
     app(|a| (a.fav_hot, a.fav_prev) = (None, prev));
@@ -1449,6 +1497,7 @@ pub(crate) unsafe fn open_favs() {
     };
     let square = DWMWCP_DONOTROUND;
     _ = DwmSetWindowAttribute(h, DWMWA_WINDOW_CORNER_PREFERENCE, &square as *const _ as _, 4);
+    clip_fav_popup(h, g.w, g.h, dpi);
     app(|a| a.fav_popup = h);
 }
 
@@ -1457,40 +1506,71 @@ pub(crate) unsafe fn paint_favs(h: HWND) {
         a.s.ensure_fav_tree();
         (visible_rows(&a.s.tree), a.fav_hot, a.dpi, a.font, a.small_font, a.icon_font)
     });
-    let g = fav_geo(rows.len(), dpi);
-    let s = |v: i32| v * dpi / 96;
+    let g = fav_geo(&rows, dpi);
+    let s = |v: i32| v * dpi.max(96) / 96;
+    let t = ui_tokens();
     buffered(h, |dc, rc| {
-        fill(dc, rc, pal().card);
-        frame(dc, rc, 1, pal().line);
-        if rows.is_empty() {
-            text(dc, rc, tr(crate::Key::NoFavouritesYetAddOneWithIn), font, pal().sub, DT_CENTER);
+        let rad = s(4).max(1);
+        aa_rfill(dc, rc, rad, t.bg, Some(t.line), t.bg);
+        for sep in &g.seps {
+            fill(dc, *sep, t.line);
+        }
+        fill(dc, g.rule, t.line);
+        if let Some(empty) = g.empty {
+            text(dc, empty, tr(crate::Key::NoFavouritesYetAddOneWithIn), small, t.sub, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         }
         for (k, (f, (row, remove))) in rows.iter().zip(&g.rows).enumerate() {
-            if hot.is_some_and(|(i, _)| i == k) {
-                fill(dc, *row, pal().pill);
-                let x_on = hot == Some((k, true));
-                text(dc, *remove, "\u{E711}", icon_font, if x_on { pal().text } else { pal().sub }, DT_CENTER);
+            let on = hot.is_some_and(|(i, _)| i == k);
+            if on {
+                fill(dc, *row, t.sel_mist());
+                if !f.group {
+                    let inset = s(3).min((row.bottom - row.top) / 4);
+                    let bar = RECT {
+                        left: row.left,
+                        top: row.top + inset,
+                        right: row.left + s(3).max(2),
+                        bottom: row.bottom - inset,
+                    };
+                    fill(dc, bar, ACCENT);
+                }
             }
-            let indent = s(14) * f.depth.min(6) as i32;
-            let icon = RECT { left: row.left + s(6) + indent, right: row.left + s(28) + indent, ..*row };
-            let glyph = if f.file { "\u{E8A5}" } else { "\u{E8B7}" };
-            text(dc, icon, glyph, icon_font, pal().sub, DT_CENTER);
-            let line = |top: i32, hgt: i32| RECT { left: icon.right + s(6), right: remove.left - s(4), top, bottom: top + hgt };
-            let label = if f.name.is_empty() { short_name(&f.path) } else { f.name.clone() };
-            let ink = if !f.group && known_missing(&f.path) { pal().sub } else { pal().text };
-            text(dc, line(row.top + s(3), s(19)), &label, font, ink, DT_LEFT);
-            let sub = if f.group {
-                tr(crate::Key::Group)
+            let indent = s(12) * f.depth.min(6) as i32;
+            let label_right = remove.left - s(2);
+            if f.group {
+                let chev = RECT { left: row.left + s(4) + indent, right: row.left + s(20) + indent, ..*row };
+                let mark = if f.open { "\u{E70D}" } else { "\u{E76C}" };
+                text(dc, chev, mark, icon_font, t.sub, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                let name = RECT { left: chev.right + s(2), right: label_right, ..*row };
+                text(dc, name, &f.name, small, t.sub, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
             } else {
-                f.path.as_str()
-            };
-            text(dc, line(row.top + s(21), s(16)), sub, small, pal().sub, DT_LEFT | DT_PATH_ELLIPSIS);
+                let icon = RECT { left: row.left + s(8) + indent, right: row.left + s(26) + indent, ..*row };
+                let glyph = if f.file { "\u{E8A5}" } else { "\u{E8B7}" };
+                text(dc, icon, glyph, icon_font, t.sub, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                let name = if f.name.is_empty() { short_name(&f.path) } else { f.name.clone() };
+                let ink = if known_missing(&f.path) { t.sub } else { t.text };
+                let label = RECT { left: icon.right + s(4), right: label_right, ..*row };
+                text(dc, label, &name, font, ink, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+            }
+            if on {
+                let x_on = hot == Some((k, true));
+                text(dc, *remove, "\u{E711}", icon_font, if x_on { t.text } else { t.sub }, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            }
         }
+        if hot.is_some_and(|(i, _)| i == rows.len()) {
+            fill(dc, g.manage, t.sel_mist());
+        }
+        let manage = RECT { left: g.manage.left + s(8), ..g.manage };
+        text(dc, manage, tr(crate::Key::FavManage), font, ACCENT, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     });
 }
 
+/// Row index, and whether the pointer is on that row's remove mark.
+/// The manage item is `rows.len()` and never reports the remove mark.
 pub(crate) fn fav_hit(g: &FavGeo, x: i32, y: i32) -> Option<(usize, bool)> {
     let inside = |r: &RECT| x >= r.left && x < r.right && y >= r.top && y < r.bottom;
+    if inside(&g.manage) {
+        return Some((g.rows.len(), false));
+    }
     g.rows.iter().position(|(row, _)| inside(row)).map(|k| (k, inside(&g.rows[k].1)))
 }
 
@@ -1500,7 +1580,7 @@ pub(crate) extern "system" fn fav_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM
 fn fav_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     unsafe {
         bind_hwnd(h);
-        let g = fav_geo(fav_rows().len(), app(|a| a.dpi));
+        let g = fav_geo(&fav_rows(), app(|a| a.dpi));
         match msg {
             WM_PAINT => paint_favs(h),
             WM_ERASEBKGND => return LRESULT(1),
@@ -1527,8 +1607,14 @@ fn fav_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                     }
                 };
                 let open = |k: usize| {
-                    let row = fav_rows().get(k).cloned();
-                    let Some(row) = row else { return };
+                    let rows = fav_rows();
+                    if k >= rows.len() {
+                        let main = app(|a| a.main);
+                        _ = DestroyWindow(h);
+                        open_fav_manager(main);
+                        return;
+                    }
+                    let Some(row) = rows.get(k).cloned() else { return };
                     if row.group {
                         app(|a| {
                             toggle_open(&mut a.s.tree, &row.id);
@@ -1549,6 +1635,8 @@ fn fav_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                     return LRESULT(0);
                 }
                 let (n, cur) = (fav_rows().len(), app(|a| a.fav_hot.map(|(k, _)| k)));
+                // The manage item sits one past the last folder, so the list is never key-empty.
+                let total = n + 1;
                 match VIRTUAL_KEY(wp.0 as u16) {
                     VK_ESCAPE => {
                         let (main, prev, active) = app(|a| (a.main, a.fav_prev, a.s.active));
@@ -1560,16 +1648,18 @@ fn fav_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                             focus_view(active);
                         }
                     }
-                    _ if n == 0 => {}
                     k @ (VK_DOWN | VK_UP) => {
-                        let next = if k == VK_DOWN { cur.map_or(0, |k| (k + 1) % n) } else { cur.map_or(n - 1, |k| (k + n - 1) % n) };
+                        let next = if k == VK_DOWN { cur.map_or(0, |i| (i + 1) % total) } else { cur.map_or(total - 1, |i| (i + total - 1) % total) };
                         app(|a| a.fav_hot = Some((next, false)));
                         _ = InvalidateRect(Some(h), None, false);
                     }
                     VK_RETURN => if let Some(k) = cur { open(k) },
-                    VK_DELETE => if let Some(k) = cur {
+                    VK_DELETE => if let Some(k) = cur.filter(|k| *k < n) {
                         remove(k);
-                        app(|a| a.fav_hot = if n > 1 { Some((k.min(n - 2), false)) } else { None });
+                        let left = n - 1;
+                        app(|a| {
+                            a.fav_hot = if left > 0 { Some((k.min(left - 1), false)) } else { Some((0, false)) };
+                        });
                     },
                     _ => {}
                 }
@@ -1693,6 +1783,61 @@ pub(crate) unsafe fn select_new_folder(i: usize, name: &str) -> bool {
         || sv.SelectItem(pidl, (SVSI_SELECT.0 | SVSI_DESELECTOTHERS.0 | SVSI_ENSUREVISIBLE.0 | SVSI_FOCUSED.0) as u32).is_ok();
     CoTaskMemFree(Some(pidl as _));
     ok
+}
+
+#[cfg(test)]
+mod geo_tests {
+    use super::{fav_geo, fav_hit};
+    use crate::session::{FavRow, RowKind};
+
+    fn row(group: bool, depth: u8) -> FavRow {
+        FavRow {
+            id: vec![depth as usize],
+            depth,
+            group,
+            file: false,
+            open: group,
+            name: if group { "Group".into() } else { "Folder".into() },
+            path: if group { String::new() } else { r"C:\folder".into() },
+            kind: RowKind::Tree,
+        }
+    }
+
+    #[test]
+    fn empty_list_still_offers_manage() {
+        let g = fav_geo(&[], 96);
+        assert_eq!(g.w, 280);
+        assert!(g.rows.is_empty());
+        assert!(g.seps.is_empty());
+        let empty = g.empty.expect("empty copy");
+        assert!(g.rule.top >= empty.bottom);
+        assert!(g.manage.top >= g.rule.bottom);
+        assert!(g.h > g.manage.bottom);
+        let y = (g.manage.top + g.manage.bottom) / 2;
+        assert_eq!(fav_hit(&g, 40, y), Some((0, false)));
+    }
+
+    #[test]
+    fn groups_leaves_and_manage_stack() {
+        let rows = vec![row(true, 0), row(false, 1), row(true, 0)];
+        let g = fav_geo(&rows, 96);
+        assert_eq!(g.rows.len(), 3);
+        assert!(g.empty.is_none());
+        assert_eq!(g.rows[0].0.bottom - g.rows[0].0.top, 20);
+        assert_eq!(g.rows[1].0.bottom - g.rows[1].0.top, 26);
+        assert_eq!(g.rows[2].0.bottom - g.rows[2].0.top, 20);
+        assert_eq!(g.seps.len(), 1);
+        assert!(g.seps[0].top >= g.rows[1].0.bottom);
+        assert!(g.seps[0].bottom <= g.rows[2].0.top);
+        assert!(g.manage.top >= g.rows[2].0.bottom);
+        assert!(g.manage.top >= g.rule.bottom);
+        let leaf = g.rows[1].0;
+        assert_eq!(fav_hit(&g, leaf.left + 4, (leaf.top + leaf.bottom) / 2), Some((1, false)));
+        let mark = g.rows[1].1;
+        assert_eq!(fav_hit(&g, (mark.left + mark.right) / 2, (mark.top + mark.bottom) / 2), Some((1, true)));
+        let y = (g.manage.top + g.manage.bottom) / 2;
+        assert_eq!(fav_hit(&g, (g.manage.left + g.manage.right) / 2, y), Some((3, false)));
+    }
 }
 
 #[cfg(test)]

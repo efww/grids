@@ -80,8 +80,8 @@ fn sc(dpi: i32, v: i32) -> i32 {
 /// Settings search frame, DIP at 96 DPI. The rect runs from `SEARCH_TOP_DIP` to 44.
 const SEARCH_TOP_DIP: i32 = 12;
 const SEARCH_FRAME_DIP: i32 = 32;
-/// Gap between that frame and the borderless edit, and the corner radius. The favourites
-/// search box uses the same pair. The name prompt uses the token field instead.
+/// Gap between that frame and the borderless edit, and the corner radius.
+/// The name prompt uses the token field. The favourites manager search uses the shared field tokens.
 pub(crate) const FIELD_INSET_DIP: i32 = 2;
 pub(crate) const FIELD_RADIUS_DIP: i32 = 4;
 

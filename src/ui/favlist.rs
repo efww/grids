@@ -257,7 +257,8 @@ pub(crate) unsafe fn paint_fav_head(dc: HDC, r: RECT, dpi: i32, font: HFONT) {
 }
 
 /// `show_chevron` draws an open/closed mark on groups and shifts the icon. Settings passes false.
-pub(crate) unsafe fn paint_fav_row(dc: HDC, row: Option<&FavRow>, r: RECT, dpi: i32, font: HFONT, small: HFONT, icon_font: HFONT, empty: bool, show_chevron: bool) {
+/// `actions` keeps the right side clear for the settings rename and delete buttons.
+pub(crate) unsafe fn paint_fav_row(dc: HDC, row: Option<&FavRow>, r: RECT, dpi: i32, font: HFONT, small: HFONT, icon_font: HFONT, empty: bool, show_chevron: bool, actions: bool) {
     let dpi = dpi.max(96);
     let s = |v: i32| px(dpi, v);
     if empty {
@@ -297,7 +298,7 @@ pub(crate) unsafe fn paint_fav_row(dc: HDC, row: Option<&FavRow>, r: RECT, dpi: 
     let name_ink = if !row.group && known_missing(&row.path) { pal().sub } else { pal().text };
     text(dc, name_r, &row.name, font, name_ink, DT_LEFT);
     // Explorer rows have no rename or delete button, so the path can use that space.
-    let reserve = if row.in_tree() { s(180) } else { s(12) };
+    let reserve = if actions && row.in_tree() { s(180) } else { s(12) };
     let path_r = RECT { left: name_right + s(8), right: r.right - reserve, ..r };
     let path = if !row.group {
         row.path.clone()

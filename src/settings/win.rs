@@ -967,7 +967,7 @@ unsafe fn draw_ctx_sub(dc: HDC, rect: RECT, mark: RECT, bit: u8, tick: crate::sh
 }
 
 unsafe fn draw_fav_row(dc: HDC, row: Option<&crate::FavRow>, r: RECT, sn: &Snap, empty: bool) {
-    crate::paint_fav_row(dc, row, r, sn.dpi.max(96), sn.font, sn.small, sn.icon, empty, false);
+    crate::paint_fav_row(dc, row, r, sn.dpi.max(96), sn.font, sn.small, sn.icon, empty, false, true);
 }
 
 unsafe fn draw_key_row(dc: HDC, i: usize, r: RECT, change: RECT, reset: RECT, sn: &Snap) {
@@ -1045,8 +1045,8 @@ unsafe fn draw_field(dc: HDC, r: RECT, dpi: i32, ground: u32) {
 }
 
 
-/// Settings footer and in-card buttons. About and Excel still share this painter.
-/// The name prompt uses [`crate::paint_button`] so a theme accent cannot tint it.
+/// Settings footer and in-card buttons. The name prompt, About, and Excel tidy use
+/// [`crate::paint_button`] so a theme accent cannot tint them.
 pub(crate) unsafe fn draw_btn(d: &DRAWITEMSTRUCT) {
     let id = d.CtlID as i32;
     let dis = d.itemState.0 & 4 != 0;
@@ -2211,13 +2211,21 @@ unsafe fn about_metrics(cw: i32, ch: i32, dpi: i32) -> AboutLay {
     about_lay(cw, ch, dpi, desc_h, lic_h, repo_h)
 }
 
+unsafe fn draw_about_btn(d: &DRAWITEMSTRUCT) {
+    let parent = GetParent(d.hwndItem).unwrap_or(d.hwndItem);
+    let dpi = GetDpiForWindow(parent).max(96) as i32;
+    let font = ask_font();
+    let visual = crate::visual_from_item(d.itemState.0, app(|a| a.hover) == d.hwndItem);
+    crate::paint_button(d.hDC, d.rcItem, crate::ButtonKind::Primary, visual, &crate::text_of(d.hwndItem), font, dpi, crate::ui_tokens().bg, crate::FocusRing::Inside);
+}
+
 unsafe fn paint_about(h: HWND) {
     let dpi = GetDpiForWindow(h).max(96) as i32;
     let copy = live_about();
     crate::buffered(h, |dc, rc| {
         let cw = rc.right - rc.left;
         let ch = rc.bottom - rc.top;
-        crate::fill(dc, rc, crate::pal().card);
+        crate::paint_window(dc, rc);
         let lay = about_metrics(cw, ch, dpi);
         let font = ask_font();
         let small = app(|a| a.small_font);
@@ -2272,7 +2280,7 @@ unsafe fn about_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT
         }
         WM_ERASEBKGND => return LRESULT(1),
         WM_DRAWITEM => {
-            draw_btn(&*(lp.0 as *const DRAWITEMSTRUCT));
+            draw_about_btn(&*(lp.0 as *const DRAWITEMSTRUCT));
             return LRESULT(1);
         }
         WM_COMMAND => {
