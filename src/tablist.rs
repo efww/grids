@@ -1,4 +1,5 @@
 //! Tab list: every window tab, its layout, and the folder open in each pane.
+//! A pane with several pane tabs lists those folders indented under the pane.
 //! Folder chips use the same tracking tooltip as tab paths (`tip_enter`, below the chip, 4px gap).
 
 use std::mem::size_of;
@@ -23,11 +24,23 @@ const EM_SETCUEBANNER: u32 = 0x1501;
 const EN_CHANGE: u32 = 0x0300;
 
 #[derive(Clone)]
+struct Leaf {
+    /// Index in the pane's tab list. Empty folders are skipped, so this is not the row position.
+    index: usize,
+    name: String,
+    tip: String,
+    current: bool,
+}
+
+#[derive(Clone)]
 struct Chip {
     pane: usize,
     name: String,
     tip: String,
+    /// Header chip. One folder shows its path. Several folders show the pane number and the current name.
+    head: String,
     tint: u8,
+    tabs: Vec<Leaf>,
 }
 
 #[derive(Clone)]
@@ -60,7 +73,16 @@ struct RowBox {
 struct ChipBox {
     tab: usize,
     pane: usize,
+    /// None is the pane header. Some is that pane tab's index in the pane's list.
+    sub: Option<usize>,
     rect: RECT,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Arm {
+    tab: usize,
+    pane: usize,
+    sub: Option<usize>,
 }
 
 struct State {
@@ -100,6 +122,8 @@ struct State {
     shown: Vec<Row>,
     rows: Vec<RowBox>,
     chips: Vec<ChipBox>,
+    /// Header or pane-tab pressed. Released on the same target opens it.
+    arm: Option<Arm>,
     content_h: i32,
 }
 
@@ -137,6 +161,7 @@ impl State {
             shown: Vec::new(),
             rows: Vec::new(),
             chips: Vec::new(),
+            arm: None,
             content_h: 0,
         }
     }
@@ -176,6 +201,11 @@ pub(crate) fn chip_name(path: &str) -> String {
     folder_display_name(path)
 }
 
+/// Path when `tip` is one, otherwise the display name. This PC stays the localized name.
+pub(crate) fn path_text<'a>(name: &'a str, tip: &'a str) -> &'a str {
+    if tip.contains('\\') || tip.contains('/') { tip } else { name }
+}
+
 /// Tooltip for a chip: the pane's full path. This PC is the localized name. An empty path shows nothing.
 pub(crate) fn chip_tip(path: &str) -> String {
     if path.is_empty() {
@@ -212,6 +242,75 @@ pub(crate) fn place_chips(widths: &[i32], avail: i32, chip_h: i32, gap: i32) -> 
         }
         out.push(RECT { left: x, top: y, right: x + w, bottom: y + chip_h });
         x += w + gap;
+    }
+    out
+}
+
+/// One pane in the folder column. `leaves` is 0 when the header chip is the only folder.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PaneBlock {
+    pub header: i32,
+    pub leaves: usize,
+}
+
+/// A header chip or one indented pane-tab line, relative to the folder cell.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct BlockHit {
+    /// Index into the `blocks` slice.
+    pub group: usize,
+    /// None is the pane header. Some is the leaf's position under that header, not its session index.
+    pub leaf: Option<usize>,
+    pub rect: RECT,
+}
+
+/// Header chips wrap like [`place_chips`]. A pane with pane tabs takes its own rows:
+/// the header, then one full-width line per pane tab, indented. The next pane starts below that.
+pub(crate) fn place_pane_blocks(
+    blocks: &[PaneBlock],
+    avail: i32,
+    chip_h: i32,
+    leaf_h: i32,
+    gap: i32,
+    leaf_gap: i32,
+    indent: i32,
+) -> Vec<BlockHit> {
+    let avail = avail.max(1);
+    let indent = indent.clamp(0, (avail - 1).max(0));
+    let mut out = Vec::new();
+    let mut x = 0;
+    let mut y = 0;
+    for (group, b) in blocks.iter().enumerate() {
+        let w = b.header.max(1).min(avail);
+        let nested = b.leaves > 0;
+        if x > 0 && (nested || x + w > avail) {
+            x = 0;
+            y += chip_h + gap;
+        }
+        out.push(BlockHit {
+            group,
+            leaf: None,
+            rect: RECT { left: x, top: y, right: x + w, bottom: y + chip_h },
+        });
+        if nested {
+            let mut ly = y + chip_h + leaf_gap;
+            let left = indent;
+            let right = avail.max(left + 1);
+            for k in 0..b.leaves {
+                out.push(BlockHit {
+                    group,
+                    leaf: Some(k),
+                    rect: RECT { left, top: ly, right, bottom: ly + leaf_h },
+                });
+                ly += leaf_h;
+                if k + 1 < b.leaves {
+                    ly += leaf_gap;
+                }
+            }
+            y = ly + gap;
+            x = 0;
+        } else {
+            x += w + gap;
+        }
     }
     out
 }
@@ -329,7 +428,14 @@ fn status_caption(n: usize, q: &str) -> String {
 }
 
 fn row_ok(row: &Row, q: &str) -> bool {
-    let chips: Vec<(&str, &str)> = row.chips.iter().map(|c| (c.name.as_str(), c.tip.as_str())).collect();
+    let mut chips = Vec::new();
+    for c in &row.chips {
+        chips.push((c.name.as_str(), c.tip.as_str()));
+        // A pane-tab match keeps the whole window tab, including its other panes.
+        for leaf in &c.tabs {
+            chips.push((leaf.name.as_str(), leaf.tip.as_str()));
+        }
+    }
     row_matches(&row.name, &chips, q)
 }
 
@@ -356,7 +462,16 @@ fn snapshot() -> Vec<Row> {
             };
             let mut chips = Vec::new();
             for pane in 0..count {
-                let p = paths.get(pane).map(String::as_str).unwrap_or("");
+                let (list, cur) = if live {
+                    resolve_pane_tabs(
+                        a.s.pane_folders.get(pane).map(Vec::as_slice).unwrap_or(&[]),
+                        a.s.pane_cur.get(pane).copied().unwrap_or(0),
+                        paths.get(pane).map(String::as_str).unwrap_or(""),
+                    )
+                } else {
+                    t.pane_tabs(pane)
+                };
+                let p = list.get(cur).map(String::as_str).unwrap_or("");
                 if p.is_empty() {
                     continue;
                 }
@@ -364,7 +479,26 @@ fn snapshot() -> Vec<Row> {
                 if label.is_empty() {
                     continue;
                 }
-                chips.push(Chip { pane, name: label, tip: chip_tip(p), tint: tints.get(pane).copied().unwrap_or(0) });
+                let tip = chip_tip(p);
+                let mut tabs = Vec::new();
+                if list.len() > 1 {
+                    for (k, path) in list.iter().enumerate() {
+                        if path.is_empty() {
+                            continue;
+                        }
+                        let name = chip_name(path);
+                        if name.is_empty() {
+                            continue;
+                        }
+                        tabs.push(Leaf { index: k, name, tip: chip_tip(path), current: k == cur });
+                    }
+                    // One visible folder is the header chip. Nesting starts at two.
+                    if tabs.len() < 2 {
+                        tabs.clear();
+                    }
+                }
+                let head = if tabs.is_empty() { path_text(&label, &tip).to_string() } else { format!("{}  {label}", pane + 1) };
+                chips.push(Chip { pane, name: label, tip, head, tint: tints.get(pane).copied().unwrap_or(0), tabs });
             }
             rows.push(Row {
                 index: i,
@@ -545,7 +679,7 @@ pub(crate) unsafe fn on_key(vk: u16, ctrl: bool, shift: bool, alt: bool) -> bool
 unsafe fn open(main: HWND) {
     let dpi = GetDpiForWindow(main).max(96) as i32;
     let style = WS_OVERLAPPEDWINDOW | WS_VSCROLL | WS_CLIPCHILDREN | WS_VISIBLE;
-    let mut rc = RECT { left: 0, top: 0, right: sc(dpi, 560), bottom: sc(dpi, 500) };
+    let mut rc = RECT { left: 0, top: 0, right: sc(dpi, 840), bottom: sc(dpi, 500) };
     _ = AdjustWindowRectExForDpi(&mut rc, style, false, WINDOW_EX_STYLE(0), dpi as u32);
     let (ww, hh) = (rc.right - rc.left, rc.bottom - rc.top);
     let (x, y) = place(main, ww, hh);
@@ -765,22 +899,35 @@ unsafe fn layout(hwnd: HWND) {
     let avail = (folders_right - folders_left).max(1);
     let chip_h = sc(dpi, 16);
     let chip_gap = sc(dpi, 3);
+    let leaf_h = sc(dpi, 18);
+    let leaf_gap = sc(dpi, 2);
+    let indent = sc(dpi, 14);
 
     let mut y = 0;
     let mut boxes = Vec::new();
     let mut chips = Vec::new();
     for row in &shown {
-        let widths: Vec<i32> = row.chips.iter().map(|c| chip_width(dc, small, &c.name, dpi)).collect();
-        let placed = place_chips(&widths, avail, chip_h, chip_gap);
-        let block = placed.last().map(|r| r.bottom).unwrap_or(0);
+        // The folder column gets the width the name and layout columns do not use.
+        // A path chip grows up to that column instead of stopping at a fixed 108 DIP.
+        let blocks: Vec<PaneBlock> = row.chips.iter().map(|c| PaneBlock { header: chip_width(dc, small, &c.head, dpi, avail), leaves: c.tabs.len() }).collect();
+        let placed = place_pane_blocks(&blocks, avail, chip_h, leaf_h, chip_gap, leaf_gap, indent);
+        let block = placed.last().map(|r| r.rect.bottom).unwrap_or(0);
         let row_h = (block + sc(dpi, 4)).max(sc(dpi, 24));
-        let row_top = list.top + y; // client y before scroll; adjusted below
-        let _ = row_top;
         let top_off = if block == 0 { 0 } else { ((row_h - block) / 2).max(sc(dpi, 2)) };
-        for (chip, r) in row.chips.iter().zip(placed) {
+        for hit in &placed {
+            let Some(chip) = row.chips.get(hit.group) else { continue };
+            let sub = match hit.leaf {
+                None => None,
+                Some(k) => match chip.tabs.get(k) {
+                    Some(leaf) => Some(leaf.index),
+                    None => continue,
+                },
+            };
+            let r = hit.rect;
             chips.push(ChipBox {
                 tab: row.index,
                 pane: chip.pane,
+                sub,
                 rect: RECT {
                     left: folders_left + r.left,
                     top: r.top + top_off, // content-relative; scroll applied after
@@ -874,10 +1021,11 @@ unsafe fn layout(hwnd: HWND) {
     _ = SetScrollInfo(hwnd, SB_VERT, &info, false);
 }
 
-fn chip_width(dc: HDC, font: HFONT, name: &str, dpi: i32) -> i32 {
+/// Header chip width. `max_w` is the folder column, so a long path uses the wider list.
+fn chip_width(dc: HDC, font: HFONT, name: &str, dpi: i32, max_w: i32) -> i32 {
     let text = unsafe { text_px(dc, font, name) };
     let pad = sc(dpi, 4) + sc(dpi, 5) + sc(dpi, 7) + sc(dpi, 3);
-    (text + pad).clamp(sc(dpi, 20), sc(dpi, 108))
+    (text + pad).clamp(sc(dpi, 20), max_w.max(sc(dpi, 20)))
 }
 
 fn chip_dot(tint: u8) -> u32 {
@@ -938,6 +1086,26 @@ unsafe fn go() {
     }
 }
 
+/// Open that window tab, focus the pane, and select the pane tab when `sub` is one. Then dismiss.
+unsafe fn go_pane(tab: usize, pane: usize, sub: Option<usize>) {
+    end_name_edit(true);
+    hide_chip_tip();
+    let owner = with_st(|s| s.owner);
+    switch_tab(tab);
+    let n = app(|a| a.s.panes().max(1));
+    if pane < n {
+        set_active(pane);
+        if let Some(k) = sub {
+            pick_pane_tab(pane, k);
+        }
+    }
+    close();
+    if !owner.0.is_null() && IsWindow(Some(owner)).as_bool() {
+        bind_hwnd(owner);
+        focus_view(if pane < n { pane } else { active_pane() });
+    }
+}
+
 unsafe fn close_selected() {
     end_name_edit(true);
     let h = with_st(|s| s.hwnd);
@@ -972,13 +1140,14 @@ unsafe fn hide_chip_tip() {
     with_st(|s| s.chip_tip = now);
 }
 
-fn tip_key(tab: usize, pane: usize, tip: &str) -> u64 {
+fn tip_key(tab: usize, pane: usize, sub: Option<usize>, tip: &str) -> u64 {
     let mut h = 0xcbf29ce484222325u64;
     for b in tip.as_bytes() {
         h ^= *b as u64;
         h = h.wrapping_mul(0x100000001b3);
     }
-    h ^ ((tab as u64) << 48) ^ ((pane as u64) << 32)
+    let sub = sub.unwrap_or(0xFFFF) as u64;
+    h ^ ((tab as u64) << 48) ^ ((pane as u64) << 32) ^ (sub << 16)
 }
 
 unsafe fn show_chip_tip(x: i32, y: i32) {
@@ -986,7 +1155,7 @@ unsafe fn show_chip_tip(x: i32, y: i32) {
     if h.0.is_null() {
         return;
     }
-    let hit = inside(list, x, y).then(|| chips.into_iter().find(|c| inside(c.rect, x, y))).flatten();
+    let hit = inside(list, x, y).then(|| chips.into_iter().rev().find(|c| inside(c.rect, x, y))).flatten();
     let Some(chip) = hit else {
         if inst {
             hide_chip_tip();
@@ -996,16 +1165,29 @@ unsafe fn show_chip_tip(x: i32, y: i32) {
     let tip = snapshot()
         .into_iter()
         .find(|r| r.index == chip.tab)
-        .and_then(|r| r.chips.into_iter().find(|c| c.pane == chip.pane))
-        .map(|c| c.tip)
+        .and_then(|r| {
+            let c = r.chips.into_iter().find(|c| c.pane == chip.pane)?;
+            match chip.sub {
+                None => Some(c.tip),
+                Some(k) => c.tabs.into_iter().find(|t| t.index == k).map(|t| t.tip),
+            }
+        })
         .unwrap_or_default();
     let screen = tip_screen_rect(h, chip.rect);
-    let (now, _) = tip_enter(h, CHIP_TIP, tip_key(chip.tab, chip.pane, &tip), &tip, screen, TipSide::Below, inst);
+    let (now, _) = tip_enter(h, CHIP_TIP, tip_key(chip.tab, chip.pane, chip.sub, &tip), &tip, screen, TipSide::Below, inst);
     with_st(|s| s.chip_tip = now);
 }
 
 fn hit_btn(x: i32, y: i32) -> Option<u8> {
     with_st(|s| s.buttons.iter().find(|b| b.on && inside(b.rect, x, y)).map(|b| b.id))
+}
+
+fn hit_chip(x: i32, y: i32) -> Option<ChipBox> {
+    let (list, chips) = with_st(|s| (s.list, s.chips.clone()));
+    if !inside(list, x, y) {
+        return None;
+    }
+    chips.into_iter().rev().find(|c| inside(c.rect, x, y))
 }
 
 fn hit_row(x: i32, y: i32) -> Option<usize> {
@@ -1324,21 +1506,52 @@ unsafe fn paint_grid_icon(dc: HDC, r: RECT, heights: &[usize]) {
     }
 }
 
+unsafe fn paint_folder_text(dc: HDC, r: RECT, s: &str, font: HFONT, rgb: u32) {
+    if s.contains('\\') || s.contains('/') {
+        text_path(dc, r, s, font, rgb, DT_LEFT);
+    } else {
+        text(dc, r, s, font, rgb, DT_LEFT);
+    }
+}
+
 unsafe fn paint_chips(dc: HDC, row: &Row, st: &PaintSnap, ground: u32) {
     let dpi = st.dpi;
     let p = pal();
-    for (chip, spot) in row.chips.iter().zip(st.chips.iter().filter(|c| c.tab == row.index)) {
+    for spot in st.chips.iter().filter(|c| c.tab == row.index) {
         let r = spot.rect;
         if r.bottom <= st.list.top || r.top >= st.list.bottom {
             continue;
         }
-        aa_rfill(dc, r, sc(dpi, 2).max(1), p.pill, Some(p.line), ground);
-        let d = sc(dpi, 7);
-        let mid = (r.top + r.bottom) / 2;
-        let dot = RECT { left: r.left + sc(dpi, 4), top: mid - d / 2, right: r.left + sc(dpi, 4) + d, bottom: mid + d / 2 };
-        ellipse(dc, dot, chip_dot(chip.tint), None);
-        let text_r = RECT { left: dot.right + sc(dpi, 3), right: r.right - sc(dpi, 4), ..r };
-        text(dc, text_r, &chip.name, st.small, p.text, DT_LEFT);
+        let Some(chip) = row.chips.iter().find(|c| c.pane == spot.pane) else { continue };
+        match spot.sub {
+            None => {
+                aa_rfill(dc, r, sc(dpi, 2).max(1), p.pill, Some(p.line), ground);
+                let d = sc(dpi, 7);
+                let mid = (r.top + r.bottom) / 2;
+                let dot = RECT { left: r.left + sc(dpi, 4), top: mid - d / 2, right: r.left + sc(dpi, 4) + d, bottom: mid + d / 2 };
+                ellipse(dc, dot, chip_dot(chip.tint), None);
+                let text_r = RECT { left: dot.right + sc(dpi, 3), right: r.right - sc(dpi, 4), ..r };
+                paint_folder_text(dc, text_r, &chip.head, st.small, p.text);
+            }
+            Some(k) => {
+                let Some(leaf) = chip.tabs.iter().find(|t| t.index == k) else { continue };
+                let label = path_text(&leaf.name, &leaf.tip);
+                let bar = sc(dpi, 2).max(2);
+                let mark_w = sc(dpi, 14);
+                let text_r = RECT { left: r.left + bar + mark_w, right: r.right - sc(dpi, 4), ..r };
+                if leaf.current {
+                    let wash = blend(ground, crate::basket::CERULEAN, 0.18);
+                    aa_rfill(dc, r, sc(dpi, 2).max(1), wash, None, ground);
+                    fill(dc, RECT { right: r.left + bar, ..r }, crate::basket::CERULEAN);
+                    let mark = RECT { left: r.left + bar, right: r.left + bar + mark_w, ..r };
+                    text(dc, mark, "\u{E73E}", st.icon, crate::basket::CERULEAN, DT_CENTER);
+                    paint_folder_text(dc, text_r, label, st.bold, p.text);
+                } else {
+                    aa_rfill(dc, r, sc(dpi, 2).max(1), p.pill, Some(p.line), ground);
+                    paint_folder_text(dc, text_r, label, st.small, p.text);
+                }
+            }
+        }
     }
 }
 
@@ -1409,12 +1622,23 @@ fn tablist_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                 let (x, y) = xy(lp);
                 if let Some(id) = hit_btn(x, y) {
                     with_st(|s| {
+                        s.arm = None;
                         s.track.pointer_down(id);
                     });
                     SetCapture(h);
                     _ = InvalidateRect(Some(h), None, false);
+                } else if let Some(chip) = hit_chip(x, y) {
+                    with_st(|s| {
+                        s.sel = chip.tab;
+                        s.arm = Some(Arm { tab: chip.tab, pane: chip.pane, sub: chip.sub });
+                    });
+                    SetCapture(h);
+                    _ = InvalidateRect(Some(h), None, false);
                 } else if let Some(tab) = hit_row(x, y) {
-                    with_st(|s| s.sel = tab);
+                    with_st(|s| {
+                        s.sel = tab;
+                        s.arm = None;
+                    });
                     _ = InvalidateRect(Some(h), None, false);
                     let edit = with_st(|s| s.edit);
                     if !edit.0.is_null() {
@@ -1426,24 +1650,48 @@ fn tablist_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                 let (x, y) = xy(lp);
                 let over = hit_btn(x, y);
                 let effect = with_st(|s| s.track.pointer_up(over));
+                let arm = with_st(|s| s.arm.take());
                 if GetCapture() == h {
                     _ = ReleaseCapture();
                 }
-                match effect {
-                    TrackEffect::Click(GO) => go(),
-                    TrackEffect::Click(CLOSE_TAB) => close_selected(),
-                    TrackEffect::Click(DISMISS) => close(),
-                    _ => {}
+                let activated = match effect {
+                    TrackEffect::Click(GO) => {
+                        go();
+                        true
+                    }
+                    TrackEffect::Click(CLOSE_TAB) => {
+                        close_selected();
+                        false
+                    }
+                    TrackEffect::Click(DISMISS) => {
+                        close();
+                        true
+                    }
+                    _ => match (arm, hit_chip(x, y)) {
+                        (Some(arm), Some(chip)) if chip.tab == arm.tab && chip.pane == arm.pane && chip.sub == arm.sub => {
+                            go_pane(chip.tab, chip.pane, chip.sub);
+                            true
+                        }
+                        _ => false,
+                    },
+                };
+                if !activated && IsWindow(Some(h)).as_bool() {
+                    _ = InvalidateRect(Some(h), None, false);
                 }
-                _ = InvalidateRect(Some(h), None, false);
             }
             WM_LBUTTONDBLCLK => {
-                if hit_row(xy(lp).0, xy(lp).1).is_some() {
+                let (x, y) = xy(lp);
+                if let Some(chip) = hit_chip(x, y) {
+                    go_pane(chip.tab, chip.pane, chip.sub);
+                } else if hit_row(x, y).is_some() {
                     go();
                 }
             }
             WM_CAPTURECHANGED => {
-                let effect = with_st(|s| s.track.capture_lost());
+                let effect = with_st(|s| {
+                    s.arm = None;
+                    s.track.capture_lost()
+                });
                 if !matches!(effect, TrackEffect::None) {
                     _ = InvalidateRect(Some(h), None, false);
                 }
@@ -1752,6 +2000,91 @@ mod tests {
     }
 
     #[test]
+    fn a_single_folder_shows_its_path_and_a_pane_tab_match_keeps_the_window_tab() {
+        assert_eq!(path_text("docs", r"C:\Work\docs"), r"C:\Work\docs");
+        assert_eq!(path_text("This PC", "This PC"), "This PC");
+        let row = Row {
+            index: 3,
+            name: "Project".into(),
+            locked: false,
+            color: None,
+            heights: vec![2],
+            grid: "1×2".into(),
+            panes: 2,
+            chips: vec![Chip {
+                pane: 0,
+                name: "docs".into(),
+                tip: r"C:\Work\docs".into(),
+                head: "1  docs".into(),
+                tint: 0,
+                tabs: vec![
+                    Leaf { index: 0, name: "docs".into(), tip: r"C:\Work\docs".into(), current: true },
+                    Leaf { index: 1, name: "old".into(), tip: r"D:\archive\old".into(), current: false },
+                ],
+            }],
+            current: false,
+        };
+        assert!(row_ok(&row, "archive"));
+        assert!(row_ok(&row, "old"));
+        assert!(row_ok(&row, "project"));
+        assert!(!row_ok(&row, "missing"));
+    }
+
+    #[test]
+    fn pane_tabs_indent_under_their_pane_and_a_wide_path_keeps_its_width() {
+        let plain = [
+            PaneBlock { header: 40, leaves: 0 },
+            PaneBlock { header: 40, leaves: 0 },
+            PaneBlock { header: 40, leaves: 0 },
+        ];
+        let hits = place_pane_blocks(&plain, 100, 16, 18, 3, 2, 16);
+        let chips = place_chips(&[40, 40, 40], 100, 16, 3);
+        assert_eq!(hits.len(), chips.len());
+        for (hit, chip) in hits.iter().zip(&chips) {
+            assert_eq!(hit.leaf, None);
+            assert_eq!((hit.rect.left, hit.rect.top, hit.rect.right, hit.rect.bottom), (chip.left, chip.top, chip.right, chip.bottom));
+        }
+
+        // The old chip cap was 108 DIP. A measured path wider than that stays wide, up to the column.
+        let wide = place_pane_blocks(&[PaneBlock { header: 400, leaves: 0 }], 500, 16, 18, 3, 2, 16);
+        assert_eq!(wide.len(), 1);
+        assert_eq!(wide[0].rect.right - wide[0].rect.left, 400);
+
+        let nested = place_pane_blocks(
+            &[PaneBlock { header: 40, leaves: 0 }, PaneBlock { header: 50, leaves: 2 }, PaneBlock { header: 30, leaves: 0 }],
+            200,
+            16,
+            18,
+            4,
+            2,
+            16,
+        );
+        assert_eq!(nested[0].leaf, None);
+        assert_eq!((nested[0].rect.left, nested[0].rect.top), (0, 0));
+        // The pane with tabs starts on the next row, then its tabs are indented full-width lines.
+        assert_eq!(nested[1].leaf, None);
+        assert_eq!((nested[1].rect.left, nested[1].rect.top, nested[1].rect.bottom), (0, 20, 36));
+        assert_eq!(nested[2].leaf, Some(0));
+        assert_eq!((nested[2].rect.left, nested[2].rect.top, nested[2].rect.right, nested[2].rect.bottom), (16, 38, 200, 56));
+        assert_eq!(nested[3].leaf, Some(1));
+        assert_eq!((nested[3].rect.top, nested[3].rect.bottom), (58, 76));
+        assert_eq!(nested[3].group, 1);
+        assert_eq!((nested[4].group, nested[4].leaf, nested[4].rect.top), (2, None, 80));
+    }
+
+    #[test]
+    fn wider_client_gives_the_extra_width_to_the_folder_column() {
+        // 8 DIP of window padding and 1 DIP of card border on each side. Name, layout,
+        // and pane-count stay fixed, so the 280 DIP from 560 to 840 lands in the folder column.
+        let list = |client: i32| RECT { left: 0, top: 0, right: client - 16 - 2, bottom: 100 };
+        let folder = |c: (i32, i32, i32, i32, i32)| c.4 - c.3;
+        let narrow = cols(list(560), 96);
+        let wide = cols(list(840), 96);
+        assert_eq!(folder(wide) - folder(narrow), 280);
+        assert_eq!((narrow.0, narrow.1, narrow.2, narrow.3), (wide.0, wide.1, wide.2, wide.3));
+    }
+
+    #[test]
     fn footer_offers_f2_to_rename() {
         let s = tr(Key::TabListKeys);
         assert!(s.contains("{F2}"), "{s}");
@@ -1783,8 +2116,15 @@ mod tests {
 
     #[test]
     fn footer_shrinks_the_count_before_clipping_keys() {
-        // Default client is 560 DIP; the status bar is that minus 8 DIP of padding on each side.
-        // The count fits in what the keys leave, so nothing wraps and nothing is ellipsized.
+        // The client is 840 DIP. 8 DIP of padding on each side leaves 824 for the status bar.
+        // The count keeps its width; the keys stay on the right. The extra client width is the folder column.
+        let wide_bar = plan_footer(824, 192, &[70, 80, 70, 64], 8);
+        assert_eq!(wide_bar.rows, 1);
+        assert!(wide_bar.count_on_keys);
+        assert_eq!(wide_bar.count_w, 192);
+        assert_eq!(wide_bar.key_rows[0].width, 284);
+
+        // The old 560-wide bar (544 DIP) still fits the count beside the keys.
         let plan = plan_footer(544, 192, &[70, 80, 70, 64], 8);
         assert_eq!(plan.rows, 1);
         assert!(plan.count_on_keys);

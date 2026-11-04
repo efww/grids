@@ -136,6 +136,18 @@ impl Tab {
             session: String::new(),
         }
     }
+
+    /// Pane tabs for this window tab. Same rule as [`Session::pane_tab_list`]: the current
+    /// slot is `paths[i]`, and a pane with no list is just the folder on display.
+    pub(crate) fn pane_tabs(&self, i: usize) -> (Vec<String>, usize) {
+        if i >= MAXP {
+            return (Vec::new(), 0);
+        }
+        let folders = self.pane_folders.get(i).map(Vec::as_slice).unwrap_or(&[]);
+        let cur = self.pane_cur.get(i).copied().unwrap_or(0);
+        let path = self.paths.get(i).map(String::as_str).unwrap_or("");
+        resolve_pane_tabs(folders, cur, path)
+    }
 }
 
 fn pad_pane_folders(mut f: Vec<Vec<String>>) -> Vec<Vec<String>> {
@@ -1361,14 +1373,10 @@ impl Session {
         if i >= MAXP {
             return Vec::new();
         }
-        let mut t = self.pane_folders.get(i).cloned().unwrap_or_default();
+        let folders = self.pane_folders.get(i).map(Vec::as_slice).unwrap_or(&[]);
         let cur = self.pane_cur.get(i).copied().unwrap_or(0);
-        let path = self.paths.get(i).cloned().unwrap_or_default();
-        match cur {
-            k if t.len() > 1 && k < t.len() => t[k] = path,
-            _ => t = vec![path],
-        }
-        t
+        let path = self.paths.get(i).map(String::as_str).unwrap_or("");
+        resolve_pane_tabs(folders, cur, path).0
     }
 
     /// The folder on display in `src` becomes a new pane tab on `dst`, just after the tab on display, and is made current.
@@ -1580,6 +1588,18 @@ impl Session {
         if let Some(slot) = self.paths.get_mut(i) {
             *slot = path.to_string();
         }
+    }
+}
+
+/// `folders[cur]` is stale after a browse inside that tab. `path` is the folder on display.
+/// A single folder, or a current index past the list, is just `path`.
+pub(crate) fn resolve_pane_tabs(folders: &[String], cur: usize, path: &str) -> (Vec<String>, usize) {
+    if folders.len() > 1 && cur < folders.len() {
+        let mut t = folders.to_vec();
+        t[cur] = path.to_string();
+        (t, cur)
+    } else {
+        (vec![path.to_string()], 0)
     }
 }
 
@@ -2886,6 +2906,25 @@ mod crumb_tests {
         base.anchor();
         assert!(layout_differs(&s, &base));
         assert!(!s.snapshot().contains("win="));
+    }
+
+    #[test]
+    fn resolve_pane_tabs_uses_the_live_path_for_the_current_slot() {
+        let folders = vec![r"C:\A".to_string(), r"C:\B".into(), r"C:\C".into()];
+        assert_eq!(
+            super::resolve_pane_tabs(&folders, 0, r"C:\A\inside"),
+            (vec![r"C:\A\inside".to_string(), r"C:\B".into(), r"C:\C".into()], 0)
+        );
+        assert_eq!(super::resolve_pane_tabs(&[], 3, r"C:\only").0, vec![r"C:\only".to_string()]);
+        assert_eq!(super::resolve_pane_tabs(&folders, 9, r"C:\only").0, vec![r"C:\only".to_string()]);
+
+        let mut s = Session::default();
+        s.paths[0] = r"C:\A\inside".into();
+        s.pane_folders[0] = vec![r"C:\A".into(), r"C:\B".into()];
+        s.pane_cur[0] = 0;
+        s.anchor();
+        assert_eq!(s.tabs[s.tab].pane_tabs(0).0, vec![r"C:\A\inside".to_string(), r"C:\B".into()]);
+        assert_eq!(s.tabs[s.tab].pane_tabs(0).1, 0);
     }
 
     #[test]
