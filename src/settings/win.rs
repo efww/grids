@@ -1,5 +1,5 @@
 use std::cell::{Cell, RefCell};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::Once;
 use windows::core::{w, BOOL, HSTRING, PCWSTR};
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_CAPTION_COLOR, DWMWINDOWATTRIBUTE};
@@ -13,15 +13,71 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 use super::*;
 use crate::tf;
 
+/// Posted to the settings window. Handled only after the menu loop has exited.
+const WM_REVEAL: u32 = WM_APP + 87;
+static MENU_DEPTH: AtomicI32 = AtomicI32::new(0);
+static REVEAL: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn menu_enter() {
+    MENU_DEPTH.fetch_add(1, Ordering::Relaxed);
+}
+
+/// The menu loop is done. A settings window opened from that menu can show now.
+pub(crate) unsafe fn menu_exit() {
+    let prev = MENU_DEPTH.fetch_sub(1, Ordering::Relaxed);
+    if prev <= 1 {
+        MENU_DEPTH.store(0, Ordering::Relaxed);
+        poke_reveal();
+    }
+}
+
+fn in_menu() -> bool {
+    MENU_DEPTH.load(Ordering::Relaxed) > 0
+}
+
+fn poke_reveal() {
+    if !REVEAL.load(Ordering::Relaxed) {
+        return;
+    }
+    let h = hwnd();
+    if h.0.is_null() {
+        return;
+    }
+    unsafe {
+        let _ = PostMessageW(Some(h), WM_REVEAL, WPARAM(0), LPARAM(0));
+    }
+}
+
+fn schedule_reveal() {
+    REVEAL.store(true, Ordering::Relaxed);
+    // Inside the menu command the restore of the menu bitmap still lies ahead.
+    // Showing now paints, then that restore puts white back and the region is
+    // already valid, so the body stays white until a hover. `reveal` waits
+    // while a menu is open; `menu_exit` posts again once it has closed.
+    poke_reveal();
+}
+
+unsafe fn reveal(h: HWND) {
+    if in_menu() {
+        return;
+    }
+    if !REVEAL.swap(false, Ordering::Relaxed) {
+        return;
+    }
+    style_window(h);
+    let _ = ShowWindow(h, SW_SHOWNORMAL);
+    let _ = SetForegroundWindow(h);
+    let _ = InvalidateRect(Some(h), None, true);
+    let _ = UpdateWindow(h);
+}
+
 pub unsafe fn open(owner: HWND) {
     ensure_class();
     let h = hwnd();
     if !h.0.is_null() && IsWindow(Some(h)).as_bool() {
         crate::winmerge::forget_status();
         crate::folderapp::reload_shown();
-        let _ = ShowWindow(h, SW_SHOWNORMAL);
-        let _ = SetForegroundWindow(h);
-        redraw();
+        schedule_reveal();
         return;
     }
     let dpi = GetDpiForWindow(owner) as i32;
@@ -30,8 +86,11 @@ pub unsafe fn open(owner: HWND) {
     let _ = GetWindowRect(owner, &mut orc);
     let x = orc.left + (orc.right - orc.left - ww) / 2;
     let y = orc.top + (orc.bottom - orc.top - hh) / 2;
-    let style = WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN | WS_VISIBLE;
+    // Shown from `reveal`, after the dark caption is set. WS_VISIBLE here is the
+    // white first frame: the menu command returns and restores over the client.
+    let style = WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN;
     let _ = CreateWindowExW(WINDOW_EX_STYLE(0), w!("MaguroSettings"), w!("Maguro"), style, x, y, ww, hh, Some(owner), None, None, None);
+    schedule_reveal();
 }
 
 pub unsafe fn close() {
@@ -503,16 +562,21 @@ unsafe fn move_to(h: HWND, r: RECT, show: bool) {
 
 unsafe fn paint(h: HWND) {
     let sn = snap();
-    crate::buffered(h, |dc, rc| {
-        let g = geo(rc, &sn);
+    // Layout reads app state. Do it before BeginPaint: a nested borrow there used
+    // to unwind out of the paint, which validated the white client until a hover.
+    let mut rc = RECT::default();
+    let _ = GetClientRect(h, &mut rc);
+    let g = geo(rc, &sn);
+    crate::buffered_solid(h, |dc, rc| {
         draw(dc, rc, &g, &sn);
     });
 }
 
 unsafe fn draw(dc: HDC, rc: RECT, g: &Geo, sn: &Snap) {
     let dpi = sn.dpi.max(96);
-    let accent = chrome();
+    // Ground first. A later borrow must not leave the buffer transparent.
     crate::fill(dc, rc, crate::pal().bg);
+    let accent = chrome();
     crate::fill(dc, RECT { bottom: g.footer.top + 1, top: g.footer.top, ..g.footer }, crate::pal().line);
     draw_field(dc, g.search, dpi, crate::pal().bg);
     if !g.show.iter().any(|s| *s) {
@@ -1822,7 +1886,15 @@ fn settings_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                 return LRESULT(0);
             }
             WM_PAINT => paint(h),
-            WM_ERASEBKGND => return LRESULT(1),
+            // The class brush is null. Claiming the erase without filling leaves
+            // COLOR_WINDOW, which is white, under the first dark frame.
+            WM_ERASEBKGND => {
+                let mut rc = RECT::default();
+                let _ = GetClientRect(h, &mut rc);
+                crate::fill(HDC(wp.0 as _), rc, crate::pal().bg);
+                return LRESULT(1);
+            }
+            WM_REVEAL => reveal(h),
             WM_DRAWITEM => {
                 draw_btn(&*(lp.0 as *const DRAWITEMSTRUCT));
                 return LRESULT(1);

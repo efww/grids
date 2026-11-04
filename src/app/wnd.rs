@@ -485,6 +485,8 @@ fn main_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                 return DefWindowProcW(h, msg, wp, lp);
             }
             WM_THEME_SYNC => theme_sync(),
+            WM_ENTERMENULOOP => settings::menu_enter(),
+            WM_EXITMENULOOP => settings::menu_exit(),
             WM_ABOUT => about(h),
             WM_WATCH => crate::watch::on_ui_event(),
             WM_WATCH_OPEN => crate::watch::open_queued(),

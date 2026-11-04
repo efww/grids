@@ -225,19 +225,52 @@ pub(crate) unsafe fn wrap_text(dc: HDC, mut r: RECT, s: &str, font: HFONT, rgb: 
 
 // Paints only the invalid area into an off-screen buffer and blits once (no flicker mid-drag).
 pub(crate) unsafe fn buffered(h: HWND, draw: impl FnOnce(HDC, RECT)) {
-    let mut ps = PAINTSTRUCT::default();
-    let hdc = BeginPaint(h, &mut ps);
+    buffered_inner(h, false, draw);
+}
+
+/// Like [`buffered`], then marks the buffer opaque. A GDI fill on `BPBF_TOPDOWNDIB`
+/// leaves alpha at 0, and the blit keeps the frame that was already there.
+pub(crate) unsafe fn buffered_solid(h: HWND, draw: impl FnOnce(HDC, RECT)) {
+    buffered_inner(h, true, draw);
+}
+
+struct PaintFrame {
+    h: HWND,
+    ps: PAINTSTRUCT,
+    pb: isize,
+    solid: bool,
+}
+
+impl Drop for PaintFrame {
+    fn drop(&mut self) {
+        unsafe {
+            if self.pb != 0 {
+                if self.solid {
+                    // Whole buffer: the ground fill has no alpha of its own.
+                    let _ = BufferedPaintSetAlpha(self.pb, None, 255);
+                }
+                let _ = EndBufferedPaint(self.pb, true);
+                self.pb = 0;
+            }
+            let _ = EndPaint(self.h, &self.ps);
+        }
+    }
+}
+
+unsafe fn buffered_inner(h: HWND, solid: bool, draw: impl FnOnce(HDC, RECT)) {
+    let mut frame = PaintFrame { h, ps: PAINTSTRUCT::default(), pb: 0, solid };
+    let hdc = BeginPaint(h, &mut frame.ps);
     let mut rc = RECT::default();
     _ = GetClientRect(h, &mut rc);
+    let target = frame.ps.rcPaint;
     let mut mem = HDC::default();
-    let pb = BeginBufferedPaint(hdc, &ps.rcPaint, BPBF_TOPDOWNDIB, None, &mut mem);
+    let pb = BeginBufferedPaint(hdc, &target, BPBF_TOPDOWNDIB, None, &mut mem);
+    frame.pb = pb;
     if pb == 0 {
         draw(hdc, rc);
     } else {
         draw(mem, rc);
-        _ = EndBufferedPaint(pb, true);
     }
-    _ = EndPaint(h, &ps);
 }
 
 // Pane header colours (background, text/icons). A colour label fills the bar the way the accent
