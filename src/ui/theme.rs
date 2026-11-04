@@ -2,6 +2,7 @@ use crate::imports::*;
 
 // Themes, 0xRRGGBB. Light: an ivory frame around white plates; dark: charcoal. Each theme has its own
 // selection colours (same names, tuned to the ground): pastels on light, muted mid tones on dark.
+// The first swatch is brand cerulean (#0A9BD6) on both themes.
 pub(crate) struct Palette {
     pub(crate) bg: u32,   // frame: window, toolbar, gaps, status line
     pub(crate) card: u32, // plates and lists
@@ -19,7 +20,7 @@ pub(crate) const LIGHT: Palette = Palette {
     pill: 0xF4F2EE,
     text: super::tokens::TEXT_LIGHT,
     sub: super::tokens::SUB_LIGHT,
-    accents: [("하늘", 0x8DB5E8), ("그레이", 0xC5C5C5), ("라벤더", 0xA99BE0), ("세이지", 0x8CC5A8), ("피치", 0xEFAE92), ("로즈", 0xE7A1B5)],
+    accents: [("하늘", 0x0A9BD6), ("그레이", 0xC5C5C5), ("라벤더", 0xA99BE0), ("세이지", 0x8CC5A8), ("피치", 0xEFAE92), ("로즈", 0xE7A1B5)],
 };
 
 pub(crate) const DARK: Palette = Palette {
@@ -29,7 +30,7 @@ pub(crate) const DARK: Palette = Palette {
     pill: 0x303338,
     text: super::tokens::TEXT_DARK,
     sub: super::tokens::SUB_DARK,
-    accents: [("하늘", 0x4C6FA8), ("그레이", 0x4B4B4B), ("라벤더", 0x6A5AA8), ("세이지", 0x3E8676), ("피치", 0xA8624A), ("로즈", 0xA65A78)],
+    accents: [("하늘", 0x0A9BD6), ("그레이", 0x4B4B4B), ("라벤더", 0x6A5AA8), ("세이지", 0x3E8676), ("피치", 0xA8624A), ("로즈", 0xA65A78)],
 };
 
 pub(crate) static DARK_ON: AtomicBool = AtomicBool::new(false);
@@ -75,15 +76,19 @@ pub(crate) fn group_tint(accent: u32, ground: u32, dark: bool) -> u32 {
 // Text/icons on a coloured fill: near-black on light colours, white on dark ones (black accent -> white text).
 /// Pre-#222 mint brand (#2EC4A6). Saved settings that still use it follow the cerulean rebrand.
 pub(crate) const OLD_MINT_BRAND: u32 = 0x2EC4A6;
+/// First light swatch before it became brand cerulean (`accent_sky`, 하늘).
+pub(crate) const OLD_ACCENT_SKY_LIGHT: u32 = 0x8DB5E8;
+/// First dark swatch before it became brand cerulean (`accent_sky`, 하늘).
+pub(crate) const OLD_ACCENT_SKY_DARK: u32 = 0x4C6FA8;
 /// Current brand accent (#0A9BD6). The button tokens own the value.
 pub(crate) const CERULEAN_BRAND: u32 = super::tokens::ACCENT;
 
-/// Map the retired mint brand to cerulean. Any other chosen swatch is left alone.
+/// Map retired brand colours to cerulean: pre-#222 mint, and the old first sky swatches.
+/// Any other chosen swatch or custom picker colour is left alone.
 pub(crate) fn brand_accent(c: u32) -> u32 {
-    if c == OLD_MINT_BRAND {
-        CERULEAN_BRAND
-    } else {
-        c
+    match c {
+        OLD_MINT_BRAND | OLD_ACCENT_SKY_LIGHT | OLD_ACCENT_SKY_DARK => CERULEAN_BRAND,
+        _ => c,
     }
 }
 
@@ -151,5 +156,27 @@ mod tests {
         assert_eq!(brand_accent(0xEFAE92), 0xEFAE92); // peach swatch stays
         assert_eq!(LIGHT.accents.len(), 6);
         assert_eq!(LIGHT.accents[1].1, 0xC5C5C5);
+    }
+
+    #[test]
+    fn first_swatch_is_brand_cerulean() {
+        assert_eq!(LIGHT.accents[0].0, "하늘");
+        assert_eq!(DARK.accents[0].0, "하늘");
+        assert_eq!(LIGHT.accents[0].1, 0x0A9BD6);
+        assert_eq!(DARK.accents[0].1, 0x0A9BD6);
+        assert_eq!(LIGHT.accents[0].1, CERULEAN_BRAND);
+        assert_eq!(DARK.accents[0].1, CERULEAN_BRAND);
+    }
+
+    #[test]
+    fn brand_accent_maps_old_first_swatches_and_mint_only() {
+        assert_eq!(brand_accent(0x8DB5E8), CERULEAN_BRAND);
+        assert_eq!(brand_accent(0x4C6FA8), CERULEAN_BRAND);
+        assert_eq!(brand_accent(OLD_MINT_BRAND), CERULEAN_BRAND);
+        assert_eq!(brand_accent(0xEFAE92), 0xEFAE92);
+        assert_eq!(brand_accent(0xA8624A), 0xA8624A);
+        assert_eq!(brand_accent(0xC5C5C5), 0xC5C5C5);
+        assert_eq!(brand_accent(0x123456), 0x123456);
+        assert_eq!(brand_accent(CERULEAN_BRAND), CERULEAN_BRAND);
     }
 }

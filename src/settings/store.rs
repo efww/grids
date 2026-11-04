@@ -1093,16 +1093,14 @@ pub(crate) fn try_load_at(cfg: &Path) -> Result<Session, String> {
             let pack_migrate = serde_json::from_str::<Value>(text).ok().is_some_and(|v| v.get("ctx_win11_pack_migrated").and_then(|x| x.as_bool()) != Some(true));
             // The activity-bar choice is retired. Drop it once so the next launch does not see it.
             let had_panel = serde_json::from_str::<Value>(text).ok().is_some_and(|v| v.get("panel").is_some());
-            // Pre-#222 mint brand in a saved file → rewrite as cerulean (brand_accent already applied above).
-            let had_mint = serde_json::from_str::<Value>(text).ok().is_some_and(|v| {
+            // Retired accents (pre-#222 mint, old first sky swatches) rewrite as cerulean.
+            // brand_accent already applied the same map to the in-memory session above.
+            let had_retired_accent = serde_json::from_str::<Value>(text).ok().is_some_and(|v| {
                 ["accent", "accent_dark"].iter().any(|k| {
-                    v.get(*k).and_then(|x| x.as_str()).is_some_and(|c| {
-                        let t = c.trim().trim_start_matches('#');
-                        u32::from_str_radix(t, 16).ok().is_some_and(|n| (n & 0xFFFFFF) == crate::OLD_MINT_BRAND)
-                    })
+                    v.get(*k).and_then(|x| x.as_str()).is_some_and(|c| parse_color(c).is_some_and(|n| crate::brand_accent(n) != n))
                 })
             });
-            if had_panel || had_mint || pack_migrate {
+            if had_panel || had_retired_accent || pack_migrate {
                 let migrated = sync_text(&s);
                 if migrated != text {
                     let _ = write_atomic(&json_path, migrated.as_bytes());
@@ -2052,6 +2050,47 @@ mod tests {
         let peach = adopt(r#"{"version":1,"accent":"EFAE92","accent_dark":"A8624A"}"#).unwrap();
         assert_eq!(peach.accent, 0xEFAE92);
         assert_eq!(peach.accent_dark, 0xA8624A);
+    }
+
+    #[test]
+    fn old_first_swatches_migrate_to_cerulean_on_adopt_and_ini() {
+        let both = adopt(r#"{"version":1,"accent":"8DB5E8","accent_dark":"4C6FA8"}"#).unwrap();
+        assert_eq!(both.accent, 0x0A9BD6);
+        assert_eq!(both.accent_dark, 0x0A9BD6);
+        let mixed = adopt(r#"{"version":1,"accent":"EFAE92","accent_dark":"8DB5E8"}"#).unwrap();
+        assert_eq!(mixed.accent, 0xEFAE92);
+        assert_eq!(mixed.accent_dark, 0x0A9BD6);
+        let custom = adopt(r#"{"version":1,"accent":"123456","accent_dark":"ABCDEF"}"#).unwrap();
+        assert_eq!(custom.accent, 0x123456);
+        assert_eq!(custom.accent_dark, 0xABCDEF);
+        let ini = Session::parse("accent=8DB5E8\naccent_dark=4C6FA8\n");
+        assert_eq!(ini.accent, 0x0A9BD6);
+        assert_eq!(ini.accent_dark, 0x0A9BD6);
+        let kept = Session::parse("accent=EFAE92\naccent_dark=123456\n");
+        assert_eq!(kept.accent, 0xEFAE92);
+        assert_eq!(kept.accent_dark, 0x123456);
+    }
+
+    #[test]
+    fn retired_first_swatch_is_rewritten_on_load_and_other_colours_stay() {
+        let sky = scratch("sky-rewrite");
+        let sky_path = sky.join(SETTINGS_FILE);
+        std::fs::write(&sky_path, r#"{"version":1,"ctx_win11_pack_migrated":true,"accent":"8DB5E8","accent_dark":"4C6FA8"}"#).unwrap();
+        let s = try_load_at(&sky).unwrap();
+        assert_eq!(s.accent, 0x0A9BD6);
+        assert_eq!(s.accent_dark, 0x0A9BD6);
+        let saved: Value = serde_json::from_str(&std::fs::read_to_string(&sky_path).unwrap()).unwrap();
+        assert_eq!(saved["accent"], "0A9BD6");
+        assert_eq!(saved["accent_dark"], "0A9BD6");
+
+        let keep = scratch("custom-keep");
+        let keep_path = keep.join(SETTINGS_FILE);
+        let raw = r#"{"version":1,"ctx_win11_pack_migrated":true,"accent":"123456","accent_dark":"EFAE92"}"#;
+        std::fs::write(&keep_path, raw).unwrap();
+        let kept = try_load_at(&keep).unwrap();
+        assert_eq!(kept.accent, 0x123456);
+        assert_eq!(kept.accent_dark, 0xEFAE92);
+        assert_eq!(std::fs::read_to_string(&keep_path).unwrap(), raw);
     }
 
     fn space_preview_defaults_on_and_round_trips() {
