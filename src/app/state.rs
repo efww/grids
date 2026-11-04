@@ -187,6 +187,7 @@ pub(crate) struct Desk {
     pub(crate) load: HWND, // load popup while open
     pub(crate) load_closed: Option<Instant>,
     pub(crate) load_hot: Option<usize>, // card index, or LOAD_SAVE_AS / LOAD_FOLDER / LOAD_DEL + card
+    pub(crate) load_btn: Tracker<usize>, // link and delete buttons on the load popup
     pub(crate) load_edit: HWND,         // rename box on a card; made on first use, hidden when done
     pub(crate) load_editing: Option<usize>, // card being renamed
     pub(crate) fav_popup: HWND,
@@ -201,6 +202,7 @@ pub(crate) struct Desk {
     pub(crate) peek_pane: usize,               // pane whose focused item it shows
     pub(crate) peek_name: String,
     pub(crate) keys_scroll: i32,
+    pub(crate) keys_btn: Tracker<u8>, // close mark on the shortcut popup
     pub(crate) crumb_hot: Option<(HWND, usize)>, // pane, crumb under the pointer
     pub(crate) kids: Option<KidsAsk>,            // a '›' whose subfolder list has not come back yet
     pub(crate) lost: u32,                        // missing-folder notes merged while one is showing
@@ -389,6 +391,7 @@ pub(crate) fn blank_desk() -> Desk {
         load: HWND::default(),
         load_closed: None,
         load_hot: None,
+        load_btn: Tracker::new(),
         load_edit: HWND::default(),
         load_editing: None,
         fav_popup: HWND::default(),
@@ -402,6 +405,7 @@ pub(crate) fn blank_desk() -> Desk {
         peek_pane: 0,
         peek_name: String::new(),
         keys_scroll: 0,
+        keys_btn: Tracker::new(),
         crumb_hot: None,
         kids: None,
         lost: 0,

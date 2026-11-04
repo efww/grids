@@ -265,11 +265,10 @@ pub(crate) enum FailHit {
 /// Message above, the two buttons centred just under the middle of the list.
 pub(crate) fn fail_layout(w: i32, h: i32, dpi: i32, retry_w: i32, back_w: i32) -> FailLayout {
     let s = |v: i32| v * dpi / 96;
-    let pad = s(16);
-    let gap = s(8);
-    let bh = s(30).clamp(1, h.max(1));
-    let mut rw = (retry_w + pad * 2).max(s(80));
-    let mut bw = (back_w + pad * 2).max(s(80));
+    let gap = s(BTN_GAP);
+    let bh = s(BTN_H_FOOTER).clamp(1, h.max(1));
+    let mut rw = (retry_w + s(BTN_PAD_X) * 2).max(s(BTN_MIN_W));
+    let mut bw = (back_w + s(BTN_PAD_X) * 2).max(s(BTN_MIN_W));
     // A narrow pane still shows both buttons. Widths shrink together; they do not run off the list.
     let room = (w - gap).max(0);
     let buttons = rw.saturating_add(bw);
@@ -812,23 +811,24 @@ unsafe fn paint_message(dc: HDC, r: RECT, msg: &str, font: HFONT) {
     SelectObject(dc, old);
 }
 
-unsafe fn paint_fail_btn(dc: HDC, r: RECT, label: &str, font: HFONT, hot: bool, accent: u32) {
-    fill(dc, r, if hot { blend(pal().pill, pal().text, 0.10) } else { pal().pill });
-    frame(dc, r, 1, if hot { accent } else { pal().line });
-    text(dc, r, label, font, pal().text, DT_CENTER);
-}
-
 unsafe fn paint_net_fail(h: HWND) {
     let hot = GetWindowLongPtrW(h, GWLP_USERDATA) as i32;
+    let down = FAIL_PRESS.lock().unwrap_or_else(|e| e.into_inner())
+        .filter(|(hwnd, _)| *hwnd == h.0 as isize)
+        .map(|(_, code)| code)
+        .unwrap_or(0);
     // Skip the frame when a window proc re-entered while `app()` is held. Validating
     // the paint from here would send WM_ERASEBKGND back into this proc.
-    let Some((accent, font)) = app_try(|a| (a.s.accent_now(), a.font)) else { return };
+    let Some((font, dpi)) = app_try(|a| (a.font, a.dpi)) else { return };
+    let hot_id = (hot > 0).then_some(hot);
+    let down_id = (down > 0).then_some(down);
+    let ground = ui_tokens().bg;
     buffered(h, |dc, rc| {
-        fill(dc, rc, pal().card);
+        paint_window(dc, rc);
         let Some((lay, msg, retry, back)) = fail_boxes(h, dc) else { return };
         paint_message(dc, lay.message.to_rect(), &msg, font);
-        paint_fail_btn(dc, lay.retry.to_rect(), &retry, font, hot == 1, accent);
-        paint_fail_btn(dc, lay.back.to_rect(), &back, font, hot == 2, accent);
+        paint_button(dc, lay.retry.to_rect(), ButtonKind::Primary, visual_from_pointer(1, hot_id, down_id), &retry, font, dpi, ground, FocusRing::Outside);
+        paint_button(dc, lay.back.to_rect(), ButtonKind::Secondary, visual_from_pointer(2, hot_id, down_id), &back, font, dpi, ground, FocusRing::Outside);
     });
 }
 
@@ -873,9 +873,13 @@ unsafe fn net_fail_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
         }
         WM_LBUTTONUP => {
             let (x, y) = xy(lp);
-            _ = ReleaseCapture();
-            let down = FAIL_PRESS.lock().unwrap_or_else(|e| e.into_inner()).take();
             let hit = fail_at(h, x, y);
+            // Read the press before ReleaseCapture. That sends WM_CAPTURECHANGED, which
+            // clears a press capture stole. Our own release must not eat the click.
+            let down = FAIL_PRESS.lock().unwrap_or_else(|e| e.into_inner()).take();
+            if GetCapture() == h {
+                _ = ReleaseCapture();
+            }
             let same = down.is_some_and(|(hwnd, code)| hwnd == h.0 as isize && code == fail_code(hit) && code != 0);
             if same {
                 if let Some(i) = pane_of(pane) {
@@ -886,6 +890,20 @@ unsafe fn net_fail_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                         FailHit::None => {}
                     }
                 }
+            }
+        }
+        WM_CAPTURECHANGED => {
+            let mut slot = FAIL_PRESS.lock().unwrap_or_else(|e| e.into_inner());
+            if slot.is_some_and(|(hwnd, _)| hwnd == h.0 as isize) {
+                *slot = None;
+                _ = SetWindowLongPtrW(h, GWLP_USERDATA, 0);
+                _ = InvalidateRect(Some(h), None, false);
+            }
+        }
+        WM_DESTROY => {
+            let mut slot = FAIL_PRESS.lock().unwrap_or_else(|e| e.into_inner());
+            if slot.is_some_and(|(hwnd, _)| hwnd == h.0 as isize) {
+                *slot = None;
             }
         }
         _ => return DefWindowProcW(h, msg, wp, lp),
@@ -4437,6 +4455,8 @@ mod missing_tests {
         assert_eq!(fail_hit(&lay, lay.retry.l + 1, lay.retry.t + 1), FailHit::Retry);
         assert_eq!(fail_hit(&lay, lay.back.l + 1, lay.back.t + 1), FailHit::Back);
         assert_eq!(fail_hit(&lay, 0, 0), FailHit::None);
+        assert_eq!(lay.retry.b - lay.retry.t, crate::BTN_H_FOOTER);
+        assert!(lay.retry.r - lay.retry.l >= crate::BTN_MIN_W);
         assert_eq!(fail_hit(&lay, lay.retry.r, lay.retry.t), FailHit::None);
         let narrow = fail_layout(40, 20, 96, 10, 10);
         assert!(narrow.retry.t >= 0 && narrow.retry.b <= 20);

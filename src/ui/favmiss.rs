@@ -30,11 +30,11 @@ pub(crate) fn folder_gone_buttons() -> (&'static str, &'static str) {
 /// Message on top, the two buttons centred along the bottom. Widths shrink together when the notice is narrow.
 pub(crate) fn miss_layout(w: i32, h: i32, dpi: i32, remove_w: i32, change_w: i32) -> (BoxI, BoxI, BoxI) {
     let s = |v: i32| v * dpi.max(1) / 96;
-    let pad = s(16);
-    let gap = s(8);
-    let bh = s(30).clamp(1, h.max(1));
-    let mut rw = (remove_w + pad).max(s(64));
-    let mut cw = (change_w + pad).max(s(64));
+    let pad = s(PAD_BODY_X);
+    let gap = s(BTN_GAP);
+    let bh = s(BTN_H_FOOTER).clamp(1, h.max(1));
+    let mut rw = (remove_w + s(BTN_PAD_X) * 2).max(s(BTN_MIN_W));
+    let mut cw = (change_w + s(BTN_PAD_X) * 2).max(s(BTN_MIN_W));
     let room = (w - pad * 2 - gap).max(0);
     let buttons = rw.saturating_add(cw);
     if buttons > room && buttons > 0 {
@@ -54,12 +54,12 @@ pub(crate) fn miss_layout(w: i32, h: i32, dpi: i32, remove_w: i32, change_w: i32
 /// Outer size for the text widths of the two buttons.
 pub(crate) fn miss_window(dpi: i32, remove_w: i32, change_w: i32) -> (i32, i32) {
     let s = |v: i32| v * dpi.max(1) / 96;
-    let pad = s(16);
-    let gap = s(8);
-    let rw = (remove_w + pad).max(s(64));
-    let cw = (change_w + pad).max(s(64));
+    let pad = s(PAD_BODY_X);
+    let gap = s(BTN_GAP);
+    let rw = (remove_w + s(BTN_PAD_X) * 2).max(s(BTN_MIN_W));
+    let cw = (change_w + s(BTN_PAD_X) * 2).max(s(BTN_MIN_W));
     let w = rw + gap + cw + pad * 2;
-    let h = pad + s(22) + s(8) + s(30) + pad;
+    let h = pad + s(22) + s(SPACE_8) + s(BTN_H_FOOTER) + pad;
     (w.max(s(240)), h)
 }
 
@@ -306,25 +306,20 @@ unsafe fn relocate_home(row: &FavRow, path: &str) -> bool {
 
 unsafe fn paint_miss(h: HWND) {
     let hot = GetWindowLongPtrW(h, GWLP_USERDATA) as i32;
-    let (accent, font) = app(|a| (a.s.accent_now(), a.font));
+    let down = *PRESS.lock().unwrap_or_else(|e| e.into_inner());
+    let (dpi, font) = app(|a| (a.dpi.max(96), a.font));
     let (remove, change) = folder_gone_buttons();
+    let hot_id = (hot > 0).then_some(hot);
+    let down_id = (down > 0).then_some(down);
+    let ground = ui_tokens().bg;
     buffered(h, |dc, rc| {
-        fill(dc, rc, pal().card);
-        frame(dc, rc, 1, pal().line);
+        paint_window(dc, rc);
+        frame(dc, rc, 1, ui_tokens().line);
         let lay = boxes(h, dc);
         text(dc, lay.0.to_rect(), folder_gone_text(), font, pal().text, DT_CENTER);
-        paint_btn(dc, lay.1.to_rect(), remove, font, hot == 1, accent);
-        paint_btn(dc, lay.2.to_rect(), change, font, hot == 2, accent);
+        paint_button(dc, lay.1.to_rect(), ButtonKind::Danger, visual_from_pointer(1, hot_id, down_id), remove, font, dpi, ground, FocusRing::Outside);
+        paint_button(dc, lay.2.to_rect(), ButtonKind::Primary, visual_from_pointer(2, hot_id, down_id), change, font, dpi, ground, FocusRing::Outside);
     });
-}
-
-unsafe fn paint_btn(dc: HDC, r: RECT, label: &str, font: HFONT, hot: bool, accent: u32) {
-    if r.right <= r.left || r.bottom <= r.top {
-        return;
-    }
-    fill(dc, r, if hot { blend(pal().pill, pal().text, 0.10) } else { pal().pill });
-    frame(dc, r, 1, if hot { accent } else { pal().line });
-    text(dc, r, label, font, pal().text, DT_CENTER);
 }
 
 unsafe extern "system" fn miss_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
@@ -371,11 +366,15 @@ unsafe fn miss_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT 
         }
         WM_LBUTTONUP => {
             let (x, y) = xy(lp);
-            _ = ReleaseCapture();
             let dc = GetDC(Some(h));
             let hit = hit_of(&boxes(h, dc), x, y);
             _ = ReleaseDC(Some(h), dc);
+            // Read the press before ReleaseCapture. That sends WM_CAPTURECHANGED, which
+            // clears a press capture stole. Our own release must not eat the click.
             let down = std::mem::take(&mut *PRESS.lock().unwrap_or_else(|e| e.into_inner()));
+            if GetCapture() == h {
+                _ = ReleaseCapture();
+            }
             if down != 0 && down == hit_code(hit) {
                 let row = ask_lock().take();
                 let owner = GetWindow(h, GW_OWNER).unwrap_or_else(|_| app(|a| a.main));
@@ -389,6 +388,13 @@ unsafe fn miss_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT 
                 }
             }
         }
+        WM_CAPTURECHANGED => {
+            let stuck = std::mem::take(&mut *PRESS.lock().unwrap_or_else(|e| e.into_inner()));
+            if stuck != 0 {
+                _ = SetWindowLongPtrW(h, GWLP_USERDATA, 0);
+                _ = InvalidateRect(Some(h), None, false);
+            }
+        }
         WM_KEYDOWN if VIRTUAL_KEY(wp.0 as u16) == VK_ESCAPE => {
             _ = PostMessageW(Some(h), WM_CLOSE, WPARAM(0), LPARAM(0));
         }
@@ -397,6 +403,7 @@ unsafe fn miss_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT 
         }
         WM_CLOSE => close_notice(h),
         WM_DESTROY => {
+            *PRESS.lock().unwrap_or_else(|e| e.into_inner()) = 0;
             let mut slot = NOTICE.lock().unwrap_or_else(|e| e.into_inner());
             if *slot == h.0 as isize {
                 *slot = 0;
@@ -451,6 +458,7 @@ mod tests {
         let narrow = miss_layout(160, h, 96, 200, 200);
         assert!(narrow.1.r <= narrow.2.l);
         assert!(narrow.2.r <= 160);
+        assert_eq!(remove.b - remove.t, crate::BTN_H_FOOTER);
         assert!(hit_of(&(msg, remove, change), remove.l + 1, remove.t + 1) == MissHit::Remove);
         assert!(hit_of(&(msg, remove, change), change.l + 1, change.t + 1) == MissHit::Change);
         assert!(hit_of(&(msg, remove, change), 0, 0) == MissHit::None);

@@ -8,7 +8,7 @@ use crate::i18n::{title_style, tr, ui_face};
 use crate::imports::*;
 use crate::remote::{self, cred_target, cred_used, fields_from_link, fields_from_parsed, mount_key, normalize, still_used, Fail, Fields, Parsed, KINDS, KIND_LABELS};
 use crate::session::{append_node, node_ref, path_clash, write_server, FavNode, ServerLink};
-use super::{aa_rfill, blend, buffered, cref, delete_font, fill, on_color, pal, text};
+use super::{aa_rfill, blend, buffered, cref, delete_font, on_color, pal, text, paint_button, paint_window, ButtonKind, FocusRing, ui_tokens, visual_from_pointer};
 
 const SAVE_MSG: u32 = WM_APP + 1;
 /// EC_LEFTMARGIN | EC_RIGHTMARGIN. Same message the settings search box and name prompt use.
@@ -224,9 +224,10 @@ fn geom(dpi: i32, width: i32) -> Geom {
     }
     let https_r = RECT { left: pad, top: y, right: width - pad, bottom: y + lab };
     y += lab + gap + lab + gap;
-    let bw = (inner - gap) / 2;
-    let save_r = RECT { left: pad, top: y, right: pad + bw, bottom: y + sc(dpi, 32) };
-    let cancel_r = RECT { left: save_r.right + gap, top: y, right: width - pad, bottom: y + sc(dpi, 32) };
+    let bw = (inner - sc(dpi, super::BTN_GAP)) / 2;
+    let bh = sc(dpi, super::BTN_H_FOOTER);
+    let save_r = RECT { left: pad, top: y, right: pad + bw, bottom: y + bh };
+    let cancel_r = RECT { left: save_r.right + sc(dpi, super::BTN_GAP), top: y, right: width - pad, bottom: y + bh };
     Geom { kind_r, edits, https_r, save_r, cancel_r }
 }
 
@@ -284,6 +285,14 @@ unsafe extern "system" fn srv_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) ->
         }
         WM_MOUSEMOVE => {
             hit(h, lp, false, false);
+            arm_leave(h);
+            LRESULT(0)
+        }
+        WM_MOUSELEAVE => {
+            if let Some(v) = view(h) {
+                (*v).hot = -1;
+                let _ = InvalidateRect(Some(h), None, false);
+            }
             LRESULT(0)
         }
         WM_LBUTTONDOWN => {
@@ -292,6 +301,18 @@ unsafe extern "system" fn srv_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) ->
         }
         WM_LBUTTONUP => {
             hit(h, lp, false, true);
+            LRESULT(0)
+        }
+        WM_CAPTURECHANGED => {
+            // `hit` clears `down` before ReleaseCapture, so a finished click does not land here.
+            // A stolen capture still drops the press and the hover.
+            if let Some(v) = view(h) {
+                if (*v).down >= 0 {
+                    (*v).down = -1;
+                    (*v).hot = -1;
+                    let _ = InvalidateRect(Some(h), None, false);
+                }
+            }
             LRESULT(0)
         }
         WM_KEYDOWN if wp.0 == VK_ESCAPE.0 as usize => {
@@ -333,7 +354,7 @@ unsafe fn paint(h: HWND) {
         v.https_r = g.https_r;
         v.save_r = g.save_r;
         v.cancel_r = g.cancel_r;
-        fill(dc, rc, pal().bg);
+        paint_window(dc, rc);
         let title = if v.editing { tr(crate::Key::EditServerConnection) } else { tr(crate::Key::AddServerConnection) };
         let title_r = RECT { left: pad, top: pad, right: rc.right - pad, bottom: pad + sc(dpi, 16) };
         text(dc, title_r, title, v.bold, pal().text, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
@@ -372,14 +393,11 @@ unsafe fn paint(h: HWND) {
             let hint = RECT { left: pad, top: g.https_r.bottom + sc(dpi, 8), right: rc.right - pad, bottom: g.save_r.top - sc(dpi, 8) };
             text(dc, hint, tr(crate::Key::LeaveBlankToKeepTheSavedPassword), v.font, pal().sub, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
         }
-        let save_hot = v.hot == 10;
-        let save_fill = if save_hot { blend(v.accent, 0xFFFFFF, 0.12) } else { v.accent };
-        aa_rfill(dc, g.save_r, sc(dpi, 8), save_fill, None, pal().bg);
-        text(dc, g.save_r, tr(crate::Key::Save), v.bold, on_color(v.accent), DT_CENTER | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
-        let cancel_hot = v.hot == 11;
-        let cancel_fill = if cancel_hot { blend(pal().card, pal().text, 0.06) } else { pal().card };
-        aa_rfill(dc, g.cancel_r, sc(dpi, 8), cancel_fill, Some(pal().line), pal().bg);
-        text(dc, g.cancel_r, tr(crate::Key::Cancel), v.font, pal().text, DT_CENTER | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
+        let hot = (v.hot >= 0).then_some(v.hot);
+        let down = (v.down >= 0).then_some(v.down);
+        let ground = ui_tokens().bg;
+        paint_button(dc, g.save_r, ButtonKind::Primary, visual_from_pointer(10, hot, down), tr(crate::Key::Save), v.bold, dpi, ground, FocusRing::Outside);
+        paint_button(dc, g.cancel_r, ButtonKind::Secondary, visual_from_pointer(11, hot, down), tr(crate::Key::Cancel), v.font, dpi, ground, FocusRing::Outside);
     });
 }
 
@@ -551,6 +569,16 @@ unsafe fn read_units(h: HWND) -> Vec<u16> {
 fn wipe(s: &mut String) {
     let mut bytes = std::mem::take(s).into_bytes();
     bytes.fill(0);
+}
+
+unsafe fn arm_leave(h: HWND) {
+    let mut t = TRACKMOUSEEVENT {
+        cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
+        dwFlags: TME_LEAVE,
+        hwndTrack: h,
+        dwHoverTime: 0,
+    };
+    let _ = TrackMouseEvent(&mut t);
 }
 
 fn inside(r: RECT, x: i32, y: i32) -> bool {

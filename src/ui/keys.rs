@@ -172,7 +172,11 @@ pub(crate) unsafe fn open_keys() {
     let work = if GetMonitorInfoW(MonitorFromWindow(main, MONITOR_DEFAULTTONEAREST), &mut mi).as_bool() { mi.rcWork } else { RECT::default() };
     let (x, y) = keys_fit_origin(frame, w, h, work);
     let prev = GetFocus();
-    app(|a| (a.keys_prev, a.keys_scroll) = (prev, 0));
+    app(|a| {
+        a.keys_prev = prev;
+        a.keys_scroll = 0;
+        a.keys_btn = Tracker::new();
+    });
     let title = HSTRING::from(tr(crate::Key::KeyboardShortcuts2));
     let Ok(p) = CreateWindowExW(WS_EX_TOOLWINDOW, w!("MaguroKeys"), &title, WS_POPUP | WS_VISIBLE, x, y, w, h, Some(main), None, None, None) else {
         return;
@@ -219,8 +223,31 @@ pub(crate) unsafe fn keys_scroll_to(h: HWND, to: impl FnOnce(i32, i32) -> i32) {
     }
 }
 
+const KEYS_CLOSE_ID: u8 = 1;
+
+fn keys_over(h: HWND, x: i32, y: i32, dpi: i32) -> Option<u8> {
+    unsafe {
+        let mut rc = RECT::default();
+        let _ = GetClientRect(h, &mut rc);
+        let r = keys_close(rc.right, dpi);
+        (x >= r.left && x < r.right && y >= r.top && y < r.bottom).then_some(KEYS_CLOSE_ID)
+    }
+}
+
+fn arm_leave(h: HWND) {
+    unsafe {
+        let mut t = TRACKMOUSEEVENT {
+            cbSize: size_of::<TRACKMOUSEEVENT>() as u32,
+            dwFlags: TME_LEAVE,
+            hwndTrack: h,
+            dwHoverTime: 0,
+        };
+        let _ = TrackMouseEvent(&mut t);
+    }
+}
+
 pub(crate) unsafe fn paint_keys(h: HWND) {
-    let (dpi, font, small, icon_font, scroll) = app(|a| (a.dpi, a.font, a.small_font, a.icon_font, a.keys_scroll));
+    let (dpi, font, small, icon_font, scroll, close_vis) = app(|a| (a.dpi, a.font, a.small_font, a.icon_font, a.keys_scroll, a.keys_btn.visual(KEYS_CLOSE_ID, false)));
     let mut rc = RECT::default();
     _ = GetClientRect(h, &mut rc);
     let rows = key_rows(&crate::keys::help_text());
@@ -228,8 +255,9 @@ pub(crate) unsafe fn paint_keys(h: HWND) {
     let s = |v: i32| v * dpi / 96;
     let head = keys_head(dpi);
     let down = |r: RECT| RECT { top: r.top + head - scroll, bottom: r.bottom + head - scroll, ..r };
+    let ground = ui_tokens().bg;
     buffered(h, |dc, rc| {
-        fill(dc, rc, pal().card);
+        paint_window(dc, rc);
         let names = [tr(crate::Key::Keyboard), tr(crate::Key::MouseAndButtons)];
         for (t, r) in names.iter().zip(g.titles) {
             text(dc, down(r), t, small, pal().sub, DT_LEFT);
@@ -242,8 +270,8 @@ pub(crate) unsafe fn paint_keys(h: HWND) {
             for (k, kr) in r.keys.iter().zip(&gr.keys) {
                 let kr = down(*kr);
                 if gr.sec == 0 {
-                    fill(dc, kr, pal().pill);
-                    frame(dc, kr, 1, pal().line);
+                    let t = ui_tokens();
+                    aa_rfill(dc, kr, px(dpi, RADIUS).max(1), t.card, Some(t.line), t.bg);
                     text(dc, RECT { left: kr.left + s(4), right: kr.right - s(4), ..kr }, k, font, pal().text, DT_CENTER);
                 } else {
                     wrap_text(dc, kr, k, font, pal().text, false);
@@ -252,10 +280,10 @@ pub(crate) unsafe fn paint_keys(h: HWND) {
             wrap_text(dc, down(gr.desc), &r.desc, font, pal().text, false);
         }
         let bar = RECT { bottom: head, ..rc };
-        fill(dc, bar, pal().card);
-        fill(dc, RECT { top: head - 1, ..bar }, pal().line);
+        fill(dc, bar, ground);
+        fill(dc, RECT { top: head - 1, ..bar }, ui_tokens().line);
         text(dc, RECT { left: s(KEYS_PAD), ..bar }, tr(crate::Key::KeyboardShortcuts2), font, pal().text, DT_LEFT);
-        text(dc, keys_close(rc.right, dpi), "\u{E711}", icon_font, pal().sub, DT_CENTER);
+        paint_button(dc, keys_close(rc.right, dpi), ButtonKind::Icon, close_vis, "\u{E711}", icon_font, dpi, ground, FocusRing::Outside);
         let page = rc.bottom - head;
         if g.h > page && g.h > 0 {
             let th = (page * page / g.h).max(s(24));
@@ -263,7 +291,7 @@ pub(crate) unsafe fn paint_keys(h: HWND) {
             let top = head + scroll * travel / (g.h - page).max(1);
             fill(dc, RECT { left: rc.right - s(6), top, right: rc.right - s(3), bottom: top + th }, pal().sub);
         }
-        frame(dc, rc, 1, pal().line);
+        frame(dc, rc, 1, ui_tokens().line);
     });
 }
 
@@ -297,13 +325,44 @@ fn keys_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
             WM_PAINT => paint_keys(h),
             WM_ERASEBKGND => return LRESULT(1),
             WM_MOUSEWHEEL => keys_scroll_to(h, |y, _| y - s((wp.0 >> 16) as i16 as i32)),
+            WM_MOUSEMOVE => {
+                let (x, y) = xy(lp);
+                let over = keys_over(h, x, y, dpi);
+                let effect = app(|a| a.keys_btn.pointer_move(over));
+                arm_leave(h);
+                if matches!(effect, TrackEffect::Repaint) {
+                    _ = InvalidateRect(Some(h), None, false);
+                }
+            }
+            WM_MOUSELEAVE => {
+                let effect = app(|a| a.keys_btn.pointer_leave());
+                if matches!(effect, TrackEffect::Repaint) {
+                    _ = InvalidateRect(Some(h), None, false);
+                }
+            }
+            WM_LBUTTONDOWN => {
+                let (x, y) = xy(lp);
+                if keys_over(h, x, y, dpi).is_some() {
+                    app(|a| { a.keys_btn.pointer_down(KEYS_CLOSE_ID); });
+                    _ = SetCapture(h);
+                    _ = InvalidateRect(Some(h), None, false);
+                }
+            }
             WM_LBUTTONUP => {
                 let (x, y) = xy(lp);
-                let mut rc = RECT::default();
-                _ = GetClientRect(h, &mut rc);
-                let r = keys_close(rc.right, dpi);
-                if x >= r.left && x < r.right && y >= r.top && y < r.bottom {
+                let over = keys_over(h, x, y, dpi);
+                let effect = app(|a| a.keys_btn.pointer_up(over));
+                if GetCapture() == h {
+                    _ = ReleaseCapture();
+                }
+                if matches!(effect, TrackEffect::Click(_)) {
                     close_keys();
+                }
+            }
+            WM_CAPTURECHANGED => {
+                let effect = app(|a| a.keys_btn.capture_lost());
+                if matches!(effect, TrackEffect::Cancel) {
+                    _ = InvalidateRect(Some(h), None, false);
                 }
             }
             WM_KEYDOWN => match VIRTUAL_KEY(wp.0 as u16) {
@@ -318,7 +377,10 @@ fn keys_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
             },
             // A click in another window already moved focus. Close without pulling it back.
             WM_ACTIVATE if (wp.0 & 0xffff) as u32 == WA_INACTIVE => _ = DestroyWindow(h),
-            WM_DESTROY => app(|a| a.keys_popup = HWND::default()),
+            WM_DESTROY => app(|a| {
+                a.keys_popup = HWND::default();
+                a.keys_btn = Tracker::new();
+            }),
             _ => return DefWindowProcW(h, msg, wp, lp),
         }
         LRESULT(0)

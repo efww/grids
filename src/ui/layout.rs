@@ -1021,22 +1021,24 @@ pub(crate) unsafe fn open_grid() {
 pub(crate) unsafe fn paint_grid(h: HWND) {
     let (preview, cur, hot, dpi, font, accent) =
         app(|a| (a.grid_preview.clone(), a.s.heights.clone(), a.grid_preset, a.dpi, a.font, a.s.accent_now()));
-    let soft = blend(accent, pal().card, 0.8);
+    let tokens = ui_tokens();
+    let soft = blend(accent, tokens.card, 0.8);
     let g = pick_geo(dpi);
     let on = |v: &[usize], r: usize, c: usize| c < v.len() && r < v[c];
+    let rad = px(dpi, RADIUS).max(1);
     buffered(h, |dc, rc| {
-        fill(dc, rc, pal().card);
-        frame(dc, rc, 1, pal().line);
+        paint_window(dc, rc);
+        frame(dc, rc, 1, tokens.line);
         for r in 0..4 {
             for c in 0..4 {
-                let col = if on(&preview, r, c) {
-                    accent
+                let cell = pick_cell(&g, r, c);
+                if on(&preview, r, c) {
+                    aa_rfill(dc, cell, rad, accent, None, tokens.bg);
                 } else if on(&cur, r, c) {
-                    soft
+                    aa_rfill(dc, cell, rad, soft, None, tokens.bg);
                 } else {
-                    pal().pill
-                };
-                fill(dc, pick_cell(&g, r, c), col);
+                    aa_rfill(dc, cell, rad, tokens.card, Some(tokens.line), tokens.bg);
+                }
             }
         }
         let label = if preview.iter().all(|&n| n == preview[0]) {
@@ -1044,12 +1046,16 @@ pub(crate) unsafe fn paint_grid(h: HWND) {
         } else {
             format!("{}  {}", tr(crate::Key::PerColumn), layout_label(&preview))
         };
-        text(dc, g.label, &label, font, pal().text, DT_CENTER);
+        text(dc, g.label, &label, font, tokens.text, DT_CENTER);
         // preset thumbnails: the panes of each layout on a tile
-        for (i, (p, t)) in PRESETS.iter().zip(g.presets).enumerate() {
-            let (tile, pane) = if hot == Some(i) { (soft, accent) } else { (pal().pill, blend(pal().card, pal().text, 0.25)) };
-            fill(dc, t, tile);
-            let inner = RECT { left: t.left + 3, top: t.top + 3, right: t.right - 3, bottom: t.bottom - 3 };
+        for (i, (p, tile_r)) in PRESETS.iter().zip(g.presets).enumerate() {
+            let pane = if hot == Some(i) { accent } else { blend(tokens.card, tokens.text, 0.25) };
+            if hot == Some(i) {
+                aa_rfill(dc, tile_r, rad, soft, Some(tokens.line), tokens.bg);
+            } else {
+                aa_rfill(dc, tile_r, rad, tokens.card, Some(tokens.line), tokens.bg);
+            }
+            let inner = RECT { left: tile_r.left + 3, top: tile_r.top + 3, right: tile_r.right - 3, bottom: tile_r.bottom - 3 };
             for (c, (x0, x1)) in cells(inner.left, inner.right - inner.left, &even(p.len()), 2).into_iter().enumerate() {
                 for (y0, y1) in cells(inner.top, inner.bottom - inner.top, &even(p[c]), 2) {
                     fill(dc, RECT { left: x0, top: y0, right: x1, bottom: y1 }, pane);

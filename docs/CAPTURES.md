@@ -176,15 +176,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File docs\capture\capture-main.ps
 - `feature_basket.png`, `feature_basket.ko.png`, `feature_basket.ja.png`
 - `tab_list.png`
 - `rename.png`, `rename.ko.png`, `rename.ja.png`
+- `copy_progress.png`, `copy_progress.ko.png`, `copy_progress.ja.png` — 푸터 버튼이 28 DIP라 창 높이는 480×148. 위 표의 480×152는 재촬영 전 값이다.
 
 세션 목록(`MaguroSessionList`)은 지금 캡처가 없다. 다음에 그 창을 찍을 때 새 버튼을 담는다.
 
-시스템 대화상자(IFileOperation 진행, 탐색기 메뉴, 공통 파일 대화상자)는 그대로다. 이름 묻기, 즐겨찾기, 정보, Excel, 팝업, 알림, 확인 창은 다음 배치다. 설정 창의 토글은 모양과 동작이 이전과 같다.
+시스템 대화상자(IFileOperation 진행, 탐색기 메뉴, 공통 파일 대화상자)는 그대로다. 이름 묻기, 즐겨찾기 관리, 정보, Excel, 확인 창, 그리고 팝업·알림(폴더 감시 토스트, 즐겨찾기 없음, 네트워크 실패, 빠른 복사 진행·이름 충돌, 세션 목록, 단축키, 레이아웃 고르기, 선택 칸, 서버 연결의 저장/취소)은 공유 토큰으로 옮겼다. 설정 창의 토글은 모양과 동작이 이전과 같다.
 
 ## 변경 이력 (관련)
 
 - **2026-11-04:** 톱니바퀴 메뉴를 세션 / 도구 / 보기 / 모양 / 동작 / 설정으로 나눔. 열린 메뉴 샷은 images-v3에 없음 (위 절). 닫힌 톱니 단추만 있는 메인 창 샷은 다시 찍지 않음.
 - **2026-11-04:** UI 통일 1차. 폴더 감시, 파일 바구니, 탭 목록, 일괄 이름 바꾸기, 세션 목록의 버튼을 공유 페인터로 옮김. 위 캡처를 다시 찍을 것. 설정 토글은 유지.
+- **2026-11-04:** UI 통일 팝업·알림. 감시 토스트, 즐겨찾기 없음, 네트워크 실패, 빠른 복사 진행·충돌, 세션 목록, 단축키, 레이아웃 고르기, 선택 칸, 서버 연결 푸터를 공유 페인터로 옮김. 빠른 복사 진행 창은 480×148. 이름 묻기, 즐겨찾기 관리, 정보, Excel, 확인 창은 이전 배치 그대로다.
 - **2026-11-04:** images-v3 전체(90장) 포터블 재촬영. servers*=가짜 sftp.example.com. preview_peek*=F3 MaguroPeek+실 JPG. feature_win_shift_v*=클립보드 경로 새 탭(Folder Watch 없음). settings_ctxmenu*=CTX_PAGE=8 Right-click menu items. workspaces*=MaguroAsk 슬롯명 Desk. docs/capture/* 재사용 스크립트. CAPTURES 크기 실측 갱신.
 - **미리보기 창 본문 변경 후 재촬영:** `preview.png`, `preview.ko.png`, `preview.ja.png` (속성 머리글, 처리기 위 머리글, 텍스트/코드/CSV/폴더 본문). `preview_peek.png`, `preview_peek.ko.png`, `preview_peek.ja.png` (F3 제목 칸의 이름 + 속성/EXIF). 위 표의 바이트 크기는 재촬영 전 값이다.
 - **2026-11-04 오전:** servers·settings_panes 가짜/페이지 수정 재촬영.

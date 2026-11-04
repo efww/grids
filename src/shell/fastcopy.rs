@@ -825,7 +825,7 @@ fn progress_geom(dpi: i32) -> ProgGeom {
     let line = sc(dpi, 16);
     let bar_h = sc(dpi, 8);
     let btn_w = sc(dpi, 96);
-    let btn_h = sc(dpi, 32);
+    let btn_h = sc(dpi, crate::BTN_H_FOOTER);
     let title_y = pad;
     let stats_y = title_y + line + gap;
     let bar_y = stats_y + line + gap;
@@ -1018,6 +1018,7 @@ struct View {
     dpi: i32,
     accent: u32,
     font: HFONT,
+    body: HFONT,
     small: HFONT,
     title: String,
     stats: String,
@@ -1057,8 +1058,9 @@ fn open_progress(owner: HWND, accent: u32, face: &str, mv: bool, cancel: Arc<Ato
         hwnd: HWND::default(),
         dpi,
         accent,
-        font: make_font(face, 16, 600, dpi),
-        small: make_font(face, 13, 400, dpi),
+        font: make_font(face, crate::FONT_PX, 600, dpi),
+        body: make_font(face, crate::FONT_PX, 400, dpi),
+        small: make_font(face, crate::FONT_META_PX, 400, dpi),
         title: title.to_string(),
         stats: String::new(),
         current: String::new(),
@@ -1129,8 +1131,8 @@ fn open_ask(owner: HWND, accent: u32, face: &str, name: &str, choice: Arc<Atomic
     let view = Box::new(AskView {
         dpi,
         accent,
-        font: make_font(face, 16, 600, dpi),
-        small: make_font(face, 13, 400, dpi),
+        font: make_font(face, crate::FONT_PX, 600, dpi),
+        small: make_font(face, crate::FONT_PX, 400, dpi),
         name: name.to_string(),
         all: false,
         hot: -1,
@@ -1279,6 +1281,14 @@ unsafe extern "system" fn progress_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
         }
         WM_MOUSEMOVE => {
             hit_progress(h, lp, false, false);
+            arm_leave(h);
+            LRESULT(0)
+        }
+        WM_MOUSELEAVE => {
+            if let Some(v) = view(h) {
+                (*v).hot = false;
+                let _ = InvalidateRect(Some(h), None, false);
+            }
             LRESULT(0)
         }
         WM_LBUTTONDOWN => {
@@ -1287,6 +1297,16 @@ unsafe extern "system" fn progress_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
         }
         WM_LBUTTONUP => {
             hit_progress(h, lp, false, true);
+            LRESULT(0)
+        }
+        WM_CAPTURECHANGED => {
+            if let Some(v) = view(h) {
+                if (*v).down {
+                    (*v).down = false;
+                    (*v).hot = false;
+                    let _ = InvalidateRect(Some(h), None, false);
+                }
+            }
             LRESULT(0)
         }
         WM_KEYDOWN if wp.0 == VK_ESCAPE.0 as usize => {
@@ -1322,7 +1342,7 @@ unsafe fn paint_progress(h: HWND) {
     crate::buffered(h, |dc, rc| {
         let dpi = v.dpi;
         let g = progress_geom(dpi);
-        crate::fill(dc, rc, crate::pal().bg);
+        crate::paint_window(dc, rc);
         let pad = g.pad;
         let title_r = RECT { left: pad, top: g.title_y, right: rc.right - pad, bottom: g.title_y + g.line };
         crate::text(dc, title_r, &v.title, v.font, crate::pal().text, DT_LEFT);
@@ -1349,9 +1369,10 @@ unsafe fn paint_progress(h: HWND) {
         };
         let eta_r = RECT { left: pad, top: g.row_y, right: v.cancel_rect.left - sc(dpi, 8), bottom: g.row_y + g.btn_h };
         crate::text(dc, eta_r, &v.eta, v.small, crate::pal().sub, DT_LEFT);
-        let fill = if v.down && v.hot { crate::blend(crate::pal().card, crate::pal().text, 0.08) } else if v.hot { crate::blend(crate::pal().card, v.accent, 0.12) } else { crate::pal().card };
-        crate::aa_rfill(dc, v.cancel_rect, sc(dpi, 8), fill, Some(crate::pal().line), crate::pal().bg);
-        crate::text(dc, v.cancel_rect, tr(Key::Cancel), v.small, crate::pal().text, DT_CENTER);
+        let hot = v.hot.then_some(1u8);
+        let down = v.down.then_some(1u8);
+        let visual = crate::visual_from_pointer(1u8, hot, down);
+        crate::paint_button(dc, v.cancel_rect, crate::ButtonKind::Secondary, visual, tr(Key::Cancel), v.body, dpi, crate::ui_tokens().bg, crate::FocusRing::Outside);
     });
 }
 
@@ -1397,6 +1418,14 @@ unsafe extern "system" fn ask_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) ->
         }
         WM_MOUSEMOVE => {
             hit_ask(h, lp, false, false);
+            arm_leave(h);
+            LRESULT(0)
+        }
+        WM_MOUSELEAVE => {
+            if let Some(v) = ask_view(h) {
+                (*v).hot = -1;
+                let _ = InvalidateRect(Some(h), None, false);
+            }
             LRESULT(0)
         }
         WM_LBUTTONDOWN => {
@@ -1405,6 +1434,16 @@ unsafe extern "system" fn ask_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) ->
         }
         WM_LBUTTONUP => {
             hit_ask(h, lp, false, true);
+            LRESULT(0)
+        }
+        WM_CAPTURECHANGED => {
+            if let Some(v) = ask_view(h) {
+                if (*v).down >= 0 {
+                    (*v).down = -1;
+                    (*v).hot = -1;
+                    let _ = InvalidateRect(Some(h), None, false);
+                }
+            }
             LRESULT(0)
         }
         WM_KEYDOWN if wp.0 == VK_ESCAPE.0 as usize => {
@@ -1442,7 +1481,7 @@ unsafe fn paint_ask(h: HWND) {
     crate::buffered(h, |dc, rc| {
         let dpi = v.dpi;
         let pad = sc(dpi, 16);
-        crate::fill(dc, rc, crate::pal().bg);
+        crate::paint_window(dc, rc);
         let mut y = pad;
         let title = RECT { left: pad, top: y, right: rc.right - pad, bottom: y + sc(dpi, 16) };
         crate::text(dc, title, tr(Key::FastCopy), v.font, crate::pal().text, DT_LEFT);
@@ -1461,18 +1500,19 @@ unsafe fn paint_ask(h: HWND) {
         }
         let label = RECT { left: mark.right + sc(dpi, 8), top: y, right: rc.right - pad, bottom: y + tick };
         crate::text(dc, label, tr(Key::ApplyToAll), v.small, crate::pal().text, DT_LEFT);
-        let bw = (rc.right - pad * 2 - sc(dpi, 8) * 2) / 3;
-        let top = rc.bottom - pad - sc(dpi, 32);
+        let bw = (rc.right - pad * 2 - sc(dpi, crate::BTN_GAP) * 2) / 3;
+        let bh = sc(dpi, crate::BTN_H_FOOTER);
+        let top = rc.bottom - pad - bh;
         let labels = [tr(Key::Overwrite), tr(Key::Skip), tr(Key::Cancel)];
+        let hot = (v.hot >= 0).then_some(v.hot);
+        let down = (v.down >= 0).then_some(v.down);
+        let ground = crate::ui_tokens().bg;
         for i in 0..3 {
-            let left = pad + i as i32 * (bw + sc(dpi, 8));
-            v.rects[i] = RECT { left, top, right: left + bw, bottom: top + sc(dpi, 32) };
-            let on = v.hot == i as i32;
-            let fill = if i == 0 { v.accent } else if on { crate::blend(crate::pal().card, crate::pal().text, 0.06) } else { crate::pal().card };
-            let border = if i == 0 { None } else { Some(crate::pal().line) };
-            crate::aa_rfill(dc, v.rects[i], sc(dpi, 8), fill, border, crate::pal().bg);
-            let ink = if i == 0 { crate::on_color(v.accent) } else { crate::pal().text };
-            crate::text(dc, v.rects[i], labels[i], v.small, ink, DT_CENTER);
+            let left = pad + i as i32 * (bw + sc(dpi, crate::BTN_GAP));
+            v.rects[i] = RECT { left, top, right: left + bw, bottom: top + bh };
+            let kind = if i == 0 { crate::ButtonKind::Primary } else { crate::ButtonKind::Secondary };
+            let visual = crate::visual_from_pointer(i as i32, hot, down);
+            crate::paint_button(dc, v.rects[i], kind, visual, labels[i], v.small, dpi, ground, crate::FocusRing::Outside);
         }
     });
 }
@@ -1525,6 +1565,7 @@ unsafe fn drop_view(h: HWND) {
     SetWindowLongPtrW(h, GWLP_USERDATA, 0);
     let v = Box::from_raw(p);
     crate::delete_font(v.font);
+    crate::delete_font(v.body);
     crate::delete_font(v.small);
 }
 
@@ -1537,6 +1578,16 @@ unsafe fn drop_ask(h: HWND) {
     let v = Box::from_raw(p);
     crate::delete_font(v.font);
     crate::delete_font(v.small);
+}
+
+unsafe fn arm_leave(h: HWND) {
+    let mut t = TRACKMOUSEEVENT {
+        cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
+        dwFlags: TME_LEAVE,
+        hwndTrack: h,
+        dwHoverTime: 0,
+    };
+    let _ = TrackMouseEvent(&mut t);
 }
 
 fn inside(r: RECT, x: i32, y: i32) -> bool {
@@ -1745,7 +1796,7 @@ mod tests {
     #[test]
     fn progress_window_packs_cancel_on_the_eta_row() {
         let g = progress_geom(96);
-        assert_eq!((g.w, g.h), (480, 152));
+        assert_eq!((g.w, g.h), (480, 148));
         assert!(g.h < 184);
         assert_eq!(g.row_y + g.btn_h + g.pad, g.h);
         assert_eq!(g.file_y + g.line + 8, g.row_y);

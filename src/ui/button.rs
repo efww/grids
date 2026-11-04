@@ -4,8 +4,8 @@
 //! release, disabled, and focus. Mouse leave clears hover. Release over the button
 //! clicks. Release outside cancels. A lost capture cancels and does not leave hover stuck.
 //!
-//! The name prompt, the custom confirm, the favourites manager, About, and Excel tidy
-//! call [`paint_button`]. The settings window, popups, and notices still have their own painters.
+//! The name prompt, the custom confirm, the favourites manager, About, Excel tidy,
+//! popups, and notices call [`paint_button`]. The settings window still has its own painters.
 
 use super::tokens::*;
 use crate::imports::*;
@@ -112,6 +112,19 @@ fn resting_colors(kind: ButtonKind, t: &Tokens, _ground: u32) -> ButtonColors {
         ButtonKind::Icon => ButtonColors { fill: None, border: None, ink: t.text, underline: false },
         ButtonKind::Link => ButtonColors { fill: None, border: None, ink: ACCENT, underline: false },
     }
+}
+
+/// Parent-painted button. `down` is the captured id, or `None` when nothing is pressed.
+/// A captured press does not hover a different button. Focus is left to [`Tracker`].
+pub(crate) fn visual_from_pointer<T: Copy + Eq>(id: T, hot: Option<T>, down: Option<T>) -> ButtonVisual {
+    let state = if down == Some(id) && hot == Some(id) {
+        ButtonState::Pressed
+    } else if down.is_none() && hot == Some(id) {
+        ButtonState::Hover
+    } else {
+        ButtonState::Normal
+    };
+    ButtonVisual { state, focus: false }
 }
 
 /// Owner-draw `DRAWITEM` flags plus the shared hover window. Pressed wins over hover.
@@ -374,6 +387,15 @@ mod tests {
         let faded = button_colors(ButtonKind::Primary, ButtonState::Disabled, false, GROUND);
         assert_eq!(faded.fill, Some(crate::blend(GROUND, ACCENT, DISABLED_ALPHA)));
         assert!(!faded.underline);
+    }
+
+    #[test]
+    fn pointer_visual_ignores_a_different_button_while_one_is_pressed() {
+        assert_eq!(visual_from_pointer(1, Some(2), Some(1)).state, ButtonState::Normal);
+        assert_eq!(visual_from_pointer(2, Some(2), Some(1)).state, ButtonState::Normal);
+        assert_eq!(visual_from_pointer(1, Some(1), Some(1)).state, ButtonState::Pressed);
+        assert_eq!(visual_from_pointer(2, Some(2), None).state, ButtonState::Hover);
+        assert!(!visual_from_pointer(2, Some(2), None).focus);
     }
 
     #[test]

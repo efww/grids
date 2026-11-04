@@ -38,8 +38,28 @@ pub(crate) fn load_geo(n: usize, dpi: i32) -> LoadGeo {
         })
         .collect();
     let fy = pad + rows * (ch + gap);
-    let link = |x0: i32, x1: i32| RECT { left: x0, top: fy, right: x1, bottom: fy + s(30) };
-    LoadGeo { w, h: fy + s(30) + s(8), cards, save_as: link(pad, w / 2), folder: link(w / 2, w - pad) }
+    let foot = s(BTN_H_FOOTER);
+    let link = |x0: i32, x1: i32| RECT { left: x0, top: fy, right: x1, bottom: fy + foot };
+    LoadGeo { w, h: fy + foot + s(SPACE_8), cards, save_as: link(pad, w / 2), folder: link(w / 2, w - pad) }
+}
+
+/// Link glyphs sit on the outer edge of a wide hit slot. `paint_button` centres in the rect it is given.
+unsafe fn link_face(dc: HDC, slot: RECT, label: &str, font: HFONT, right: bool) -> RECT {
+    let old = SelectObject(dc, font.into());
+    let w: Vec<u16> = label.encode_utf16().collect();
+    let mut sz = SIZE::default();
+    if !w.is_empty() {
+        _ = GetTextExtentPoint32W(dc, &w, &mut sz);
+    }
+    SelectObject(dc, old);
+    let room = (slot.right - slot.left).max(1);
+    // Two extra pixels so DT_END_ELLIPSIS does not clip a label that measured exact.
+    let width = (sz.cx + 2).clamp(1, room);
+    if right {
+        RECT { left: slot.right - width, right: slot.right, ..slot }
+    } else {
+        RECT { left: slot.left, right: slot.left + width, ..slot }
+    }
 }
 
 /// The name line under a card's thumbnail. The rename box sits there.
@@ -101,7 +121,11 @@ pub(crate) unsafe fn open_load() {
     if let Ok(b) = GetDlgItem(Some(main), ID_TB_LOAD) {
         _ = GetWindowRect(b, &mut rc);
     }
-    app(|a| (a.cards, a.load_hot) = (cards, None));
+    app(|a| {
+        a.cards = cards;
+        a.load_hot = None;
+        a.load_btn = Tracker::new();
+    });
     let style = WS_POPUP | WS_VISIBLE | WS_CLIPCHILDREN;
     let y = rc.bottom + 6 * dpi / 96;
     let Ok(h) = CreateWindowExW(WS_EX_TOOLWINDOW, w!("MaguroLoad"), w!(""), style, rc.left, y, g.w, g.h, Some(main), None, None, None) else {
@@ -147,7 +171,11 @@ pub(crate) unsafe fn fit_load() {
 
 unsafe fn reload_cards() {
     let cards = session_cards();
-    app(|a| (a.cards, a.load_hot) = (cards, None));
+    app(|a| {
+        a.cards = cards;
+        a.load_hot = None;
+        a.load_btn = Tracker::new();
+    });
     fit_load();
 }
 
@@ -315,16 +343,35 @@ pub(crate) unsafe fn commit_load_rename() {
     reload_cards();
 }
 
+fn load_button(k: usize) -> Option<usize> {
+    if k == LOAD_SAVE_AS || k == LOAD_FOLDER || k >= LOAD_DEL { Some(k) } else { None }
+}
+
 pub(crate) unsafe fn paint_load(h: HWND) {
-    let (cards, hot, cur, dpi, font, small, icon_font, accent, editing) = app(|a| {
+    let (cards, hot, cur, dpi, font, small, icon_font, accent, editing, save_vis, folder_vis, del_vis) = app(|a| {
         let cards: Vec<_> = a.cards.iter().map(|(p, s, t)| (p.clone(), s.clone(), t.clone())).collect();
-        (cards, a.load_hot, a.s.file.clone(), a.dpi, a.font, a.small_font, a.icon_font, a.s.accent_now(), a.load_editing)
+        let del_vis: Vec<_> = (0..cards.len()).map(|k| a.load_btn.visual(LOAD_DEL + k, false)).collect();
+        (
+            cards,
+            a.load_hot,
+            a.s.file.clone(),
+            a.dpi,
+            a.font,
+            a.small_font,
+            a.icon_font,
+            a.s.accent_now(),
+            a.load_editing,
+            a.load_btn.visual(LOAD_SAVE_AS, false),
+            a.load_btn.visual(LOAD_FOLDER, false),
+            del_vis,
+        )
     });
     let g = load_geo(cards.len(), dpi);
     let s = |v: i32| v * dpi / 96;
+    let ground = ui_tokens().bg;
     buffered(h, |dc, rc| {
-        fill(dc, rc, pal().card);
-        frame(dc, rc, 1, pal().line);
+        paint_window(dc, rc);
+        frame(dc, rc, 1, ui_tokens().line);
         if cards.is_empty() {
             let r = RECT { bottom: g.save_as.top, ..rc };
             text(dc, r, tr(crate::Key::NoSavedSessions), font, pal().sub, DT_CENTER);
@@ -332,20 +379,22 @@ pub(crate) unsafe fn paint_load(h: HWND) {
         for (k, ((path, sess, when), (card, thumb, del))) in cards.iter().zip(&g.cards).enumerate() {
             let on = hot == Some(k) || hot == Some(LOAD_DEL + k);
             if on {
-                fill(dc, *card, pal().pill);
+                let t = ui_tokens();
+                aa_rfill(dc, *card, px(dpi, RADIUS).max(1), t.sel_mist(), Some(t.line), t.bg);
+            } else {
+                crate::ui::paint_card(dc, *card, dpi);
             }
             draw_thumb(dc, *thumb, sess, small);
             if path.to_string_lossy() == cur.as_str() {
                 frame(dc, *thumb, s(2), accent); // the session you're in
             }
             if on {
-                fill(dc, *del, pal().card);
-                text(dc, *del, "\u{E711}", icon_font, if hot == Some(LOAD_DEL + k) { pal().text } else { pal().sub }, DT_CENTER);
+                let vis = del_vis.get(k).copied().unwrap_or(ButtonVisual { state: ButtonState::Normal, focus: false });
+                paint_button(dc, *del, ButtonKind::Icon, vis, "\u{E711}", icon_font, dpi, pal().bg, FocusRing::Outside);
             }
             let name_r = load_name(card, thumb, dpi);
             if editing == Some(k) {
-                fill(dc, name_r, pal().pill);
-                frame(dc, name_r, 1, accent);
+                paint_field(dc, name_r, dpi, true);
             } else {
                 text(dc, name_r, &path.file_stem().unwrap_or_default().to_string_lossy(), font, pal().text, DT_LEFT);
             }
@@ -353,13 +402,24 @@ pub(crate) unsafe fn paint_load(h: HWND) {
             let meta = format!("{}  ·  {}", layout_label(&sess.heights), when);
             text(dc, line(thumb.bottom + s(22), s(16)), &meta, small, pal().sub, DT_LEFT);
         }
-        fill(dc, RECT { left: s(12), top: g.save_as.top - 1, right: rc.right - s(12), bottom: g.save_as.top }, pal().line);
-        let link = |r: RECT, label: &str, k: usize, align| {
-            text(dc, r, label, font, if hot == Some(k) { pal().text } else { accent }, align);
-        };
-        link(g.save_as, tr(crate::Key::SaveThisTab2), LOAD_SAVE_AS, DT_LEFT);
-        link(g.folder, tr(crate::Key::OpenSessionsFolder), LOAD_FOLDER, DT_RIGHT);
+        fill(dc, RECT { left: s(12), top: g.save_as.top - 1, right: rc.right - s(12), bottom: g.save_as.top }, ui_tokens().line);
+        let save = tr(crate::Key::SaveThisTab2);
+        let folder = tr(crate::Key::OpenSessionsFolder);
+        paint_button(dc, link_face(dc, g.save_as, save, font, false), ButtonKind::Link, save_vis, save, font, dpi, ground, FocusRing::Outside);
+        paint_button(dc, link_face(dc, g.folder, folder, font, true), ButtonKind::Link, folder_vis, folder, font, dpi, ground, FocusRing::Outside);
     });
+}
+
+fn arm_leave(h: HWND) {
+    unsafe {
+        let mut t = TRACKMOUSEEVENT {
+            cbSize: size_of::<TRACKMOUSEEVENT>() as u32,
+            dwFlags: TME_LEAVE,
+            hwndTrack: h,
+            dwHoverTime: 0,
+        };
+        let _ = TrackMouseEvent(&mut t);
+    }
 }
 
 pub(crate) fn load_hit(g: &LoadGeo, x: i32, y: i32) -> Option<usize> {
@@ -390,35 +450,91 @@ fn load_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
             WM_MOUSEMOVE => {
                 let (x, y) = xy(lp);
                 let hot = load_hit(&g, x, y);
-                if app(|a| std::mem::replace(&mut a.load_hot, hot)) != hot {
+                let over = hot.and_then(load_button);
+                let repaint = app(|a| {
+                    let hot_changed = a.load_hot != hot;
+                    a.load_hot = hot;
+                    let effect = a.load_btn.pointer_move(over);
+                    hot_changed || matches!(effect, TrackEffect::Repaint)
+                });
+                arm_leave(h);
+                if repaint {
+                    _ = InvalidateRect(Some(h), None, false);
+                }
+            }
+            WM_MOUSELEAVE => {
+                let repaint = app(|a| {
+                    let hot_changed = a.load_hot.is_some();
+                    a.load_hot = None;
+                    let effect = a.load_btn.pointer_leave();
+                    hot_changed || matches!(effect, TrackEffect::Repaint)
+                });
+                if repaint {
+                    _ = InvalidateRect(Some(h), None, false);
+                }
+            }
+            WM_LBUTTONDOWN => {
+                if app(|a| a.load_editing.is_some()) {
+                    return LRESULT(0);
+                }
+                let (x, y) = xy(lp);
+                if let Some(id) = load_hit(&g, x, y).and_then(load_button) {
+                    app(|a| { a.load_btn.pointer_down(id); });
+                    _ = SetCapture(h);
                     _ = InvalidateRect(Some(h), None, false);
                 }
             }
             WM_LBUTTONUP => {
                 // A click while renaming only ends the rename.
-                if end_load_rename().is_some() {
+                let renaming = end_load_rename().is_some();
+                let (x, y) = xy(lp);
+                let hit = load_hit(&g, x, y);
+                let effect = app(|a| {
+                    if a.load_btn.down().is_some() {
+                        Some(a.load_btn.pointer_up(hit.and_then(load_button)))
+                    } else {
+                        None
+                    }
+                });
+                if GetCapture() == h {
+                    _ = ReleaseCapture();
+                }
+                if renaming {
                     return LRESULT(0);
                 }
-                let (x, y) = xy(lp);
-                let Some(k) = load_hit(&g, x, y) else { return LRESULT(0) };
-                if k >= LOAD_DEL {
-                    delete_card(h, k - LOAD_DEL);
+                if let Some(effect) = effect {
+                    if let TrackEffect::Click(k) = effect {
+                        if k >= LOAD_DEL {
+                            delete_card(h, k - LOAD_DEL);
+                        } else {
+                            _ = DestroyWindow(h);
+                            match k {
+                                LOAD_SAVE_AS => _ = save_session_as(),
+                                LOAD_FOLDER => {
+                                    let d = sessions_dir();
+                                    _ = std::fs::create_dir_all(&d);
+                                    navigate(app(|a| a.s.active), &d.to_string_lossy());
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    return LRESULT(0);
+                }
+                let Some(k) = hit else { return LRESULT(0) };
+                if load_button(k).is_some() {
                     return LRESULT(0);
                 }
                 let file = app(|a| a.cards.get(k).map(|c| c.0.clone()));
                 _ = DestroyWindow(h);
-                match k {
-                    LOAD_SAVE_AS => _ = save_session_as(),
-                    LOAD_FOLDER => {
-                        let d = sessions_dir();
-                        _ = std::fs::create_dir_all(&d);
-                        navigate(app(|a| a.s.active), &d.to_string_lossy());
-                    }
-                    _ => {
-                        if let Some(f) = file {
-                            load_session_file(&f);
-                        }
-                    }
+                if let Some(f) = file {
+                    load_session_file(&f);
+                }
+            }
+            WM_CAPTURECHANGED => {
+                let effect = app(|a| a.load_btn.capture_lost());
+                if matches!(effect, TrackEffect::Cancel) {
+                    _ = InvalidateRect(Some(h), None, false);
                 }
             }
             WM_RBUTTONUP => {
@@ -446,9 +562,9 @@ fn load_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
             }
             WM_CTLCOLOREDIT => {
                 let dc = HDC(wp.0 as _);
-                SetBkColor(dc, cref(pal().pill));
+                SetBkColor(dc, cref(ui_tokens().field_bg));
                 SetTextColor(dc, cref(pal().text));
-                SetDCBrushColor(dc, cref(pal().pill));
+                SetDCBrushColor(dc, cref(ui_tokens().field_bg));
                 return LRESULT(GetStockObject(DC_BRUSH).0 as isize);
             }
             WM_COMMAND if ((wp.0 >> 16) & 0xffff) as u32 == EN_KILLFOCUS => _ = end_load_rename(),
@@ -457,6 +573,8 @@ fn load_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
             WM_DESTROY => app(|a| {
                 (a.load, a.load_closed) = (HWND::default(), Some(Instant::now()));
                 (a.load_edit, a.load_editing) = (HWND::default(), None);
+                a.load_hot = None;
+                a.load_btn = Tracker::new();
             }),
             _ => return DefWindowProcW(h, msg, wp, lp),
         }

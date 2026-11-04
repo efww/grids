@@ -201,14 +201,13 @@ pub(crate) unsafe fn invert_selection(i: usize) {
 }
 
 pub(crate) unsafe fn paint_match(h: HWND) {
-    let desel = app(|a| a.matcher.as_ref().is_some_and(|m| m.desel));
+    let (desel, dpi, font) = app(|a| (a.matcher.as_ref().is_some_and(|m| m.desel), a.dpi, a.font));
     let g = match_geo_now(desel);
-    let font = app(|a| a.font);
     buffered(h, |dc, rc| {
-        fill(dc, rc, pal().card);
-        frame(dc, rc, 1, pal().line);
+        paint_window(dc, rc);
+        frame(dc, rc, 1, ui_tokens().line);
         text(dc, g.label, match_label(desel), font, pal().sub, DT_LEFT);
-        fill(dc, g.field, pal().pill);
+        paint_field(dc, g.field, dpi, true);
     });
 }
 
@@ -224,9 +223,9 @@ fn match_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
             WM_ERASEBKGND => return LRESULT(1),
             WM_CTLCOLOREDIT => {
                 let dc = HDC(wp.0 as _);
-                SetBkColor(dc, cref(pal().pill));
+                SetBkColor(dc, cref(ui_tokens().field_bg));
                 SetTextColor(dc, cref(pal().text));
-                SetDCBrushColor(dc, cref(pal().pill));
+                SetDCBrushColor(dc, cref(ui_tokens().field_bg));
                 return LRESULT(GetStockObject(DC_BRUSH).0 as isize);
             }
             WM_ACTIVATE if (wp.0 & 0xffff) as u32 == WA_INACTIVE => _ = PostMessageW(Some(h), WM_CLOSE, WPARAM(0), LPARAM(0)),
