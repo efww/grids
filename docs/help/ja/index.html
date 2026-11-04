@@ -215,9 +215,13 @@ body.lb-open { overflow: hidden; }
   border-radius: 999px;
   background: rgba(0, 0, 0, .55);
   color: #fff;
-  font: 700 28px/1 "Segoe UI", sans-serif;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
   cursor: pointer;
 }
+.lb-close svg { display: block; width: 20px; height: 20px; }
 .lb-close:hover { background: rgba(0, 0, 0, .78); }
 .lb-close:focus-visible { outline: 2px solid var(--brand-soft); outline-offset: 2px; }
 
@@ -593,7 +597,7 @@ body.lb-open { overflow: hidden; }
 </div>
 <div class="lb" id="shot-lb" hidden role="dialog" aria-modal="true" data-label="スクリーンショット">
   <div class="lb-stage" id="shot-lb-stage"><img id="shot-lb-img" alt="" draggable="false"></div>
-  <button type="button" class="lb-close" id="shot-lb-close" aria-label="閉じる">&times;</button>
+  <button type="button" class="lb-close" id="shot-lb-close" aria-label="閉じる"><svg viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M4 4L16 16M16 4L4 16" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg></button>
 </div>
 <script>
 (function () {
