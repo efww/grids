@@ -139,7 +139,7 @@ Space 또는 F3으로 그림, PDF, Office, HTML, Markdown, 코드, CSV, ZIP, HWP
 
 `.xlsx` / `.xlsm`을 우클릭 → **읽기 모드로 열기**로 잠그지 않고 Excel을 엽니다. **A1·100%로 정리**는 선택을 A1로, 확대를 100%로 맞추고, 필요하면 첫 시트를 고르며 `.bak.xlsx` 백업도 남길 수 있습니다.
 
-<p align="center"><img width="420" alt="Excel을 A1·100%로 정리" src="docs/images-v4/feature_excel_readonly_tidy.ko.png"></p>
+<p align="center"><img width="420" alt="Excel을 A1·100%로 정리" src="docs/images-v3/feature_excel_readonly_tidy.ko.png"></p>
 
 ### 13. 파일 바구니
 
