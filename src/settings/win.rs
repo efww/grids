@@ -2,11 +2,11 @@ use std::cell::{Cell, RefCell};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::Once;
 use windows::core::{w, BOOL, HSTRING, PCWSTR};
-use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_CAPTION_COLOR, DWMWINDOWATTRIBUTE};
+use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_CAPTION_COLOR, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DWMWINDOWATTRIBUTE};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::{SetWindowTheme, DRAWITEMSTRUCT, WM_MOUSELEAVE};
 use windows::Win32::UI::HiDpi::{AdjustWindowRectExForDpi, GetDpiForWindow};
-use windows::Win32::UI::Input::KeyboardAndMouse::{EnableWindow, IsWindowEnabled, ReleaseCapture, SetCapture, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT, VK_ESCAPE, VK_RETURN};
+use windows::Win32::UI::Input::KeyboardAndMouse::{EnableWindow, GetFocus, IsWindowEnabled, ReleaseCapture, SetCapture, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT, VK_ESCAPE, VK_RETURN};
 use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -1039,14 +1039,14 @@ unsafe fn text_w(dc: HDC, font: HFONT, s: &str) -> i32 {
     r.right
 }
 
-/// Search-box frame: card fill, `line` border, 4 DIP corners. The name prompt uses this too.
+/// Search-box frame: card fill, `line` border, 4 DIP corners.
 unsafe fn draw_field(dc: HDC, r: RECT, dpi: i32, ground: u32) {
     crate::aa_rfill(dc, r, sc(dpi, FIELD_RADIUS_DIP), crate::pal().card, Some(crate::pal().line), ground);
 }
 
 
-/// Settings footer and in-card buttons. The name prompt, About, and Excel still share
-/// this painter. The next batch switches those windows to [`crate::paint_button`].
+/// Settings footer and in-card buttons. About and Excel still share this painter.
+/// The name prompt uses [`crate::paint_button`] so a theme accent cannot tint it.
 pub(crate) unsafe fn draw_btn(d: &DRAWITEMSTRUCT) {
     let id = d.CtlID as i32;
     let dis = d.itemState.0 & 4 != 0;
@@ -2072,6 +2072,7 @@ fn settings_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
 
 thread_local! {
     static ASK_EDIT: Cell<HWND> = Cell::new(HWND(std::ptr::null_mut()));
+    static ASK_FONT: Cell<HFONT> = Cell::new(HFONT::default());
     static ASK_OUT: RefCell<Option<Option<String>>> = const { RefCell::new(None) };
     static ABOUT_DONE: Cell<bool> = const { Cell::new(false) };
 }
@@ -2406,25 +2407,34 @@ unsafe fn ask_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
         WM_ERASEBKGND => return LRESULT(1),
         WM_CTLCOLOREDIT | WM_CTLCOLORSTATIC => {
             let dc = HDC(wp.0 as _);
+            let t = crate::ui_tokens();
+            // The edit sits on the field fill. A static, if one appears, sits on the window.
+            let bg = if msg == WM_CTLCOLOREDIT { t.field_bg } else { t.bg };
+            // Transparent text so a selection highlight stays visible. The brush still fills the control.
             SetBkMode(dc, TRANSPARENT);
-            SetBkColor(dc, crate::cref(crate::pal().card));
-            SetTextColor(dc, crate::cref(crate::pal().text));
-            SetDCBrushColor(dc, crate::cref(crate::pal().card));
+            SetBkColor(dc, crate::cref(bg));
+            SetTextColor(dc, crate::cref(t.text));
+            SetDCBrushColor(dc, crate::cref(bg));
             return LRESULT(GetStockObject(DC_BRUSH).0 as isize);
         }
         WM_DRAWITEM => {
-            draw_btn(&*(lp.0 as *const DRAWITEMSTRUCT));
+            draw_ask_btn(&*(lp.0 as *const DRAWITEMSTRUCT));
             return LRESULT(1);
         }
         WM_COMMAND => {
             let id = (wp.0 & 0xffff) as i32;
-            if id == 1 {
+            let code = ((wp.0 >> 16) & 0xffff) as u32;
+            if id == ASK_EDIT_ID && (code == EN_SETFOCUS || code == EN_KILLFOCUS) {
+                let _ = InvalidateRect(Some(h), None, false);
+                return LRESULT(0);
+            }
+            if id == ASK_OK {
                 let text = crate::text_of(ASK_EDIT.with(|e| e.get()));
                 ASK_OUT.with(|o| *o.borrow_mut() = Some(Some(text)));
                 let _ = DestroyWindow(h);
                 return LRESULT(0);
             }
-            if id == 2 {
+            if id == ASK_CANCEL {
                 ASK_OUT.with(|o| *o.borrow_mut() = Some(None));
                 let _ = DestroyWindow(h);
                 return LRESULT(0);
@@ -2436,14 +2446,11 @@ unsafe fn ask_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
             return LRESULT(0);
         }
         WM_DPICHANGED => {
+            let dpi = ((wp.0 & 0xffff) as i32).max(96);
+            let (ww, hh) = ask_outer(dpi);
             let r = &*(lp.0 as *const RECT);
-            let _ = SetWindowPos(h, None, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE);
-            let font = ask_font();
-            if !font.is_invalid() {
-                for id in [1, 2, 10] {
-                    SendMessageW(ctl(h, id), WM_SETFONT, Some(WPARAM(font.0 as usize)), Some(LPARAM(1)));
-                }
-            }
+            let _ = SetWindowPos(h, None, r.left, r.top, ww, hh, SWP_NOZORDER | SWP_NOACTIVATE);
+            let _ = apply_ask_font(h, dpi);
             layout_ask(h);
             return LRESULT(0);
         }
@@ -2461,88 +2468,187 @@ fn ask_style() -> WINDOW_STYLE {
     WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN
 }
 
-const ASK_MARGIN_DIP: i32 = 16;
-const ASK_GAP_DIP: i32 = 16;
-const ASK_BTN_W_DIP: i32 = 80;
-const ASK_BTN_H_DIP: i32 = 28;
-const ASK_BTN_GAP_DIP: i32 = 12;
+/// Mockup window (B) is 360px wide. The caption is the non-client strip of that same width.
+const ASK_W_DIP: i32 = 360;
+/// 12px label at the body line-height.
+const ASK_LABEL_H_DIP: i32 = 16;
+/// Space under the label. The mockup's label margin is 6px, between the 4 and 8 tokens.
+const ASK_LABEL_GAP_DIP: i32 = 6;
+const ASK_OK: i32 = 1;
+const ASK_CANCEL: i32 = 2;
+const ASK_EDIT_ID: i32 = 10;
 
-/// Client height that puts the same margin above the field and below the buttons.
-fn ask_client_h(dpi: i32) -> i32 {
-    let dpi = dpi.max(96);
-    search_frame_h(dpi) + sc(dpi, ASK_GAP_DIP) + sc(dpi, ASK_BTN_H_DIP) + 2 * sc(dpi, ASK_MARGIN_DIP)
+/// 12px UI face. The settings page font is 14px and may already have been dropped.
+fn ask_ui_font(dpi: i32) -> HFONT {
+    let custom = app(|a| a.s.font_face.clone());
+    let face = if custom.is_empty() { crate::ui_face().to_string() } else { custom };
+    make_font(&face, crate::FONT_PX, 400, dpi.max(96))
 }
 
-/// Outer size. Width stays 420 DIP. Height grows so the client fits `ask_client_h` under the caption.
+/// Swap in a font for this DPI and point the live children at it. The previous face is deleted
+/// only after `WM_SETFONT`, so a control never paints a freed handle.
+unsafe fn apply_ask_font(h: HWND, dpi: i32) -> HFONT {
+    let font = ask_ui_font(dpi);
+    let old = ASK_FONT.with(|f| f.replace(font));
+    if !font.is_invalid() {
+        for id in [ASK_OK, ASK_CANCEL, ASK_EDIT_ID] {
+            let c = ctl(h, id);
+            if !c.0.is_null() {
+                SendMessageW(c, WM_SETFONT, Some(WPARAM(font.0 as usize)), Some(LPARAM(1)));
+            }
+        }
+    }
+    if !old.is_invalid() {
+        crate::delete_font(old);
+    }
+    font
+}
+
+fn drop_ask_font() {
+    let old = ASK_FONT.with(|f| f.replace(HFONT::default()));
+    if !old.is_invalid() {
+        unsafe { crate::delete_font(old) };
+    }
+}
+
+fn ask_button_kind(id: i32) -> crate::ButtonKind {
+    if id == ASK_OK { crate::ButtonKind::Primary } else { crate::ButtonKind::Secondary }
+}
+
+/// Label width plus the token pad, and at least the token minimum.
+fn ask_btn_w(text_px: i32, dpi: i32) -> i32 {
+    let dpi = dpi.max(96);
+    (text_px.max(0) + 2 * sc(dpi, crate::BTN_PAD_X)).max(sc(dpi, crate::BTN_MIN_W))
+}
+
+/// Client height: body pad, label, field, footer rule, footer buttons, body pad.
+fn ask_client_h(dpi: i32) -> i32 {
+    let dpi = dpi.max(96);
+    let s = |v: i32| sc(dpi, v);
+    s(crate::PAD_BODY_Y) + s(ASK_LABEL_H_DIP) + s(ASK_LABEL_GAP_DIP) + s(crate::FIELD_H)
+        + s(crate::SPACE_12) + 1 + s(crate::SPACE_12) + s(crate::BTN_H_FOOTER) + s(crate::PAD_BODY_Y)
+}
+
+/// Outer size. Both axes include the dialog frame so the client stays `ASK_W_DIP` by `ask_client_h`.
 fn ask_outer(dpi: i32) -> (i32, i32) {
     let dpi = dpi.max(96);
-    let mut r = RECT { left: 0, top: 0, right: 0, bottom: ask_client_h(dpi) };
-    let h = unsafe {
+    let client_w = sc(dpi, ASK_W_DIP);
+    let client_h = ask_client_h(dpi);
+    let mut r = RECT { left: 0, top: 0, right: client_w, bottom: client_h };
+    unsafe {
         if AdjustWindowRectExForDpi(&mut r, ask_style(), false, WS_EX_DLGMODALFRAME, dpi as u32).is_ok() {
-            (r.bottom - r.top).max(ask_client_h(dpi))
+            ((r.right - r.left).max(client_w), (r.bottom - r.top).max(client_h))
         } else {
-            ask_client_h(dpi) + sc(dpi, 48)
+            (client_w, client_h + sc(dpi, 48))
         }
-    };
-    (sc(dpi, 420), h)
+    }
 }
 
 struct AskLay {
+    label: RECT,
     field: RECT,
     edit: RECT,
+    rule: RECT,
     ok: RECT,
     cancel: RECT,
 }
 
-/// Field, edit slot and buttons inside the client, under the caption title.
-/// The field is the settings search frame. The edit slot is that frame inset by the same 2 DIP,
-/// and `place_edit` centres the line in the slot with `centered_edit_rect`.
-fn ask_lay(client_w: i32, client_h: i32, dpi: i32) -> AskLay {
+/// Label, token field, footer rule, and right-aligned buttons. Content is top-aligned;
+/// the caller sizes the client with [`ask_client_h`].
+/// Cancel sits left of Save. `ok_w` and `cancel_w` are already in px; a pair that
+/// cannot fit the content row is shrunk so the two still share `BTN_GAP`.
+/// The edit slot is the field inset by 2 DIP. `place_edit` centres the line in that slot.
+fn ask_lay(client_w: i32, dpi: i32, ok_w: i32, cancel_w: i32) -> AskLay {
     let dpi = dpi.max(96);
     let s = |v: i32| sc(dpi, v);
-    let margin = s(ASK_MARGIN_DIP);
-    let gap = s(ASK_GAP_DIP);
-    let btn_w = s(ASK_BTN_W_DIP);
-    let btn_h = s(ASK_BTN_H_DIP);
-    let btn_gap = s(ASK_BTN_GAP_DIP);
-    let frame_h = search_frame_h(dpi).max(1);
     let cw = client_w.max(1);
-    let ch = client_h.max(1);
-    let block = frame_h + gap + btn_h;
-    let top = ((ch - block) / 2).max(0);
-    let left = margin.min(cw / 2);
-    let right = (cw - margin).max(left + 1);
-    let field = RECT { left, top, right, bottom: top + frame_h };
-    let edit = inset(field, s(FIELD_INSET_DIP).min(frame_h / 2));
-    let by = field.bottom + gap;
-    let cancel = RECT { left: (right - btn_w).max(left), top: by, right, bottom: by + btn_h };
-    let ok_right = (cancel.left - btn_gap).max(left);
-    let ok = RECT { left: (ok_right - btn_w).max(0), top: by, right: ok_right, bottom: by + btn_h };
-    AskLay { field, edit, ok, cancel }
+    let margin_x = s(crate::PAD_BODY_X);
+    let left = margin_x.min(cw / 2);
+    let right = (cw - margin_x).max(left + 1);
+    let mut y = s(crate::PAD_BODY_Y);
+    let label = RECT { left, top: y, right, bottom: y + s(ASK_LABEL_H_DIP) };
+    y = label.bottom + s(ASK_LABEL_GAP_DIP);
+    let field_h = s(crate::FIELD_H).max(1);
+    let field = RECT { left, top: y, right, bottom: y + field_h };
+    y = field.bottom + s(crate::SPACE_12);
+    let rule = RECT { left, top: y, right, bottom: y + 1 };
+    y = rule.bottom + s(crate::SPACE_12);
+    let btn_h = s(crate::BTN_H_FOOTER);
+    let gap = s(crate::BTN_GAP);
+    let mut ok_w = ok_w.max(1);
+    let mut cancel_w = cancel_w.max(1);
+    let content = (right - left).max(1);
+    if ok_w + cancel_w + gap > content {
+        let room = (content - gap).max(2);
+        let sum = ok_w + cancel_w;
+        ok_w = (ok_w * room / sum).clamp(1, room - 1);
+        cancel_w = room - ok_w;
+    }
+    let ok = RECT { left: right - ok_w, top: y, right, bottom: y + btn_h };
+    let cancel_right = ok.left - gap;
+    let cancel = RECT { left: cancel_right - cancel_w, top: y, right: cancel_right, bottom: y + btn_h };
+    let edit = inset(field, s(FIELD_INSET_DIP).min(field_h / 2));
+    AskLay { label, field, edit, rule, ok, cancel }
+}
+
+unsafe fn ask_button_widths(font: HFONT, dpi: i32) -> (i32, i32) {
+    let dc = GetDC(None);
+    if dc.is_invalid() {
+        let w = sc(dpi, crate::BTN_MIN_W);
+        return (w, w);
+    }
+    let ok = ask_btn_w(text_w(dc, font, tx(crate::Key::Save)), dpi);
+    let cancel = ask_btn_w(text_w(dc, font, tx(crate::Key::Cancel)), dpi);
+    let _ = ReleaseDC(None, dc);
+    (ok, cancel)
 }
 
 unsafe fn paint_ask(h: HWND) {
     let dpi = GetDpiForWindow(h).max(96) as i32;
+    let font = ASK_FONT.with(|f| f.get());
+    let font = if font.is_invalid() { ask_font() } else { font };
+    let focused = GetFocus() == ASK_EDIT.with(|e| e.get());
     crate::buffered(h, |dc, rc| {
-        crate::fill(dc, rc, crate::pal().card);
-        let lay = ask_lay(rc.right - rc.left, rc.bottom - rc.top, dpi);
-        draw_field(dc, lay.field, dpi, crate::pal().card);
+        crate::paint_window(dc, rc);
+        let (ok_w, cancel_w) = ask_button_widths(font, dpi);
+        let lay = ask_lay(rc.right - rc.left, dpi, ok_w, cancel_w);
+        crate::paint_section_header(dc, lay.label, tx(crate::Key::Name), font);
+        crate::paint_field(dc, lay.field, dpi, focused);
+        crate::fill(dc, lay.rule, crate::ui_tokens().line);
     });
 }
 
-/// Place the borderless edit in the search-height frame, and the buttons under it.
+/// Place the borderless edit in the token field, and the footer buttons under the rule.
 unsafe fn layout_ask(h: HWND) {
     let dpi = GetDpiForWindow(h).max(96) as i32;
     let mut rc = RECT::default();
     let _ = GetClientRect(h, &mut rc);
-    let lay = ask_lay(rc.right - rc.left, rc.bottom - rc.top, dpi);
+    let font = ASK_FONT.with(|f| f.get());
+    let font = if font.is_invalid() { ask_font() } else { font };
+    let (ok_w, cancel_w) = ask_button_widths(font, dpi);
+    let lay = ask_lay(rc.right - rc.left, dpi, ok_w, cancel_w);
     let edit = ASK_EDIT.with(|e| e.get());
-    let m = sc(dpi, 8) as isize;
-    SendMessageW(edit, 0x00D3, Some(WPARAM(3)), Some(LPARAM(m | (m << 16)))); // EM_SETMARGINS, same as the search box
+    let m = sc(dpi, crate::FIELD_PAD_X) as isize;
+    SendMessageW(edit, 0x00D3, Some(WPARAM(3)), Some(LPARAM(m | (m << 16)))); // EM_SETMARGINS
     crate::place_edit(edit, lay.edit, true);
-    move_to(ctl(h, 1), lay.ok, true);
-    move_to(ctl(h, 2), lay.cancel, true);
+    move_to(ctl(h, ASK_OK), lay.ok, true);
+    move_to(ctl(h, ASK_CANCEL), lay.cancel, true);
     let _ = InvalidateRect(Some(h), None, false);
+}
+
+/// Owner-draw footer button. Hover comes from the shared hover window, the same way the
+/// session list does. Pressed wins, and the face is cerulean or secondary — never the theme accent.
+unsafe fn draw_ask_btn(d: &DRAWITEMSTRUCT) {
+    let dpi = GetDpiForWindow(d.hwndItem).max(96) as i32;
+    let font = ASK_FONT.with(|f| f.get());
+    let font = if font.is_invalid() {
+        HFONT(SendMessageW(d.hwndItem, WM_GETFONT, None, None).0 as _)
+    } else {
+        font
+    };
+    let visual = crate::visual_from_item(d.itemState.0, app(|a| a.hover) == d.hwndItem);
+    let kind = ask_button_kind(d.CtlID as i32);
+    crate::paint_button(d.hDC, d.rcItem, kind, visual, &crate::text_of(d.hwndItem), font, dpi, crate::ui_tokens().bg, crate::FocusRing::Inside);
 }
 
 /// One-line prompt. None means cancel.
@@ -2590,12 +2696,16 @@ unsafe fn ask_with(owner: HWND, title: &str, initial: &str, select_stem: bool) -
         return None;
     }
     style_window(h);
-    let font = ask_font();
-    let edit = child_at(h, w!("EDIT"), initial, 0x80 | 0x00010000, 10, font);
+    // Mockup B is a square dialog, same as the other Maguro popups. About keeps style_window as it is.
+    let square = DWMWCP_DONOTROUND;
+    let _ = DwmSetWindowAttribute(h, DWMWA_WINDOW_CORNER_PREFERENCE, &square as *const _ as _, 4);
+    let font = apply_ask_font(h, dpi);
+    let edit = child_at(h, w!("EDIT"), initial, 0x80 | 0x00010000, ASK_EDIT_ID, font);
     theme_ctl(edit);
     ASK_EDIT.with(|e| e.set(edit));
-    let _ = child_at(h, w!("BUTTON"), tx(crate::Key::Ok), 0xB | 0x00010000, 1, font);
-    let _ = child_at(h, w!("BUTTON"), tx(CLOSE_L), 0xB | 0x00010000, 2, font);
+    // Mockup B: secondary 취소, then primary 저장, both on the right.
+    let _ = child_at(h, w!("BUTTON"), tx(crate::Key::Save), 0xB | 0x00010000, ASK_OK, font);
+    let _ = child_at(h, w!("BUTTON"), tx(crate::Key::Cancel), 0xB | 0x00010000, ASK_CANCEL, font);
     layout_ask(h);
     let _ = ShowWindow(h, SW_SHOW);
     crate::keys::set_modal(true);
@@ -2615,9 +2725,9 @@ unsafe fn ask_with(owner: HWND, title: &str, initial: &str, select_stem: bool) -
         let mine = msg.hwnd == h || IsChild(h, msg.hwnd).as_bool();
         if msg.message == WM_KEYDOWN && mine {
             let cmd: usize = if msg.wParam.0 == VK_RETURN.0 as usize {
-                1
+                ASK_OK as usize
             } else if msg.wParam.0 == VK_ESCAPE.0 as usize {
-                2
+                ASK_CANCEL as usize
             } else {
                 0
             };
@@ -2626,9 +2736,18 @@ unsafe fn ask_with(owner: HWND, title: &str, initial: &str, select_stem: bool) -
                 continue;
             }
         }
+        // Owner-draw buttons have no hot state. Track the pointer the way the session list does.
+        if msg.message == WM_MOUSEMOVE || msg.message == WM_MOUSELEAVE {
+            let on = msg.message == WM_MOUSEMOVE
+                && crate::is_icon_button(msg.hwnd)
+                && GetParent(msg.hwnd).unwrap_or_default() == h;
+            crate::set_hover(if on { msg.hwnd } else { HWND::default() });
+        }
         let _ = TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
+    crate::set_hover(HWND::default());
+    drop_ask_font();
     crate::keys::set_modal(false);
     let _ = windows::Win32::UI::Input::KeyboardAndMouse::EnableWindow(owner, true);
     let _ = SetForegroundWindow(owner);
@@ -2739,24 +2858,74 @@ mod tests {
     }
 
     #[test]
-    fn ask_field_matches_the_settings_search_frame() {
-        // The painted search rect is top 12, bottom 44: 32px at 96 DPI, not sc(32) at every DPI.
-        assert_eq!(search_frame_h(96), 32);
-        assert_eq!(search_frame_h(191), sc(191, 44) - sc(191, 12));
-        assert_ne!(search_frame_h(191), sc(191, 32));
-        for dpi in [96, 120, 144, 191, 192] {
-            let cw = sc(dpi, 388);
+    fn ask_prompt_matches_the_name_field_mockup() {
+        assert_eq!(crate::BG_LIGHT, 0xF3F1EC);
+        assert_eq!(crate::BG_DARK, 0x1C1D20);
+        assert_eq!(crate::FIELD_LIGHT, 0xFFFFFF);
+        assert_eq!(crate::FIELD_DARK, 0x1A1B1E);
+        assert_eq!(crate::ACCENT, 0x0A9BD6);
+        assert_ne!(crate::ACCENT, 0x2EC4A6);
+        let ground = crate::BG_LIGHT;
+        let rest = crate::button_colors(ask_button_kind(ASK_OK), crate::ButtonState::Normal, false, ground);
+        let hot = crate::button_colors(ask_button_kind(ASK_OK), crate::ButtonState::Hover, false, ground);
+        let down = crate::button_colors(ask_button_kind(ASK_OK), crate::ButtonState::Pressed, false, ground);
+        assert_eq!(ask_button_kind(ASK_OK), crate::ButtonKind::Primary);
+        assert_eq!(ask_button_kind(ASK_CANCEL), crate::ButtonKind::Secondary);
+        assert_eq!(rest.fill, Some(crate::ACCENT));
+        assert_eq!(rest.ink, 0xFFFFFF);
+        assert_eq!(hot.fill, Some(crate::ACCENT_HOVER_LIGHT));
+        assert_eq!(down.fill, Some(crate::ACCENT_PRESSED));
+        assert_ne!(hot.fill, down.fill);
+        let sec = crate::button_colors(ask_button_kind(ASK_CANCEL), crate::ButtonState::Normal, false, ground);
+        assert_eq!(sec.fill, Some(crate::CARD_LIGHT));
+        assert_eq!(sec.ink, crate::TEXT_LIGHT);
+        let dark_ground = crate::BG_DARK;
+        let dark_hot = crate::button_colors(ask_button_kind(ASK_OK), crate::ButtonState::Hover, true, dark_ground);
+        let dark_down = crate::button_colors(ask_button_kind(ASK_OK), crate::ButtonState::Pressed, true, dark_ground);
+        assert_eq!(dark_hot.fill, Some(crate::ACCENT_HOVER_DARK));
+        assert_eq!(dark_down.fill, Some(crate::ACCENT_PRESSED));
+        assert_ne!(dark_hot.fill, Some(crate::ACCENT));
+        let dark_sec = crate::button_colors(ask_button_kind(ASK_CANCEL), crate::ButtonState::Normal, true, dark_ground);
+        assert_eq!(dark_sec.fill, Some(crate::CARD_DARK));
+        assert_eq!(dark_sec.ink, crate::TEXT_DARK);
+        for c in [rest.fill, hot.fill, down.fill, dark_hot.fill, dark_down.fill].into_iter().flatten() {
+            assert_ne!(c, 0x2EC4A6);
+        }
+        assert_eq!(ask_btn_w(10, 96), sc(96, crate::BTN_MIN_W));
+        assert_eq!(ask_btn_w(80, 96), 80 + 2 * sc(96, crate::BTN_PAD_X));
+        for dpi in [96, 120, 144, 192] {
+            let cw = sc(dpi, ASK_W_DIP);
             let ch = ask_client_h(dpi);
-            let lay = ask_lay(cw, ch, dpi);
-            let frame_h = lay.field.bottom - lay.field.top;
+            let ok_w = sc(dpi, 80);
+            let cancel_w = sc(dpi, 96);
+            let lay = ask_lay(cw, dpi, ok_w, cancel_w);
+            let mx = sc(dpi, crate::PAD_BODY_X);
+            let my = sc(dpi, crate::PAD_BODY_Y);
             let inset_d = sc(dpi, FIELD_INSET_DIP);
-            assert_eq!(frame_h, search_frame_h(dpi));
-            assert_eq!(frame_h, sc(dpi, 44) - sc(dpi, 12));
-            assert!(frame_h > sc(dpi, 16), "frame stays taller than one text line");
+            assert_eq!(lay.label.top, my);
+            assert_eq!(lay.label.left, mx);
+            assert_eq!(cw - lay.field.right, mx);
+            assert_eq!(lay.label.bottom - lay.label.top, sc(dpi, ASK_LABEL_H_DIP));
+            assert_eq!(lay.field.top - lay.label.bottom, sc(dpi, ASK_LABEL_GAP_DIP));
+            assert_eq!(lay.field.bottom - lay.field.top, sc(dpi, crate::FIELD_H));
+            assert_eq!(lay.field.left, mx);
             assert_eq!(lay.edit.top, lay.field.top + inset_d);
             assert_eq!(lay.edit.bottom, lay.field.bottom - inset_d);
             assert_eq!((lay.edit.left, lay.edit.right), (lay.field.left + inset_d, lay.field.right - inset_d));
-            // Same centring the borderless edit gets from place_edit / centered_edit_rect.
+            assert_eq!(lay.rule.top, lay.field.bottom + sc(dpi, crate::SPACE_12));
+            assert_eq!(lay.rule.bottom - lay.rule.top, 1);
+            assert_eq!(lay.rule.left, mx);
+            assert_eq!(lay.ok.top, lay.rule.bottom + sc(dpi, crate::SPACE_12));
+            assert_eq!(lay.ok.bottom - lay.ok.top, sc(dpi, crate::BTN_H_FOOTER));
+            assert_eq!(lay.cancel.bottom - lay.cancel.top, sc(dpi, crate::BTN_H_FOOTER));
+            assert_eq!(lay.cancel.top, lay.ok.top);
+            assert_eq!(lay.ok.right, lay.field.right);
+            assert_eq!(lay.ok.right - lay.ok.left, ok_w);
+            assert_eq!(lay.cancel.right - lay.cancel.left, cancel_w);
+            assert_eq!(lay.ok.left - lay.cancel.right, sc(dpi, crate::BTN_GAP));
+            assert_eq!(ch - lay.ok.bottom, my);
+            assert!(lay.cancel.left >= mx);
+            assert!(lay.ok.top >= lay.field.bottom);
             for px in [15, 16, 19] {
                 let line = (px * dpi / 96).max(1);
                 let text = crate::centered_edit_rect(lay.edit, line);
@@ -2765,24 +2934,16 @@ mod tests {
                 assert_eq!(text.bottom - text.top, used);
                 assert_eq!(text.top, lay.edit.top + (slot_h - used) / 2);
                 assert!(text.top >= lay.field.top && text.bottom <= lay.field.bottom);
-                assert!(text.bottom - text.top < frame_h);
+                assert!(text.bottom - text.top < lay.field.bottom - lay.field.top);
             }
-            let above = lay.field.top;
-            let below = ch - lay.ok.bottom;
-            assert_eq!(above, below);
-            assert_eq!(above, sc(dpi, ASK_MARGIN_DIP));
-            assert_eq!(lay.ok.top - lay.field.bottom, sc(dpi, ASK_GAP_DIP));
-            assert_eq!(lay.cancel.top, lay.ok.top);
-            assert_eq!(lay.cancel.bottom - lay.cancel.top, sc(dpi, ASK_BTN_H_DIP));
-            assert_eq!(lay.ok.bottom - lay.ok.top, sc(dpi, ASK_BTN_H_DIP));
-            assert_eq!(lay.cancel.left - lay.ok.right, sc(dpi, ASK_BTN_GAP_DIP));
-            assert_eq!(lay.cancel.right, lay.field.right);
-            assert_eq!(lay.field.left, sc(dpi, ASK_MARGIN_DIP));
-            assert_eq!(cw - lay.field.right, sc(dpi, ASK_MARGIN_DIP));
-            assert!(lay.ok.left >= lay.field.left);
-            assert!(lay.ok.bottom <= ch && lay.field.top >= 0);
-            assert!(lay.ok.top >= lay.field.bottom);
         }
+        // A pair wider than the row still shares the gap and stays inside the pads.
+        let narrow = ask_lay(sc(96, 160), 96, 200, 200);
+        let mx = sc(96, crate::PAD_BODY_X);
+        assert!(narrow.cancel.left >= mx);
+        assert_eq!(narrow.ok.right, sc(96, 160) - mx);
+        assert_eq!(narrow.ok.left - narrow.cancel.right, sc(96, crate::BTN_GAP));
+        assert!(narrow.ok.right > narrow.cancel.right);
     }
 
     fn point_in_capsule(x: f32, y: f32, w: f32, h: f32) -> bool {
