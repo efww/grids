@@ -199,6 +199,23 @@ pub(crate) fn allowed(place: Place, network: bool) -> bool {
     }
 }
 
+/// Whether the preview pane should walk a folder for its recursive size.
+/// Volume roots are skipped. Network places run only when that option is on.
+pub(crate) fn preview_walk(root: bool, place: Place, network: bool) -> bool {
+    !root && allowed(place, network)
+}
+
+pub(crate) fn cached_stat(path: &str) -> Option<FolderStat> {
+    lock().cache.get(&norm_key(path))
+}
+
+pub(crate) fn remember_stat(path: &str, bytes: u64, files: u64, folders: u64, partial: bool) {
+    lock().cache.insert(
+        norm_key(path),
+        FolderStat { bytes, files, folders, partial, at: SystemTime::now() },
+    );
+}
+
 /// Drive-letter paths ask `GetDriveTypeW` (the same call the free-space line already makes).
 /// UNC and WSL are classified from the text, so a dead share is not queried here.
 pub(crate) fn classify_ui(path: &str) -> Place {
@@ -942,6 +959,15 @@ mod tests {
 
     fn stat(bytes: u64, files: u64, partial: bool) -> FolderStat {
         FolderStat { bytes, files, folders: 1, partial, at: SystemTime::UNIX_EPOCH }
+    }
+
+    #[test]
+    fn preview_skips_roots_and_unwanted_network() {
+        assert!(preview_walk(false, Place::Local, false));
+        assert!(preview_walk(false, Place::Wsl, false));
+        assert!(!preview_walk(true, Place::Local, true));
+        assert!(!preview_walk(false, Place::Network, false));
+        assert!(preview_walk(false, Place::Network, true));
     }
 
     #[test]

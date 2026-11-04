@@ -1,3 +1,4 @@
+use std::ops::{Deref, DerefMut};
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
@@ -104,6 +105,7 @@ pub(crate) struct Peeked {
     pub(crate) body: Body,
     pub(crate) icon: i32,          // system image list index for the header, -1 = none
     pub(crate) meta: Vec<String>,  // header facts: type, dimensions / pages / lines, size, date
+    pub(crate) file: FileFacts,    // multi-line attribute header
 }
 
 impl PeekJob {
@@ -214,13 +216,14 @@ unsafe fn render_peek(gen: usize, req: &PeekReq) {
             )],
         },
     };
-    let (icon, meta) = meta(&req.path, &body);
+    let file = meta(&req.path, Some(&body));
+    let (icon, meta) = (file.icon, file.facts.clone());
     let more = match &body {
         Body::Pages { pages, total } if (pages.len() as u32) < *total => Some(*total),
         _ => None,
     };
     let tell = || _ = PostMessageW(Some(HWND(req.hwnd as _)), WM_PEEK_DONE, WPARAM(gen), LPARAM(0));
-    if peek_job().publish(gen, Peeked { body, icon, meta }) {
+    if peek_job().publish(gen, Peeked { body, icon, meta, file }) {
         tell();
         // the first page is up; the rest follow while this is still the item shown
         if let (Some(total), Ok(doc)) = (more, pdf_open(&req.path)) {
@@ -597,18 +600,13 @@ unsafe fn geo_of(h: HWND) -> PeekGeo {
 }
 
 // UI-thread state of the open preview: scroll position, laid-out text, the hosted handler.
+// Scroll fields live on `scroll` and are reached through Deref, so `v.y` is the shared body scroll.
 #[derive(Default)]
 pub(crate) struct PeekView {
-    pub(crate) y: i32, // scrolled down, px
-    pub(crate) x: i32, // scrolled right (tables, code, zoomed pictures), px
-    pub(crate) max_y: i32, // how far it can scroll down, from the last paint; 0 = it all fits
-    pub(crate) max_x: i32, // how far a zoomed picture can scroll right; 0 hides the horizontal bar
-    pub(crate) page_h: i32, // viewport height from that paint; the thumb is sized from it
-    pub(crate) page_w: i32, // viewport width from that paint; the horizontal thumb is sized from it
+    pub(crate) scroll: super::pview::BodyScroll,
+    fonts: super::pview::FaceCache,
     pub(crate) edge_at: Option<Instant>, // the wheel reached the top / bottom then
     pub(crate) wheel: i32, // wheel delta toward the next file step (120 a notch)
-    pub(crate) layout: Option<(usize, i32, Vec<Line>, i32)>, // (gen, width, lines, total height)
-    pub(crate) fonts: Option<(i32, [HFONT; 4])>,              // (dpi, [mono, bold, h1, h2])
     pub(crate) hosted: Option<usize>, // generation a preview handler is showing
     pub(crate) host_win: Option<HWND>, // the picture area's child window the handler draws in
     pub(crate) hover: bool,            // the mouse is over the popup: ‹ › show
@@ -633,6 +631,19 @@ pub(crate) struct PeekView {
     zoom_seq: u64,                   // last PDF re-render asked for
     pan_pt: Option<(i32, i32)>,      // client point while a content drag may become a pan
     pan_drag: bool,
+}
+
+impl Deref for PeekView {
+    type Target = super::pview::BodyScroll;
+    fn deref(&self) -> &Self::Target {
+        &self.scroll
+    }
+}
+
+impl DerefMut for PeekView {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.scroll
+    }
 }
 
 thread_local! {
@@ -987,7 +998,7 @@ pub(crate) unsafe fn load_peek(plain: bool) {
             let gen = {
                 let mut j = peek_job();
                 j.want(None);
-                j.done = Some(Peeked { body: Body::Card { icon: None, rows: Vec::new() }, icon: -1, meta: Vec::new() });
+                j.done = Some(Peeked { body: Body::Card { icon: None, rows: Vec::new() }, icon: -1, meta: Vec::new(), file: FileFacts::default() });
                 j.gen
             };
             fit_on_result(h, gen);
@@ -1694,161 +1705,11 @@ unsafe fn handler_ready(h: HWND, gen: usize, ok: bool) {
     _ = InvalidateRect(Some(h), None, false);
 }
 
-// ---------- text layout ----------
-
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub(crate) enum Style {
-    Plain,
-    Mono, // not wrapped
-    H1,
-    H2,
-    H3,
-    Bullet,
-    Quote,
-}
-
-pub(crate) struct Line {
-    pub(crate) text: String,
-    pub(crate) style: Style,
-    pub(crate) y: i32,
-    pub(crate) h: i32,
-    pub(crate) no: usize, // source line number, for the code gutter
-    table: Option<(Vec<Vec<String>>, Vec<i32>)>,
-}
-
-/// Markdown lines with their look: headings, bullets, quotes, fenced code. Inline marks are dropped.
-pub(crate) fn md_lines(text: &str) -> Vec<(String, Style)> {
-    let mut out = Vec::new();
-    let mut code = false;
-    for l in text.lines() {
-        let t = l.trim_start();
-        if t.starts_with("```") || t.starts_with("~~~") {
-            code = !code;
-            continue;
-        }
-        if code {
-            out.push((l.to_string(), Style::Mono));
-            continue;
-        }
-        let clean = |s: &str| s.replace("**", "").replace("__", "").replace('`', "");
-        let h3 = t.strip_prefix("### ").or_else(|| t.strip_prefix("#### ")).or_else(|| t.strip_prefix("##### "));
-        let item = t.strip_prefix("- ").or_else(|| t.strip_prefix("* ")).or_else(|| t.strip_prefix("+ "));
-        let (text, style) = if let Some(h) = h3 {
-            (clean(h), Style::H3)
-        } else if let Some(h) = t.strip_prefix("## ") {
-            (clean(h), Style::H2)
-        } else if let Some(h) = t.strip_prefix("# ") {
-            (clean(h), Style::H1)
-        } else if let Some(b) = item {
-            let indent = "    ".repeat((l.len() - t.len()) / 2);
-            (format!("{indent}• {}", clean(b)), Style::Bullet)
-        } else if let Some(q) = t.strip_prefix("> ").or_else(|| t.strip_prefix('>')) {
-            (clean(q), Style::Quote)
-        } else if t.len() >= 3 && t.chars().all(|c| c == '-') {
-            ("────────".into(), Style::Quote)
-        } else {
-            (clean(l), Style::Plain)
-        };
-        out.push((text, style));
-    }
-    out
-}
+// Text, tables and lists live in pview so the preview pane paints the same bodies.
+pub(crate) use super::pview::{md_lines, Style};
 
 unsafe fn fonts(dpi: i32, base: HFONT) -> [HFONT; 4] {
-    if let Some((d, f)) = view(|v| v.fonts) {
-        if d == dpi {
-            return f;
-        }
-        for x in f {
-            delete_font(x);
-        }
-    }
-    let mut lf = LOGFONTW::default();
-    GetObjectW(base.into(), size_of::<LOGFONTW>() as i32, Some(&mut lf as *mut _ as _));
-    let mono = CreateFontIndirectW(&LOGFONTW { lfFaceName: logfont("Consolas", 0).lfFaceName, ..lf });
-    let bold = CreateFontIndirectW(&LOGFONTW { lfWeight: 600, ..lf });
-    let h1 = CreateFontIndirectW(&LOGFONTW { lfWeight: 600, lfHeight: lf.lfHeight * 16 / 10, ..lf });
-    let h2 = CreateFontIndirectW(&LOGFONTW { lfWeight: 600, lfHeight: lf.lfHeight * 13 / 10, ..lf });
-    let f = [mono, bold, h1, h2];
-    view(|v| v.fonts = Some((dpi, f)));
-    f
-}
-
-fn style_font(st: Style, font: HFONT, f: &[HFONT; 4]) -> HFONT {
-    match st {
-        Style::Mono => f[0],
-        Style::H1 => f[2],
-        Style::H2 => f[3],
-        Style::H3 => f[1],
-        _ => font,
-    }
-}
-
-// Heights of every line at this width, measured once per item and width; painting then draws only what shows.
-unsafe fn layout(dc: HDC, gen: usize, width: i32, text: &str, kind: TextKind, font: HFONT, f: &[HFONT; 4], dpi: i32) -> i32 {
-    if let Some(total) = view(|v| v.layout.as_ref().filter(|(g, w, ..)| *g == gen && *w == width).map(|l| l.3)) {
-        return total;
-    }
-    let src: Vec<(String, Style)> = match kind {
-        TextKind::Markdown => md_lines(text),
-        TextKind::Code => text.lines().map(|l| (l.to_string(), Style::Mono)).collect(),
-        TextKind::Plain => text.lines().map(|l| (l.to_string(), Style::Plain)).collect(),
-        TextKind::Document => text.lines().map(|l| (l.to_string(), Style::Plain)).collect(),
-    };
-    let mut y = 0;
-    let mut lines = Vec::with_capacity(src.len().min(40_000));
-    let mut source = src.into_iter().take(40_000).enumerate().peekable();
-    while let Some((no, (t, st))) = source.next() {
-        if kind == TextKind::Document && t.starts_with("| ") {
-            let mut rows = Vec::new();
-            let parse = |line: &str| -> Vec<String> {
-                line.strip_prefix("| ").unwrap_or(line).strip_suffix('|').unwrap_or(line).split(" | ").map(|cell| cell.trim().to_string()).collect()
-            };
-            rows.push(parse(&t));
-            while source.peek().is_some_and(|(_, (line, _))| line.starts_with("| ")) {
-                if let Some((_, (line, _))) = source.next() {
-                    rows.push(parse(&line));
-                }
-            }
-            let mut widths = Vec::<i32>::new();
-            let scale = |v: i32| v * dpi / 96;
-            for row in &rows {
-                for (col, cell) in row.iter().enumerate() {
-                    if widths.len() <= col {
-                        widths.push(scale(36));
-                    }
-                    widths[col] = widths[col].max((text_w(dc, cell, font) + scale(14)).min(scale(260)));
-                }
-            }
-            let rh = app(|a| a.fh) + scale(8);
-            let h = rh * rows.len() as i32;
-            lines.push(Line { text: String::new(), style: st, y, h, no: no + 1, table: Some((rows, widths)) });
-            y += h;
-            continue;
-        }
-        let old = SelectObject(dc, style_font(st, font, f).into());
-        let mut tm = TEXTMETRICW::default();
-        _ = GetTextMetricsW(dc, &mut tm);
-        let lh = tm.tmHeight + tm.tmExternalLeading;
-        let h = if st == Style::Mono || t.is_empty() {
-            lh
-        } else {
-            let mut w: Vec<u16> = t.encode_utf16().collect();
-            let mut r = RECT { left: 0, top: 0, right: width, bottom: 0 };
-            DrawTextW(dc, &mut w, &mut r, DT_CALCRECT | DT_WORDBREAK | DT_EXPANDTABS | DT_NOPREFIX | DT_EDITCONTROL);
-            (r.bottom - r.top).max(lh)
-        };
-        SelectObject(dc, old);
-        y += match st {
-            Style::H1 | Style::H2 => lh / 2,
-            Style::H3 => lh / 3,
-            _ => 0,
-        };
-        lines.push(Line { text: t, style: st, y, h, no: no + 1, table: None });
-        y += h + if matches!(st, Style::H1 | Style::H2) { dpi / 24 } else { 0 };
-    }
-    view(|v| v.layout = Some((gen, width, lines, y)));
-    y
+    view(|v| super::pview::fonts(&mut v.fonts, dpi, base))
 }
 
 // ---------- scrollbar ----------
@@ -2606,174 +2467,15 @@ unsafe fn clip(dc: HDC, r: RECT, draw: impl FnOnce()) {
     _ = DeleteObject(rgn.into());
 }
 
-unsafe fn paint_text(dc: HDC, area: RECT, gen: usize, text: &str, kind: TextKind, cut: bool, font: HFONT, dpi: i32, pic: Option<&Pix>) {
-    let s = |v: i32| v * dpi / 96;
-    let f = fonts(dpi, font);
-    let gutter = if kind == TextKind::Code { s(44) } else { 0 };
-    let width = area.right - area.left - gutter - s(8);
-    let pic_size = pic.map(|p| {
-        let k = ((area.right - area.left) as f32 / p.w as f32).min((area.bottom - area.top) as f32 / p.h as f32);
-        ((p.w as f32 * k) as i32, (p.h as f32 * k) as i32)
-    });
-    let offset = pic_size.map_or(0, |(_, h)| h + s(20));
-    let total = offset + layout(dc, gen, width, text, kind, font, &f, dpi) + if cut { s(28) } else { 0 };
-    clamp_scroll(total, area.bottom - area.top);
-    if kind == TextKind::Document {
-        view(|v| {
-            let full = v
-                .layout
-                .as_ref()
-                .map(|(_, _, lines, _)| lines.iter().filter_map(|l| l.table.as_ref()).map(|(_, widths)| widths.iter().sum::<i32>()).max().unwrap_or(0))
-                .unwrap_or(0);
-            v.x = v.x.clamp(0, (full - (area.right - area.left)).max(0));
-        });
-    }
-    let (sy, sx) = view(|v| (v.y, v.x));
-    clip(dc, area, || {
-        if let (Some(p), Some((w, h))) = (pic, pic_size) {
-            let x = (area.left + area.right - w) / 2;
-            let y = area.top - sy;
-            blit_bgra(dc, RECT { left: x, top: y, right: x + w, bottom: y + h }, p.w, p.h, &p.bgra);
-        }
-        let sy = sy - offset;
-        view(|v| {
-            let Some((_, _, lines, _)) = v.layout.as_ref() else { return };
-            let first = lines.partition_point(|l| l.y + l.h < sy);
-            for l in lines[first..].iter().take_while(|l| l.y - sy < area.bottom - area.top) {
-                let top = area.top + l.y - sy;
-                if let Some((rows, widths)) = &l.table {
-                    let rh = app(|a| a.fh) + s(8);
-                    let first = ((area.top - top).max(0) / rh) as usize;
-                    let shown = ((area.bottom - area.top) / rh + 2) as usize;
-                    for (row_no, row) in rows.iter().enumerate().skip(first).take(shown) {
-                        let row_top = top + row_no as i32 * rh;
-                        let mut x = area.left - sx;
-                        for (col, w) in widths.iter().enumerate() {
-                            if x + w > area.left && x < area.right {
-                                let cell = row.get(col).map(String::as_str).unwrap_or("");
-                                let rect = RECT { left: x + s(7), top: row_top, right: x + w - s(7), bottom: row_top + rh };
-                                crate::text(dc, rect, cell, font, pal().text, DT_LEFT);
-                                fill(dc, RECT { left: x + w - 1, top: row_top, right: x + w, bottom: row_top + rh }, pal().line);
-                                fill(dc, RECT { left: x, top: row_top + rh - 1, right: x + w, bottom: row_top + rh }, pal().line);
-                            }
-                            x += w;
-                        }
-                        fill(dc, RECT { left: area.left - sx, top: row_top, right: area.left - sx + 1, bottom: row_top + rh }, pal().line);
-                    }
-                    let table_width: i32 = widths.iter().sum();
-                    fill(dc, RECT { left: area.left - sx, top, right: area.left - sx + table_width, bottom: top + 1 }, pal().line);
-                    continue;
-                }
-                if gutter > 0 {
-                    let g = RECT { left: area.left, top, right: area.left + gutter - s(10), bottom: top + l.h };
-                    text_flags(dc, g, &l.no.to_string(), f[0], pal().sub, DT_RIGHT | DT_SINGLELINE);
-                }
-                let mono = l.style == Style::Mono;
-                let (ink, fnt) = match l.style {
-                    Style::Quote => (pal().sub, font),
-                    st => (pal().text, style_font(st, font, &f)),
-                };
-                let left = area.left + gutter - if mono { sx } else { 0 };
-                let r = RECT { left, top, right: if mono { left + 100_000 } else { area.right - s(8) }, bottom: top + l.h };
-                let flags = if mono { DT_SINGLELINE | DT_EXPANDTABS } else { DT_WORDBREAK | DT_EXPANDTABS | DT_EDITCONTROL };
-                text_flags(dc, r, &l.text, fnt, ink, flags);
-            }
-        });
-        if cut {
-            let y = area.top + total - offset - s(24) - sy;
-            let r = RECT { left: area.left, top: y, right: area.right, bottom: y + s(24) };
-            text_flags(dc, r, tr(crate::Key::OnlyFirst512KbIsShown), font, pal().sub, DT_SINGLELINE);
-        }
-    });
-}
-
-// A grid: column widths from the first rows' text, the first row as a header, scrolled both ways.
-unsafe fn paint_table(dc: HDC, area: RECT, rows: &[Vec<String>], cut: bool, font: HFONT, dpi: i32) {
-    let s = |v: i32| v * dpi / 96;
-    let f = fonts(dpi, font);
-    let cols = rows.iter().map(|r| r.len()).max().unwrap_or(0);
-    if cols == 0 {
-        text(dc, area, tr(crate::Key::Empty), font, pal().sub, DT_CENTER);
-        return;
-    }
-    let mut widths = vec![s(36); cols];
-    for (k, r) in rows.iter().take(200).enumerate() {
-        for (c, cell) in r.iter().enumerate() {
-            let w = text_w(dc, cell, if k == 0 { f[1] } else { font }) + s(14);
-            widths[c] = widths[c].max(w.min(s(260)));
-        }
-    }
-    let num = text_w(dc, &rows.len().to_string(), font) + s(14);
-    let rh = app(|a| a.fh) + s(8);
-    let total = rh * rows.len() as i32 + if cut { rh } else { 0 };
-    clamp_scroll(total, area.bottom - area.top);
-    let full: i32 = num + widths.iter().sum::<i32>();
-    view(|v| v.x = v.x.min((full - (area.right - area.left)).max(0)).max(0));
-    let (sy, sx) = view(|v| (v.y, v.x));
-    clip(dc, area, || {
-        let first = (sy / rh) as usize;
-        let shown = ((area.bottom - area.top) / rh + 2) as usize;
-        for (k, r) in rows.iter().enumerate().skip(first).take(shown) {
-            let top = area.top + k as i32 * rh - sy;
-            let row = RECT { left: area.left, top, right: area.right, bottom: top + rh };
-            if k == 0 {
-                fill(dc, row, pal().pill);
-            }
-            fill(dc, RECT { top: row.bottom - 1, ..row }, pal().line);
-            text(dc, RECT { left: area.left, right: area.left + num - s(6), ..row }, &(k + 1).to_string(), font, pal().sub, DT_RIGHT);
-            let mut x = area.left + num - sx;
-            for (c, w) in widths.iter().enumerate() {
-                if x + w > area.left + num && x < area.right {
-                    let cell = r.get(c).map(String::as_str).unwrap_or("");
-                    let cr = RECT { left: (x + s(7)).max(area.left + num), top, right: x + w - s(7), bottom: top + rh };
-                    let right = k > 0 && !cell.is_empty() && cell.replace(',', "").parse::<f64>().is_ok();
-                    text(dc, cr, cell, if k == 0 { f[1] } else { font }, pal().text, if right { DT_RIGHT } else { DT_LEFT });
-                    fill(dc, RECT { left: x + w - 1, top, right: x + w, bottom: top + rh }, pal().line);
-                }
-                x += w;
-            }
-        }
-        if cut {
-            let top = area.top + rows.len() as i32 * rh - sy;
-            let r = RECT { left: area.left + s(6), top, right: area.right, bottom: top + rh };
-            text(dc, r, tr(crate::Key::MoreRowsNotShown), font, pal().sub, DT_LEFT);
-        }
-    });
-}
-
-unsafe fn paint_list(dc: HDC, area: RECT, rows: &[(String, String)], font: HFONT, dpi: i32) {
-    let s = |v: i32| v * dpi / 96;
-    let rh = app(|a| a.fh) + s(8);
-    let top0 = area.top;
-    if rows.is_empty() {
-        text(dc, area, tr(crate::Key::Empty), font, pal().sub, DT_CENTER);
-        return;
-    }
-    let page = area.bottom - top0;
-    clamp_scroll(rh * rows.len() as i32, page);
-    let sy = view(|v| v.y);
-    let sw = s(90);
-    clip(dc, RECT { top: top0, ..area }, || {
-        for (k, (name, size)) in rows.iter().enumerate().skip((sy / rh) as usize).take((page / rh + 2) as usize) {
-            let top = top0 + k as i32 * rh - sy;
-            let r = RECT { left: area.left, top, right: area.right, bottom: top + rh };
-            if k % 2 == 1 {
-                fill(dc, RECT { left: r.left - s(8), right: r.right + s(8), ..r }, blend(pal().card, pal().bg, 0.45));
-            }
-            text(dc, RECT { right: r.right - sw - s(8), ..r }, name, font, pal().text, DT_LEFT);
-            text(dc, RECT { left: r.right - sw, ..r }, size, font, pal().sub, DT_RIGHT);
-        }
-    });
-}
 
 // Big icon (or thumbnail) on the left, the facts beside it.
-unsafe fn paint_card(dc: HDC, area: RECT, icon: Option<&Pix>, rows: &[(String, String)], font: HFONT, dpi: i32) {
+pub(crate) unsafe fn paint_card(dc: HDC, area: RECT, icon: Option<&Pix>, rows: &[(String, String)], font: HFONT, dpi: i32) {
     let s = |v: i32| v * dpi / 96;
     // drawn at its own size (only shrunk if it doesn't fit): scaling an icon blurs and fringes it
     let side = icon.map_or(s(96), |p| p.w.max(p.h)).min((area.right - area.left) / 3).min(area.bottom - area.top);
     // icon and facts as one block, centred
-    let lw = rows.iter().map(|(l, _)| text_w(dc, l, font)).max().unwrap_or(0) + s(16);
-    let vw = rows.iter().map(|(_, v)| text_w(dc, v, font)).max().unwrap_or(0);
+    let lw = rows.iter().map(|(l, _)| super::pview::text_w(dc, l, font)).max().unwrap_or(0) + s(16);
+    let vw = rows.iter().map(|(_, v)| super::pview::text_w(dc, v, font)).max().unwrap_or(0);
     let block = side + s(32) + lw + vw;
     let x0 = area.left + ((area.right - area.left - block) / 2).max(s(8));
     if let Some(p) = icon {
@@ -2793,7 +2495,7 @@ unsafe fn paint_card(dc: HDC, area: RECT, icon: Option<&Pix>, rows: &[(String, S
         let old = SelectObject(dc, font.into());
         DrawTextW(dc, &mut w, &mut calc, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX | DT_EDITCONTROL);
         SelectObject(dc, old);
-        text_flags(dc, v, value, font, pal().text, DT_WORDBREAK | DT_EDITCONTROL | DT_END_ELLIPSIS);
+        super::pview::text_flags(dc, v, value, font, pal().text, DT_WORDBREAK | DT_EDITCONTROL | DT_END_ELLIPSIS);
         y += (calc.bottom - calc.top).clamp(rh - s(8), rh * 3 - s(8)) + s(8);
     }
 }
@@ -2847,17 +2549,22 @@ pub(crate) unsafe fn paint_peek(h: HWND) {
                 _ = DestroyIcon(icon);
             }
         }
-        let room = g.title.right - g.title.left;
-        let name_w = text_w(dc, &name, f[1]).min(room * 6 / 10);
-        text(dc, RECT { right: g.title.left + name_w, ..g.title }, &name, f[1], pal().text, DT_LEFT);
+        let mid = g.title.top + (g.title.bottom - g.title.top) / 2;
+        let name_r = RECT { bottom: mid, ..g.title };
+        text(dc, name_r, &name, f[1], pal().text, DT_LEFT | DT_VCENTER);
         if let Some(p) = &j.done {
-            let joined = p.meta.join("   ·   ");
+            let budget = header_char_budget(g.title.right - g.title.left, s(16));
+            let mut rows = wrap_fields(&p.file.fields(), budget.max(24));
+            if !p.file.exif.is_empty() {
+                rows.push(exif_line(&p.file.exif));
+            }
+            let joined = if rows.is_empty() { p.meta.join("   ·   ") } else { rows.join(" · ") };
             let shown = match &p.body {
                 Body::Pic(_) | Body::Pages { .. } => zoom_label(&joined, zoom_pct(zoom)),
                 _ => joined,
             };
-            let facts = RECT { left: g.title.left + name_w + s(16), ..g.title };
-            text(dc, facts, &shown, font, pal().sub, DT_LEFT);
+            let facts = RECT { top: mid, ..g.title };
+            text(dc, facts, &shown, font, pal().sub, DT_LEFT | DT_VCENTER);
         }
         let glyph = if maximized { ICON_RESTORE } else { ICON_MAX };
         for (r, on, mark) in [(g.max, hot == Hot::Max, glyph), (g.close, hot == Hot::Close, ICON_CLOSE)] {
@@ -2897,19 +2604,19 @@ pub(crate) unsafe fn paint_peek(h: HWND) {
             Some(Body::Pages { pages, total }) => paint_pages(dc, g.stage, pages, *total, font, dpi),
             Some(Body::Text { text: t, kind, cut }) => {
                 plate();
-                paint_text(dc, g.inner, gen, t, *kind, *cut, font, dpi, None);
+                view(|v| super::pview::paint_text(&mut v.scroll, dc, g.inner, gen, t, *kind, *cut, font, dpi, None, None, 0, &mut v.fonts));
             }
             Some(Body::Document { pic, text: t, cut }) => {
                 plate();
-                paint_text(dc, g.inner, gen, t, TextKind::Document, *cut, font, dpi, pic.as_ref());
+                view(|v| super::pview::paint_text(&mut v.scroll, dc, g.inner, gen, t, TextKind::Document, *cut, font, dpi, pic.as_ref(), None, 0, &mut v.fonts));
             }
             Some(Body::Table { rows, cut }) => {
                 plate();
-                paint_table(dc, g.inner, rows, *cut, font, dpi);
+                view(|v| super::pview::paint_table(&mut v.scroll, dc, g.inner, rows, *cut, font, dpi, &mut v.fonts));
             }
             Some(Body::List { rows, .. }) => {
                 plate();
-                paint_list(dc, g.inner, rows, font, dpi);
+                view(|v| super::pview::paint_list(&mut v.scroll, dc, g.inner, rows, font, dpi));
             }
             Some(Body::Card { icon, rows }) => {
                 plate();
@@ -3653,8 +3360,8 @@ mod tests {
     #[test]
     fn peek_newest_only() {
         let req = |p: &str| Some(PeekReq { path: p.into(), w: 10, h: 10, hwnd: 0, plain: false });
-        let pix = || Peeked { body: Body::Pic(Pix::new(1, 1, vec![0; 4])), icon: -1, meta: Vec::new() };
-        let card = || Peeked { body: Body::Card { icon: None, rows: Vec::new() }, icon: -1, meta: Vec::new() };
+        let pix = || Peeked { body: Body::Pic(Pix::new(1, 1, vec![0; 4])), icon: -1, meta: Vec::new(), file: FileFacts::default() };
+        let card = || Peeked { body: Body::Card { icon: None, rows: Vec::new() }, icon: -1, meta: Vec::new(), file: FileFacts::default() };
         let mut j = PeekJob { gen: 0, req: None, done: None, zoom: None };
         j.want(req("a"));
         let a = j.gen;

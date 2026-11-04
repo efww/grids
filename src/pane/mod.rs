@@ -7,6 +7,7 @@ mod fsize;
 mod icon;
 mod nav;
 mod reconnect;
+mod pview;
 mod peek;
 mod preview;
 mod prevpane;

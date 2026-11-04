@@ -102,12 +102,12 @@ servers.png / servers.ko.png / servers.ja.png 는 **실제 호스트·자격 증
 | panedrag_after.png | 패널 드래그 후 | MaguroMain | light/en | panedrag | 300889 B (1226×823) | capture-main.ps1 | DWM |  |
 | panedrag_before.png | 패널 드래그 전 | MaguroMain | light/en | panedrag | 301707 B (1226×823) | capture-main.ps1 | DWM |  |
 | panedrag_dup.png | 패널 드래그 복제 | MaguroMain | light/en | panedrag | 518088 B (1226×823) | capture-main.ps1 | DWM |  |
-| preview.ja.png | 미리보기 | MaguroMain | light/ja | Photos 2026 | 304453 B (1226×823) | capture-main.ps1 | DWM |  |
-| preview.ko.png | 미리보기 | MaguroMain | light/ko | Photos 2026 | 302690 B (1226×823) | capture-main.ps1 | DWM |  |
-| preview.png | 미리보기 | MaguroMain | light/en | Photos 2026 | 301707 B (1226×823) | capture-main.ps1 | DWM |  |
-| preview_peek.ja.png | 피크 미리보기 | MaguroPeek | light/ja | photo-01.jpg 시드 | 1162153 B (918×678) | F3 MaguroPeek + TOPMOST | DWM | F3 (Space 아님); 실 JPG 시드 |
-| preview_peek.ko.png | 피크 미리보기 | MaguroPeek | light/ko | photo-01.jpg 시드 | 1162134 B (918×678) | F3 MaguroPeek + TOPMOST | DWM | F3 (Space 아님); 실 JPG 시드 |
-| preview_peek.png | 피크 미리보기 | MaguroPeek | light/en | photo-01.jpg 시드 | 1161933 B (918×678) | F3 MaguroPeek + TOPMOST | DWM | F3 (Space 아님); 실 JPG 시드 |
+| preview.ja.png | 미리보기 | MaguroMain | light/ja | Photos 2026 | 304453 B (1226×823) | capture-main.ps1 | DWM | **재촬영 필요.** 속성 머리글(아이콘·이름·크기·종류·날짜·특성)과 처리기 없을 때의 본문(텍스트/코드/CSV/폴더)이 바뀜 |
+| preview.ko.png | 미리보기 | MaguroMain | light/ko | Photos 2026 | 302690 B (1226×823) | capture-main.ps1 | DWM | **재촬영 필요.** 속성 머리글과 폴백 본문이 바뀜 |
+| preview.png | 미리보기 | MaguroMain | light/en | Photos 2026 | 301707 B (1226×823) | capture-main.ps1 | DWM | **재촬영 필요.** 속성 머리글과 폴백 본문이 바뀜 |
+| preview_peek.ja.png | 피크 미리보기 | MaguroPeek | light/ja | photo-01.jpg 시드 | 1162153 B (918×678) | F3 MaguroPeek + TOPMOST | DWM | **재촬영 필요.** F3 머리글이 이름 + 속성/EXIF 두 줄. 실 JPG 시드 |
+| preview_peek.ko.png | 피크 미리보기 | MaguroPeek | light/ko | photo-01.jpg 시드 | 1162134 B (918×678) | F3 MaguroPeek + TOPMOST | DWM | **재촬영 필요.** F3 머리글이 이름 + 속성/EXIF 두 줄. 실 JPG 시드 |
+| preview_peek.png | 피크 미리보기 | MaguroPeek | light/en | photo-01.jpg 시드 | 1161933 B (918×678) | F3 MaguroPeek + TOPMOST | DWM | **재촬영 필요.** F3 머리글이 이름 + 속성/EXIF 두 줄. 실 JPG 시드 |
 | rename.ja.png | 일괄 이름 바꾸기 | MaguroRename | light/ja | rename_camera 시드 | 41082 B (1346×693) | capture-features.ps1 | DWM |  |
 | rename.ko.png | 일괄 이름 바꾸기 | MaguroRename | light/ko | rename_camera 시드 | 35251 B (1346×693) | capture-features.ps1 | DWM |  |
 | rename.png | 일괄 이름 바꾸기 | MaguroRename | light/en | rename_camera 시드 | 35660 B (1346×693) | capture-features.ps1 | DWM |  |
@@ -172,4 +172,5 @@ powershell -NoProfile -ExecutionPolicy Bypass -File docs\capture\capture-main.ps
 
 - **2026-11-04:** 톱니바퀴 메뉴를 세션 / 도구 / 보기 / 모양 / 동작 / 설정으로 나눔. 열린 메뉴 샷은 images-v3에 없음 (위 절). 닫힌 톱니 단추만 있는 메인 창 샷은 다시 찍지 않음.
 - **2026-11-04:** images-v3 전체(90장) 포터블 재촬영. servers*=가짜 sftp.example.com. preview_peek*=F3 MaguroPeek+실 JPG. feature_win_shift_v*=클립보드 경로 새 탭(Folder Watch 없음). settings_ctxmenu*=CTX_PAGE=8 Right-click menu items. workspaces*=MaguroAsk 슬롯명 Desk. docs/capture/* 재사용 스크립트. CAPTURES 크기 실측 갱신.
+- **미리보기 창 본문 변경 후 재촬영:** `preview.png`, `preview.ko.png`, `preview.ja.png` (속성 머리글, 처리기 위 머리글, 텍스트/코드/CSV/폴더 본문). `preview_peek.png`, `preview_peek.ko.png`, `preview_peek.ja.png` (F3 제목 칸의 이름 + 속성/EXIF). 위 표의 바이트 크기는 재촬영 전 값이다.
 - **2026-11-04 오전:** servers·settings_panes 가짜/페이지 수정 재촬영.

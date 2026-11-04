@@ -156,7 +156,8 @@ pub(crate) unsafe fn content(req: &PeekReq) -> Body {
         "md" | "markdown" | "mdown" | "mkd" => text_body(path, TextKind::Markdown),
         e if PLAIN.contains(&e) => text_body(path, TextKind::Plain),
         e if CODE.contains(&e) => text_body(path, TextKind::Code),
-        "html" | "htm" | "xhtml" => read_head(path, TEXT_MAX).map(|(b, cut)| Body::Text { text: html_text(&decode_text(&b)), kind: TextKind::Plain, cut }),
+        // A registered handler is tried above. With none, or after it fails (`plain`), show the source.
+        "html" | "htm" | "xhtml" => text_body(path, TextKind::Code),
         "eml" => read_head(path, 4 << 20).map(|(b, cut)| Body::Text { text: eml_text(&b), kind: TextKind::Plain, cut }),
         "url" | "website" => url_card(path),
         "lnk" => Some(lnk_card(path)),
@@ -336,7 +337,220 @@ unsafe fn pdf_first(path: &str, req: &PeekReq) -> Option<Body> {
     Some(Body::Pages { pages: vec![first], total })
 }
 
-// ---------- the header line: icon, type and what matters for this kind of file ----------
+// ---------- the header: icon, name, type, size, dates, attributes, and image facts ----------
+
+pub(crate) const FA_READONLY: u32 = 0x1;
+pub(crate) const FA_HIDDEN: u32 = 0x2;
+pub(crate) const FA_SYSTEM: u32 = 0x4;
+pub(crate) const FA_ARCHIVE: u32 = 0x20;
+pub(crate) const FA_TEMPORARY: u32 = 0x100;
+pub(crate) const FA_SPARSE: u32 = 0x200;
+pub(crate) const FA_COMPRESSED: u32 = 0x800;
+pub(crate) const FA_OFFLINE: u32 = 0x1000;
+pub(crate) const FA_ENCRYPTED: u32 = 0x4000;
+
+/// Labels for [`format_attributes`]. Empty strings are skipped.
+pub(crate) struct AttrWords<'a> {
+    pub read_only: &'a str,
+    pub hidden: &'a str,
+    pub system: &'a str,
+    pub archive: &'a str,
+    pub compressed: &'a str,
+    pub encrypted: &'a str,
+    pub offline: &'a str,
+    pub temporary: &'a str,
+    pub sparse: &'a str,
+}
+
+/// Read-only, hidden, system, archive, and the other bits worth naming. Directory and Normal are left out.
+pub(crate) fn format_attributes(bits: u32, w: &AttrWords) -> String {
+    let named = [
+        (FA_READONLY, w.read_only),
+        (FA_HIDDEN, w.hidden),
+        (FA_SYSTEM, w.system),
+        (FA_ARCHIVE, w.archive),
+        (FA_COMPRESSED, w.compressed),
+        (FA_ENCRYPTED, w.encrypted),
+        (FA_OFFLINE, w.offline),
+        (FA_TEMPORARY, w.temporary),
+        (FA_SPARSE, w.sparse),
+    ];
+    named.into_iter().filter(|(bit, name)| bits & bit != 0 && !name.is_empty()).map(|(_, name)| name).collect::<Vec<_>>().join(", ")
+}
+
+/// Raw image properties. Empty options are hidden by [`format_exif`].
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ExifIn {
+    pub make: Option<String>,
+    pub model: Option<String>,
+    pub taken: Option<String>,
+    pub exposure: Option<String>,
+    pub fnumber: Option<String>,
+    pub iso: Option<String>,
+    pub focal: Option<String>,
+    pub latitude: Option<String>,
+    pub longitude: Option<String>,
+}
+
+pub(crate) struct ExifLabels<'a> {
+    pub camera: &'a str,
+    pub taken: &'a str,
+    pub exposure: &'a str,
+    pub aperture: &'a str,
+    pub iso: &'a str,
+    pub focal: &'a str,
+    pub gps: &'a str,
+}
+
+fn nonempty(s: Option<String>) -> Option<String> {
+    s.and_then(|v| {
+        let t = v.trim().to_string();
+        (!t.is_empty()).then_some(t)
+    })
+}
+
+/// Camera, exposure and GPS lines. A missing value is omitted. Make and model share one line.
+pub(crate) fn format_exif(v: &ExifIn, labels: &ExifLabels) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let make = nonempty(v.make.clone());
+    let model = nonempty(v.model.clone());
+    let camera = match (make, model) {
+        (Some(a), Some(b)) if a != b => Some(format!("{a} {b}")),
+        (Some(a), _) => Some(a),
+        (_, Some(b)) => Some(b),
+        _ => None,
+    };
+    let lat = nonempty(v.latitude.clone());
+    let lon = nonempty(v.longitude.clone());
+    let gps = match (lat, lon) {
+        (Some(a), Some(b)) => Some(format!("{a}, {b}")),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        _ => None,
+    };
+    let mut push = |label: &str, value: Option<String>| {
+        if let Some(value) = nonempty(value) {
+            if !label.is_empty() {
+                out.push((label.to_string(), value));
+            }
+        }
+    };
+    push(labels.camera, camera);
+    push(labels.taken, v.taken.clone());
+    push(labels.exposure, v.exposure.clone());
+    push(labels.aperture, v.fnumber.clone());
+    push(labels.iso, v.iso.clone());
+    push(labels.focal, v.focal.clone());
+    push(labels.gps, gps);
+    out
+}
+
+/// One logical header field, already worded. Empty fields should not be passed in.
+pub(crate) fn ellipsize(s: &str, max_chars: usize) -> String {
+    let n = s.chars().count();
+    if max_chars == 0 || n <= max_chars {
+        return s.to_string();
+    }
+    if max_chars == 1 {
+        return "…".into();
+    }
+    let mut out: String = s.chars().take(max_chars - 1).collect();
+    out.push('…');
+    out
+}
+
+/// Pack ` · `-separated fields onto lines of at most `max_chars`. A single field that is
+/// still too long is ellipsized. Empty fields are skipped.
+pub(crate) fn wrap_fields(fields: &[String], max_chars: usize) -> Vec<String> {
+    let max_chars = max_chars.max(4);
+    let mut lines = Vec::new();
+    let mut cur = String::new();
+    for f in fields {
+        if f.is_empty() {
+            continue;
+        }
+        let piece = ellipsize(f, max_chars);
+        if cur.is_empty() {
+            cur = piece;
+            continue;
+        }
+        let joined = format!("{cur} · {piece}");
+        if joined.chars().count() <= max_chars {
+            cur = joined;
+        } else {
+            lines.push(std::mem::take(&mut cur));
+            cur = piece;
+        }
+    }
+    if !cur.is_empty() {
+        lines.push(cur);
+    }
+    lines
+}
+
+/// Name on the first line, then the attribute fields wrapped to `max_chars`.
+pub(crate) fn header_lines(name: &str, fields: &[String], max_chars: usize) -> Vec<String> {
+    let mut lines = vec![ellipsize(name, max_chars.max(4))];
+    lines.extend(wrap_fields(fields, max_chars));
+    lines
+}
+
+/// How many characters a header line can hold. `fh` is the UI font height in px.
+pub(crate) fn header_char_budget(width_px: i32, fh: i32) -> usize {
+    let cw = (fh.max(1) * 3 / 5).max(6);
+    (width_px.max(0) / cw).max(8) as usize
+}
+
+pub(crate) fn exif_line(pairs: &[(String, String)]) -> String {
+    pairs.iter().map(|(k, v)| format!("{k} {v}")).collect::<Vec<_>>().join(" · ")
+}
+
+/// Facts drawn in the attribute header. `facts` is the short list Quick Look used to join.
+#[derive(Clone, Debug)]
+pub(crate) struct FileFacts {
+    pub icon: i32,
+    pub name: String,
+    pub type_name: String,
+    pub size: String,
+    pub modified: String,
+    pub created: String,
+    pub attributes: String,
+    pub dimensions: String,
+    pub extra: String,
+    pub exif: Vec<(String, String)>,
+    pub facts: Vec<String>,
+}
+
+impl Default for FileFacts {
+    fn default() -> Self {
+        Self {
+            icon: -1,
+            name: String::new(),
+            type_name: String::new(),
+            size: String::new(),
+            modified: String::new(),
+            created: String::new(),
+            attributes: String::new(),
+            dimensions: String::new(),
+            extra: String::new(),
+            exif: Vec::new(),
+            facts: Vec::new(),
+        }
+    }
+}
+
+impl FileFacts {
+    /// Non-empty attribute fields, in header order. The name is separate.
+    pub(crate) fn fields(&self) -> Vec<String> {
+        let mut v = Vec::new();
+        for s in [&self.type_name, &self.size, &self.dimensions, &self.extra, &self.modified, &self.created, &self.attributes] {
+            if !s.is_empty() {
+                v.push(s.clone());
+            }
+        }
+        v
+    }
+}
 
 unsafe fn prop(ps: &IPropertyStore, k: &PROPERTYKEY) -> Option<String> {
     let v = ps.GetValue(k).ok()?;
@@ -344,42 +558,145 @@ unsafe fn prop(ps: &IPropertyStore, k: &PROPERTYKEY) -> Option<String> {
     (!s.trim().is_empty()).then_some(s)
 }
 
-/// (system image list icon, "JPEG 이미지 · 3840 x 2400 · 1.5 MB · 2026-10-23 10:27")
-pub(crate) unsafe fn meta(path: &str, body: &Body) -> (i32, Vec<String>) {
+fn photo_key(pid: u32) -> PROPERTYKEY {
+    PROPERTYKEY { fmtid: GUID::from_values(0x14B81DA1, 0x0135, 0x4D31, [0x96, 0xD9, 0x6C, 0xBF, 0xC9, 0x67, 0x1A, 0x99]), pid }
+}
+
+fn gps_key(pid: u32) -> PROPERTYKEY {
+    PROPERTYKEY { fmtid: GUID::from_values(0x8727CFFF, 0x4868, 0x4EC6, [0xAD, 0x5B, 0x81, 0xB6, 0x60, 0xC6, 0x77, 0xD8]), pid }
+}
+
+fn exif_labels() -> ExifLabels<'static> {
+    ExifLabels {
+        camera: tr(crate::Key::ExifCamera),
+        taken: tr(crate::Key::ExifTaken),
+        exposure: tr(crate::Key::ExifExposure),
+        aperture: tr(crate::Key::ExifAperture),
+        iso: tr(crate::Key::ExifIso),
+        focal: tr(crate::Key::ExifFocal),
+        gps: tr(crate::Key::ExifGps),
+    }
+}
+
+fn attr_words() -> AttrWords<'static> {
+    AttrWords {
+        read_only: tr(crate::Key::AttrReadOnly),
+        hidden: tr(crate::Key::AttrHidden),
+        system: tr(crate::Key::AttrSystem),
+        archive: tr(crate::Key::AttrArchive),
+        compressed: tr(crate::Key::AttrCompressed),
+        encrypted: tr(crate::Key::AttrEncrypted),
+        offline: tr(crate::Key::AttrOffline),
+        temporary: tr(crate::Key::AttrTemporary),
+        sparse: tr(crate::Key::AttrSparse),
+    }
+}
+
+unsafe fn read_exif(ps: &IPropertyStore) -> ExifIn {
+    ExifIn {
+        make: prop(ps, &photo_key(271)),
+        model: prop(ps, &photo_key(272)),
+        taken: prop(ps, &photo_key(36867)),
+        exposure: prop(ps, &photo_key(33434)),
+        fnumber: prop(ps, &photo_key(33437)),
+        iso: prop(ps, &photo_key(34855)),
+        focal: prop(ps, &photo_key(37386)),
+        latitude: prop(ps, &gps_key(100)),
+        longitude: prop(ps, &gps_key(101)),
+    }
+}
+
+fn file_name(path: &str) -> String {
+    path.rsplit(['\\', '/']).next().unwrap_or(path).to_string()
+}
+
+/// Icon and attribute header for `path`. `body` adds dimensions, page counts and similar facts.
+/// Pass `None` while a preview handler is showing and those counts are not known yet.
+pub(crate) unsafe fn meta(path: &str, body: Option<&Body>) -> FileFacts {
     let mut fi = SHFILEINFOW::default();
     let flags = SHGFI_SYSICONINDEX | SHGFI_SMALLICON | SHGFI_TYPENAME;
-    SHGetFileInfoW(&HSTRING::from(path), FILE_FLAGS_AND_ATTRIBUTES(0), Some(&mut fi), size_of::<SHFILEINFOW>() as u32, flags);
+    let got = SHGetFileInfoW(&HSTRING::from(path), FILE_FLAGS_AND_ATTRIBUTES(0), Some(&mut fi), size_of::<SHFILEINFOW>() as u32, flags);
+    let type_name = String::from_utf16_lossy(&fi.szTypeName[..fi.szTypeName.iter().position(|&c| c == 0).unwrap_or(0)]);
+    let mut facts = FileFacts { icon: if got == 0 { -1 } else { fi.iIcon }, name: file_name(path), type_name: type_name.clone(), ..FileFacts::default() };
     let mut out = Vec::new();
-    let t = String::from_utf16_lossy(&fi.szTypeName[..fi.szTypeName.iter().position(|&c| c == 0).unwrap_or(0)]);
-    if !t.is_empty() {
-        out.push(t);
+    if !type_name.is_empty() {
+        out.push(type_name);
     }
     let e = ext_of(path);
     let ps = SHGetPropertyStoreFromParsingName::<_, _, IPropertyStore>(&HSTRING::from(path), None, GPS_DEFAULT).ok();
-    match body {
-        Body::Pic(_) if VIDEOS.contains(&e.as_str()) => {
-            if let Some(ps) = &ps {
-                let (w, h) = (prop(ps, &PKEY_Video_FrameWidth), prop(ps, &PKEY_Video_FrameHeight));
-                if let (Some(w), Some(h)) = (w, h) {
-                    out.push(format!("{w} × {h}"));
+    let image = PICS.contains(&e.as_str());
+    if let Some(body) = body {
+        match body {
+            Body::Pic(_) if VIDEOS.contains(&e.as_str()) => {
+                if let Some(ps) = &ps {
+                    let (w, h) = (prop(ps, &PKEY_Video_FrameWidth), prop(ps, &PKEY_Video_FrameHeight));
+                    if let (Some(w), Some(h)) = (w, h) {
+                        let dim = format!("{w} × {h}");
+                        facts.dimensions = dim.clone();
+                        out.push(dim);
+                    }
+                    if let Some(d) = prop(ps, &PKEY_Media_Duration) {
+                        facts.extra = d.clone();
+                        out.push(d);
+                    }
                 }
-                out.extend(prop(ps, &PKEY_Media_Duration));
             }
+            Body::Pic(_) => {
+                if let Some(d) = ps.as_ref().and_then(|ps| prop(ps, &PKEY_Image_Dimensions)).map(|d| d.replace(" x ", " × ")) {
+                    facts.dimensions = d.clone();
+                    out.push(d);
+                }
+            }
+            Body::Pages { total, .. } => {
+                let s = tf(crate::Key::PagesN, &[("total", &total.to_string())]);
+                facts.extra = s.clone();
+                out.push(s);
+            }
+            Body::Text { text, .. } | Body::Document { text, .. } => {
+                let s = tf(crate::Key::LinesN, &[("n", &text.lines().count().to_string())]);
+                facts.extra = s.clone();
+                out.push(s);
+            }
+            Body::Table { rows, .. } => {
+                let s = tf(crate::Key::RowsN, &[("n", &rows.len().to_string())]);
+                facts.extra = s.clone();
+                out.push(s);
+            }
+            Body::List { head, .. } => {
+                facts.extra = head.clone();
+                out.push(head.clone());
+            }
+            _ => {}
         }
-        Body::Pic(_) => out.extend(ps.as_ref().and_then(|ps| prop(ps, &PKEY_Image_Dimensions)).map(|d| d.replace(" x ", " × "))),
-        Body::Pages { total, .. } => out.push(tf(crate::Key::PagesN, &[("total", &total.to_string())])),
-        Body::Text { text, .. } | Body::Document { text, .. } => out.push(tf(crate::Key::LinesN, &[("n", &text.lines().count().to_string())])),
-        Body::Table { rows, .. } => out.push(tf(crate::Key::RowsN, &[("n", &rows.len().to_string())])),
-        Body::List { head, .. } => out.push(head.clone()),
-        _ => {}
+    } else if image {
+        if let Some(d) = ps.as_ref().and_then(|ps| prop(ps, &PKEY_Image_Dimensions)).map(|d| d.replace(" x ", " × ")) {
+            facts.dimensions = d.clone();
+            out.push(d);
+        }
+    }
+    if image {
+        if let Some(ps) = &ps {
+            facts.exif = format_exif(&read_exif(ps), &exif_labels());
+        }
     }
     if let Ok(m) = std::fs::metadata(path) {
         if m.is_file() {
-            out.push(human(m.len()));
+            let s = human(m.len());
+            facts.size = s.clone();
+            out.push(s);
         }
-        out.extend(when(m.modified()));
+        if let Some(t) = when(m.modified()) {
+            facts.modified = format!("{} {t}", tr(crate::Key::Modified));
+            out.push(t);
+        }
+        if let Some(t) = when(m.created()) {
+            facts.created = format!("{} {t}", tr(crate::Key::Created));
+        }
+        use std::os::windows::fs::MetadataExt;
+        facts.attributes = format_attributes(m.file_attributes(), &attr_words());
     }
-    (fi.iIcon, out)
+    facts.facts = out;
+    facts
 }
 
 // ---------- lists ----------
@@ -759,5 +1076,86 @@ mod tests {
     fn grouped_digits() {
         assert_eq!(group_digits(30360942), "30,360,942");
         assert_eq!(group_digits(999), "999");
+    }
+
+    fn words() -> AttrWords<'static> {
+        AttrWords {
+            read_only: "Read-only",
+            hidden: "Hidden",
+            system: "System",
+            archive: "Archive",
+            compressed: "Compressed",
+            encrypted: "Encrypted",
+            offline: "Offline",
+            temporary: "Temporary",
+            sparse: "Sparse",
+        }
+    }
+
+    #[test]
+    fn attributes_name_the_bits_and_skip_the_rest() {
+        let w = words();
+        assert_eq!(format_attributes(0, &w), "");
+        assert_eq!(format_attributes(FA_READONLY | FA_ARCHIVE, &w), "Read-only, Archive");
+        assert_eq!(format_attributes(FA_HIDDEN | FA_SYSTEM | FA_ENCRYPTED, &w), "Hidden, System, Encrypted");
+        assert_eq!(format_attributes(0x10 | 0x80, &w), ""); // directory and normal stay quiet
+        assert_eq!(format_attributes(FA_OFFLINE | FA_COMPRESSED | FA_TEMPORARY | FA_SPARSE, &w), "Compressed, Offline, Temporary, Sparse");
+    }
+
+    #[test]
+    fn exif_hides_empty_fields_and_joins_camera_and_gps() {
+        let labels = ExifLabels {
+            camera: "Camera",
+            taken: "Taken",
+            exposure: "Exposure",
+            aperture: "Aperture",
+            iso: "ISO",
+            focal: "Focal length",
+            gps: "Location",
+        };
+        let full = ExifIn {
+            make: Some("Canon".into()),
+            model: Some("EOS R6".into()),
+            taken: Some("2026-01-02 03:04".into()),
+            exposure: Some("1/200 s".into()),
+            fnumber: Some("f/2.8".into()),
+            iso: Some("ISO 200".into()),
+            focal: Some("50 mm".into()),
+            latitude: Some("37.5".into()),
+            longitude: Some("127.0".into()),
+        };
+        let rows = format_exif(&full, &labels);
+        assert_eq!(
+            rows,
+            vec![
+                ("Camera".into(), "Canon EOS R6".into()),
+                ("Taken".into(), "2026-01-02 03:04".into()),
+                ("Exposure".into(), "1/200 s".into()),
+                ("Aperture".into(), "f/2.8".into()),
+                ("ISO".into(), "ISO 200".into()),
+                ("Focal length".into(), "50 mm".into()),
+                ("Location".into(), "37.5, 127.0".into()),
+            ]
+        );
+        let sparse = ExifIn { model: Some("  X100  ".into()), latitude: Some("1".into()), make: Some(" ".into()), ..ExifIn::default() };
+        assert_eq!(format_exif(&sparse, &labels), vec![("Camera".into(), "X100".into()), ("Location".into(), "1".into())]);
+        assert!(format_exif(&ExifIn::default(), &labels).is_empty());
+        assert_eq!(exif_line(&rows[..2]), "Camera Canon EOS R6 · Taken 2026-01-02 03:04");
+    }
+
+    #[test]
+    fn header_wraps_and_ellipsizes_when_narrow() {
+        assert_eq!(ellipsize("abcdef", 4), "abc…");
+        assert_eq!(ellipsize("ab", 4), "ab");
+        let fields = vec!["JPEG image".into(), "1.5 MB".into(), "3840 × 2400".into(), "Modified 2026-10-23".into(), "Read-only, Archive".into()];
+        let wide = wrap_fields(&fields, 80);
+        assert_eq!(wide.len(), 1);
+        let narrow = wrap_fields(&fields, 16);
+        assert!(narrow.len() >= 3, "{narrow:?}");
+        assert!(narrow.iter().all(|l| l.chars().count() <= 16));
+        let lines = header_lines("a-very-long-file-name.txt", &fields, 12);
+        assert!(lines[0].ends_with('…'));
+        assert!(lines.len() > 2);
+        assert_eq!(header_char_budget(160, 16), (160 / 9).max(8) as usize);
     }
 }
