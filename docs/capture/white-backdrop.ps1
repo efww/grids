@@ -1,7 +1,24 @@
-﻿# Temporary white window covering [L,T,R,B] so CopyFromScreen has no desktop chrome bleed.
+# Temporary white window covering [L,T,R,B] so CopyFromScreen has no desktop chrome bleed.
+# Must not activate: Quick Look closes itself on WA_INACTIVE.
 param([int]$L,[int]$T,[int]$R,[int]$B,[string]$Marker)
 Add-Type -AssemblyName System.Windows.Forms
-$form = New-Object Windows.Forms.Form
+if (-not ('MaguroWhiteBd' -as [type])) {
+Add-Type -TypeDefinition @"
+using System;
+using System.Windows.Forms;
+public class MaguroWhiteBd : Form {
+  protected override bool ShowWithoutActivation { get { return true; } }
+  protected override CreateParams CreateParams {
+    get {
+      CreateParams cp = base.CreateParams;
+      cp.ExStyle |= 0x08000000 | 0x00000080; // WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW
+      return cp;
+    }
+  }
+}
+"@
+}
+$form = New-Object MaguroWhiteBd
 $form.FormBorderStyle = 'None'
 $form.BackColor = [Drawing.Color]::White
 $form.TopMost = $false

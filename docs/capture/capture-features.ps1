@@ -12,6 +12,8 @@ $Exe = Join-Path $Portable 'maguro.exe'
 $Json = Join-Path $Portable 'maguro.json'
 $Force = ($env:MAGURO_FORCE -eq '1')
 $Root = Split-Path $Portable -Parent
+$Excel = $env:MAGURO_EXCEL_DEMO
+if (-not $Excel) { $Excel = Join-Path $Root 'readme-excel-demo' }
 New-Item -ItemType Directory -Force $Out | Out-Null
 
 if (-not ('CapFeat' -as [type])) {
@@ -34,8 +36,8 @@ public static class CapFeat {
   [DllImport("user32.dll")] public static extern bool DestroyWindow(IntPtr h);
   [DllImport("user32.dll")] public static extern int GetDlgCtrlID(IntPtr h);
   public delegate bool EnumProc(IntPtr h, IntPtr l);
-  public static void Tap(byte k){ keybd_event(k,0,0,UIntPtr.Zero); keybd_event(k,0,2,UIntPtr.Zero); }
-  public static void Chord(params byte[] keys){ foreach(var k in keys) keybd_event(k,0,0,UIntPtr.Zero); for(int i=keys.Length-1;i>=0;i--) keybd_event(keys[i],0,2,UIntPtr.Zero); }
+  public static void Tap(byte k){ throw new InvalidOperationException("FORBIDDEN Tap — use MaguroCap.TapTo"); }
+  public static void Chord(params byte[] keys){ throw new InvalidOperationException("FORBIDDEN Chord — use MaguroCap.ChordTo"); }
   public static string Cls(IntPtr h){ var sb=new StringBuilder(64); GetClassName(h,sb,64); return sb.ToString(); }
   public static List<IntPtr> FindOwned(uint pid,string cls){
     var f=new List<IntPtr>();
@@ -81,8 +83,8 @@ foreach($x in @(@{c='preview.json';n='search'},@{c='preview.ko.json';n='search.k
   if((Test-Path $dest) -and -not $Force){ Write-Host "skip $($x.n)"; continue }
   $st=StartMag $x.c; if(-not $st){ continue }
   [void][CapFeat]::SetForegroundWindow($st.Hwnd); Start-Sleep -Milliseconds 400
-  [CapFeat]::Chord(0x11,0x46); Start-Sleep -Milliseconds 400
-  [Windows.Forms.SendKeys]::SendWait('sunset'); Start-Sleep -Milliseconds 1400
+  [MaguroCap]::ChordTo($st.Hwnd, [uint32]$st.Pid, 0x11,0x46); Start-Sleep -Milliseconds 400
+  if (-not [MaguroCap]::SetChildText($st.Hwnd, [uint32]$st.Pid, $null, 'sunset')) { [MaguroCap]::TypeChars($st.Hwnd, [uint32]$st.Pid, 'sunset') }; Start-Sleep -Milliseconds 1400
   SaveCap $st.Hwnd $dest
   CloseMag $st
 }
@@ -93,11 +95,16 @@ foreach($rn in @(@{c='rename_camera.en.json';n='rename'},@{c='rename_camera.ko.j
   $dest=Join-Path $Out "$($rn.n).png"
   if((Test-Path $dest) -and -not $Force){ Write-Host "skip $($rn.n)"; continue }
   $st=StartMag $rn.c; if(-not $st){ continue }
-  [void][CapFeat]::ShowWindow($st.Hwnd,9); [void][CapFeat]::SetForegroundWindow($st.Hwnd); Start-Sleep -Milliseconds 1800
+  [void][CapFeat]::SetForegroundWindow($st.Hwnd)
+  [void][MaguroCap]::RedrawWindow($st.Hwnd, [IntPtr]::Zero, [IntPtr]::Zero, 0x0105)
+  Start-Sleep -Milliseconds 1800
   $r=[MaguroCap]::Ext($st.Hwnd)
-  [MaguroCap]::Click(($r.Left+520),($r.Top+300)); Start-Sleep -Milliseconds 500
-  [CapFeat]::Chord(0x11,0x41); Start-Sleep -Milliseconds 600
-  [CapFeat]::Chord(0x11,0x10,0x52); Start-Sleep -Milliseconds 2500
+  
+  [MaguroCap]::ClickClient($st.Hwnd, 520, 300); Start-Sleep -Milliseconds 500
+  # (was screen Click Left+520,Top+300)
+
+  [MaguroCap]::ChordTo($st.Hwnd, [uint32]$st.Pid, 0x11,0x41); Start-Sleep -Milliseconds 600
+  [MaguroCap]::ChordTo($st.Hwnd, [uint32]$st.Pid, 0x11,0x10,0x52); Start-Sleep -Milliseconds 2500
   $rh=WaitCls $st.Pid 'MaguroRename' 8
   if($rh -eq [IntPtr]::Zero){ Write-Host "FAIL rename $($rn.n)"; CloseMag $st; continue }
   $script:combos=New-Object Collections.Generic.List[IntPtr]
@@ -127,7 +134,7 @@ if(-not (Test-Path $dest) -or $Force){
   $st=StartMag 'tabs.json'
   if($st){
     [void][CapFeat]::SetForegroundWindow($st.Hwnd); Start-Sleep -Milliseconds 400
-    [CapFeat]::Chord(0x11,0x10,0x4C); Start-Sleep -Milliseconds 800
+    [MaguroCap]::ChordTo($st.Hwnd, [uint32]$st.Pid, 0x11,0x10,0x4C); Start-Sleep -Milliseconds 800
     $tl=WaitCls $st.Pid 'MaguroTabList' 6
     if($tl -ne [IntPtr]::Zero){ SaveCap $tl $dest } else { Write-Host 'WARN no MaguroTabList' }
     CloseMag $st
@@ -146,6 +153,7 @@ base['lang']='$lang'
 base['theme']='light'; base['dark']=False
 base['accent']='0A9BD6'; base['accent_dark']='0A9BD6'
 root=r'$($Root.Replace('\','\\'))'
+excel=r'$($Excel.Replace('\','\\'))'
 base['file_basket']=[
   root+r'\\demo-253\\basket-src\\demo-file-01.txt',
   root+r'\\demo-253\\basket-src\\demo-file-02.txt',
@@ -156,8 +164,13 @@ base['file_basket']=[
 base['folder_watches']=[
   {'path': root+r'\\demo-readme-watch\\photos', 'subfolders': True, 'paused': False},
 ]
-base['panes']=[{'index':0,'path':root+r'\\readme-demo','tint':1,'view':[4,16]},{'index':1,'path':'::{20D04FE0-3AEA-1069-A2D8-08002B30309D}','tint':5,'view':[4,16]}]
-base['start_path']=root+r'\\readme-demo'
+pane0=root+r'\\readme-demo'
+if excel:
+    import os
+    if os.path.isdir(excel):
+        pane0=excel
+base['panes']=[{'index':0,'path':pane0,'tint':1,'view':[4,16]},{'index':1,'path':'::{20D04FE0-3AEA-1069-A2D8-08002B30309D}','tint':5,'view':[4,16]}]
+base['start_path']=pane0
 base['favorites']=[{'path':root+r'\\readme-demo','name':'readme-demo'}]
 base['tabs']=[{'active':True,'locked':False,'name':'readme-demo','layout':base.get('layout',{'columns':[1,1],'colr':[0.5,0.5],'rowr':[[1.0],[1.0]],'active':0}),'panes':base['panes']}]
 p.write_text(json.dumps(base,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
@@ -181,7 +194,9 @@ foreach($pair in @(
   $st=@{ Proc=$p; Hwnd=(WaitCls ([uint32]$p.Id) 'MaguroMain' 20); Pid=[uint32]$p.Id }
   if($st.Hwnd -eq [IntPtr]::Zero){ KillP; continue }
   Start-Sleep -Milliseconds 1500
-  [void][CapFeat]::ShowWindow($st.Hwnd,9); [void][CapFeat]::SetForegroundWindow($st.Hwnd); Start-Sleep -Milliseconds 800
+  [void][CapFeat]::SetForegroundWindow($st.Hwnd)
+  [void][MaguroCap]::RedrawWindow($st.Hwnd, [IntPtr]::Zero, [IntPtr]::Zero, 0x0105)
+  Start-Sleep -Milliseconds 800
 
   if($Force -or -not (Test-Path (Join-Path $Out $pair.basket))){
     [void][CapFeat]::PostMessage($st.Hwnd,[CapFeat]::WM_COMMAND,[UIntPtr]::new(1125),[IntPtr]::Zero)
@@ -198,20 +213,35 @@ foreach($pair in @(
     Start-Sleep -Milliseconds 300
     [void][CapFeat]::SetForegroundWindow($st.Hwnd)
     # Win+Alt+V (VK_LWIN, VK_MENU, V)
-    [CapFeat]::Chord(0x5B,0x12,0x56)
+    [MaguroCap]::ChordTo($st.Hwnd, [uint32]$st.Pid, 0x5B,0x12,0x56)
     Start-Sleep -Milliseconds 1200
     SaveCap $st.Hwnd (Join-Path $Out $pair.wsv)
   }
   if($Force -or -not (Test-Path (Join-Path $Out $pair.excel))){
-    [void][CapFeat]::PostMessage($st.Hwnd,[CapFeat]::WM_COMMAND,[UIntPtr]::new(1140),[IntPtr]::Zero)
-    Start-Sleep -Milliseconds 800
-    $ex=[IntPtr]::Zero
-    foreach($cls in @('MaguroExcelTidy','MaguroExcel','MaguroTidy','MaguroAsk')){
-      $l=[CapFeat]::FindOwned($st.Pid,$cls); if($l.Count -gt 0){ $ex=$l[0]; break }
+    # Context-menu command 0x8007 (excel tidy). There is no gear id for it.
+    # Excel tidy is a context-menu command (0x8007), not a main-window WM_COMMAND.
+    [void][CapFeat]::SetForegroundWindow($st.Hwnd)
+    $r=[MaguroCap]::Ext($st.Hwnd)
+    
+    [MaguroCap]::ClickClient($st.Hwnd, 520, 360); Start-Sleep -Milliseconds 400
+    # (was screen Click Left+520,Top+360)
+
+    if (-not [MaguroCap]::SetChildText($st.Hwnd, [uint32]$st.Pid, $null, 'sheet.xlsx')) { [MaguroCap]::TypeChars($st.Hwnd, [uint32]$st.Pid, 'sheet.xlsx') }; Start-Sleep -Milliseconds 700
+    [MaguroCap]::ChordTo($st.Hwnd, [uint32]$st.Pid, 0x10,0x79)
+    Start-Sleep -Milliseconds 700
+    if(-not (Invoke-MaguroMenuName 'A1')){ Write-Host "no excel menu $($pair.lang)" }
+    $ex=WaitCls $st.Pid 'MaguroExcelTidy' 8
+    if($ex -ne [IntPtr]::Zero){
+      Start-Sleep -Milliseconds 500
+      SaveCap $ex (Join-Path $Out $pair.excel)
+      [void][CapFeat]::PostMessage($ex,[CapFeat]::WM_CLOSE,[UIntPtr]::Zero,[IntPtr]::Zero)
     }
-    if($ex -ne [IntPtr]::Zero){ SaveCap $ex (Join-Path $Out $pair.excel) }
     else { Write-Host "no excel tidy $($pair.lang)" }
   }
   CloseMag $st
 }
 Write-Host 'capture-features DONE'
+
+
+
+

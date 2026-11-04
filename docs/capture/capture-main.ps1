@@ -31,7 +31,7 @@ public static class CapMain {
   [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, UIntPtr w, IntPtr l);
   [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte sc, uint f, UIntPtr e);
   public delegate bool EnumProc(IntPtr h, IntPtr l);
-  public static void Tap(byte k){ keybd_event(k,0,0,UIntPtr.Zero); keybd_event(k,0,2,UIntPtr.Zero); }
+  public static void Tap(byte k){ throw new InvalidOperationException("FORBIDDEN Tap — use MaguroCap.TapTo"); }
   public static string Cls(IntPtr h){ var sb=new StringBuilder(64); GetClassName(h,sb,64); return sb.ToString(); }
   public static List<IntPtr> FindOwned(uint pid,string cls){
     var f=new List<IntPtr>();
@@ -102,19 +102,37 @@ foreach($x in @(
   [void][CapMain]::SetForegroundWindow($st.Hwnd); Start-Sleep -Milliseconds 300
   # click first file then Space for peek
   $r=[MaguroCap]::Ext($st.Hwnd)
-  [MaguroCap]::Click(($r.Left+280),($r.Top+280)); Start-Sleep -Milliseconds 400
-  [CapMain]::Tap(0x20); Start-Sleep -Milliseconds 900
+  [MaguroCap]::ClickClient($st.Hwnd, 460, 340); Start-Sleep -Milliseconds 500
+  [MaguroCap]::TapTo($st.Hwnd, [uint32]$st.Pid, 0x72)  # F3 quick look. The popup is created, then refitted; a 0-rect hwnd is not ready.
+  # Peek refits after the picture loads, and WA_INACTIVE closes it. Wait until one hwnd holds its size.
   $pk=[IntPtr]::Zero
-  foreach($cls in @('MaguroPeek','MaguroPreview','MaguroLightbox')){
-    $l=[CapMain]::FindOwned($st.Pid,$cls); if($l.Count -gt 0){ $pk=$l[0]; break }
-  }
+  $prev=''
+  $stable=0
+  $deadline=(Get-Date).AddSeconds(10)
+  do {
+    $owned=[CapMain]::FindOwned($st.Pid,'MaguroPeek')
+    $key=''
+    $cand=[IntPtr]::Zero
+    for($i=0; $i -lt $owned.Count; $i++){
+      $h=$owned[$i]
+      if(-not [MaguroCap]::IsWindow($h)){ continue }
+      $rr=[MaguroCap]::Ext($h)
+      $pw=$rr.Right-$rr.Left; $ph=$rr.Bottom-$rr.Top
+      if($pw -gt 80 -and $ph -gt 80){ $cand=$h; $key="$h|$pw|$ph"; break }
+    }
+    if($key -ne '' -and $key -eq $prev){ $stable++ } else { $stable=0 }
+    $prev=$key
+    if($stable -ge 3){ $pk=$cand; break }
+    Start-Sleep -Milliseconds 300
+  } while((Get-Date) -lt $deadline)
+  Start-Sleep -Milliseconds 500
   if($pk -ne [IntPtr]::Zero){
     try { CapW $pk $destPeek }
-    catch { Write-Host "WARN peek fail $($x.pk): $_"; CapW $st.Hwnd $destPeek }
+    catch { Write-Host "WARN peek fail $($x.pk): $_" }
   } else {
-    Write-Host "WARN no peek hwnd; fallback main"
-    CapW $st.Hwnd $destPeek
+    Write-Host "WARN no sized MaguroPeek $($x.pk)"
   }
   CloseMag $st
 }
 Write-Host 'capture-main DONE'
+

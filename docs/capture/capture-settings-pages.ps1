@@ -26,7 +26,7 @@ public static class CapSet {
   [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte sc, uint f, UIntPtr e);
   [DllImport("user32.dll")] public static extern bool RedrawWindow(IntPtr h, IntPtr r, IntPtr ur, uint f);
   public delegate bool EnumProc(IntPtr h, IntPtr l);
-  public static void Chord(params byte[] keys){ foreach(var k in keys) keybd_event(k,0,0,UIntPtr.Zero); for(int i=keys.Length-1;i>=0;i--) keybd_event(keys[i],0,2,UIntPtr.Zero); }
+  public static void Chord(params byte[] keys){ throw new InvalidOperationException("FORBIDDEN Chord — use MaguroCap.ChordTo"); }
   public static string Cls(IntPtr h){ var sb=new StringBuilder(64); GetClassName(h,sb,64); return sb.ToString(); }
   public static List<IntPtr> FindOwned(uint pid,string cls){
     var f=new List<IntPtr>();
@@ -74,7 +74,7 @@ foreach($pair in @(
   Write-Host "=== settings suite $($pair.gen) ==="
   $st=StartMag $pair.c
   [void][CapSet]::SetForegroundWindow($st.Hwnd)
-  [CapSet]::Chord(0x11,0xBC)  # Ctrl+,
+  [MaguroCap]::ChordTo($st.Hwnd, [uint32]$st.Pid, 0x11,0xBC)  # Ctrl+,
   Start-Sleep -Milliseconds 2000
   $sh=WaitCls $st.Pid 'MaguroSettings' 10
   if($sh -eq [IntPtr]::Zero){ Write-Host "FAIL settings"; CloseMag $st; continue }
@@ -97,3 +97,4 @@ foreach($pair in @(
   CloseMag $st
 }
 Write-Host 'capture-settings-pages DONE'
+

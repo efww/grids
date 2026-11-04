@@ -1,15 +1,7 @@
 ﻿# Capture MaguroServer Add dialog with FAKE demo fields only (never real hosts/credentials).
-# Required fill (t633u policy):
-#   display name: Demo Server
-#   host:         sftp.example.com
-#   port:         22
-#   remote path:  /home/demo/projects
-#   user:         demo
-#   password:     empty
-# Env: MAGURO_PORTABLE, MAGURO_CFG_DIR, MAGURO_SHOT_DIR (see capture-settings-panes.ps1)
+# Env: MAGURO_PORTABLE, MAGURO_CFG_DIR, MAGURO_SHOT_DIR
 param()
 $ErrorActionPreference='Stop'
-Add-Type -AssemblyName System.Windows.Forms
 . (Join-Path $PSScriptRoot 'cap-lib.ps1')
 $Portable = $env:MAGURO_PORTABLE; if (-not $Portable) { throw 'Set MAGURO_PORTABLE' }
 $CfgDir   = $env:MAGURO_CFG_DIR;   if (-not $CfgDir)   { throw 'Set MAGURO_CFG_DIR' }
@@ -32,6 +24,31 @@ function Seed([string]$cfg,[string]$lang){
   ($raw | ConvertTo-Json -Depth 30) + "`n" | Set-Content $j -Encoding utf8
 }
 
+Add-Type @"
+using System; using System.Runtime.InteropServices;
+public class AddrEdit {
+  public delegate bool CB(IntPtr h, IntPtr l);
+  [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr h, CB cb, IntPtr l);
+  [DllImport("user32.dll")] public static extern int GetDlgCtrlID(IntPtr h);
+  [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr h, uint m, IntPtr w, string l);
+  [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, UIntPtr w, IntPtr l);
+  [DllImport("user32.dll")] public static extern IntPtr SetFocus(IntPtr h);
+  public static IntPtr FindId(IntPtr parent, int id){
+    IntPtr found=IntPtr.Zero;
+    EnumChildWindows(parent,(h,l)=>{ if(GetDlgCtrlID(h)==id){ found=h; return false;} return true;}, IntPtr.Zero);
+    return found;
+  }
+  public static void SetAndEnter(IntPtr edit, string text){
+    SendMessage(edit, 0x000C /*WM_SETTEXT*/, IntPtr.Zero, text);
+    System.Threading.Thread.Sleep(100);
+    try { SetFocus(edit); } catch {}
+    PostMessage(edit, 0x0100 /*KEYDOWN*/, (UIntPtr)0x0D, IntPtr.Zero);
+    PostMessage(edit, 0x0102 /*CHAR*/, (UIntPtr)0x0D, IntPtr.Zero);
+    PostMessage(edit, 0x0101 /*KEYUP*/, (UIntPtr)0x0D, IntPtr.Zero);
+  }
+}
+"@
+
 foreach ($pair in @(
   @{ c='favorites.json';    lang='en'; n='servers.png' },
   @{ c='favorites.ko.json'; lang='ko'; n='servers.ko.png' },
@@ -49,19 +66,28 @@ foreach ($pair in @(
   }
   if ($main -eq [IntPtr]::Zero) { throw "no MaguroMain $($pair.n)" }
   Start-Sleep 7
-  [void][MaguroCap]::SetForegroundWindow($main); Start-Sleep -Milliseconds 400
-  [MaguroCap]::Chord(0x11, 0x4C)  # Ctrl+L
+  [MaguroCap]::ForceOwnForeground($main, $pid_); Start-Sleep -Milliseconds 400
+  # Focus address (Ctrl+L) — gated keybd_event after Maguro FG assert
+  [MaguroCap]::ChordTo($main, [uint32]$proc.Id, 0x11, 0x4C)
   Start-Sleep -Milliseconds 500
-  [Windows.Forms.SendKeys]::SendWait($FakeUrl)
-  Start-Sleep -Milliseconds 300
-  [MaguroCap]::Tap(0x0D)
+  # Set address Edit (id 104) via WM_SETTEXT on Maguro-owned HWND only; Enter via PostMessage to that Edit
+  $edit = [AddrEdit]::FindId($main, 104)
+  if ($edit -eq [IntPtr]::Zero) { throw "no address Edit(104) $($pair.n)" }
+  [AddrEdit]::SetAndEnter($edit, $FakeUrl)
+  Start-Sleep -Milliseconds 400
+  # Fallback Enter via gated TapTo if dialog not yet up
   $srv = [IntPtr]::Zero
-  for ($i=0; $i -lt 30; $i++) {
-    Start-Sleep -Milliseconds 300
+  for ($i=0; $i -lt 40; $i++) {
+    Start-Sleep -Milliseconds 250
     $cand = [MaguroCap]::FindClsAny($pid_, 'MaguroServer')
     if ($cand -ne [IntPtr]::Zero) {
       $br = [MaguroCap]::Ext($cand)
       if (($br.Right - $br.Left) -ge 80) { $srv = $cand; break }
+    }
+    if ($i -eq 8 -or $i -eq 20) {
+      [MaguroCap]::ForceOwnForeground($main, $pid_)
+      [MaguroCap]::TapTo($main, [uint32]$proc.Id, 0x0D)
+      [AddrEdit]::SetAndEnter($edit, $FakeUrl)
     }
   }
   if ($srv -eq [IntPtr]::Zero) { throw "no MaguroServer $($pair.n)" }
@@ -72,14 +98,13 @@ foreach ($pair in @(
   [void][MaguroCap]::SetEdit($srv, 12, '22')
   [void][MaguroCap]::SetEdit($srv, 13, '/home/demo/projects')
   [void][MaguroCap]::SetEdit($srv, 14, 'demo')
-  [void][MaguroCap]::SetEdit($srv, 15, '')   # empty password — never real credentials
-  # Click SFTP kind (index 2 of SMB/WebDAV/SFTP/FTP)
+  [void][MaguroCap]::SetEdit($srv, 15, '')
   $wr = [MaguroCap]::Ext($srv)
   $cw = $wr.Right - $wr.Left
   $slot = [int](($cw - 32 - 24) / 4)
-  $kx = $wr.Left + 16 + [int]($slot * 2 + $slot / 2)
-  $ky = $wr.Top + 76
-  [MaguroCap]::Click($kx, $ky)
+  $cx = 16 + [int]($slot * 2 + $slot / 2)
+  $cy = 76
+  [MaguroCap]::ClickClient($srv, $cx, $cy)
   Start-Sleep -Milliseconds 400
   Cap-MaguroWindow $srv (Join-Path $Out $pair.n) 5
   [void][MaguroCap]::PostMessage($srv, [MaguroCap]::WM_CLOSE, [UIntPtr]::Zero, [IntPtr]::Zero)

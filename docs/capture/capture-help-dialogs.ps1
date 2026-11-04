@@ -30,8 +30,8 @@ public static class CapHelp {
   public static readonly IntPtr HWND_TOPMOST=new IntPtr(-1), HWND_NOTOPMOST=new IntPtr(-2);
   public delegate bool EnumProc(IntPtr h, IntPtr l);
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left,Top,Right,Bottom; }
-  public static void Chord(params byte[] keys){ foreach(var k in keys) keybd_event(k,0,0,UIntPtr.Zero); for(int i=keys.Length-1;i>=0;i--) keybd_event(keys[i],0,2,UIntPtr.Zero); }
-  public static void Tap(byte k){ keybd_event(k,0,0,UIntPtr.Zero); keybd_event(k,0,2,UIntPtr.Zero); }
+  public static void Chord(params byte[] keys){ throw new InvalidOperationException("FORBIDDEN Chord — use MaguroCap.ChordTo"); }
+  public static void Tap(byte k){ throw new InvalidOperationException("FORBIDDEN Tap — use MaguroCap.TapTo"); }
   public static string Cls(IntPtr h){ var sb=new StringBuilder(64); GetClassName(h,sb,64); return sb.ToString(); }
   public static string Title(IntPtr h){ var sb=new StringBuilder(512); GetWindowText(h,sb,512); return sb.ToString(); }
   public static List<IntPtr> FindOwned(uint pid,string cls){
@@ -131,25 +131,20 @@ foreach($lang in @('en','ko','ja')){
 
   # workspaces name ask: Ctrl+Alt+Shift+1 then WM_COMMAND 1920
   [void][CapHelp]::SetForegroundWindow($main)
-  [CapHelp]::Chord(0x11,0x12,0x10,0x31)
+  [MaguroCap]::ChordTo($main, [uint32]$pidMag, 0x11,0x12,0x10,0x31)
   Start-Sleep -Milliseconds 700
   [void][CapHelp]::PostMessage($main,[CapHelp]::WM_COMMAND,[UIntPtr]::new(1920),[IntPtr]::Zero)
   $ask=WaitCls $pidMag 'MaguroAsk' 8
   if($ask -ne [IntPtr]::Zero){ SaveCap $ask (Join-Path $Out "workspaces$sfx.png") | Out-Null; [void][CapHelp]::PostMessage($ask,[CapHelp]::WM_CLOSE,[UIntPtr]::Zero,[IntPtr]::Zero) }
   else { Write-Host "no workspaces $lang" }
 
-  # in-app help window (F1 / WM_COMMAND if available)
-  [void][CapHelp]::SetForegroundWindow($main)
-  [CapHelp]::Tap(0x70) # F1
-  Start-Sleep -Milliseconds 1200
-  $hh=WaitCls $pidMag 'MaguroHelp' 4
-  if($hh -eq [IntPtr]::Zero){
-    foreach($cls in @('MaguroHelp','MaguroDoc','Chrome_WidgetWin_1')){
-      $l=[CapHelp]::FindOwned($pidMag,$cls); if($l.Count -gt 0){ $hh=$l[0]; break }
-    }
-  }
+  # In-app shortcut list. F1 opens the browser Help site, which is not this crop.
+  # ID_KEYS = 1101. Ctrl+/ (VK_OEM_2) is easy to miss when the shell has focus.
+  [void][CapHelp]::PostMessage($main,[CapHelp]::WM_COMMAND,[UIntPtr]::new(1101),[IntPtr]::Zero)
+  Start-Sleep -Milliseconds 700
+  $hh=WaitCls $pidMag 'MaguroKeys' 6
   if($hh -ne [IntPtr]::Zero){ SaveCap $hh (Join-Path $Out "help$sfx.png") | Out-Null }
-  else { Write-Host "no MaguroHelp $lang — try gear help cmd 1115"; [void][CapHelp]::PostMessage($main,[CapHelp]::WM_COMMAND,[UIntPtr]::new(1115),[IntPtr]::Zero); Start-Sleep -Milliseconds 1000; $hh=WaitCls $pidMag 'MaguroHelp' 4; if($hh -ne [IntPtr]::Zero){ SaveCap $hh (Join-Path $Out "help$sfx.png") | Out-Null } }
+  else { Write-Host "no MaguroKeys $lang" }
 
   # dialog_jump via Notepad Open + Ctrl+Alt+G
   CloseNotepad
@@ -163,7 +158,7 @@ foreach($lang in @('en','ko','ja')){
   if($npH -eq [IntPtr]::Zero){ $all=[CapHelp]::FindByClass('Notepad'); if($all.Count -gt 0){ $npH=$all[0] } }
   if($npH -ne [IntPtr]::Zero){
     [void][CapHelp]::SetForegroundWindow($npH); Start-Sleep -Milliseconds 300
-    [CapHelp]::Chord(0x11,0x4F); Start-Sleep -Milliseconds 1000
+    [MaguroCap]::ChordTo($main, [uint32]$pidMag, 0x11,0x4F); Start-Sleep -Milliseconds 1000
     $dlg=[IntPtr]::Zero
     $deadline=(Get-Date).AddSeconds(8)
     do {
@@ -176,15 +171,24 @@ foreach($lang in @('en','ko','ja')){
     } while((Get-Date) -lt $deadline)
     if($dlg -ne [IntPtr]::Zero){
       [void][CapHelp]::SetForegroundWindow($dlg); Start-Sleep -Milliseconds 300
-      [CapHelp]::Chord(0x11,0x12,0x47) # Ctrl+Alt+G
-      Start-Sleep -Milliseconds 800
-      $jump = WaitCls $pidMag 'MaguroDlgJump' 3
-      if($jump -eq [IntPtr]::Zero){
-        foreach($cls in @('MaguroDlgJump','MaguroJump')){ $jl=[CapHelp]::FindOwned($pidMag,$cls); if($jl.Count -gt 0){ $jump=$jl[0]; break } }
-      }
-      if($jump -ne [IntPtr]::Zero){ SaveCap $jump (Join-Path $Out "dialog_jump$sfx.png") | Out-Null }
-      else { Write-Host "no MaguroDlgJump $lang" }
-      [CapHelp]::Tap(0x1B); Start-Sleep -Milliseconds 200; [CapHelp]::Tap(0x1B)
+      [MaguroCap]::ChordTo($main, [uint32]$pidMag, 0x11,0x12,0x47) # Ctrl+Alt+G
+      # MaguroDlgJump is a 1x1 host. The picture is the open menu (#32768).
+      $menu=[IntPtr]::Zero
+      $deadline=(Get-Date).AddSeconds(4)
+      do {
+        foreach($h in [CapHelp]::FindByClass('#32768')){
+          $rr=[MaguroCap]::Ext($h)
+          $mw=$rr.Right-$rr.Left; $mh=$rr.Bottom-$rr.Top
+          if($mw -gt 120 -and $mh -gt 40){ $menu=$h; break }
+        }
+        if($menu -ne [IntPtr]::Zero){ break }
+        Start-Sleep -Milliseconds 100
+      } while((Get-Date) -lt $deadline)
+      if($menu -ne [IntPtr]::Zero){
+        try { Cap-MaguroWindow $menu (Join-Path $Out "dialog_jump$sfx.png") -Still }
+        catch { Write-Host "CAP FAIL dialog_jump$sfx : $_" }
+      } else { Write-Host "no jump menu $lang" }
+      [MaguroCap]::TapTo($main, [uint32]$pidMag, 0x1B); Start-Sleep -Milliseconds 200; [MaguroCap]::TapTo($main, [uint32]$pidMag, 0x1B)
     } else { Write-Host "no Open dialog $lang" }
   } else { Write-Host "no Notepad $lang" }
   CloseNotepad
@@ -203,11 +207,14 @@ foreach($lang in @('en','ko','ja')){
   $r=[MaguroCap]::Ext($main)
   $cx=[int](($r.Left+$r.Right)/2); $cy=[int](($r.Top+$r.Bottom)/2)
   Open-MaguroBackdrop ($cx-280) ($cy-120) ($cx+280) ($cy+120)
-  [MaguroCap]::Click(($r.Left+300),($r.Top+400)); Start-Sleep -Milliseconds 300
-  [CapHelp]::Chord(0x11,0x41); Start-Sleep -Milliseconds 300
-  [CapHelp]::Chord(0x11,0x43); Start-Sleep -Milliseconds 300
-  [MaguroCap]::Click(($r.Left+900),($r.Top+400)); Start-Sleep -Milliseconds 300
-  [CapHelp]::Chord(0x11,0x56)
+  [MaguroCap]::ClickClient($main, 300, 400); Start-Sleep -Milliseconds 300
+  [MaguroCap]::ChordTo($main, [uint32]$pidMag, 0x11,0x41); Start-Sleep -Milliseconds 300
+  [MaguroCap]::ChordTo($main, [uint32]$pidMag, 0x11,0x43); Start-Sleep -Milliseconds 300
+  [MaguroCap]::ClickClient($main, 900, 400); Start-Sleep -Milliseconds 300
+  # Local paste stays on IFileOperation. Fast paste is the Maguro progress window.
+  [MaguroCap]::ChordTo($main, [uint32]$pidMag, 0x10,0x79)
+  Start-Sleep -Milliseconds 600
+  if(-not (Invoke-MaguroMenuName 'Fast paste|고속 붙여넣기|高速貼り付け')){ Write-Host "no fast-paste row $lang" }
   $fc=[IntPtr]::Zero
   $deadline=(Get-Date).AddSeconds(15)
   do {
@@ -224,3 +231,4 @@ foreach($lang in @('en','ko','ja')){
   Close-MaguroBackdrop; KillP
 }
 Write-Host 'capture-help-dialogs DONE'
+

@@ -45,7 +45,7 @@ foreach ($pair in @(
   if ($main -eq [IntPtr]::Zero) { throw "no MaguroMain $($pair.n)" }
   Start-Sleep 7   # shell-ext settle; do not ShowWindow during enum
   [void][MaguroCap]::SetForegroundWindow($main)
-  [MaguroCap]::Chord(0x11, 0xBC)  # Ctrl+,
+  [MaguroCap]::ChordTo($main, [uint32]$pid_, 0x11, 0xBC)  # Ctrl+,
   Start-Sleep -Milliseconds 1800
   $sh = [IntPtr]::Zero
   for ($i=0; $i -lt 40; $i++) {
@@ -62,3 +62,4 @@ foreach ($pair in @(
   [void][MaguroCap]::PostMessage($main, [MaguroCap]::WM_CLOSE, [UIntPtr]::Zero, [IntPtr]::Zero)
   Start-Sleep -Milliseconds 400; Kill-PortableMaguro
 }
+
