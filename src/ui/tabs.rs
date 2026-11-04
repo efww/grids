@@ -85,12 +85,7 @@ pub(crate) struct TabLay {
 impl TabLay {
     /// Tab under a drag, among the ones on screen. Past the last visible tab, that tab.
     pub(crate) fn drag_target(&self, x: i32) -> usize {
-        self.body
-            .iter()
-            .enumerate()
-            .find(|(_, r)| r.right > r.left && x < (r.left + r.right) / 2)
-            .map(|(i, _)| i)
-            .unwrap_or_else(|| self.body.iter().enumerate().rev().find(|(_, r)| r.right > r.left).map(|(i, _)| i).unwrap_or(0))
+        tab_drag_index(&self.body, x)
     }
 
     /// Where a tab dragged in from another window is inserted.
@@ -102,6 +97,15 @@ impl TabLay {
             .map(|(i, _)| i)
             .unwrap_or_else(|| self.body.iter().enumerate().rev().find(|(_, r)| r.right > r.left).map(|(i, _)| i + 1).unwrap_or(self.body.len()))
     }
+}
+
+/// Index a horizontal drag lands on. The first body whose midpoint is to the right of `x`, else the last one with a width.
+pub(crate) fn tab_drag_index(body: &[RECT], x: i32) -> usize {
+    body.iter()
+        .enumerate()
+        .find(|(_, r)| r.right > r.left && x < (r.left + r.right) / 2)
+        .map(|(i, _)| i)
+        .unwrap_or_else(|| body.iter().enumerate().rev().find(|(_, r)| r.right > r.left).map(|(i, _)| i).unwrap_or(0))
 }
 
 /// X uses the accent while the pointer is on it. A lock stays the quiet colour, hot or not.
@@ -630,6 +634,8 @@ pub(crate) unsafe fn new_tab_at(path: Option<&str>) {
             cols: vec![String::new(); MAXP],
             pane_folders: vec![Vec::new(); MAXP],
             pane_cur: vec![0; MAXP],
+            pane_locks: vec![Vec::new(); MAXP],
+            pane_names: vec![Vec::new(); MAXP],
             ..a.s.clone()
         };
         let old = a.s.tab;

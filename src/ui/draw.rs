@@ -1432,12 +1432,14 @@ pub(crate) unsafe fn paint_pane(h: HWND) {
         }
         if pg.tabs.bottom > pg.tabs.top {
             if let Some(i) = i {
-                let (list, cur) = app(|a| {
+                let (list, locks, names, cur) = app(|a| {
                     let list = a.s.pane_tab_list(i);
+                    let locks = a.s.pane_tab_locks(i);
+                    let names = a.s.pane_tab_names(i);
                     let cur = if list.len() > 1 { a.s.pane_cur.get(i).copied().unwrap_or(0).min(list.len() - 1) } else { 0 };
-                    (list, cur)
+                    (list, locks, names, cur)
                 });
-                paint_pane_tabs(dc, &pg, &list, cur, dpi, font, accent, file_hot);
+                paint_pane_tabs(dc, &pg, &list, &locks, &names, cur, dpi, font, icon_font, accent, file_hot);
             }
         }
         if pg.filt.right - pg.filt.left < s(24) {

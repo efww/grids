@@ -1646,12 +1646,7 @@ fn blank_pane_slot(s: &mut Session, i: usize) {
     if i < s.tints.len() {
         s.tints[i] = 0;
     }
-    if i < s.pane_folders.len() {
-        s.pane_folders[i].clear();
-    }
-    if i < s.pane_cur.len() {
-        s.pane_cur[i] = 0;
-    }
+    s.clear_pane_tabs(i);
 }
 
 pub(crate) unsafe fn set_layout(h: Vec<usize>) {

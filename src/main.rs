@@ -748,6 +748,84 @@ mod tests {
         assert!(side.active < side.panes());
     }
 
+    /// boot=0 keeps the saved grid. start=2 only fills an empty pane. A lock on the
+    /// current pane tab must still be there after the same steps launch runs.
+    #[test]
+    fn pane_lock_survives_startup_restore() {
+        let dst = r"C:\dst";
+        let dst_b = r"C:\dstB";
+        let dst_c = r"C:\dstC";
+        let pane = serde_json::json!({
+            "index": 0,
+            "path": dst,
+            "folders": [dst, dst_b, dst_c],
+            "folder": 0,
+            "locks": [true, false, false],
+        });
+        let tab = serde_json::json!({
+            "name": "1",
+            "locked": false,
+            "active": true,
+            "layout": {"columns": [1], "active": 0},
+            "panes": [pane.clone()],
+        });
+        let root = serde_json::json!({
+            "version": 1,
+            "boot": 0,
+            "start": 2,
+            "start_path": dst,
+            "ctx_win11_pack_migrated": true,
+            "layout": {"columns": [1], "active": 0},
+            "panes": [pane],
+            "tabs": [tab.clone()],
+        });
+        let mut s = store::import_text(&root.to_string()).unwrap();
+        apply_boot(&mut s);
+        s.anchor();
+        assert!(
+            s.pane_tab_locked(0),
+            "root locks={:?} folders={:?} cur={} path={}",
+            s.pane_locks[0], s.pane_folders[0], s.pane_cur[0], s.paths[0]
+        );
+        assert_eq!(s.pane_tab_locks(0), vec![true, false, false]);
+        let saved = store::sync_text(&s);
+        assert!(saved.contains("\"locks\""), "{saved}");
+
+        // A real maguro.json also stores the focused window. That copy wins at load.
+        let mut with_wins = root.clone();
+        with_wins["windows"] = serde_json::json!([{ "tabs": [tab] }]);
+        let mut w = store::import_text(&with_wins.to_string()).unwrap();
+        apply_boot(&mut w);
+        w.anchor();
+        assert!(
+            w.pane_tab_locked(0),
+            "window locks={:?} folders={:?} cur={} path={}",
+            w.pane_locks[0], w.pane_folders[0], w.pane_cur[0], w.paths[0]
+        );
+
+        // A file saved before pane locks (or edited only on the root copies) still has
+        // windows[0]. That snapshot is the focused window and wins at load. Same folders,
+        // no locks key: the lock configured on panes and tabs[0] must still come through,
+        // and the next save must write it.
+        let mut bare = tab.clone();
+        bare["panes"][0].as_object_mut().unwrap().remove("locks");
+        let mut stale = root.clone();
+        stale["windows"] = serde_json::json!([{ "tabs": [bare] }]);
+        let mut dropped = store::import_text(&stale.to_string()).unwrap();
+        apply_boot(&mut dropped);
+        dropped.anchor();
+        assert!(
+            dropped.pane_tab_locked(0),
+            "stale window locks={:?} folders={:?} cur={} path={}",
+            dropped.pane_locks[0], dropped.pane_folders[0], dropped.pane_cur[0], dropped.paths[0]
+        );
+        assert_eq!(dropped.pane_tab_locks(0), vec![true, false, false]);
+        let again = store::sync_text(&dropped);
+        assert!(again.contains("\"locks\""), "{again}");
+        let round = store::import_text(&again).unwrap();
+        assert!(round.pane_tab_locked(0), "resave locks={:?}", round.pane_locks[0]);
+    }
+
     #[test]
     fn tab_color_persists_and_one_tab_session_drops_the_others() {
         let mut s = Session::default();

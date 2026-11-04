@@ -34,6 +34,8 @@ pub(crate) struct PanePress {
     pub(crate) x: i32,
     pub(crate) y: i32,
     pub(crate) grab: PaneGrab,
+    /// The pointer already left the click slack, and this press is not a pane move.
+    pub(crate) past: bool,
 }
 
 /// A pane drag that has passed the click slack. `hot` is the pane and zone under the pointer.
@@ -65,9 +67,19 @@ pub(crate) fn drag_slack(dpi: i32) -> i32 {
     (4 * dpi.max(1) / 96).max(4)
 }
 
+/// Whether arming a pane-tab reorder should open the dragged tab.
+/// `cur` is the tab on display. `index` is the tab under the press.
+/// Never. `pick_pane_tab` browses, the shell takes the mouse, and `WM_CAPTURECHANGED`
+/// drops the reorder before the pointer can move the tab. The path tip stays up.
+/// A click that never leaves the slack still selects on button up. The folder on
+/// display stays where `moved_active` puts it.
+pub(crate) fn pane_reorder_switches(_cur: usize, _index: usize) -> bool {
+    false
+}
+
 /// Header or pane-tab strip, and not a control. The file list is below `view` and is left to OLE.
-/// Tab close and '+' stay clicks. Address, filter and the icon buttons do too.
-pub(crate) fn pane_grab(pg: &PaneGeo, tabs: usize, x: i32, y: i32, dpi: i32) -> Option<PaneGrab> {
+/// An unlocked × and '+' stay clicks. A lock mark can still drag the tab. Address, filter and the icon buttons do too.
+pub(crate) fn pane_grab(pg: &PaneGeo, tabs: usize, locks: &[bool], x: i32, y: i32, dpi: i32) -> Option<PaneGrab> {
     if x < 0 || y < 0 || y >= pg.view.top {
         return None;
     }
@@ -76,13 +88,14 @@ pub(crate) fn pane_grab(pg: &PaneGeo, tabs: usize, x: i32, y: i32, dpi: i32) -> 
         return None;
     }
     if pg.tabs.bottom > pg.tabs.top && inside(pg.tabs, x, y) {
-        // Same hit order as pane_tab_hit. Close and '+' stay clicks; the rest can drag.
+        // Same hit order as pane_tab_hit. An unlocked close and '+' stay clicks; the rest can drag.
         let (tabs_r, plus) = pane_tab_rects(pg.tabs, tabs, dpi);
         if inside(plus, x, y) {
             return None;
         }
         if let Some(k) = tabs_r.iter().position(|r| inside(*r, x, y)) {
-            let on_close = pane_tab_close_rect(tabs_r[k], dpi).is_some_and(|c| tabs > 1 && inside(c, x, y));
+            let locked = locks.get(k).copied().unwrap_or(false);
+            let on_close = pane_tab_close_rect(tabs_r[k], dpi).is_some_and(|c| !locked && tabs > 1 && inside(c, x, y));
             return if on_close { None } else { Some(PaneGrab::Tab(k)) };
         }
         return Some(PaneGrab::Strip);
@@ -526,24 +539,34 @@ mod tests {
     }
 
     #[test]
+    fn dragging_a_pane_tab_does_not_open_it() {
+        // Third tab, first one on display: opening it browses, the shell takes capture,
+        // and the reorder is cancelled. The path tip stays up. A click still selects.
+        assert!(!pane_reorder_switches(0, 2));
+        assert!(!pane_reorder_switches(2, 0));
+        assert!(!pane_reorder_switches(2, 2));
+    }
+
+    #[test]
     fn grab_is_the_header_and_the_strip_not_the_list_or_controls() {
         let bar = pane_geo(900, 600, 96, false);
-        assert_eq!(pane_grab(&bar, 1, bar.num.left, bar.num.top, 96), Some(PaneGrab::Header));
-        assert!(pane_grab(&bar, 1, bar.addr.left + 2, bar.addr.top + 2, 96).is_none());
-        assert!(pane_grab(&bar, 1, bar.filt.left + 2, bar.filt.top + 2, 96).is_none());
-        assert!(pane_grab(&bar, 1, bar.btn[0].left + 1, bar.btn[0].top + 1, 96).is_none());
-        assert!(pane_grab(&bar, 1, bar.view.left + 4, bar.view.top + 4, 96).is_none());
+        assert_eq!(pane_grab(&bar, 1, &[], bar.num.left, bar.num.top, 96), Some(PaneGrab::Header));
+        assert!(pane_grab(&bar, 1, &[], bar.addr.left + 2, bar.addr.top + 2, 96).is_none());
+        assert!(pane_grab(&bar, 1, &[], bar.filt.left + 2, bar.filt.top + 2, 96).is_none());
+        assert!(pane_grab(&bar, 1, &[], bar.btn[0].left + 1, bar.btn[0].top + 1, 96).is_none());
+        assert!(pane_grab(&bar, 1, &[], bar.view.left + 4, bar.view.top + 4, 96).is_none());
         let wide = pane_geo(900, 600, 144, false);
-        assert_eq!(pane_grab(&wide, 1, wide.num.left + 1, wide.num.top + 1, 144), Some(PaneGrab::Header));
-        assert!(pane_grab(&wide, 1, wide.view.left, wide.view.top, 144).is_none());
+        assert_eq!(pane_grab(&wide, 1, &[], wide.num.left + 1, wide.num.top + 1, 144), Some(PaneGrab::Header));
+        assert!(pane_grab(&wide, 1, &[], wide.view.left, wide.view.top, 144).is_none());
 
         let strip = pane_geo(900, 600, 96, true);
         let (tabs, plus) = pane_tab_rects(strip.tabs, 2, 96);
-        assert_eq!(pane_grab(&strip, 2, tabs[0].left + 8, tabs[0].top + 4, 96), Some(PaneGrab::Tab(0)));
+        assert_eq!(pane_grab(&strip, 2, &[], tabs[0].left + 8, tabs[0].top + 4, 96), Some(PaneGrab::Tab(0)));
         let close = pane_tab_close_rect(tabs[0], 96).unwrap();
-        assert!(pane_grab(&strip, 2, close.left + 2, close.top + 2, 96).is_none());
-        assert!(pane_grab(&strip, 2, plus.left + 2, plus.top + 2, 96).is_none());
-        assert_eq!(pane_grab(&strip, 2, plus.right + 8, strip.tabs.top + 8, 96), Some(PaneGrab::Strip));
+        assert!(pane_grab(&strip, 2, &[], close.left + 2, close.top + 2, 96).is_none());
+        assert_eq!(pane_grab(&strip, 2, &[true, false], close.left + 2, close.top + 2, 96), Some(PaneGrab::Tab(0)));
+        assert!(pane_grab(&strip, 2, &[], plus.left + 2, plus.top + 2, 96).is_none());
+        assert_eq!(pane_grab(&strip, 2, &[], plus.right + 8, strip.tabs.top + 8, 96), Some(PaneGrab::Strip));
 
         // A narrow column used to drop the number, and the buttons then covered the whole header.
         for (w, dpi, strip_on) in [(240, 96, true), (200, 96, false), (384, 192, true), (80, 96, true)] {
@@ -551,7 +574,7 @@ mod tests {
             let tabs = if strip_on { 2 } else { 1 };
             let x = p.num.left + (p.num.right - p.num.left) / 2;
             let y = p.num.top + (p.num.bottom - p.num.top) / 2;
-            assert_eq!(pane_grab(&p, tabs, x, y, dpi), Some(PaneGrab::Header), "{w}@{dpi} strip={strip_on}");
+            assert_eq!(pane_grab(&p, tabs, &[], x, y, dpi), Some(PaneGrab::Header), "{w}@{dpi} strip={strip_on}");
         }
     }
 

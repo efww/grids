@@ -819,11 +819,12 @@ pub(crate) enum Key {
     FolderTotalSkipped,
     OpenInEditor,
     OpenInTerminalAdministrator,
+    CloseTabsToTheRight,
 }
 
-pub(crate) const KEY_COUNT: usize = 816;
+pub(crate) const KEY_COUNT: usize = 817;
 
-const _: () = assert!((Key::OpenInTerminalAdministrator as usize) + 1 == KEY_COUNT);
+const _: () = assert!((Key::CloseTabsToTheRight as usize) + 1 == KEY_COUNT);
 
 pub(crate) const EN: [&str; KEY_COUNT] = [
     "About",
@@ -1641,6 +1642,7 @@ pub(crate) const EN: [&str; KEY_COUNT] = [
     "Total size is not computed for this place",
     "Open in editor",
     "Open in Terminal (Administrator)",
+    "Close tabs to the right",
 
 ];
 
@@ -2461,6 +2463,7 @@ pub(crate) const KEY_ID: [&str; KEY_COUNT] = [
     "folder_total_skipped",
     "open_in_editor",
     "open_in_terminal_administrator",
+    "close_tabs_to_the_right",
 
 ];
 

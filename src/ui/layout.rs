@@ -819,9 +819,9 @@ fn place_header(w: i32, h: i32, dpi: i32, strip: bool, chrome: &HeaderChrome) ->
     }
 }
 
-/// This window's bar. The strip is on only while that pane has two or more tabs.
+/// This window's bar. The strip is on for two or more tabs, and for one tab that is locked or renamed.
 pub(crate) fn pane_geo_of(h: HWND, w: i32, height: i32, dpi: i32) -> PaneGeo {
-    let strip = pane_of(h).is_some_and(|i| app(|a| a.s.pane_tab_list(i).len() > 1));
+    let strip = pane_of(h).is_some_and(|i| app(|a| a.s.pane_strip_on(i)));
     pane_geo(w, height, dpi, strip)
 }
 
@@ -1543,9 +1543,15 @@ mod tests {
             tabs: strip,
             view: RECT::default(),
         };
-        assert!(matches!(crate::pane_tab_hit(&pg, 2, 6, 40, 96), Some(crate::PaneTabHit::Tab(0))));
-        assert!(matches!(crate::pane_tab_hit(&pg, 2, 350, 40, 96), Some(crate::PaneTabHit::Plus)));
-        assert!(crate::pane_tab_hit(&pg, 2, 1, 40, 96).is_none());
+        let (wide, _) = pane_tab_rects(strip, 2, 96);
+        assert!(matches!(crate::pane_tab_hit(&pg, 2, &[false, false], 6, 40, 96), Some(crate::PaneTabHit::Tab(0))));
+        assert!(matches!(crate::pane_tab_hit(&pg, 2, &[false, false], 350, 40, 96), Some(crate::PaneTabHit::Plus)));
+        assert!(crate::pane_tab_hit(&pg, 2, &[false, false], 1, 40, 96).is_none());
+        let close = pane_tab_close_rect(wide[0], 96).unwrap();
+        assert!(matches!(crate::pane_tab_hit(&pg, 2, &[false, false], close.left + 2, 40, 96), Some(crate::PaneTabHit::Close(0))));
+        assert!(matches!(crate::pane_tab_hit(&pg, 2, &[true, false], close.left + 2, 40, 96), Some(crate::PaneTabHit::Lock(0))));
+        assert!(matches!(crate::pane_tab_hit(&pg, 1, &[true], close.left + 2, 40, 96), Some(crate::PaneTabHit::Lock(0))));
+        assert!(matches!(crate::pane_tab_hit(&pg, 1, &[false], close.left + 2, 40, 96), Some(crate::PaneTabHit::Tab(0))));
     }
 
     #[test]

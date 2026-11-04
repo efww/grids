@@ -637,7 +637,14 @@ fn pane_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
             WM_MOUSEMOVE => {
                 let (x, y) = xy(lp);
                 pane_drag_move(h, x, y);
-                if app(|a| a.pane_press.is_none() && a.pane_drag.is_none()) {
+                let dragging = app(|a| a.pane_drag.is_some() || a.pane_tab_drag.is_some() || a.tab_drag.is_some());
+                if dragging {
+                    addr_tip_at(h, false);
+                    hide_pane_tab_tip(h);
+                } else if pane_of(h).is_some_and(|i| pane_tab_hover(h, i, x, y)) {
+                    crumb_hover(h, None);
+                    addr_tip_at(h, false);
+                } else if app(|a| a.pane_press.is_none() && a.pane_drag.is_none()) {
                     let at = pane_of(h).and_then(|i| crumb_at(h, i, x, y)).and_then(|hit| hit.map(|(k, ..)| k));
                     crumb_hover(h, at);
                     let dpi = app(|a| a.dpi);
@@ -648,6 +655,7 @@ fn pane_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                 }
             }
             WM_MOUSELEAVE => {
+                hide_pane_tab_tip(h);
                 crumb_hover(h, None);
                 refresh_addr_tip(h);
             }
@@ -690,7 +698,7 @@ fn pane_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                 }
                 return DefWindowProcW(h, msg, wp, lp);
             }
-            WM_RBUTTONDOWN | WM_MBUTTONDOWN if app(|a| a.pane_drag.is_some() || a.pane_press.is_some()) => {
+            WM_RBUTTONDOWN | WM_MBUTTONDOWN if app(|a| a.pane_drag.is_some() || a.pane_press.is_some() || a.pane_tab_drag.is_some()) => {
                 cancel_pane_drag();
                 return LRESULT(0);
             }
@@ -714,7 +722,7 @@ fn pane_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                 return DefWindowProcW(h, msg, wp, lp);
             }
             WM_CAPTURECHANGED => {
-                if app(|a| a.pane_drag.is_some() || a.pane_press.is_some()) {
+                if app(|a| a.pane_drag.is_some() || a.pane_press.is_some() || a.pane_tab_drag.is_some()) {
                     cancel_pane_drag();
                 }
             }
@@ -725,13 +733,21 @@ fn pane_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                         let mut rc = RECT::default();
                         _ = GetClientRect(h, &mut rc);
                         let dpi = app(|a| a.dpi);
-                        let n = app(|a| a.s.pane_tab_list(i).len());
-                        // Empty strip: a new pane tab. On a tab this is just the second click.
-                        if matches!(pane_tab_hit(&pane_geo_of(h, rc.right, rc.bottom, dpi), n, x, y, dpi), Some(PaneTabHit::Strip)) {
-                            new_pane_tab(i);
-                            focus_view(i);
-                        } else {
-                            pane_tab_mouse(h, i, x, y, false);
+                        let (n, locks) = app(|a| (a.s.pane_tab_list(i).len(), a.s.pane_tab_locks(i)));
+                        // Empty strip: a new pane tab. A tab body renames. Close and + keep the click.
+                        match pane_tab_hit(&pane_geo_of(h, rc.right, rc.bottom, dpi), n, &locks, x, y, dpi) {
+                            Some(PaneTabHit::Strip) => {
+                                new_pane_tab(i);
+                                focus_view(i);
+                            }
+                            Some(PaneTabHit::Tab(k)) => {
+                                set_active(i);
+                                rename_pane_tab(i, k);
+                                focus_view(i);
+                            }
+                            _ => {
+                                pane_tab_mouse(h, i, x, y, false);
+                            }
                         }
                         return LRESULT(0);
                     }
@@ -880,7 +896,13 @@ fn pane_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                 let mut rc = RECT::default();
                 _ = GetClientRect(h, &mut rc);
                 let pg = pane_geo_of(h, rc.right, rc.bottom, app(|a| a.dpi));
-                // The pane-tab strip is not the header: a right-click there does not open the colour menu.
+                // The pane-tab strip is not the header: a right-click there opens the pane-tab menu.
+                if lp.0 != -1 && pg.tabs.bottom > pg.tabs.top && p.y >= pg.tabs.top && p.y < pg.tabs.bottom {
+                    if let Some(i) = pane_of(h) {
+                        pane_tab_menu(h, i, p.x, p.y);
+                        return LRESULT(0);
+                    }
+                }
                 let header_bottom = if pg.tabs.bottom > pg.tabs.top { pg.tabs.top } else { pg.view.top };
                 match pane_of(h) {
                     Some(i) if lp.0 != -1 && p.y < header_bottom => tint_menu(h, i, screen),

@@ -1805,12 +1805,7 @@ pub(crate) fn copy_pane_view(s: &mut Session, src: usize, dst: usize) {
     if src < s.cols.len() && dst < s.cols.len() {
         s.cols[dst] = s.cols[src].clone();
     }
-    if dst < s.pane_folders.len() {
-        s.pane_folders[dst].clear();
-    }
-    if dst < s.pane_cur.len() {
-        s.pane_cur[dst] = 0;
-    }
+    s.clear_pane_tabs(dst);
 }
 
 /// Slot that `remap` will place in the right column, before `set_layout` permutes.
@@ -2078,7 +2073,7 @@ pub(crate) unsafe fn tint_menu(h: HWND, i: usize, at: POINT) {
 }
 
 /// Shell parsing name of the folder on display. A filesystem folder's name is its path.
-unsafe fn pane_parsing_name(i: usize) -> String {
+pub(crate) unsafe fn pane_parsing_name(i: usize) -> String {
     if let Some(fv) = view_of::<IFolderView2>(i) {
         if let Ok(item) = fv.GetFolder::<IShellItem>() {
             if let Ok(p) = item.GetDisplayName(SIGDN_DESKTOPABSOLUTEPARSING) {
@@ -3178,7 +3173,8 @@ unsafe fn on_nav_impl(i: usize, pidl: *const ITEMIDLIST) {
             update_status();
         }
     }
-    let Some((h, eb, view, cols, group, ticket)) = app(|a| {
+    let mut forked = false;
+    let landed = app(|a| {
         let fs = is_fs(&parse);
         // A pane-tab click stores the destination in `paths` before this browse.
         // The folder that was on screen is `tab_left`; visiting from `paths` would
@@ -3191,6 +3187,11 @@ unsafe fn on_nav_impl(i: usize, pidl: *const ITEMIDLIST) {
         let old = std::mem::replace(&mut a.s.paths[i], parse.clone());
         let path = a.s.paths[i].clone();
         visit(&mut a.s.recent, left.as_deref().unwrap_or(&old), &path);
+        // A locked pane tab stays put. The folder just opened becomes a new pane tab.
+        // A pane-tab switch (`tab_left`) and a theme rebuild do not fork.
+        if !theme_same && left.is_none() && !super::recent::same_dir(&old, &parse) {
+            forked = a.s.fork_locked_nav(i, &old, &parse);
+        }
         let remember = a.s.remember_views;
         let choice = if remember { crate::folderview::choose(&path) } else { crate::folderview::Choice::None };
         let (pane_view, own) = (a.s.views[i], a.s.cols[i].clone());
@@ -3243,7 +3244,12 @@ unsafe fn on_nav_impl(i: usize, pidl: *const ITEMIDLIST) {
             }
             (p.hwnd, p.eb.clone(), view, cols, group, p.ticket)
         })
-    }) else {
+    });
+    if forked {
+        repaint_pane_tabs(i);
+        note_save();
+    }
+    let Some((h, eb, view, cols, group, ticket)) = landed else {
         tabs_invalidate();
         return;
     };
@@ -3254,7 +3260,7 @@ unsafe fn on_nav_impl(i: usize, pidl: *const ITEMIDLIST) {
     if !theme_same {
         request_icon(h, ticket, pidl);
     }
-    if app(|a| a.s.pane_tab_list(i).len() > 1) {
+    if app(|a| a.s.pane_strip_on(i)) {
         repaint_pane_tabs(i); // the current pane tab's name is this folder's
     }
     if let Ok(b) = GetDlgItem(Some(h), ID_FAV) {

@@ -183,6 +183,12 @@ struct PaneJson {
     folders: Vec<String>,
     #[serde(default, skip_serializing_if = "is_zero_usize")]
     folder: usize,
+    /// Lock flags lined up with `folders`, or `[true]` when the one folder is locked.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    locks: Vec<bool>,
+    /// Custom pane-tab titles. An empty string is the folder name. Omitted when every title is empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    labels: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -545,9 +551,10 @@ impl SettingsFile {
         let mut panes = Vec::new();
         for i in 0..MAXP {
             let filter = filters.get(i).cloned().unwrap_or_default();
-            let folders = s.pane_tab_list(i);
-            let folders = if folders.len() > 1 { folders } else { Vec::new() };
-            if s.paths[i].is_empty() && s.views[i] == (0, 0) && s.cols[i].is_empty() && filter.is_empty() && folders.is_empty() {
+            let list = s.pane_tab_list(i);
+            let folders = if list.len() > 1 { list } else { Vec::new() };
+            let (locks, labels) = crate::pane_meta_json(folders.len(), &s.pane_tab_locks(i), &s.pane_tab_names(i));
+            if s.paths[i].is_empty() && s.views[i] == (0, 0) && s.cols[i].is_empty() && filter.is_empty() && folders.is_empty() && locks.is_empty() && labels.is_empty() {
                 continue;
             }
             panes.push(PaneJson {
@@ -558,6 +565,8 @@ impl SettingsFile {
                 filter,
                 folders: folders.clone(),
                 folder: if folders.len() > 1 { s.pane_cur[i].min(folders.len() - 1) } else { 0 },
+                locks,
+                labels,
             });
         }
         let tree = if s.tree.is_empty() { crate::tree_from_flat(&s.favs) } else { s.tree.clone() };
@@ -755,6 +764,9 @@ impl SettingsFile {
                 s.pane_cur[p.index] = p.folder.min(p.folders.len() - 1);
                 s.pane_folders[p.index] = p.folders.clone();
             }
+            let (locks, labels) = crate::pane_meta_json(s.pane_folders[p.index].len(), &p.locks, &p.labels);
+            s.pane_locks[p.index] = locks;
+            s.pane_names[p.index] = labels;
         }
         let mut filters = vec![String::new(); MAXP];
         for p in &self.panes {
@@ -1908,6 +1920,29 @@ mod tests {
         let again = sync_text(&kept);
         assert!(!again.contains("pane_tabs"), "{again}");
         assert!(again.contains("future_flag"));
+    }
+
+    #[test]
+    fn pane_tab_lock_and_label_round_trip_in_maguro_json() {
+        let mut s = Session::default();
+        s.paths[0] = r"C:\a".into();
+        s.add_pane_tab(0);
+        s.paths[0] = r"C:\b".into();
+        assert!(s.set_pane_tab_lock(0, 0, true));
+        assert!(s.set_pane_tab_name(0, 1, "Docs"));
+        s.anchor();
+        let text = sync_text(&s);
+        assert!(text.contains("locks") && text.contains("Docs"), "{text}");
+        let back = adopt(&text).unwrap();
+        assert_eq!(back.pane_tab_list(0), vec![r"C:\a".to_string(), r"C:\b".into()]);
+        assert_eq!(back.pane_tab_locks(0), vec![true, false]);
+        assert_eq!(back.pane_tab_names(0), vec!["".to_string(), "Docs".into()]);
+        let mut one = Session::default();
+        one.paths[1] = r"C:\only".into();
+        assert!(one.set_pane_tab_lock(1, 0, true));
+        one.anchor();
+        let back = adopt(&sync_text(&one)).unwrap();
+        assert!(back.pane_folders[1].is_empty() && back.pane_tab_locked(1));
     }
 
     #[test]

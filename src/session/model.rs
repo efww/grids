@@ -29,6 +29,12 @@ pub(crate) struct Tab {
     pub(crate) pane_folders: Vec<Vec<String>>,
     /// Per pane: which pane-tab is current. The current entry in `pane_folders` is stale; `paths[i]` is the truth.
     pub(crate) pane_cur: Vec<usize>,
+    /// Per pane: lock flags for that pane's tabs. Empty means unlocked.
+    /// One folder stores `[true]` when that tab is locked. Two or more line up with `pane_folders`.
+    pub(crate) pane_locks: Vec<Vec<bool>>,
+    /// Per pane: custom pane-tab titles. An empty string is the folder's short name.
+    /// One folder stores a one-element vector when it has a title. All empty is stored empty.
+    pub(crate) pane_names: Vec<Vec<String>>,
     /// `.maguro` file this tab was saved as, or that a session was loaded into. Empty means Save asks for a name.
     /// Other tabs keep their own paths. Omitted from older files, which still load.
     pub(crate) session: String,
@@ -51,6 +57,12 @@ pub(crate) fn stored_tab_name(typed: &str) -> String {
         Some(name) => name.chars().take(80).collect(),
         None => String::new(),
     }
+}
+
+/// What a pane-tab rename stores. Empty means the folder's short name.
+/// Digits stay: a pane tab is not a legacy window tab, so `"12"` is a real title.
+pub(crate) fn stored_pane_tab_name(typed: &str) -> String {
+    typed.trim().chars().take(80).collect()
 }
 
 /// Folder name for an automatic tab.
@@ -119,6 +131,8 @@ impl Tab {
             tints: s.tints.clone(),
             pane_folders: pack.0,
             pane_cur: pack.1,
+            pane_locks: pack.2,
+            pane_names: pack.3,
             session: String::new(),
         }
     }
@@ -136,19 +150,88 @@ fn pad_pane_cur(mut c: Vec<usize>) -> Vec<usize> {
     c
 }
 
-/// Resolved pane-tab lists, dropped back to empty when a pane has only its current folder.
-pub(crate) fn pack_pane_tabs(s: &Session) -> (Vec<Vec<String>>, Vec<usize>) {
-    let mut folders = vec![Vec::new(); MAXP];
-    let mut cur = vec![0usize; MAXP];
-    for i in 0..MAXP {
-        let list = s.pane_tab_list(i);
-        if list.len() > 1 {
-            let k = s.pane_cur.get(i).copied().unwrap_or(0).min(list.len() - 1);
-            folders[i] = list;
-            cur[i] = k;
+fn pad_pane_locks(mut v: Vec<Vec<bool>>) -> Vec<Vec<bool>> {
+    v.resize(MAXP, Vec::new());
+    v.truncate(MAXP);
+    v
+}
+
+fn pad_pane_names(mut v: Vec<Vec<String>>) -> Vec<Vec<String>> {
+    v.resize(MAXP, Vec::new());
+    v.truncate(MAXP);
+    v
+}
+
+struct PaneTabSet {
+    paths: Vec<String>,
+    locks: Vec<bool>,
+    names: Vec<String>,
+    cur: usize,
+}
+
+fn align_bools(src: &[bool], n: usize) -> Vec<bool> {
+    let mut v: Vec<bool> = src.iter().copied().take(n).collect();
+    v.resize(n, false);
+    v
+}
+
+fn align_names(src: &[String], n: usize) -> Vec<String> {
+    let mut v: Vec<String> = src.iter().take(n).map(|s| stored_pane_tab_name(s)).collect();
+    v.resize(n, String::new());
+    v
+}
+
+/// A copied custom title becomes "Name (2)" among this pane's titles. An automatic title stays automatic.
+fn pane_dup_name(names: &[String], src: &str) -> String {
+    let src = stored_pane_tab_name(src);
+    if src.is_empty() {
+        return String::new();
+    }
+    let mut n = 2u32;
+    loop {
+        let s = format!("{src} ({n})");
+        if !names.iter().any(|t| t == &s) {
+            return s;
+        }
+        n += 1;
+        if n > 1000 {
+            return s;
         }
     }
-    (folders, cur)
+}
+
+/// Resolved pane-tab lists. One folder is stored empty, plus a lock or a title when it has one.
+pub(crate) fn pack_pane_tabs(s: &Session) -> (Vec<Vec<String>>, Vec<usize>, Vec<Vec<bool>>, Vec<Vec<String>>) {
+    let mut folders = vec![Vec::new(); MAXP];
+    let mut cur = vec![0usize; MAXP];
+    let mut locks = vec![Vec::new(); MAXP];
+    let mut names = vec![Vec::new(); MAXP];
+    for i in 0..MAXP {
+        let b = s.bundle(i);
+        if b.paths.len() > 1 {
+            let n = b.paths.len();
+            let l = align_bools(&b.locks, n);
+            let nm = align_names(&b.names, n);
+            folders[i] = b.paths;
+            cur[i] = b.cur.min(n - 1);
+            if l.iter().any(|&v| v) {
+                locks[i] = l;
+            }
+            if nm.iter().any(|v| !v.is_empty()) {
+                names[i] = nm;
+            }
+        } else {
+            let locked = b.locks.first().copied().unwrap_or(false);
+            let name = stored_pane_tab_name(b.names.first().map(String::as_str).unwrap_or(""));
+            if locked {
+                locks[i] = vec![true];
+            }
+            if !name.is_empty() {
+                names[i] = vec![name];
+            }
+        }
+    }
+    (folders, cur, locks, names)
 }
 
 /// The next automatic token: 1, then 2, skipping numbers already stored.
@@ -261,9 +344,14 @@ pub(crate) struct Session {
     /// inside the current tab, that entry is stale and `paths[i]` is the truth.
     /// A switch updates `paths[i]` together with `pane_cur`, so the strip never paints
     /// the folder just left on the tab just selected.
-    /// A pane tab is one folder inside one pane, not a window tab (`tabs` / `tab`). The strip shows from the second folder on.
+    /// A pane tab is one folder inside one pane, not a window tab (`tabs` / `tab`).
+    /// The strip shows from the second folder on, and also for one folder when that tab is locked or renamed.
     pub(crate) pane_folders: Vec<Vec<String>>,
     pub(crate) pane_cur: Vec<usize>,
+    /// Lock flags for the pane tabs on screen. Empty means unlocked. See `Tab::pane_locks`.
+    pub(crate) pane_locks: Vec<Vec<bool>>,
+    /// Custom titles for the pane tabs on screen. Empty means the folder name. See `Tab::pane_names`.
+    pub(crate) pane_names: Vec<Vec<String>>,
     pub(crate) hotkey: bool,           // global hotkey brings Maguro forward; the chord is in the keymap
     /// List Maguro folders in another app's Open or Save dialog. Missing means on.
     pub(crate) dialog_jump: bool,
@@ -447,6 +535,8 @@ impl Default for Session {
             peek_doc: None,
             pane_folders: vec![Vec::new(); MAXP],
             pane_cur: vec![0; MAXP],
+            pane_locks: vec![Vec::new(); MAXP],
+            pane_names: vec![Vec::new(); MAXP],
             hotkey: true,
             dialog_jump: true,
             clip_hotkey: true,
@@ -743,6 +833,8 @@ impl Session {
         self.tints = t.tints;
         self.pane_folders = pad_pane_folders(t.pane_folders);
         self.pane_cur = pad_pane_cur(t.pane_cur);
+        self.pane_locks = pad_pane_locks(t.pane_locks);
+        self.pane_names = pad_pane_names(t.pane_names);
         settle_sessions(self);
     }
 
@@ -939,6 +1031,10 @@ impl Session {
             if s.pane_folders[i].len() > 1 {
                 continue;
             }
+            // A lock or a title from the tab JSON already describes this one folder.
+            if s.pane_locks[i].iter().any(|&l| l) || s.pane_names[i].iter().any(|n| !n.is_empty()) {
+                continue;
+            }
             s.pane_cur[i] = cur;
             s.pane_folders[i] = list;
             folded = true;
@@ -1067,6 +1163,8 @@ impl Session {
         self.tints = o.tints.clone();
         self.pane_folders = pad_pane_folders(o.pane_folders.clone());
         self.pane_cur = pad_pane_cur(o.pane_cur.clone());
+        self.pane_locks = pad_pane_locks(o.pane_locks.clone());
+        self.pane_names = pad_pane_names(o.pane_names.clone());
         self.tabs = o.view_tabs();
         self.tab = o.tab.min(self.tabs.len().saturating_sub(1));
         self.order.clear();
@@ -1085,6 +1183,8 @@ impl Session {
         self.tints.swap(i, j);
         self.pane_folders.swap(i, j);
         self.pane_cur.swap(i, j);
+        self.pane_locks.swap(i, j);
+        self.pane_names.swap(i, j);
         if self.tab < self.tabs.len() && i < self.tabs[self.tab].filters.len() && j < self.tabs[self.tab].filters.len() {
             self.tabs[self.tab].filters.swap(i, j);
         }
@@ -1109,6 +1209,8 @@ impl Session {
             self.tints[i] = old.tints[k];
             self.pane_folders[i] = old.pane_folders.get(k).cloned().unwrap_or_default();
             self.pane_cur[i] = old.pane_cur.get(k).copied().unwrap_or(0);
+            self.pane_locks[i] = old.pane_locks.get(k).cloned().unwrap_or_default();
+            self.pane_names[i] = old.pane_names.get(k).cloned().unwrap_or_default();
         }
         if self.tab < self.tabs.len() {
             let old_f = old.tabs[self.tab].filters.clone();
@@ -1124,6 +1226,130 @@ impl Session {
     pub(crate) fn ensure_pane_tabs(&mut self) {
         self.pane_folders = pad_pane_folders(std::mem::take(&mut self.pane_folders));
         self.pane_cur = pad_pane_cur(std::mem::take(&mut self.pane_cur));
+        self.pane_locks = pad_pane_locks(std::mem::take(&mut self.pane_locks));
+        self.pane_names = pad_pane_names(std::mem::take(&mut self.pane_names));
+    }
+
+    /// Pane tabs as they are now: the current slot is `paths[i]`, locks and titles line up with it.
+    fn bundle(&self, i: usize) -> PaneTabSet {
+        let paths = self.pane_tab_list(i);
+        if paths.is_empty() {
+            return PaneTabSet { paths, locks: Vec::new(), names: Vec::new(), cur: 0 };
+        }
+        let (locks, names, cur) = self.meta_for(i, paths.len());
+        PaneTabSet { paths, locks, names, cur }
+    }
+
+    /// Locks and titles for `n` tabs. A single folder ignores a leftover multi-length vector.
+    fn meta_for(&self, i: usize, n: usize) -> (Vec<bool>, Vec<String>, usize) {
+        let locks_s = self.pane_locks.get(i).map(Vec::as_slice).unwrap_or(&[]);
+        let names_s = self.pane_names.get(i).map(Vec::as_slice).unwrap_or(&[]);
+        if n > 1 {
+            let cur = self.pane_cur.get(i).copied().unwrap_or(0).min(n - 1);
+            (align_bools(locks_s, n), align_names(names_s, n), cur)
+        } else {
+            let locked = locks_s.len() == 1 && locks_s[0];
+            let name = if names_s.len() == 1 { stored_pane_tab_name(&names_s[0]) } else { String::new() };
+            (vec![locked], vec![name], 0)
+        }
+    }
+
+    fn commit_pane_tabs(&mut self, i: usize, b: &PaneTabSet) {
+        self.ensure_pane_tabs();
+        if i >= MAXP {
+            return;
+        }
+        let n = b.paths.len();
+        if n > 1 {
+            self.pane_folders[i] = b.paths.clone();
+            self.pane_cur[i] = b.cur.min(n - 1);
+            let locks = align_bools(&b.locks, n);
+            let names = align_names(&b.names, n);
+            self.pane_locks[i] = if locks.iter().any(|&l| l) { locks } else { Vec::new() };
+            self.pane_names[i] = if names.iter().any(|s| !s.is_empty()) { names } else { Vec::new() };
+        } else {
+            self.pane_folders[i].clear();
+            self.pane_cur[i] = 0;
+            let locked = b.locks.first().copied().unwrap_or(false);
+            let name = stored_pane_tab_name(b.names.first().map(String::as_str).unwrap_or(""));
+            self.pane_locks[i] = if locked { vec![true] } else { Vec::new() };
+            self.pane_names[i] = if name.is_empty() { Vec::new() } else { vec![name] };
+        }
+    }
+
+    /// Lock flags lined up with `pane_tab_list`. Empty when this pane has no tabs.
+    pub(crate) fn pane_tab_locks(&self, i: usize) -> Vec<bool> {
+        self.bundle(i).locks
+    }
+
+    /// Custom titles lined up with `pane_tab_list`. An empty string is the folder name.
+    pub(crate) fn pane_tab_names(&self, i: usize) -> Vec<String> {
+        self.bundle(i).names
+    }
+
+    /// The pane tab on display is locked.
+    pub(crate) fn pane_tab_locked(&self, i: usize) -> bool {
+        let b = self.bundle(i);
+        b.locks.get(b.cur).copied().unwrap_or(false)
+    }
+
+    /// The strip is up for two or more tabs, and for one tab that is locked or renamed.
+    pub(crate) fn pane_strip_on(&self, i: usize) -> bool {
+        let n = self.pane_tab_list(i).len();
+        if n > 1 {
+            return true;
+        }
+        if n == 0 {
+            return false;
+        }
+        let (locks, names, _) = self.meta_for(i, 1);
+        locks.first().copied().unwrap_or(false) || names.first().is_some_and(|s| !s.is_empty())
+    }
+
+    /// Drop every pane tab on this slot. The folder in `paths[i]` stays.
+    pub(crate) fn clear_pane_tabs(&mut self, i: usize) {
+        if i >= MAXP {
+            return;
+        }
+        self.ensure_pane_tabs();
+        self.pane_folders[i].clear();
+        self.pane_cur[i] = 0;
+        self.pane_locks[i].clear();
+        self.pane_names[i].clear();
+    }
+
+    /// Lock or unlock pane tab `k`. False when there is no such tab or the flag is unchanged.
+    pub(crate) fn set_pane_tab_lock(&mut self, i: usize, k: usize, locked: bool) -> bool {
+        if i >= MAXP {
+            return false;
+        }
+        self.ensure_pane_tabs();
+        let mut b = self.bundle(i);
+        if k >= b.paths.len() || b.locks.get(k).copied().unwrap_or(false) == locked {
+            return false;
+        }
+        b.locks[k] = locked;
+        self.commit_pane_tabs(i, &b);
+        true
+    }
+
+    /// Store a custom title. Empty, after trimming, shows the folder name again.
+    pub(crate) fn set_pane_tab_name(&mut self, i: usize, k: usize, typed: &str) -> bool {
+        if i >= MAXP {
+            return false;
+        }
+        self.ensure_pane_tabs();
+        let mut b = self.bundle(i);
+        if k >= b.paths.len() {
+            return false;
+        }
+        let name = stored_pane_tab_name(typed);
+        if b.names.get(k).map(String::as_str).unwrap_or("") == name {
+            return false;
+        }
+        b.names[k] = name;
+        self.commit_pane_tabs(i, &b);
+        true
     }
 
     /// Pane i's pane tabs as they are now. The current one is the folder on display (`paths[i]`).
@@ -1147,26 +1373,30 @@ impl Session {
 
     /// The folder on display in `src` becomes a new pane tab on `dst`, just after the tab on display, and is made current.
     /// Only that folder is copied: `src`'s other pane tabs stay, and `dst` keeps the tabs it already had.
-    /// None when `dst` is already showing that folder (nothing to browse). The caller does not clone a back/forward stack.
+    /// The new tab is unlocked and untitled. None when `dst` is already showing that folder (nothing to browse).
     pub(crate) fn copy_pane_tab(&mut self, src: usize, dst: usize) -> Option<String> {
         if src >= MAXP || dst >= MAXP {
             return None;
         }
         self.ensure_pane_tabs();
         let path = self.paths.get(src).cloned().unwrap_or_default();
-        let mut t = self.pane_tab_list(dst);
-        if t.is_empty() {
-            t.push(self.paths.get(dst).cloned().unwrap_or_default());
+        let mut b = self.bundle(dst);
+        if b.paths.is_empty() {
+            b.paths.push(self.paths.get(dst).cloned().unwrap_or_default());
+            b.locks.push(false);
+            b.names.push(String::new());
         }
-        let cur = if t.len() > 1 { self.pane_cur[dst].min(t.len() - 1) } else { 0 };
-        let at = cur + 1;
-        t.insert(at, path.clone());
+        let at = b.cur + 1;
+        b.paths.insert(at, path.clone());
+        b.locks.insert(at, false);
+        b.names.insert(at, String::new());
+        b.cur = at;
         let showing = self.paths.get(dst).is_some_and(|p| p == &path);
-        (self.pane_folders[dst], self.pane_cur[dst]) = (t, at);
+        self.commit_pane_tabs(dst, &b);
         if showing {
             None
         } else {
-            // `t` already has the folder that was on display in the previous slot.
+            // The previous slot still holds the folder that was on display.
             // Point `paths` at the new tab before anyone reads the list back.
             self.land_pane_path(dst, &path);
             Some(path)
@@ -1174,15 +1404,37 @@ impl Session {
     }
 
     /// A copy of the current pane tab, placed just after it and made current. Same folder, so nothing browses.
+    /// The copy is unlocked. A custom title becomes "Name (2)".
     pub(crate) fn add_pane_tab(&mut self, i: usize) {
+        let _ = self.duplicate_pane_tab(i, self.bundle(i).cur);
+    }
+
+    /// A copy of pane tab `k`, just after it, unlocked, and made current.
+    /// None when the copy is already the folder on display (nothing to browse). `None` still inserts the tab.
+    pub(crate) fn duplicate_pane_tab(&mut self, i: usize, k: usize) -> Option<String> {
         if i >= MAXP {
-            return;
+            return None;
         }
         self.ensure_pane_tabs();
-        let mut t = self.pane_tab_list(i);
-        let k = self.pane_cur[i].min(t.len() - 1) + 1;
-        t.insert(k, self.paths[i].clone());
-        (self.pane_folders[i], self.pane_cur[i]) = (t, k);
+        let mut b = self.bundle(i);
+        if k >= b.paths.len() {
+            return None;
+        }
+        let path = b.paths[k].clone();
+        let name = pane_dup_name(&b.names, b.names.get(k).map(String::as_str).unwrap_or(""));
+        let at = k + 1;
+        b.paths.insert(at, path.clone());
+        b.locks.insert(at, false);
+        b.names.insert(at, name);
+        b.cur = at;
+        self.commit_pane_tabs(i, &b);
+        let showing = self.paths.get(i).is_some_and(|p| p == &path);
+        if showing {
+            None
+        } else {
+            self.land_pane_path(i, &path);
+            Some(path)
+        }
     }
 
     /// Pane tab k becomes current. The folder to browse to, or None when it already is (or there is no such tab).
@@ -1191,50 +1443,135 @@ impl Session {
             return None;
         }
         self.ensure_pane_tabs();
-        let t = self.pane_tab_list(i);
-        let cur = if t.len() > 1 { self.pane_cur[i].min(t.len() - 1) } else { 0 };
-        if k >= t.len() || k == cur {
+        let mut b = self.bundle(i);
+        if k >= b.paths.len() || k == b.cur {
             return None;
         }
-        let to = t[k].clone();
-        // `t[cur]` is the folder we are leaving. Move the live path with the index:
+        let to = b.paths[k].clone();
+        // `b.paths[cur]` is the folder we are leaving. Move the live path with the index:
         // the next `pane_tab_list` (the strip's paint) would otherwise stamp that
         // folder onto tab `k` until navigation replaces `paths[i]`.
-        (self.pane_folders[i], self.pane_cur[i]) = (t, k);
+        b.cur = k;
+        self.commit_pane_tabs(i, &b);
         self.land_pane_path(i, &to);
         Some(to)
     }
 
-    /// Closes pane tab k. The last one stays. Closing the current one moves to its right neighbour, else its left.
+    /// Closes pane tab k. The last one stays, and so does a locked tab. Closing the current one
+    /// moves to its right neighbour, else its left.
     pub(crate) fn close_pane_tab(&mut self, i: usize, k: usize) -> Option<String> {
         if i >= MAXP {
             return None;
         }
         self.ensure_pane_tabs();
-        let mut t = self.pane_tab_list(i);
-        if t.len() < 2 || k >= t.len() {
+        let mut b = self.bundle(i);
+        if b.paths.len() < 2 || k >= b.paths.len() || b.locks.get(k).copied().unwrap_or(false) {
             return None;
         }
-        let cur = self.pane_cur[i].min(t.len() - 1);
-        t.remove(k);
+        let cur = b.cur;
+        b.paths.remove(k);
+        b.locks.remove(k);
+        b.names.remove(k);
         let (next, go) = match k.cmp(&cur) {
             std::cmp::Ordering::Less => (cur - 1, None),
             std::cmp::Ordering::Greater => (cur, None),
             std::cmp::Ordering::Equal => {
-                let n = k.min(t.len() - 1);
-                (n, Some(t[n].clone()))
+                let n = k.min(b.paths.len() - 1);
+                (n, Some(b.paths[n].clone()))
             }
         };
-        if t.len() > 1 {
-            (self.pane_folders[i], self.pane_cur[i]) = (t, next);
-        } else {
-            self.pane_folders[i].clear();
-            self.pane_cur[i] = 0;
-        }
+        b.cur = next;
+        self.commit_pane_tabs(i, &b);
         if let Some(ref to) = go {
             self.land_pane_path(i, to);
         }
         go
+    }
+
+    /// Closes every unlocked pane tab except `keep`. A locked tab stays. The last tab stays.
+    /// When the current tab is among those closed, the folder to browse to.
+    pub(crate) fn close_pane_tabs_other(&mut self, i: usize, keep: usize) -> Option<String> {
+        self.close_pane_where(i, |k| k != keep)
+    }
+
+    /// Closes every unlocked pane tab to the right of `k`. Locked tabs stay. The last tab stays.
+    pub(crate) fn close_pane_tabs_right(&mut self, i: usize, k: usize) -> Option<String> {
+        self.close_pane_where(i, |j| j > k)
+    }
+
+    fn close_pane_where(&mut self, i: usize, drop: impl Fn(usize) -> bool) -> Option<String> {
+        if i >= MAXP {
+            return None;
+        }
+        self.ensure_pane_tabs();
+        let b = self.bundle(i);
+        if b.paths.len() < 2 {
+            return None;
+        }
+        let cur = b.cur;
+        let keep_idx: Vec<usize> = (0..b.paths.len())
+            .filter(|&k| b.locks.get(k).copied().unwrap_or(false) || !drop(k))
+            .collect();
+        if keep_idx.is_empty() || keep_idx.len() == b.paths.len() {
+            return None;
+        }
+        let new_paths: Vec<String> = keep_idx.iter().map(|&k| b.paths[k].clone()).collect();
+        let new_locks: Vec<bool> = keep_idx.iter().map(|&k| b.locks.get(k).copied().unwrap_or(false)).collect();
+        let new_names: Vec<String> = keep_idx.iter().map(|&k| b.names.get(k).cloned().unwrap_or_default()).collect();
+        let (next, go) = if let Some(pos) = keep_idx.iter().position(|&k| k == cur) {
+            (pos, None)
+        } else {
+            let pos = keep_idx.iter().position(|&k| k > cur).unwrap_or(keep_idx.len() - 1);
+            (pos, Some(new_paths[pos].clone()))
+        };
+        self.commit_pane_tabs(i, &PaneTabSet { paths: new_paths, locks: new_locks, names: new_names, cur: next });
+        if let Some(ref to) = go {
+            self.land_pane_path(i, to);
+        }
+        go
+    }
+
+    /// Moves pane tab `from` to index `to` inside this pane. The folder on display stays on display.
+    pub(crate) fn reorder_pane_tab(&mut self, i: usize, from: usize, to: usize) -> bool {
+        if i >= MAXP || from == to {
+            return false;
+        }
+        self.ensure_pane_tabs();
+        let mut b = self.bundle(i);
+        if from >= b.paths.len() || to >= b.paths.len() {
+            return false;
+        }
+        let cur = b.cur;
+        reorder_vec(&mut b.paths, from, to);
+        reorder_vec(&mut b.locks, from, to);
+        reorder_vec(&mut b.names, from, to);
+        b.cur = moved_active(cur, from, to);
+        self.commit_pane_tabs(i, &b);
+        true
+    }
+
+    /// The current pane tab is locked and a browse left its folder. Put `stayed` back on that tab
+    /// and open `opened` as a new unlocked tab just after it. False when the current tab is not locked.
+    pub(crate) fn fork_locked_nav(&mut self, i: usize, stayed: &str, opened: &str) -> bool {
+        if i >= MAXP {
+            return false;
+        }
+        self.ensure_pane_tabs();
+        let mut b = self.bundle(i);
+        if b.paths.is_empty() || !b.locks.get(b.cur).copied().unwrap_or(false) {
+            return false;
+        }
+        if b.cur < b.paths.len() {
+            b.paths[b.cur] = stayed.to_string();
+        }
+        let at = b.cur + 1;
+        b.paths.insert(at, opened.to_string());
+        b.locks.insert(at, false);
+        b.names.insert(at, String::new());
+        b.cur = at;
+        self.commit_pane_tabs(i, &b);
+        self.land_pane_path(i, opened);
+        true
     }
 
     /// `paths[i]` is the folder the current pane tab is showing. Call this in the same
@@ -1257,6 +1594,8 @@ fn pad_tab_slots(t: &mut Tab) {
     t.tints.resize(MAXP, 0);
     t.pane_folders.resize(MAXP, Vec::new());
     t.pane_cur.resize(MAXP, 0);
+    t.pane_locks.resize(MAXP, Vec::new());
+    t.pane_names.resize(MAXP, Vec::new());
     t.filters.resize(MAXP, String::new());
     t.paths.truncate(MAXP);
     t.views.truncate(MAXP);
@@ -1264,6 +1603,8 @@ fn pad_tab_slots(t: &mut Tab) {
     t.tints.truncate(MAXP);
     t.pane_folders.truncate(MAXP);
     t.pane_cur.truncate(MAXP);
+    t.pane_locks.truncate(MAXP);
+    t.pane_names.truncate(MAXP);
     t.filters.truncate(MAXP);
 }
 
@@ -1280,6 +1621,8 @@ pub(crate) fn swap_tab_slots(t: &mut Tab, i: usize, j: usize) {
     t.tints.swap(i, j);
     t.pane_folders.swap(i, j);
     t.pane_cur.swap(i, j);
+    t.pane_locks.swap(i, j);
+    t.pane_names.swap(i, j);
     t.filters.swap(i, j);
 }
 
@@ -1298,6 +1641,8 @@ pub(crate) fn reorder_tab_slots(t: &mut Tab, order: &[u8]) {
         t.tints[i] = old.tints[k];
         t.pane_folders[i] = old.pane_folders[k].clone();
         t.pane_cur[i] = old.pane_cur[k];
+        t.pane_locks[i] = old.pane_locks[k].clone();
+        t.pane_names[i] = old.pane_names[k].clone();
         t.filters[i] = old.filters[k].clone();
     }
 }
@@ -1416,6 +1761,8 @@ pub(crate) fn apply_tab_grid(s: &mut Session, t: &Tab) {
     s.tints = tints;
     s.pane_folders = pad_pane_folders(t.pane_folders.clone());
     s.pane_cur = pad_pane_cur(t.pane_cur.clone());
+    s.pane_locks = pad_pane_locks(t.pane_locks.clone());
+    s.pane_names = pad_pane_names(t.pane_names.clone());
 }
 
 /// Load `incoming` into tab `i` and link that tab to `path`. Other tabs' links are unchanged.
@@ -1561,6 +1908,8 @@ pub(crate) fn saved_grid(tab: &Tab, file_tab: Option<&Tab>) -> Tab {
     grid.tints = src.tints.clone();
     grid.pane_folders = src.pane_folders.clone();
     grid.pane_cur = src.pane_cur.clone();
+    grid.pane_locks = src.pane_locks.clone();
+    grid.pane_names = src.pane_names.clone();
     grid.session = tab.session.clone();
     grid
 }
@@ -1649,6 +1998,30 @@ pub(crate) fn parse_tab_color(v: &str) -> Option<u32> {
     u32::from_str_radix(t, 16).ok().map(|n| n & 0xFFFFFF)
 }
 
+fn json_bools(v: Option<&Value>) -> Vec<bool> {
+    v.and_then(|x| x.as_array()).map(|a| a.iter().map(|n| n.as_bool().unwrap_or(false)).collect()).unwrap_or_default()
+}
+
+fn json_strings(v: Option<&Value>) -> Vec<String> {
+    v.and_then(|x| x.as_array()).map(|a| a.iter().map(|n| n.as_str().unwrap_or("").to_string()).collect()).unwrap_or_default()
+}
+
+/// Locks and titles worth writing. All-false and all-empty are omitted so an older snapshot stays the same.
+pub(crate) fn pane_meta_json(folders: usize, locks: &[bool], labels: &[String]) -> (Vec<bool>, Vec<String>) {
+    if folders > 1 {
+        let locks = align_bools(locks, folders);
+        let labels = align_names(labels, folders);
+        let locks = if locks.iter().any(|&l| l) { locks } else { Vec::new() };
+        let labels = if labels.iter().any(|s| !s.is_empty()) { labels } else { Vec::new() };
+        (locks, labels)
+    } else {
+        let locks = if locks.len() == 1 && locks[0] { vec![true] } else { Vec::new() };
+        let name = if labels.len() == 1 { stored_pane_tab_name(&labels[0]) } else { String::new() };
+        let labels = if name.is_empty() { Vec::new() } else { vec![name] };
+        (locks, labels)
+    }
+}
+
 pub(crate) fn pane_json(t: &Tab) -> Vec<Value> {
     let mut panes = Vec::new();
     for i in 0..MAXP {
@@ -1656,7 +2029,18 @@ pub(crate) fn pane_json(t: &Tab) -> Vec<Value> {
         let tint = t.tints.get(i).copied().unwrap_or(0);
         let folders = t.pane_folders.get(i).cloned().unwrap_or_default();
         let folder = t.pane_cur.get(i).copied().unwrap_or(0);
-        if t.paths[i].is_empty() && t.views[i] == (0, 0) && t.cols[i].is_empty() && filter.is_empty() && tint == 0 && folders.len() < 2 {
+        let raw_locks = t.pane_locks.get(i).cloned().unwrap_or_default();
+        let raw_labels = t.pane_names.get(i).cloned().unwrap_or_default();
+        let (locks, labels) = pane_meta_json(folders.len(), &raw_locks, &raw_labels);
+        if t.paths[i].is_empty()
+            && t.views[i] == (0, 0)
+            && t.cols[i].is_empty()
+            && filter.is_empty()
+            && tint == 0
+            && folders.len() < 2
+            && locks.is_empty()
+            && labels.is_empty()
+        {
             continue;
         }
         let mut p = serde_json::Map::new();
@@ -1679,6 +2063,12 @@ pub(crate) fn pane_json(t: &Tab) -> Vec<Value> {
         if folders.len() > 1 {
             p.insert("folders".into(), Value::Array(folders.into_iter().map(Value::String).collect()));
             p.insert("folder".into(), Value::from(folder));
+        }
+        if !locks.is_empty() {
+            p.insert("locks".into(), Value::Array(locks.into_iter().map(Value::Bool).collect()));
+        }
+        if !labels.is_empty() {
+            p.insert("labels".into(), Value::Array(labels.into_iter().map(Value::String).collect()));
         }
         panes.push(Value::Object(p));
     }
@@ -1751,6 +2141,8 @@ pub(crate) fn tab_from_value(v: &Value) -> Option<Tab> {
     let mut tints = vec![0u8; MAXP];
     let mut pane_folders = vec![Vec::new(); MAXP];
     let mut pane_cur = vec![0usize; MAXP];
+    let mut pane_locks = vec![Vec::new(); MAXP];
+    let mut pane_names = vec![Vec::new(); MAXP];
     if let Some(panes) = obj.get("panes").and_then(|p| p.as_array()) {
         for p in panes {
             let Some(o) = p.as_object() else { continue };
@@ -1785,10 +2177,13 @@ pub(crate) fn tab_from_value(v: &Value) -> Option<Tab> {
                     pane_folders[i] = list;
                 }
             }
+            let (locks, labels) = pane_meta_json(pane_folders[i].len(), &json_bools(o.get("locks")), &json_strings(o.get("labels")));
+            pane_locks[i] = locks;
+            pane_names[i] = labels;
         }
     }
     let name = if name.is_empty() { "1".into() } else { name };
-    Some(Tab { name, locked, color, heights, colr, rowr, active, paths, views, cols, filters, tints, pane_folders, pane_cur, session })
+    Some(Tab { name, locked, color, heights, colr, rowr, active, paths, views, cols, filters, tints, pane_folders, pane_cur, pane_locks, pane_names, session })
 }
 
 pub(crate) fn tabs_from_json(v: &str) -> Option<(Vec<Tab>, usize)> {
@@ -2609,6 +3004,93 @@ mod crumb_tests {
         assert_eq!((s.paths[3].as_str(), s.views[3], s.cols[3].as_str()), (r"C:\src", (4, 32), "name:1"));
         assert!(s.pane_folders[3].is_empty() && s.pane_cur[3] == 0);
         assert_eq!(s.pane_folders[0].len(), 4);
+    }
+
+    #[test]
+    fn pane_tab_lock_forks_a_new_tab_and_refuses_close() {
+        let mut s = Session::default();
+        s.paths[0] = r"C:\locked".into();
+        assert!(s.set_pane_tab_lock(0, 0, true));
+        assert!(s.pane_folders[0].is_empty() && s.pane_locks[0] == vec![true]);
+        assert!(s.pane_strip_on(0) && s.pane_tab_locked(0));
+        assert_eq!(s.close_pane_tab(0, 0), None);
+        assert!(s.pane_tab_locked(0));
+        assert!(s.fork_locked_nav(0, r"C:\locked", r"C:\other"));
+        assert_eq!(s.pane_tab_list(0), vec![r"C:\locked".to_string(), r"C:\other".into()]);
+        assert_eq!((s.pane_cur[0], s.paths[0].as_str()), (1, r"C:\other"));
+        assert_eq!(s.pane_tab_locks(0), vec![true, false]);
+        assert!(!s.fork_locked_nav(0, r"C:\other", r"C:\third"));
+        assert_eq!(s.close_pane_tab(0, 1).as_deref(), Some(r"C:\locked"));
+        assert!(s.pane_tab_locked(0) && s.pane_strip_on(0));
+        assert_eq!(s.close_pane_tab(0, 0), None);
+        assert!(s.set_pane_tab_lock(0, 0, false));
+        assert!(s.pane_locks[0].is_empty() && !s.pane_strip_on(0));
+    }
+
+    #[test]
+    fn pane_tab_names_reorder_close_and_round_trip() {
+        let mut s = Session::default();
+        s.paths[0] = r"C:\a".into();
+        s.add_pane_tab(0);
+        s.paths[0] = r"C:\b".into();
+        s.add_pane_tab(0);
+        s.paths[0] = r"C:\c".into();
+        assert_eq!(s.pane_tab_list(0), vec![r"C:\a".to_string(), r"C:\b".into(), r"C:\c".into()]);
+        assert!(s.set_pane_tab_lock(0, 2, true));
+        assert!(s.set_pane_tab_name(0, 1, "  Docs  "));
+        assert_eq!(s.pane_tab_names(0)[1], "Docs");
+        assert_eq!(s.close_pane_tab(0, 2), None);
+        // Right of A: Docs closes, the locked C stays, and the current tab stays C.
+        assert_eq!(s.close_pane_tabs_right(0, 0), None);
+        assert_eq!(s.pane_tab_list(0), vec![r"C:\a".to_string(), r"C:\c".into()]);
+        assert_eq!(s.pane_cur[0], 1);
+        assert_eq!(s.pane_tab_locks(0), vec![false, true]);
+        assert!(s.set_pane_tab_name(0, 0, "Docs"));
+        assert_eq!(s.duplicate_pane_tab(0, 0).as_deref(), Some(r"C:\a"));
+        assert_eq!(s.pane_tab_names(0), vec!["Docs".to_string(), "Docs (2)".into(), "".into()]);
+        assert_eq!(s.pane_tab_locks(0), vec![false, false, true]);
+        assert_eq!(s.pane_cur[0], 1);
+        assert!(s.reorder_pane_tab(0, 2, 0));
+        assert_eq!(s.pane_cur[0], 2);
+        assert_eq!(s.pane_tab_locks(0), vec![true, false, false]);
+        assert_eq!(s.pane_tab_list(0), vec![r"C:\c".to_string(), r"C:\a".into(), r"C:\a".into()]);
+        assert_eq!(s.pane_tab_names(0), vec!["".to_string(), "Docs".into(), "Docs (2)".into()]);
+        // The locked tab stays. The current tab is to its right, so the browse returns to C.
+        assert_eq!(s.close_pane_tabs_right(0, 0).as_deref(), Some(r"C:\c"));
+        assert_eq!(s.pane_tab_list(0), vec![r"C:\c".to_string()]);
+        assert!(s.pane_folders[0].is_empty() && s.pane_tab_locked(0) && s.pane_strip_on(0));
+
+        let mut one = Session::default();
+        one.paths[0] = r"C:\a".into();
+        assert!(one.set_pane_tab_name(0, 0, "12"));
+        assert!(one.pane_folders[0].is_empty() && one.pane_strip_on(0));
+        let text = one.to_ini();
+        assert!(!text.contains("b0="), "{text}");
+        assert!(text.contains("\"labels\":[\"12\"]"), "{text}");
+        assert!(!text.contains("\"locks\""), "{text}");
+        let back = Session::parse(&text);
+        assert_eq!(back.pane_tab_names(0), vec!["12".to_string()]);
+        assert!(!back.to_ini().contains("b0="));
+
+        let mut many = Session::default();
+        many.paths[0] = r"C:\a".into();
+        many.add_pane_tab(0);
+        many.paths[0] = r"C:\b".into();
+        assert!(many.set_pane_tab_lock(0, 0, true));
+        assert!(many.set_pane_tab_name(0, 1, "Docs"));
+        many.anchor();
+        let saved = many.to_ini();
+        assert!(saved.contains("b0=1|C:\\a|C:\\b\n"), "{saved}");
+        assert!(saved.contains("\"locks\":[true,false]"), "{saved}");
+        assert!(saved.contains("\"labels\":[\"\",\"Docs\"]"), "{saved}");
+        let round = Session::parse(&saved);
+        assert_eq!(round.pane_tab_list(0), vec![r"C:\a".to_string(), r"C:\b".into()]);
+        assert_eq!(round.pane_cur[0], 1);
+        assert_eq!(round.pane_tab_locks(0), vec![true, false]);
+        assert_eq!(round.pane_tab_names(0), vec!["".to_string(), "Docs".into()]);
+        // A single-tab lock from the tab JSON is not replaced by an older b-line.
+        let kept = Session::parse("p0=C:\\a\nb0=0|C:\\a|D:\\b\ntabs=[{\"name\":\"1\",\"locked\":false,\"active\":true,\"panes\":[{\"index\":0,\"path\":\"C:\\\\a\",\"locks\":[true]}]}]\n");
+        assert!(kept.pane_folders[0].is_empty() && kept.pane_tab_locked(0));
     }
 
     #[test]

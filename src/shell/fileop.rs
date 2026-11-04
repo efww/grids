@@ -993,6 +993,8 @@ pub(crate) fn apply_boot(s: &mut Session) {
             s.cols = vec![String::new(); MAXP];
             s.pane_folders = vec![Vec::new(); MAXP];
             s.pane_cur = vec![0; MAXP];
+            s.pane_locks = vec![Vec::new(); MAXP];
+            s.pane_names = vec![Vec::new(); MAXP];
             s.active = 0;
             s.file.clear();
             s.tabs.clear();

@@ -260,7 +260,7 @@ fn already(hit: &Hit) -> bool {
         Hit::Pane(i, k) => {
             let list = a.s.pane_tab_list(i);
             let cur = if list.len() > 1 { a.s.pane_cur.get(i).copied().unwrap_or(0).min(list.len() - 1) } else { 0 };
-            list.len() > 1 && k == cur
+            k < list.len() && k == cur
         }
     })
 }
@@ -359,7 +359,9 @@ fn wipe() {
 }
 
 fn activate(hit: Hit) {
-    if app(|a| a.tab_drag.is_some() || a.pane_drag.is_some()) {
+    // A window-tab reorder, a pane move, and a pane-tab reorder each own the pointer.
+    // A resting file drag must not switch a tab out from under them.
+    if app(|a| a.tab_drag.is_some() || a.pane_drag.is_some() || a.pane_tab_drag.is_some()) {
         return;
     }
     if already(&hit) {
@@ -425,13 +427,16 @@ fn pane_hit(hwnd: HWND, pt: &POINTL) -> Option<Hit> {
     let (x, y) = client_pt(hwnd, pt)?;
     let mut rc = RECT::default();
     unsafe { let _ = GetClientRect(hwnd, &mut rc); }
-    let (dpi, n) = app(|a| (a.dpi, a.s.pane_tab_list(i).len()));
-    if n < 2 {
+    // A plain single folder hides the strip. One locked or renamed tab still shows it,
+    // and a file drag lands on that tab the same way it does when there are several.
+    let (dpi, n, locks, strip) = app(|a| (a.dpi, a.s.pane_tab_list(i).len(), a.s.pane_tab_locks(i), a.s.pane_strip_on(i)));
+    if !strip || n == 0 {
         return None;
     }
     let pg = pane_geo_of(hwnd, rc.right, rc.bottom, dpi);
-    match pane_tab_hit(&pg, n, x, y, dpi)? {
-        PaneTabHit::Tab(k) | PaneTabHit::Close(k) => Some(Hit::Pane(i, k)),
+    match pane_tab_hit(&pg, n, &locks, x, y, dpi)? {
+        // The lock mark sits in the close slot. A file drag still targets that tab.
+        PaneTabHit::Tab(k) | PaneTabHit::Close(k) | PaneTabHit::Lock(k) => Some(Hit::Pane(i, k)),
         PaneTabHit::Plus | PaneTabHit::Strip => None,
     }
 }

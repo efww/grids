@@ -168,10 +168,48 @@ pub(crate) fn session_from_window(v: &Value, base: &Session) -> Session {
     }
     if let Some(tabs) = obj.get("tabs").and_then(|t| t.as_array()) {
         adopt_tabs(&mut s, tabs);
+        // This snapshot replaces the session built from the root panes and tabs.
+        // A copy saved before pane locks, or edited only on those root copies, has
+        // the same folders and no `locks` key. Keep the lock the root tab already had.
+        keep_omitted_pane_locks(&mut s, tabs, base);
     } else {
         s.anchor();
     }
     s
+}
+
+/// `locks` omitted on a window pane means "this snapshot does not say", not "unlock",
+/// when that pane is still the same folders as `base`. An explicit `locks` array wins.
+fn keep_omitted_pane_locks(s: &mut Session, tabs: &[Value], base: &Session) {
+    let active = tabs.iter().find(|t| t.get("active").and_then(|a| a.as_bool()) == Some(true)).or_else(|| tabs.first());
+    let Some(active) = active else { return };
+    let Some(panes) = active.get("panes").and_then(|p| p.as_array()) else { return };
+    let mut restored = false;
+    for p in panes {
+        let Some(o) = p.as_object() else { continue };
+        if o.contains_key("locks") {
+            continue;
+        }
+        let i = o.get("index").and_then(|n| n.as_u64()).unwrap_or(0) as usize;
+        if i >= MAXP {
+            continue;
+        }
+        let Some(locks) = base.pane_locks.get(i) else { continue };
+        if !locks.iter().any(|&l| l) {
+            continue;
+        }
+        let same = s.pane_folders.get(i) == base.pane_folders.get(i)
+            && s.pane_cur.get(i) == base.pane_cur.get(i)
+            && s.paths.get(i) == base.paths.get(i);
+        if !same {
+            continue;
+        }
+        s.pane_locks[i] = locks.clone();
+        restored = true;
+    }
+    if restored {
+        s.anchor();
+    }
 }
 
 /// The foreground window first, then the rest. Each snap is that window's own tabs.
@@ -235,6 +273,8 @@ pub(crate) fn fresh_window_session() -> Session {
         n.cols = vec![String::new(); MAXP];
         n.pane_folders = vec![Vec::new(); MAXP];
         n.pane_cur = vec![0; MAXP];
+        n.pane_locks = vec![Vec::new(); MAXP];
+        n.pane_names = vec![Vec::new(); MAXP];
         let d = 32 * a.dpi.max(96) / 96;
         if let Some(w) = n.win.as_mut() {
             w[0] += d;
