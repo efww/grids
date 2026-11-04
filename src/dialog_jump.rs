@@ -22,6 +22,7 @@ struct Watch {
     hook: HWINEVENTHOOK,
     live: bool,     // hotkey registered on main
     retries: u8,
+    seen: HWND,     // the window the last foreground event named: GetForegroundWindow may not say so yet
     restore: Option<(HWND, String, String, u8)>, // dialog, name to put back, folder typed, ticks left
 }
 
@@ -145,15 +146,17 @@ unsafe fn sync() {
         _ = UnregisterHotKey(Some(main), DLG_HOTKEY_ID);
         with(|w| w.live = false);
     }
-    // a #32770 of another app that has no file name box yet: maybe it is still being built
-    if on && !want && class_of(fg) == "#32770" && with(|w| w.retries > 0) {
+    // a #32770 of another app that has no file name box yet: maybe it is still being built, or the event
+    // named it before the foreground caught up (a dialog opened from a console window does that)
+    let seen = with(|w| w.seen);
+    if on && !want && (class_of(fg) == "#32770" || class_of(seen) == "#32770") && with(|w| w.retries > 0) {
         with(|w| w.retries -= 1);
         SetTimer(Some(main), TIMER_DLG_RETRY, 200, None);
     }
 }
 
-unsafe extern "system" fn on_foreground(_: HWINEVENTHOOK, _: u32, _: HWND, _: i32, _: i32, _: u32, _: u32) {
-    with(|w| w.retries = RETRIES);
+unsafe extern "system" fn on_foreground(_: HWINEVENTHOOK, _: u32, h: HWND, _: i32, _: i32, _: u32, _: u32) {
+    with(|w| (w.retries, w.seen) = (RETRIES, h));
     sync();
 }
 
