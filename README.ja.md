@@ -1,9 +1,5 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/maguro-lockup-dark.png">
-    <source media="(prefers-color-scheme: light)" srcset="assets/maguro-lockup-light.png">
-    <img alt="Maguro" src="assets/maguro-lockup-light.png" width="192">
-  </picture>
+  <img alt="Maguro" src="assets/maguro-icon.svg" width="96">
 </p>
 
 <h1 align="center">Maguro</h1>
