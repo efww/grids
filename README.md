@@ -95,7 +95,7 @@ The exe is not code-signed, so Windows SmartScreen may warn the first time: choo
 | Del / Shift+Del (preview) | Recycle / delete the file shown, go to the next |
 | F2 (preview) | Rename the file shown |
 | Ctrl+wheel, Ctrl+= / Ctrl+- / Ctrl+0 (preview) | Zoom in / out / fit |
-| F2, Del, Ctrl+C / X / V, F5 | Same as Explorer |
+| F2, Del, Ctrl+C / X / V, F5 | Same as Explorer (on F5 the pane's ↑ turns into a spinning ↻ for a moment) |
 
 Double-clicking empty space in a pane goes up a folder (can be turned off in the view menu).
 
