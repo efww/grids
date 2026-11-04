@@ -413,9 +413,9 @@ body.lb-open { overflow: hidden; }
     <div class="shot-grid"><figure class="shot"><img src="../../images-v3/feature_folder_watch.png" alt="Folder Watch with a folder row and a file row" loading="lazy"><figcaption>A folder and a file</figcaption></figure></div>
   </section>
 
-  <section class="section-block" id="clipboard" data-search="clipboard path win+shift+v hdrop">
+  <section class="section-block" id="clipboard" data-search="clipboard path win+alt+v hdrop">
     <h2>Clipboard path</h2>
-    <p>While Maguro is running, <strong>Win+Shift+V</strong> opens the clipboard path in a new tab, even when another window is in front. A folder becomes that tab. A file opens its parent folder and selects the file. It does not start a rename.</p>
+    <p>While Maguro is running, <strong>Win+Alt+V</strong> opens the clipboard path even when another window is in front. A folder opens in a new tab. A file opens with its default app.</p>
     <p>A copied file (CF_HDROP) wins over plain text. Text is trimmed, quotes are removed, a <code>file:</code> URL is accepted, environment variables are expanded, and only the first line is used. If nothing on the clipboard is a folder or a file, Maguro says so. If the path is missing, it says so.</p>
     <p>The hotkey is on by default. Settings → General turns it off, which unregisters it. Settings → Shortcuts can change the chord. If another app’s file dialog is in front, the hotkey is handed to that dialog instead of opening a tab.</p>
     <div class="shot-grid"><figure class="shot"><img src="../../images-v3/feature_win_shift_v.png" alt="A folder opened from the clipboard as a tab" loading="lazy"><figcaption>A clipboard path opened as a tab</figcaption></figure></div>
@@ -489,7 +489,7 @@ body.lb-open { overflow: hidden; }
   <section class="section-block" id="shortcuts" data-search="shortcut key chord hotkey keyboard defaults">
     <h2>Shortcuts</h2>
     <p>These are the defaults. Change any of them in Settings → Shortcuts. The in-app list (Ctrl+/) follows your changes immediately, with no restart. This page lists the defaults that ship with 0.2.3.</p>
-    <p>Win+Shift+E and Win+Shift+V are registered for the whole time Maguro is running. Ctrl+Alt+G is registered only while another app’s Open or Save dialog is in front. Workspace chords are not global. Pane-tab chords run only while focus is in a pane.</p>
+    <p>Win+Shift+E and Win+Alt+V are registered for the whole time Maguro is running. Ctrl+Alt+G is registered only while another app’s Open or Save dialog is in front. Workspace chords are not global. Pane-tab chords run only while focus is in a pane.</p>
     <table class="shortcuts-table"><thead><tr><th>Keys</th><th>Action</th></tr></thead><tbody>
       <tr><td class="cat" colspan="2">Tab</td></tr>
       <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>T</kbd></span></td><td>New tab</td></tr>
@@ -560,7 +560,7 @@ body.lb-open { overflow: hidden; }
       <tr><td class="cat" colspan="2">Window</td></tr>
       <tr><td><span class="chord"><kbd>Win</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd></span></td><td>Bring Maguro to the front</td></tr>
       <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>G</kbd></span></td><td>Jump to a folder in a file dialog</td></tr>
-      <tr><td><span class="chord"><kbd>Win</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd></span></td><td>Open clipboard path</td></tr>
+      <tr><td><span class="chord"><kbd>Win</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd></span></td><td>Open clipboard path</td></tr>
       <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>N</kbd></span></td><td>New window</td></tr>
       <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>W</kbd></span></td><td>Folder Watch</td></tr>
     </tbody></table>

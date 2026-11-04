@@ -130,7 +130,8 @@ const CMDS: &[Cmd] = &[
     // Registered only while another app's Open or Save dialog is in front. See dialogjump.
     cmd("dialog.jump", WIN, crate::Key::JumpToAFolderInAFileDialog, 0x47, true, false, true, false, false),
     // Registered for the whole time Maguro is running, same as app.front. See cliphot.
-    cmd("clip.open", WIN, crate::Key::OpenClipboardPath, 0x56, false, true, false, true, false),
+    // Win+Alt+V does not overlap app.front (Win+Shift+E).
+    cmd("clip.open", WIN, crate::Key::OpenClipboardPath, 0x56, false, false, true, true, false),
     cmd("win.new", WIN, crate::Key::NewWindow, 0x4E, true, false, false, false, false),
     cmd("watch.open", WIN, crate::Key::FolderWatch, 0x57, true, true, false, false, false),
 ];
@@ -339,7 +340,7 @@ pub(crate) fn dialog_chord() -> Option<Chord> {
     index("dialog.jump").and_then(|i| with(|s| s.binds.get(i).copied()))
 }
 
-/// The chord that opens a clipboard path in a new tab.
+/// The chord that opens a clipboard folder in a new tab, or a clipboard file with the shell.
 pub(crate) fn clip_chord() -> Option<Chord> {
     index("clip.open").and_then(|i| with(|s| s.binds.get(i).copied()))
 }
@@ -363,6 +364,12 @@ fn untangle(binds: &mut [Chord]) {
     }
 }
 
+/// Previous built-in `clip.open` (Win+Shift+V). It was not written while it was the default.
+/// A file that still names it is that old default, so the new built-in (Win+Alt+V) replaces it.
+fn legacy_clip_open(c: Chord) -> bool {
+    c.vk == 0x56 && c.win && c.shift && !c.ctrl && !c.alt && !c.digits
+}
+
 pub(crate) fn load_bindings(map: &Map<String, Value>) {
     let mut binds: Vec<Chord> = CMDS.iter().map(Cmd::chord).collect();
     let mut extra = Map::new();
@@ -370,7 +377,9 @@ pub(crate) fn load_bindings(map: &Map<String, Value>) {
         match index(k) {
             Some(i) => {
                 if let Some(c) = v.as_str().and_then(parse_chord) {
-                    binds[i] = c;
+                    if !(k == "clip.open" && legacy_clip_open(c)) {
+                        binds[i] = c;
+                    }
                 }
             }
             None => {
@@ -677,10 +686,14 @@ mod tests {
         assert!(help_text().lines().any(|l| l == "Alt+P\tPreview pane"));
         assert_ne!(lookup(b'P' as u16, true, false, false, false), index("view.preview"));
         let clip = index("clip.open").unwrap();
-        assert_eq!(chord_text(clip), "Win+Shift+V");
-        assert_eq!(lookup(b'V' as u16, false, true, false, true), Some(clip));
-        assert!(help_text().lines().any(|l| l == "Win+Shift+V\tOpen clipboard path"));
+        assert_eq!(chord_text(clip), "Win+Alt+V");
+        assert_eq!(lookup(b'V' as u16, false, false, true, true), Some(clip));
+        assert_eq!(lookup(b'V' as u16, false, true, false, true), None);
+        assert!(help_text().lines().any(|l| l == "Win+Alt+V\tOpen clipboard path"));
         let clip_chord = default_chord(clip).unwrap();
+        let front = default_chord(index("app.front").unwrap()).unwrap();
+        assert_eq!(format_chord(&front), "Win+Shift+E");
+        assert!(!overlaps(front, clip_chord));
         for (i, c) in CMDS.iter().enumerate() {
             if i != clip {
                 assert!(!overlaps(c.chord(), clip_chord), "{} collides with clip.open", c.id);
@@ -822,6 +835,29 @@ mod tests {
             }
             _ => panic!("digit rebind of go-to-pane should stay a range"),
         }
+        fresh();
+    }
+
+    #[test]
+    fn stored_win_shift_v_for_clip_open_becomes_win_alt_v() {
+        fresh();
+        let clip = index("clip.open").unwrap();
+        let mut old = Map::new();
+        old.insert("clip.open".into(), serde_json::json!("Win+Shift+V"));
+        load_bindings(&old);
+        assert_eq!(chord_text(clip), "Win+Alt+V");
+        assert!(bindings_json().get("clip.open").is_none());
+
+        let mut lower = Map::new();
+        lower.insert("clip.open".into(), serde_json::json!("win+shift+v"));
+        load_bindings(&lower);
+        assert_eq!(chord_text(clip), "Win+Alt+V");
+
+        let mut custom = Map::new();
+        custom.insert("clip.open".into(), serde_json::json!("Ctrl+Alt+V"));
+        load_bindings(&custom);
+        assert_eq!(chord_text(clip), "Ctrl+Alt+V");
+        assert_eq!(bindings_json()["clip.open"], "Ctrl+Alt+V");
         fresh();
     }
 

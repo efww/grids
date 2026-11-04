@@ -1,4 +1,4 @@
-﻿# Feature windows: basket, folder watch, Win+Shift+V, excel tidy; also rename, search, tab_list.
+﻿# Feature windows: basket, folder watch, Win+Alt+V, excel tidy; also rename, search, tab_list.
 # Env: MAGURO_PORTABLE, MAGURO_CFG_DIR, MAGURO_SHOT_DIR, MAGURO_FORCE=1
 # Demo paths come from cfg seeds / optional MAGURO_DEMO_* — never real servers.
 $ErrorActionPreference='Continue'
@@ -197,8 +197,8 @@ foreach($pair in @(
     Set-Clipboard -Value (Join-Path $Root 'readme-demo')
     Start-Sleep -Milliseconds 300
     [void][CapFeat]::SetForegroundWindow($st.Hwnd)
-    # Win+Shift+V
-    [CapFeat]::Chord(0x5B,0x10,0x56)
+    # Win+Alt+V (VK_LWIN, VK_MENU, V)
+    [CapFeat]::Chord(0x5B,0x12,0x56)
     Start-Sleep -Milliseconds 1200
     SaveCap $st.Hwnd (Join-Path $Out $pair.wsv)
   }

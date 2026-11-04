@@ -324,7 +324,7 @@ struct SettingsFile {
     /// Folders in another app's Open or Save dialog. Missing means on.
     #[serde(default = "yes", skip_serializing_if = "is_on")]
     dialog_jump: bool,
-    /// Open a clipboard path in a new tab. Missing means on.
+    /// Clipboard path hotkey. A folder opens in a new tab; a file opens with the shell. Missing means on.
     #[serde(default = "yes", skip_serializing_if = "is_on")]
     clip_hotkey: bool,
     /// UI language. Missing means `"auto"`: the Windows display language (Korean, Japanese, otherwise English).

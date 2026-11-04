@@ -1,11 +1,12 @@
-//! Clipboard text into a folder to open, or a file whose parent opens with that file selected.
+//! Clipboard text into a folder to open in a new tab, or a file to hand to the shell.
 //! No Win32 here: environment expansion and the file-or-folder check are supplied by the caller.
 
 /// What to open once a path is known to exist, or known to be a share we must not stat.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ClipPlan {
     Folder(String),
-    File { folder: String, name: String },
+    /// Existing file. The caller opens it with the shell. It is not a Maguro tab.
+    File(String),
 }
 
 /// Result of looking at the path. `Skip` is a UNC or mapped drive: do not stat it on the UI thread.
@@ -51,8 +52,9 @@ pub(crate) fn plan(path: &str, probe: Probe) -> Option<ClipPlan> {
         Probe::Missing => None,
         Probe::Dir | Probe::Skip => Some(ClipPlan::Folder(path.to_string())),
         Probe::File => {
-            let (folder, name) = split_file(path)?;
-            Some(ClipPlan::File { folder, name })
+            // Parent must be a real folder path. `\\srv\a.txt` is not a file on a share.
+            split_file(path)?;
+            Some(ClipPlan::File(path.to_string()))
         }
     }
 }
@@ -246,18 +248,9 @@ mod tests {
         assert_eq!(plan(r"C:\Work", Probe::Dir), Some(ClipPlan::Folder(r"C:\Work".into())));
         assert_eq!(plan(r"\\srv\share", Probe::Skip), Some(ClipPlan::Folder(r"\\srv\share".into())));
         assert_eq!(plan(r"C:\Work", Probe::Missing), None);
-        assert_eq!(
-            plan(r"C:\Work\note.txt", Probe::File),
-            Some(ClipPlan::File { folder: r"C:\Work".into(), name: "note.txt".into() })
-        );
-        assert_eq!(
-            plan(r"C:\note.txt", Probe::File),
-            Some(ClipPlan::File { folder: r"C:\".into(), name: "note.txt".into() })
-        );
-        assert_eq!(
-            plan(r"\\srv\share\a.txt", Probe::File),
-            Some(ClipPlan::File { folder: r"\\srv\share".into(), name: "a.txt".into() })
-        );
+        assert_eq!(plan(r"C:\Work\note.txt", Probe::File), Some(ClipPlan::File(r"C:\Work\note.txt".into())));
+        assert_eq!(plan(r"C:\note.txt", Probe::File), Some(ClipPlan::File(r"C:\note.txt".into())));
+        assert_eq!(plan(r"\\srv\share\a.txt", Probe::File), Some(ClipPlan::File(r"\\srv\share\a.txt".into())));
         // Parent would be `\\srv`, which is not a share.
         assert_eq!(plan(r"\\srv\a.txt", Probe::File), None);
         assert_eq!(plan(r"\\srv", Probe::Dir), None);

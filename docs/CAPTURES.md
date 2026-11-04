@@ -67,9 +67,9 @@ servers.png / servers.ko.png / servers.ja.png 는 **실제 호스트·자격 증
 | feature_folder_watch.ja.png | 폴더 감시 | MaguroWatch | light/ja | 데모 | 20342 B (746×433) | capture-features.ps1 | DWM |  |
 | feature_folder_watch.ko.png | 폴더 감시 | MaguroWatch | light/ko | 데모 | 16051 B (746×433) | capture-features.ps1 | DWM |  |
 | feature_folder_watch.png | 폴더 감시 | MaguroWatch | light/en | 데모 | 15631 B (746×433) | capture-features.ps1 | DWM |  |
-| feature_win_shift_v.ja.png | Win+Shift+V | MaguroMain 새 탭 | light/ja | 클립보드=Photos 2026 경로 | 305006 B (1226×823) | Win+Shift+V 코드 (Folder Watch 닫은 뒤) | DWM | Folder Watch 오버레이 없이 Photos 2026 탭 |
-| feature_win_shift_v.ko.png | Win+Shift+V | MaguroMain 새 탭 | light/ko | 클립보드=Photos 2026 경로 | 303262 B (1226×823) | Win+Shift+V 코드 (Folder Watch 닫은 뒤) | DWM | Folder Watch 오버레이 없이 Photos 2026 탭 |
-| feature_win_shift_v.png | Win+Shift+V | MaguroMain 새 탭 | light/en | 클립보드=Photos 2026 경로 | 301386 B (1226×823) | Win+Shift+V 코드 (Folder Watch 닫은 뒤) | DWM | Folder Watch 오버레이 없이 Photos 2026 탭 |
+| feature_win_shift_v.ja.png | Win+Alt+V | MaguroMain 새 탭 | light/ja | 클립보드=Photos 2026 경로 | 305006 B (1226×823) | Win+Alt+V 코드 (Folder Watch 닫은 뒤) | DWM | Folder Watch 오버레이 없이 Photos 2026 탭 |
+| feature_win_shift_v.ko.png | Win+Alt+V | MaguroMain 새 탭 | light/ko | 클립보드=Photos 2026 경로 | 303262 B (1226×823) | Win+Alt+V 코드 (Folder Watch 닫은 뒤) | DWM | Folder Watch 오버레이 없이 Photos 2026 탭 |
+| feature_win_shift_v.png | Win+Alt+V | MaguroMain 새 탭 | light/en | 클립보드=Photos 2026 경로 | 301386 B (1226×823) | Win+Alt+V 코드 (Folder Watch 닫은 뒤) | DWM | Folder Watch 오버레이 없이 Photos 2026 탭 |
 | help.ja.png | 도움말 창 | MaguroHelp/브라우저 | light/ja | — | 29368 B (760×672) | F1 | DWM |  |
 | help.ko.png | 도움말 창 | MaguroHelp/브라우저 | light/ko | — | 22566 B (760×672) | F1 | DWM |  |
 | help.png | 도움말 창 | MaguroHelp/브라우저 | light/en | — | 24725 B (760×672) | F1 | DWM |  |

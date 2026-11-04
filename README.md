@@ -157,9 +157,9 @@ Ctrl+Shift+W opens folder watch. Add folders, the active pane, or **individual f
 
 <p align="center"><img width="560" alt="Folder watch with a folder and a file row" src="docs/images-v3/feature_folder_watch.png"></p>
 
-### 15. Open clipboard path (Win+Shift+V)
+### 15. Open clipboard path (Win+Alt+V)
 
-With Maguro running, **Win+Shift+V** opens the folder or file path on the clipboard as a new tab — even when another app is in front.
+With Maguro running, **Win+Alt+V** opens the clipboard path even when another app is in front. A folder opens in a new tab. A file opens with its default app.
 
 <p align="center"><img width="760" alt="Clipboard path opened as a new tab" src="docs/images-v3/feature_win_shift_v.png"></p>
 
@@ -216,7 +216,7 @@ Defaults; every one can be changed in Settings → Shortcuts.
 |  | Ctrl+Shift+B | File basket |
 |  | Ctrl+Alt+B | Add selection to basket |
 |  | Ctrl+Shift+W | Folder watch |
-|  | Win+Shift+V | Open clipboard path as a new tab |
+|  | Win+Alt+V | Open a clipboard folder as a new tab, or a file with its default app |
 |  | Ctrl+Shift+R | Batch rename |
 |  | Ctrl+Alt+R | Recent files (Windows Recent, newest first) |
 |  | Ctrl+Enter | Show the selected recent file in its folder |

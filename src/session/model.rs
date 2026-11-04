@@ -355,7 +355,7 @@ pub(crate) struct Session {
     pub(crate) hotkey: bool,           // global hotkey brings Maguro forward; the chord is in the keymap
     /// List Maguro folders in another app's Open or Save dialog. Missing means on.
     pub(crate) dialog_jump: bool,
-    /// Open a clipboard path in a new tab. Missing means on. The chord is in the keymap.
+    /// Clipboard path hotkey. A folder opens in a new tab; a file opens with the shell. Missing means on. The chord is in the keymap.
     pub(crate) clip_hotkey: bool,
     /// Session file of the tab on screen. Mirrors `tabs[tab].session`.
     /// Older files stored only this, for the whole window; it is adopted onto the active tab.

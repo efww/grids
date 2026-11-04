@@ -1,6 +1,7 @@
-//! Global hotkey that opens a clipboard path in a new tab.
+//! Global hotkey that opens a clipboard path.
 //! Registered the same way as Win+Shift+E (`app.front`): `RegisterHotKey` on one window,
-//! only while Maguro is running. The chord is `clip.open` (Win+Shift+V unless rebound).
+//! only while Maguro is running. The chord is `clip.open` (Win+Alt+V unless rebound).
+//! A folder opens in a new tab. A file opens with the shell default handler.
 //! The on/off switch is `Session::clip_hotkey`, not an unbound chord.
 
 use std::sync::Mutex;
@@ -232,24 +233,40 @@ unsafe fn arm_select(name: &str) {
     }
 }
 
-/// Win+Shift+V, or whatever chord the keymap now has. A dialog that has disabled its owner comes forward instead.
+/// Open `path` with the shell default handler (`ShellExecute` "open"). A value above 32 is success.
+unsafe fn shell_open(path: &str) -> bool {
+    let file = HSTRING::from(path);
+    let r = ShellExecuteW(None, w!("open"), &file, PCWSTR::null(), PCWSTR::null(), SW_SHOWNORMAL);
+    r.0 as isize > 32
+}
+
+fn reveal_miss() {
+    unsafe { crate::reveal_window(front_target()) };
+    miss();
+}
+
+/// Win+Alt+V, or whatever chord the keymap now has. A dialog that has disabled its owner comes forward instead.
+/// A folder opens in a new tab. A file is handed to the shell and does not arm `TIMER_CLIPSEL`.
 pub(crate) unsafe fn on_hotkey() {
     if modal_forward() {
         return;
     }
     let (drop, text) = read_clip();
-    crate::reveal_window(front_target());
     let Some(path) = clippath::choose_clip(drop.as_deref(), text.as_deref(), expand_env) else {
-        miss();
+        reveal_miss();
         return;
     };
     match clippath::plan(&path, probe_path(&path)) {
-        Some(ClipPlan::Folder(folder)) => crate::new_tab_at(Some(&folder)),
-        Some(ClipPlan::File { folder, name }) => {
+        Some(ClipPlan::Folder(folder)) => {
+            crate::reveal_window(front_target());
             crate::new_tab_at(Some(&folder));
-            arm_select(&name);
         }
-        None => miss(),
+        Some(ClipPlan::File(file)) => {
+            if !shell_open(&file) {
+                reveal_miss();
+            }
+        }
+        None => reveal_miss(),
     }
 }
 

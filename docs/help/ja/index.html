@@ -413,9 +413,9 @@ body.lb-open { overflow: hidden; }
     <div class="shot-grid"><figure class="shot"><img src="../../images-v3/feature_folder_watch.ja.png" alt="フォルダーの行とファイルの行があるフォルダー監視" loading="lazy"><figcaption>フォルダーとファイル</figcaption></figure></div>
   </section>
 
-  <section class="section-block" id="clipboard" data-search="clipboard path win+shift+v hdrop クリップボード">
+  <section class="section-block" id="clipboard" data-search="clipboard path win+alt+v hdrop クリップボード">
     <h2>クリップボードのパス</h2>
-    <p>Maguro の実行中は、<strong>Win+Shift+V</strong> がクリップボードのパスを新しいタブで開きます。別のウィンドウが前面でも開きます。フォルダーは、そのタブになります。ファイルは親フォルダーを開き、そのファイルを選択します。名前の変更は始まりません。</p>
+    <p>Maguro の実行中は、<strong>Win+Alt+V</strong> がクリップボードのパスを開きます。別のウィンドウが前面でも開きます。フォルダーは新しいタブになり、ファイルは既定のアプリで開きます。</p>
     <p>コピーしたファイル（CF_HDROP）は、プレーン テキストより優先されます。テキストは前後を削り、引用符を外し、<code>file:</code> URL を受け付け、環境変数を展開し、最初の行だけを使います。クリップボードにフォルダーもファイルも無ければ、Maguro はその旨を示します。パスが無ければ、その旨を示します。</p>
     <p>ホットキーは、既定でオンです。設定 → 一般でオフにすると、登録が解除されます。設定 → ショートカットで、キーの組み合わせを変えられます。別のアプリのファイル ダイアログが前面にあるときは、ホットキーはタブを開かず、そのダイアログに渡されます。</p>
     <div class="shot-grid"><figure class="shot"><img src="../../images-v3/feature_win_shift_v.ja.png" alt="クリップボードからタブとして開いたフォルダー" loading="lazy"><figcaption>タブとして開いたクリップボードのパス</figcaption></figure></div>
@@ -489,7 +489,7 @@ body.lb-open { overflow: hidden; }
   <section class="section-block" id="shortcuts" data-search="shortcut key chord hotkey keyboard defaults ショートカット">
     <h2>ショートカット</h2>
     <p>これらは既定です。設定 → ショートカットで、どれでも変えられます。アプリ内の一覧（Ctrl+/）は、再起動なしで、変更にすぐ従います。このページに載るのは、0.2.3 に同梱される既定です。</p>
-    <p>Win+Shift+E と Win+Shift+V は、Maguro が実行しているあいだ、ずっと登録されます。Ctrl+Alt+G は、別のアプリの開くダイアログまたは保存ダイアログが前面にあるときだけ登録されます。ワークスペースのキーは、グローバルではありません。ペイン タブのキーは、フォーカスがペインにあるときだけ動きます。</p>
+    <p>Win+Shift+E と Win+Alt+V は、Maguro が実行しているあいだ、ずっと登録されます。Ctrl+Alt+G は、別のアプリの開くダイアログまたは保存ダイアログが前面にあるときだけ登録されます。ワークスペースのキーは、グローバルではありません。ペイン タブのキーは、フォーカスがペインにあるときだけ動きます。</p>
     <table class="shortcuts-table"><thead><tr><th>キー</th><th>操作</th></tr></thead><tbody>
       <tr><td class="cat" colspan="2">タブ</td></tr>
       <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>T</kbd></span></td><td>新しいタブ</td></tr>
@@ -560,7 +560,7 @@ body.lb-open { overflow: hidden; }
       <tr><td class="cat" colspan="2">ウィンドウ</td></tr>
       <tr><td><span class="chord"><kbd>Win</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd></span></td><td>Maguro を前面に</td></tr>
       <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>G</kbd></span></td><td>ファイル ダイアログのフォルダーへ移動</td></tr>
-      <tr><td><span class="chord"><kbd>Win</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd></span></td><td>クリップボードのパスを開く</td></tr>
+      <tr><td><span class="chord"><kbd>Win</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd></span></td><td>クリップボードのパスを開く</td></tr>
       <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>N</kbd></span></td><td>新しいウィンドウ</td></tr>
       <tr><td><span class="chord"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>W</kbd></span></td><td>フォルダー監視</td></tr>
     </tbody></table>
