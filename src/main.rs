@@ -845,6 +845,23 @@ mod tests {
             let span = |f: fn(&(i32, i32)) -> i32| added.iter().map(f).min().unwrap() + added.iter().map(f).max().unwrap();
             assert_eq!((span(|p| p.0), span(|p| p.1)), (n - 1, n - 1), "{n}");
         }
+        // the F5 ↻ turns about the box centre exactly: a quarter turn is the rest image rotated 90° clockwise,
+        // and the ink stays the same however far round it is (no shake, no breathing)
+        for n in [16, 24, 32] {
+            let rest = refresh_coverage(n, 0.0);
+            let quarter = refresh_coverage(n, 0.25);
+            for j in 0..n {
+                for i in 0..n {
+                    let (a, b) = (quarter[(j * n + i) as usize] as i32, rest[((n - 1 - i) * n + j) as usize] as i32);
+                    assert!((a - b).abs() <= 1, "{n} ({i},{j}) {a} vs {b}");
+                }
+            }
+            let ink = |t: f32| refresh_coverage(n, t).iter().map(|&a| a as f32).sum::<f32>();
+            for t in [0.07, 0.13, 0.31, 0.5, 0.77] {
+                assert!((ink(t) / ink(0.0) - 1.0).abs() < 0.04, "{n} {t}");
+            }
+            assert!(rest.iter().any(|&a| a >= 200) && rest[(n / 2 * n + n / 2) as usize] == 0, "{n}: a ring, hollow middle");
+        }
         // favourites: kept in grids.ini, case-insensitive, never in a named session
         let mut f = Session { favs: vec![r"C:\Work".into(), r"D:\".into()], ..Default::default() };
         f = Session::parse(&f.to_ini());

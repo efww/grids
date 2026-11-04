@@ -110,7 +110,7 @@ pub(crate) unsafe fn draw_button(d: &DRAWITEMSTRUCT) {
     if !on_main {
         if let Some(turn) = (id == ID_UP).then(|| spin_turn(parent)).flatten() {
             let back = if pressed || hot { blend(bg, ink, press_tint(tinted, pressed)) } else { bg };
-            return draw_spin(dc, rc, back, fg, icon_font, turn);
+            return draw_spin(dc, rc, back, fg, dpi, turn);
         }
         return text(dc, rc, glyph(id), icon_font, fg, DT_CENTER);
     }
@@ -195,35 +195,63 @@ fn spin_turn(pane: HWND) -> Option<f32> {
     (now < end).then(|| (now - start).as_secs_f32() / SPIN_TURN.as_secs_f32() % 1.0)
 }
 
-// ↻ turned clockwise about its own ink centre (not its cell's, or it wobbles), drawn off-screen in one go
-unsafe fn draw_spin(dc: HDC, rc: RECT, back: u32, ink: u32, font: HFONT, turn: f32) {
+// ↻ drawn from geometry, not the font: a glyph turned by GDI snaps to whole pixels and is re-hinted at every
+// angle, and its ink box (arrowhead included) is not the ring's centre, so it shook. This one turns exactly
+// about the ring's centre, with edges anti-aliased from each pixel's distance to the stroke.
+pub(crate) fn refresh_coverage(n: i32, turn: f32) -> Vec<u8> {
+    let c = n as f32 / 2.0;
+    let (r, half) = (n as f32 * 0.35, (n as f32 / 16.0).max(1.0) / 2.0); // ring radius, half the stroke
+    let (a0, sweep) = ((-50f32).to_radians(), 290f32.to_radians()); // the gap sits at the top right at rest
+    let a1 = a0 + sweep;
+    let end = (r * a1.cos(), r * a1.sin());
+    let tangent = (-a1.sin(), a1.cos()); // clockwise on screen (y down)
+    // arrowhead: two strokes back from the arc's end, each 45° off the way it came
+    let (len, fan) = (n as f32 * 0.22, 45f32.to_radians());
+    let wings = [fan, -fan].map(|f| {
+        let (sf, cf) = f.sin_cos();
+        let (bx, by) = (-tangent.0, -tangent.1);
+        (end.0 + len * (bx * cf - by * sf), end.1 + len * (bx * sf + by * cf))
+    });
+    let start = (r * a0.cos(), r * a0.sin());
+    let seg = |p: (f32, f32), q: (f32, f32), x: f32, y: f32| {
+        let (dx, dy) = (q.0 - p.0, q.1 - p.1);
+        let t = (((x - p.0) * dx + (y - p.1) * dy) / (dx * dx + dy * dy)).clamp(0.0, 1.0);
+        (x - p.0 - t * dx).hypot(y - p.1 - t * dy)
+    };
+    let (sn, cs) = (turn * std::f32::consts::TAU).sin_cos();
+    let mut out = Vec::with_capacity((n * n) as usize);
+    for j in 0..n {
+        for i in 0..n {
+            // this pixel's centre, turned back by `turn`, against the shape at rest
+            let (u, v) = (i as f32 + 0.5 - c, j as f32 + 0.5 - c);
+            let (x, y) = (u * cs + v * sn, -u * sn + v * cs);
+            let ang = (y.atan2(x) - a0).rem_euclid(std::f32::consts::TAU);
+            // on the arc: distance to the circle; past its ends: to the nearer end (round caps)
+            let ring = if ang <= sweep { (x.hypot(y) - r).abs() } else { (x - end.0).hypot(y - end.1).min((x - start.0).hypot(y - start.1)) };
+            let d = wings.iter().fold(ring, |d, &w| d.min(seg(end, w, x, y)));
+            out.push(((half - d + 0.5).clamp(0.0, 1.0) * 255.0).round() as u8);
+        }
+    }
+    out
+}
+
+unsafe fn draw_spin(dc: HDC, rc: RECT, back: u32, ink: u32, dpi: i32, turn: f32) {
     let (w, h) = (rc.right - rc.left, rc.bottom - rc.top);
+    let n = 16 * dpi / 96;
+    let mut px = Vec::with_capacity((n * n * 4) as usize);
+    for a in refresh_coverage(n, turn) {
+        let pre = |ch: u32| ((ch & 0xFF) * a as u32 / 255) as u8; // premultiplied BGRA
+        px.extend_from_slice(&[pre(ink), pre(ink >> 8), pre(ink >> 16), a]);
+    }
+    // off-screen in one go, so a frame never shows the background alone
     let mem = CreateCompatibleDC(Some(dc));
     let bmp = CreateCompatibleBitmap(dc, w, h);
-    let old_bmp = SelectObject(mem, bmp.into());
+    let old = SelectObject(mem, bmp.into());
     fill(mem, RECT { left: 0, top: 0, right: w, bottom: h }, back);
-    let old_font = SelectObject(mem, font.into());
-    let g: Vec<u16> = ICON_REFRESH.encode_utf16().collect();
-    let one = FIXED { fract: 0, value: 1 };
-    let unit = MAT2 { eM11: one, eM22: one, ..Default::default() };
-    let mut gm = GLYPHMETRICS::default();
-    GetGlyphOutlineW(mem, g[0] as u32, GGO_METRICS, &mut gm, 0, None, &unit);
-    // ink centre from the pen at the baseline (y down)
-    let cx = gm.gmptGlyphOrigin.x as f32 + gm.gmBlackBoxX as f32 / 2.0;
-    let cy = -(gm.gmptGlyphOrigin.y as f32) + gm.gmBlackBoxY as f32 / 2.0;
-    let (sn, cs) = (turn * std::f32::consts::TAU).sin_cos();
-    let (ox, oy) = (w as f32 / 2.0, h as f32 / 2.0);
-    SetGraphicsMode(mem, GM_ADVANCED);
-    let xf = XFORM { eM11: cs, eM12: sn, eM21: -sn, eM22: cs, eDx: ox - cx * cs + cy * sn, eDy: oy - cx * sn - cy * cs };
-    _ = SetWorldTransform(mem, &xf);
-    SetTextAlign(mem, TA_BASELINE | TA_LEFT);
-    SetBkMode(mem, TRANSPARENT);
-    SetTextColor(mem, cref(ink));
-    _ = TextOutW(mem, 0, 0, &g);
-    _ = ModifyWorldTransform(mem, None, MWT_IDENTITY);
+    let (x, y) = ((w - n) / 2, (h - n) / 2);
+    blit_bgra(mem, RECT { left: x, top: y, right: x + n, bottom: y + n }, n, n, &px);
     _ = BitBlt(dc, rc.left, rc.top, w, h, Some(mem), 0, 0, SRCCOPY);
-    SelectObject(mem, old_font);
-    SelectObject(mem, old_bmp);
+    SelectObject(mem, old);
     _ = DeleteObject(bmp.into());
     _ = DeleteDC(mem);
 }

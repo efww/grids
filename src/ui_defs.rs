@@ -154,7 +154,6 @@ pub(crate) const ICON_FILTER: &str = "\u{E71C}";
 pub(crate) const ICON_CLOSE: &str = "\u{E711}";
 pub(crate) const ICON_PREV: &str = "\u{E76B}";
 pub(crate) const ICON_NEXT: &str = "\u{E76C}";
-pub(crate) const ICON_REFRESH: &str = "\u{E72C}";
 
 pub(crate) fn glyph(id: i32) -> &'static str {
     match id {
