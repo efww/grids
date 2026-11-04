@@ -45,6 +45,9 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
 fn main_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     unsafe {
         bind_hwnd(h);
+        if matches!(msg, WM_IME_SETCONTEXT | WM_IME_NOTIFY | WM_IME_CONTROL | WM_IME_REQUEST | WM_IME_STARTCOMPOSITION | WM_IME_ENDCOMPOSITION | WM_IME_COMPOSITION | WM_IME_CHAR) {
+            return DefWindowProcW(h, msg, wp, lp);
+        }
         if window_count() == 0 {
             return DefWindowProcW(h, msg, wp, lp);
         }

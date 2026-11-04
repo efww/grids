@@ -420,33 +420,31 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
         }
         return true;
     }
-    // Favourites rename. A real Esc/Enter is often taken by a dialog filter before this
-    // loop when the edit does not ask for those keys; the edit subclass handles that copy.
-    // A key that lands on the panel (right-click never used to focus it) is posted to the
-    // edit, including VK_PROCESSKEY. Eating the process key here would stop Japanese IME.
+    // Favourites rename. The message loop translates a key that is already aimed at the
+    // edit. Eating it here, or calling into the IME before that translate, drops WM_CHAR
+    // and WM_IME_* on a TSF Japanese IME: the edit keeps focus and the text never changes.
+    // Esc and Enter are handled by the edit subclass after that translate. A key that
+    // landed on the panel is translated once, for the edit, and not again by this loop.
     if let Some((edit, host)) = side_rename_windows() {
-        // Resolve VK_PROCESSKEY first so an IME F6 is not typed into the edit.
-        let aim = side_aim_key(m.hwnd, vk);
-        if m.hwnd == host && m.hwnd != edit && side_key_belongs_to_edit(aim, ctrl, alt) {
-            focus_side_edit(edit);
-            // A posted VK_PROCESSKEY does not compose. Translate a copy aimed at the edit
-            // so WM_CHAR and WM_IME_* are queued for the edit, not the panel.
-            let mut copy = *m;
-            copy.hwnd = edit;
-            _ = TranslateMessage(&copy);
-            DispatchMessageW(&copy);
-            return true;
-        }
-        if m.hwnd == edit {
-            let ch = VIRTUAL_KEY(vk);
-            if ch == VK_PROCESSKEY || side_ime_busy() {
+        let on_edit = m.hwnd == edit;
+        let scan = side_msg_scan(m.lParam.0);
+        let mapped = side_scan_vk(scan);
+        let aim = side_key_vk(vk, scan, mapped);
+        let on_host = m.hwnd == host && m.hwnd != edit && side_key_belongs_to_edit(aim, ctrl, alt);
+        if on_edit || on_host {
+            if side_pretranslate_eats(on_edit, vk, scan, mapped, side_composing()) {
+                match side_rename_key(aim, false, false) {
+                    SideRenameKey::Commit => end_side_rename(true),
+                    SideRenameKey::Cancel => end_side_rename(false),
+                    SideRenameKey::Pass => return false,
+                }
+                return true;
+            }
+            if on_edit {
                 return false;
             }
-            match side_rename_key(vk, false, false) {
-                SideRenameKey::Commit => end_side_rename(true),
-                SideRenameKey::Cancel => end_side_rename(false),
-                SideRenameKey::Pass => return false,
-            }
+            focus_side_edit(edit);
+            deliver_side_key(edit, m.message, m.wParam, m.lParam);
             return true;
         }
     }
