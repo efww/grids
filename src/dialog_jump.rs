@@ -11,6 +11,7 @@ use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVE
 pub(crate) const DLG_HOTKEY_ID: i32 = 2; // 1 is Win+Alt+E
 const FILENAME_ID: i32 = 0x47C; // cmb13: the new dialog's file name combo (its Edit has the same id)
 const EDT1_ID: i32 = 0x480; // edt1: older dialogs
+const SAVE_NAME_ID: i32 = 0x3E9; // the Save dialog's file name Edit, in an id-less ComboBox in a FloatNotifySink
 pub(crate) const TIMER_DLG_RETRY: usize = 1141; // timers on main (numbers from this feature's id range)
 pub(crate) const TIMER_DLG_RESTORE: usize = 1142;
 const RETRIES: u8 = 5; // a dialog just shown may not have its file name box yet: look again a few times
@@ -32,9 +33,20 @@ fn with<R>(f: impl FnOnce(&mut Watch) -> R) -> R {
     WATCH.with(|w| f(&mut w.borrow_mut()))
 }
 
-/// A #32770 with a file name control, in another process (Grids' own dialogs and message boxes don't count).
-pub(crate) fn looks_like_file_dialog(class: &str, self_pid: u32, pid: u32, ids: &[i32]) -> bool {
-    class == "#32770" && pid != 0 && pid != self_pid && ids.iter().any(|&id| id == FILENAME_ID || id == EDT1_ID)
+/// A #32770 with a file name box, in another process (Grids' own dialogs and message boxes don't count).
+pub(crate) fn looks_like_file_dialog(class: &str, self_pid: u32, pid: u32, has_name_box: bool) -> bool {
+    class == "#32770" && pid != 0 && pid != self_pid && has_name_box
+}
+
+/// How good a file name box this control is (lower is better), from its class, id, parent's and grandparent's class.
+/// The Save dialog's id 1001 alone means nothing (its address bar toolbar has it too), so there its place counts.
+pub(crate) fn name_box_rank(class: &str, id: i32, parent: &str, grand: &str) -> Option<u8> {
+    match (class, id) {
+        ("Edit", FILENAME_ID | EDT1_ID) => Some(0),
+        ("Edit", SAVE_NAME_ID) if parent == "ComboBox" && grand == "FloatNotifySink" => Some(1),
+        (_, FILENAME_ID | EDT1_ID) => Some(2), // its combo when no Edit carries the id
+        _ => None,
+    }
 }
 
 /// What gets typed: backslashes, no trailing one except on a drive root.
@@ -99,10 +111,15 @@ unsafe fn children(h: HWND) -> Vec<HWND> {
     v
 }
 
-/// The file name Edit (or its combo when no Edit carries the id).
+/// The file name box: the Open dialog's Edit, the Save dialog's, or an older dialog's.
 unsafe fn name_box(dlg: HWND) -> Option<HWND> {
-    let hits: Vec<HWND> = children(dlg).into_iter().filter(|&c| matches!(GetDlgCtrlID(c), FILENAME_ID | EDT1_ID)).collect();
-    hits.iter().copied().find(|&c| class_of(c) == "Edit").or(hits.first().copied())
+    let up = |c: HWND| GetParent(c).map(|p| class_of(p)).unwrap_or_default();
+    let grand = |c: HWND| GetParent(c).ok().and_then(|p| GetParent(p).ok()).map(|g| class_of(g)).unwrap_or_default();
+    children(dlg)
+        .into_iter()
+        .filter_map(|c| name_box_rank(&class_of(c), GetDlgCtrlID(c), &up(c), &grand(c)).map(|r| (r, c)))
+        .min_by_key(|&(r, _)| r)
+        .map(|(_, c)| c)
 }
 
 unsafe fn file_dialog(h: HWND) -> Option<HWND> {
@@ -111,8 +128,8 @@ unsafe fn file_dialog(h: HWND) -> Option<HWND> {
     }
     let mut pid = 0;
     GetWindowThreadProcessId(h, Some(&mut pid));
-    let ids: Vec<i32> = children(h).into_iter().map(|c| GetDlgCtrlID(c)).collect();
-    looks_like_file_dialog(&class_of(h), GetCurrentProcessId(), pid, &ids).then_some(h)
+    let class = class_of(h);
+    (class == "#32770" && looks_like_file_dialog(&class, GetCurrentProcessId(), pid, name_box(h).is_some())).then_some(h)
 }
 
 /// Hotkey on while a foreign file dialog is in front, off otherwise.
@@ -273,12 +290,19 @@ mod tests {
 
     #[test]
     fn dialog_detection() {
-        assert!(looks_like_file_dialog("#32770", 4, 9, &[1, FILENAME_ID]));
-        assert!(looks_like_file_dialog("#32770", 4, 9, &[EDT1_ID]));
-        assert!(!looks_like_file_dialog("#32770", 4, 4, &[FILENAME_ID])); // Grids' own
-        assert!(!looks_like_file_dialog("#32770", 4, 9, &[1, 2])); // a message box
-        assert!(!looks_like_file_dialog("Notepad", 4, 9, &[FILENAME_ID]));
-        assert!(!looks_like_file_dialog("#32770", 4, 0, &[FILENAME_ID]));
+        assert!(looks_like_file_dialog("#32770", 4, 9, true));
+        assert!(!looks_like_file_dialog("#32770", 4, 4, true)); // Grids' own
+        assert!(!looks_like_file_dialog("#32770", 4, 9, false)); // a message box
+        assert!(!looks_like_file_dialog("Notepad", 4, 9, true));
+        assert!(!looks_like_file_dialog("#32770", 4, 0, true));
+        // as Windows 11 builds them (seen on win): Open, Save, and look-alikes that are not the name box
+        assert_eq!(name_box_rank("Edit", 0x47C, "ComboBox", "ComboBoxEx32"), Some(0));
+        assert_eq!(name_box_rank("ComboBox", 0x47C, "ComboBoxEx32", "#32770"), Some(2));
+        assert_eq!(name_box_rank("Edit", 0x480, "#32770", ""), Some(0));
+        assert_eq!(name_box_rank("Edit", 0x3E9, "ComboBox", "FloatNotifySink"), Some(1));
+        assert_eq!(name_box_rank("ToolbarWindow32", 0x3E9, "Breadcrumb Parent", "msctls_progress32"), None);
+        assert_eq!(name_box_rank("Edit", 0x3E9, "#32770", ""), None);
+        assert_eq!(name_box_rank("Edit", 0xA205, "ComboBox", "ComboBoxEx32"), None); // the address bar
         assert_ne!(DLG_HOTKEY_ID, HOTKEY_ID);
     }
 
