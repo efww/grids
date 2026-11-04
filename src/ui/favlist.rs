@@ -316,7 +316,7 @@ pub(crate) unsafe fn paint_fav_row(dc: HDC, row: Option<&FavRow>, r: RECT, dpi: 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::{compose_side, RowKind};
+    use crate::session::{compose_side, short_name, RowKind};
 
     fn row(id: &[usize], name: &str, path: &str, group: bool) -> FavRow {
         FavRow {
@@ -351,8 +351,10 @@ mod tests {
         assert_eq!(filter_fav_rows(&rows, "work"), vec![0, 1]);
         assert_eq!(filter_fav_rows(&rows, "HOME"), vec![2, 3]);
         // The last path component matches even when the row's label does not contain it.
-        let pc = row(&[0], "PC", "::{20D04FE0-3AEA-1069-A2D8-08002B30309D}", false);
-        assert!(fav_row_matches(&pc, "this pc"));
+        let pc = row(&[0], "Root", "::{20D04FE0-3AEA-1069-A2D8-08002B30309D}", false);
+        // The shell name follows the process language (This PC, 내 PC, PC, …).
+        let shown = short_name(&pc.path);
+        assert!(fav_row_matches(&pc, &shown), "{shown}");
         assert!(!fav_row_matches(&pc, "없는"));
         let ko = row(&[0], "사진", r"D:\사진", false);
         assert!(fav_row_matches(&ko, "사진"));

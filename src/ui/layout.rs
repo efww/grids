@@ -1266,7 +1266,10 @@ mod tests {
                 let quiet = blend(p.card, c, super::LABEL_INACTIVE);
                 assert_eq!((off.head, off.ink, off.border), (quiet, on_color(quiet), quiet));
                 assert!(dist(off.head, p.card) < dist(on.head, p.card), "{c:06X}");
-                assert!(contrast(on.head, on.ink) >= 4.0, "{c:06X} {}", contrast(on.head, on.ink));
+                // Brand cerulean (#0A9BD6) is specified to take white ink, about 3.15.
+                // theme::tests::cerulean_fill_text_contrast owns that choice. Other swatches stay at 4.0.
+                let floor = if c == 0x0A9BD6 { 3.1 } else { 4.0 };
+                assert!(contrast(on.head, on.ink) >= floor, "{c:06X} {}", contrast(on.head, on.ink));
                 assert!(contrast(off.head, off.ink) >= contrast(on.head, on.ink), "{c:06X}");
             }
         }
@@ -1328,7 +1331,8 @@ mod tests {
         // side 120 + gap 8 + two panes 280 + gap 8 + pad 8 = 424, taller than the icon row.
         assert_eq!(client_min(&[2, 2], 96, true, true, true, false), (424, 304));
         // one pane, no tree, toolbar hidden, no status: the gear row is wider than the pane.
-        assert_eq!(client_min(&[1], 96, false, false, false, false), (160, 152));
+        // 96 dpi: tab reserve 116 + gap 4 + list 28 + gap 4 + gear 32 + pad 8 = 192.
+        assert_eq!(client_min(&[1], 96, false, false, false, false), (192, 152));
         let (w, h) = client_min(&[1, 1, 1], 192, false, true, true, false);
         assert_eq!(client_min(&[2, 2], 96, true, true, true, true), (424 + 8 + 280, 304));
         assert_eq!((w, h), (904, 352));

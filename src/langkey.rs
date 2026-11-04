@@ -1621,7 +1621,7 @@ pub(crate) const EN: [&str; KEY_COUNT] = [
     "Go",
     "{n} tabs · current tab highlighted",
     "{n} tabs · filter “{q}”",
-    "{Enter} go · {F2} rename · {Del} close tab · {Esc} close",
+    "{Enter} go · {Right} expand · {Left} collapse · {F2} rename · {Del} close tab · {Esc} close",
     "Close all tabs",
     "Reconnecting…",
     "Behavior",

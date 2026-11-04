@@ -1,7 +1,10 @@
 //! Tab list: every window tab, its layout, and the folder open in each pane.
+//! Each tab is one row until it is opened: the representative folder and a `+N` count.
+//! The current tab starts open. A filter opens only the tabs that match.
 //! A pane with several pane tabs lists those folders indented under the pane.
 //! Folder chips use the same tracking tooltip as tab paths (`tip_enter`, below the chip, 4px gap).
 
+use std::collections::BTreeSet;
 use std::mem::size_of;
 
 use windows::Win32::UI::Controls::SetScrollInfo;
@@ -53,6 +56,12 @@ struct Row {
     grid: String,
     panes: usize,
     chips: Vec<Chip>,
+    /// Active pane. Its current folder is the row's representative folder.
+    active: usize,
+    /// Full nested folders. False is one summary chip plus [`Row::extra`].
+    open: bool,
+    /// Other pane folders hidden by the summary chip. Zero when the tab has one folder.
+    extra: usize,
     current: bool,
 }
 
@@ -75,6 +84,13 @@ struct ChipBox {
     pane: usize,
     /// None is the pane header. Some is that pane tab's index in the pane's list.
     sub: Option<usize>,
+    rect: RECT,
+}
+
+/// `+N` beside a collapsed tab's representative folder.
+#[derive(Clone)]
+struct BadgeBox {
+    tab: usize,
     rect: RECT,
 }
 
@@ -124,6 +140,11 @@ struct State {
     chips: Vec<ChipBox>,
     /// Header or pane-tab pressed. Released on the same target opens it.
     arm: Option<Arm>,
+    /// Tabs the user opened. The current tab is open without being listed here.
+    expanded: BTreeSet<usize>,
+    /// Tabs the user shut, including a collapsed current tab. Wins over [`State::expanded`].
+    collapsed: BTreeSet<usize>,
+    badges: Vec<BadgeBox>,
     content_h: i32,
 }
 
@@ -162,6 +183,9 @@ impl State {
             rows: Vec::new(),
             chips: Vec::new(),
             arm: None,
+            expanded: BTreeSet::new(),
+            collapsed: BTreeSet::new(),
+            badges: Vec::new(),
             content_h: 0,
         }
     }
@@ -226,6 +250,264 @@ pub(crate) fn row_matches(name: &str, chips: &[(&str, &str)], q: &str) -> bool {
     let q = q.to_lowercase();
     let has = |s: &str| s.to_lowercase().contains(&q);
     has(name) || chips.iter().any(|(n, p)| has(n) || has(p))
+}
+
+/// One window tab reduced to the strings the filter and the row count need.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TabFold {
+    pub index: usize,
+    pub name: String,
+    /// Display name and full path of each pane folder. A pane tab is its own folder.
+    pub folders: Vec<(String, String)>,
+}
+
+/// What the list draws for one window tab.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum FoldRow {
+    /// One row: the representative folder, plus `extra` other pane folders.
+    Collapsed { tab: usize, extra: usize },
+    Open { tab: usize },
+}
+
+/// A pane folder the representative picker can see. `current` is that pane's open folder.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RepFolder {
+    pub pane: usize,
+    pub current: bool,
+}
+
+/// One painted piece of a label. `hit` is a case-insensitive match of the filter.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct MarkedRun {
+    pub text: String,
+    pub hit: bool,
+}
+
+pub(crate) fn fold_index(row: &FoldRow) -> usize {
+    match *row {
+        FoldRow::Collapsed { tab, .. } | FoldRow::Open { tab } => tab,
+    }
+}
+
+fn fold_matches(tab: &TabFold, q: &str) -> bool {
+    let chips: Vec<(&str, &str)> = tab.folders.iter().map(|(n, p)| (n.as_str(), p.as_str())).collect();
+    row_matches(&tab.name, &chips, q)
+}
+
+/// Open when a filter is showing this tab and the user has not shut it,
+/// when the user expanded it, or when it is the current tab and still on the default.
+/// `collapsed` wins, so Left can shut the current tab and a match.
+pub(crate) fn tab_is_open(index: usize, expanded: &BTreeSet<usize>, collapsed: &BTreeSet<usize>, filtering: bool, current: usize) -> bool {
+    if collapsed.contains(&index) {
+        return false;
+    }
+    filtering || expanded.contains(&index) || index == current
+}
+
+/// Visible tabs, in order. A filter drops misses and opens each match unless the user shut it.
+/// With no filter, only `expanded` and the current tab are open. The rest are one summary row.
+pub(crate) fn visible_fold_rows(tabs: &[TabFold], expanded: &BTreeSet<usize>, collapsed: &BTreeSet<usize>, filter: &str, current: usize) -> Vec<FoldRow> {
+    let filtering = !filter.trim().is_empty();
+    let mut out = Vec::new();
+    for tab in tabs {
+        if filtering && !fold_matches(tab, filter) {
+            continue;
+        }
+        if tab_is_open(tab.index, expanded, collapsed, filtering, current) {
+            out.push(FoldRow::Open { tab: tab.index });
+        } else {
+            out.push(FoldRow::Collapsed { tab: tab.index, extra: tab.folders.len().saturating_sub(1) });
+        }
+    }
+    out
+}
+
+/// Typing a filter opens the matches again. Collapses of other tabs stay.
+pub(crate) fn reveal_matches(tabs: &[TabFold], collapsed: &mut BTreeSet<usize>, filter: &str) {
+    if filter.trim().is_empty() {
+        return;
+    }
+    let hit: Vec<usize> = tabs.iter().filter(|t| fold_matches(t, filter)).map(|t| t.index).collect();
+    for i in hit {
+        collapsed.remove(&i);
+    }
+}
+
+/// `+2` for two other pane folders. No badge when there is nothing else to show.
+pub(crate) fn extra_label(extra: usize) -> Option<String> {
+    if extra == 0 { None } else { Some(format!("+{extra}")) }
+}
+
+/// The active pane's current folder. The first folder when that pane has none.
+pub(crate) fn representative_index(folders: &[RepFolder], active_pane: usize) -> usize {
+    if let Some(i) = folders.iter().position(|f| f.pane == active_pane && f.current) {
+        return i;
+    }
+    if let Some(i) = folders.iter().position(|f| f.pane == active_pane) {
+        return i;
+    }
+    0
+}
+
+pub(crate) fn set_fold(index: usize, open: bool, expanded: &mut BTreeSet<usize>, collapsed: &mut BTreeSet<usize>) {
+    if open {
+        collapsed.remove(&index);
+        expanded.insert(index);
+    } else {
+        expanded.remove(&index);
+        collapsed.insert(index);
+    }
+}
+
+pub(crate) fn toggle_fold(index: usize, open_now: bool, expanded: &mut BTreeSet<usize>, collapsed: &mut BTreeSet<usize>) {
+    set_fold(index, !open_now, expanded, collapsed);
+}
+
+/// Drop `closed` and move every later tab down one, matching the session after a close.
+pub(crate) fn shift_fold_sets(expanded: &mut BTreeSet<usize>, collapsed: &mut BTreeSet<usize>, closed: usize) {
+    *expanded = shift_fold_index(expanded, closed);
+    *collapsed = shift_fold_index(collapsed, closed);
+}
+
+fn shift_fold_index(set: &BTreeSet<usize>, closed: usize) -> BTreeSet<usize> {
+    set.iter().filter_map(|&i| if i == closed { None } else if i > closed { Some(i - 1) } else { Some(i) }).collect()
+}
+
+/// Case-insensitive pieces of `text`. The letters stay as they were written.
+pub(crate) fn mark_runs(text: &str, query: &str) -> Vec<MarkedRun> {
+    let query = query.trim();
+    if text.is_empty() {
+        return Vec::new();
+    }
+    if query.is_empty() {
+        return vec![MarkedRun { text: text.to_string(), hit: false }];
+    }
+    let spans = match_spans(text, query);
+    if spans.is_empty() {
+        return vec![MarkedRun { text: text.to_string(), hit: false }];
+    }
+    let mut out = Vec::new();
+    let mut at = 0usize;
+    for (a, b) in spans {
+        if a > at {
+            out.push(MarkedRun { text: text[at..a].to_string(), hit: false });
+        }
+        if b > a {
+            out.push(MarkedRun { text: text[a..b].to_string(), hit: true });
+        }
+        at = b;
+    }
+    if at < text.len() {
+        out.push(MarkedRun { text: text[at..].to_string(), hit: false });
+    }
+    out
+}
+
+/// Byte ranges of `query` in `text`. A character that lowercases to several characters still matches.
+fn match_spans(text: &str, query: &str) -> Vec<(usize, usize)> {
+    let q: Vec<char> = query.chars().flat_map(|c| c.to_lowercase()).collect();
+    if q.is_empty() {
+        return Vec::new();
+    }
+    let chars: Vec<(usize, char)> = text.char_indices().collect();
+    let mut low = Vec::new();
+    let mut src = Vec::new();
+    for (ci, (_, c)) in chars.iter().enumerate() {
+        let mut n = 0;
+        for lc in c.to_lowercase() {
+            low.push(lc);
+            src.push(ci);
+            n += 1;
+        }
+        if n == 0 {
+            low.push(*c);
+            src.push(ci);
+        }
+    }
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i + q.len() <= low.len() {
+        if low[i..i + q.len()] == q[..] {
+            let a = chars[src[i]].0;
+            let last = src[i + q.len() - 1];
+            let b = chars.get(last + 1).map(|(byte, _)| *byte).unwrap_or(text.len());
+            out.push((a, b));
+            i += q.len();
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+fn prefix_fit(text: &str, room: i32, measure: &impl Fn(&str) -> i32) -> String {
+    let mut acc = String::new();
+    if room <= 0 {
+        return acc;
+    }
+    for c in text.chars() {
+        let mut next = acc.clone();
+        next.push(c);
+        if measure(&next) > room {
+            break;
+        }
+        acc = next;
+    }
+    acc
+}
+
+/// Keep runs that fit. The run that overflows loses its tail to `…`.
+pub(crate) fn fit_marked_end(runs: &[MarkedRun], avail: i32, measure: impl Fn(&str) -> i32) -> Vec<MarkedRun> {
+    if avail <= 0 {
+        return Vec::new();
+    }
+    let total: i32 = runs.iter().map(|r| measure(&r.text).max(0)).sum();
+    if total <= avail {
+        return runs.to_vec();
+    }
+    let ell = "…";
+    let ell_w = measure(ell).max(0);
+    let mut out = Vec::new();
+    let mut used = 0i32;
+    for run in runs {
+        let w = measure(&run.text).max(0);
+        if !run.text.is_empty() && used + w <= avail {
+            out.push(run.clone());
+            used += w;
+            continue;
+        }
+        let room = avail - used - ell_w;
+        let prefix = if room > 0 { prefix_fit(&run.text, room, &measure) } else { String::new() };
+        if !prefix.is_empty() {
+            used += measure(&prefix).max(0);
+            out.push(MarkedRun { text: prefix, hit: run.hit });
+        }
+        if ell_w > 0 && used + ell_w <= avail {
+            out.push(MarkedRun { text: ell.to_string(), hit: false });
+        }
+        break;
+    }
+    out
+}
+
+/// Full text when it fits. Otherwise keep the last path segment, so a match in the folder name stays visible.
+pub(crate) fn fit_marked_path(text: &str, query: &str, avail: i32, measure: impl Fn(&str) -> i32) -> Vec<MarkedRun> {
+    let full = mark_runs(text, query);
+    if avail <= 0 {
+        return Vec::new();
+    }
+    let total: i32 = full.iter().map(|r| measure(&r.text).max(0)).sum();
+    if total <= avail {
+        return full;
+    }
+    let Some(cut) = text.rfind(['\\', '/']) else {
+        return fit_marked_end(&full, avail, measure);
+    };
+    if cut == 0 {
+        return fit_marked_end(&full, avail, measure);
+    }
+    let shown = format!("…{}", &text[cut..]);
+    fit_marked_end(&mark_runs(&shown, query), avail, measure)
 }
 
 /// Chip rectangles inside the folder cell. `widths` are already capped at the cell width.
@@ -427,6 +709,53 @@ fn status_caption(n: usize, q: &str) -> String {
     }
 }
 
+struct PaneFolder {
+    pane: usize,
+    sub: Option<usize>,
+    label: String,
+    tip: String,
+    current: bool,
+    tint: u8,
+}
+
+fn pane_folders(chips: &[Chip]) -> Vec<PaneFolder> {
+    let mut v = Vec::new();
+    for c in chips {
+        if c.tabs.is_empty() {
+            v.push(PaneFolder { pane: c.pane, sub: None, label: c.name.clone(), tip: c.tip.clone(), current: true, tint: c.tint });
+        } else {
+            for leaf in &c.tabs {
+                v.push(PaneFolder { pane: c.pane, sub: Some(leaf.index), label: leaf.name.clone(), tip: leaf.tip.clone(), current: leaf.current, tint: c.tint });
+            }
+        }
+    }
+    v
+}
+
+fn summary_pick(row: &Row) -> Option<PaneFolder> {
+    let folders = pane_folders(&row.chips);
+    if folders.is_empty() {
+        return None;
+    }
+    let reps: Vec<RepFolder> = folders.iter().map(|f| RepFolder { pane: f.pane, current: f.current }).collect();
+    let i = representative_index(&reps, row.active).min(folders.len() - 1);
+    folders.into_iter().nth(i)
+}
+
+fn summary_text(row: &Row) -> String {
+    summary_pick(row).map(|f| path_text(&f.label, &f.tip).to_string()).unwrap_or_default()
+}
+
+fn summary_target(row: &Row) -> (usize, Option<usize>, u8) {
+    summary_pick(row).map(|f| (f.pane, f.sub, f.tint)).unwrap_or((0, None, 0))
+}
+
+fn tab_fold_of(row: &Row) -> TabFold {
+    let folders = pane_folders(&row.chips);
+    TabFold { index: row.index, name: row.name.clone(), folders: folders.into_iter().map(|f| (f.label, f.tip)).collect() }
+}
+
+#[cfg(test)]
 fn row_ok(row: &Row, q: &str) -> bool {
     let mut chips = Vec::new();
     for c in &row.chips {
@@ -500,6 +829,7 @@ fn snapshot() -> Vec<Row> {
                 let head = if tabs.is_empty() { path_text(&label, &tip).to_string() } else { format!("{}  {label}", pane + 1) };
                 chips.push(Chip { pane, name: label, tip, head, tint: tints.get(pane).copied().unwrap_or(0), tabs });
             }
+            let total = chips.iter().map(|c| if c.tabs.is_empty() { 1 } else { c.tabs.len() }).sum::<usize>();
             rows.push(Row {
                 index: i,
                 name,
@@ -509,24 +839,14 @@ fn snapshot() -> Vec<Row> {
                 heights,
                 panes: count,
                 chips,
+                active,
+                open: false,
+                extra: total.saturating_sub(1),
                 current: i == cur,
             });
         }
         rows
     })
-}
-
-fn visible_of(rows: &[Row], q: &str) -> Vec<usize> {
-    rows.iter().filter(|r| row_ok(r, q)).map(|r| r.index).collect()
-}
-
-fn clamp_sel(rows: &[Row], q: &str, sel: usize) -> usize {
-    let vis = visible_of(rows, q);
-    if vis.iter().any(|&i| i == sel) {
-        sel
-    } else {
-        vis.first().copied().unwrap_or(0)
-    }
 }
 
 pub(crate) fn belongs(main: HWND, hwnd: HWND) -> bool {
@@ -644,6 +964,24 @@ pub(crate) unsafe fn on_key(vk: u16, ctrl: bool, shift: bool, alt: bool) -> bool
         }
         VK_DOWN if !ctrl && !alt => {
             nudge_sel(1);
+            true
+        }
+        VK_RIGHT if !ctrl && !alt => {
+            let edit = with_st(|s| s.edit);
+            if ime_composing(edit) {
+                return false;
+            }
+            let sel = with_st(|s| s.sel);
+            apply_fold(sel, Some(true));
+            true
+        }
+        VK_LEFT if !ctrl && !alt => {
+            let edit = with_st(|s| s.edit);
+            if ime_composing(edit) {
+                return false;
+            }
+            let sel = with_st(|s| s.sel);
+            apply_fold(sel, Some(false));
             true
         }
         VK_PRIOR if !alt => {
@@ -868,9 +1206,27 @@ unsafe fn layout(hwnd: HWND) {
 
     let rows_all = snapshot();
     let (edit, prev_q, prev_sel) = with_st(|s| (s.edit, s.query.clone(), s.sel));
-    let q = if edit.0.is_null() { prev_q } else { text_of(edit) };
-    let sel = clamp_sel(&rows_all, &q, prev_sel);
-    let shown: Vec<Row> = rows_all.into_iter().filter(|r| row_ok(r, &q)).collect();
+    let q = if edit.0.is_null() { prev_q.clone() } else { text_of(edit) };
+    let current = rows_all.iter().find(|r| r.current).map(|r| r.index).unwrap_or(0);
+    let mut collapsed = with_st(|s| s.collapsed.clone());
+    if prev_q.trim() != q.trim() {
+        let folds: Vec<TabFold> = rows_all.iter().map(tab_fold_of).collect();
+        reveal_matches(&folds, &mut collapsed, &q);
+        with_st(|s| s.collapsed = collapsed.clone());
+    }
+    let expanded = with_st(|s| s.expanded.clone());
+    let plan = visible_fold_rows(&rows_all.iter().map(tab_fold_of).collect::<Vec<_>>(), &expanded, &collapsed, &q, current);
+    let ids: Vec<usize> = plan.iter().map(fold_index).collect();
+    let sel = if ids.iter().any(|&i| i == prev_sel) { prev_sel } else { ids.first().copied().unwrap_or(0) };
+    let mut shown = Vec::new();
+    for mut row in rows_all {
+        let Some(kind) = plan.iter().find(|f| fold_index(f) == row.index) else { continue };
+        row.open = matches!(kind, FoldRow::Open { .. });
+        if let FoldRow::Collapsed { extra, .. } = *kind {
+            row.extra = extra;
+        }
+        shown.push(row);
+    }
 
     // The key hint stays whole. The count shrinks on the same line, or the keys wrap and the
     // count takes the line above. Measured before the list, so the buttons move up with it.
@@ -906,35 +1262,75 @@ unsafe fn layout(hwnd: HWND) {
     let mut y = 0;
     let mut boxes = Vec::new();
     let mut chips = Vec::new();
+    let mut badges = Vec::new();
     for row in &shown {
         // The folder column gets the width the name and layout columns do not use.
         // A path chip grows up to that column instead of stopping at a fixed 108 DIP.
-        let blocks: Vec<PaneBlock> = row.chips.iter().map(|c| PaneBlock { header: chip_width(dc, small, &c.head, dpi, avail), leaves: c.tabs.len() }).collect();
+        // A shut tab keeps one chip, the representative folder, and leaves room for `+N`.
+        let summary = if row.open { None } else { Some(summary_target(row)) };
+        let blocks: Vec<PaneBlock> = if row.open {
+            row.chips.iter().map(|c| PaneBlock { header: chip_width(dc, small, &c.head, dpi, avail), leaves: c.tabs.len() }).collect()
+        } else {
+            let label = summary_text(row);
+            let badge_w = extra_label(row.extra).map(|s| text_px(dc, small, &s) + sc(dpi, 10)).unwrap_or(0);
+            let gap_b = if badge_w > 0 { sc(dpi, 4) } else { 0 };
+            let max_w = (avail - badge_w - gap_b).max(sc(dpi, 20));
+            if label.is_empty() {
+                Vec::new()
+            } else {
+                vec![PaneBlock { header: chip_width(dc, small, &label, dpi, max_w), leaves: 0 }]
+            }
+        };
         let placed = place_pane_blocks(&blocks, avail, chip_h, leaf_h, chip_gap, leaf_gap, indent);
         let block = placed.last().map(|r| r.rect.bottom).unwrap_or(0);
         let row_h = (block + sc(dpi, 4)).max(sc(dpi, 24));
         let top_off = if block == 0 { 0 } else { ((row_h - block) / 2).max(sc(dpi, 2)) };
-        for hit in &placed {
-            let Some(chip) = row.chips.get(hit.group) else { continue };
-            let sub = match hit.leaf {
-                None => None,
-                Some(k) => match chip.tabs.get(k) {
-                    Some(leaf) => Some(leaf.index),
-                    None => continue,
-                },
-            };
-            let r = hit.rect;
-            chips.push(ChipBox {
-                tab: row.index,
-                pane: chip.pane,
-                sub,
-                rect: RECT {
-                    left: folders_left + r.left,
-                    top: r.top + top_off, // content-relative; scroll applied after
-                    right: folders_left + r.right,
-                    bottom: r.bottom + top_off,
-                },
-            });
+        if let Some((pane, sub, _)) = summary {
+            if let Some(hit) = placed.first() {
+                let r = hit.rect;
+                chips.push(ChipBox {
+                    tab: row.index,
+                    pane,
+                    sub,
+                    rect: RECT {
+                        left: folders_left + r.left,
+                        top: r.top + top_off,
+                        right: folders_left + r.right,
+                        bottom: r.bottom + top_off,
+                    },
+                });
+                if let Some(label) = extra_label(row.extra) {
+                    let bw = text_px(dc, small, &label) + sc(dpi, 10);
+                    let left = folders_left + r.right + sc(dpi, 4);
+                    badges.push(BadgeBox {
+                        tab: row.index,
+                        rect: RECT { left, top: r.top + top_off, right: left + bw, bottom: r.bottom + top_off },
+                    });
+                }
+            }
+        } else {
+            for hit in &placed {
+                let Some(chip) = row.chips.get(hit.group) else { continue };
+                let sub = match hit.leaf {
+                    None => None,
+                    Some(k) => match chip.tabs.get(k) {
+                        Some(leaf) => Some(leaf.index),
+                        None => continue,
+                    },
+                };
+                let r = hit.rect;
+                chips.push(ChipBox {
+                    tab: row.index,
+                    pane: chip.pane,
+                    sub,
+                    rect: RECT {
+                        left: folders_left + r.left,
+                        top: r.top + top_off, // content-relative; scroll applied after
+                        right: folders_left + r.right,
+                        bottom: r.bottom + top_off,
+                    },
+                });
+            }
         }
         boxes.push(RowBox { tab: row.index, y, h: row_h });
         y += row_h;
@@ -960,6 +1356,11 @@ unsafe fn layout(hwnd: HWND) {
         let row_y = boxes.iter().find(|b| b.tab == chip.tab).map(|b| b.y).unwrap_or(0);
         chip.rect.top += list.top + row_y - scroll;
         chip.rect.bottom += list.top + row_y - scroll;
+    }
+    for badge in &mut badges {
+        let row_y = boxes.iter().find(|b| b.tab == badge.tab).map(|b| b.y).unwrap_or(0);
+        badge.rect.top += list.top + row_y - scroll;
+        badge.rect.bottom += list.top + row_y - scroll;
     }
 
     let go_on = !shown.is_empty();
@@ -1002,6 +1403,7 @@ unsafe fn layout(hwnd: HWND) {
         s.shown = shown;
         s.rows = boxes;
         s.chips = chips;
+        s.badges = badges;
         s.content_h = content_h;
     });
     let edit = with_st(|s| s.edit);
@@ -1030,6 +1432,39 @@ fn chip_width(dc: HDC, font: HFONT, name: &str, dpi: i32, max_w: i32) -> i32 {
 
 fn chip_dot(tint: u8) -> u32 {
     tint_color(tint).unwrap_or_else(|| pal().accents[1].1)
+}
+
+/// `open` forces the row. `None` flips it. A filter still hides tabs that do not match.
+unsafe fn apply_fold(index: usize, open: Option<bool>) {
+    let h = with_st(|s| s.hwnd);
+    if h.0.is_null() {
+        return;
+    }
+    let (q, current, any) = with_st(|s| {
+        let current = s.shown.iter().find(|r| r.current).map(|r| r.index).unwrap_or(0);
+        let any = s.shown.iter().any(|r| r.index == index);
+        (s.query.clone(), current, any)
+    });
+    if !any {
+        return;
+    }
+    let filtering = !q.trim().is_empty();
+    hide_chip_tip();
+    with_st(|s| {
+        let expanded = s.expanded.clone();
+        let collapsed = s.collapsed.clone();
+        let open_now = tab_is_open(index, &expanded, &collapsed, filtering, current);
+        if let Some(next) = open {
+            set_fold(index, next, &mut s.expanded, &mut s.collapsed);
+        } else {
+            toggle_fold(index, open_now, &mut s.expanded, &mut s.collapsed);
+        }
+        s.sel = index;
+    });
+    layout(h);
+    reveal();
+    layout(h);
+    _ = InvalidateRect(Some(h), None, false);
 }
 
 unsafe fn nudge_sel(delta: i32) {
@@ -1119,7 +1554,10 @@ unsafe fn close_selected() {
     hide_chip_tip();
     close_tab(sel);
     let n = app(|a| a.s.tabs.len());
-    with_st(|s| s.sel = sel.min(n.saturating_sub(1)));
+    with_st(|s| {
+        shift_fold_sets(&mut s.expanded, &mut s.collapsed, sel);
+        s.sel = sel.min(n.saturating_sub(1));
+    });
     let h = with_st(|s| s.hwnd);
     if !h.0.is_null() && IsWindow(Some(h)).as_bool() {
         layout(h);
@@ -1188,6 +1626,21 @@ fn hit_chip(x: i32, y: i32) -> Option<ChipBox> {
         return None;
     }
     chips.into_iter().rev().find(|c| inside(c.rect, x, y))
+}
+
+fn hit_chevron(x: i32, y: i32) -> Option<usize> {
+    let (list, scroll, rows, dpi) = with_st(|s| (s.list, s.scroll, s.rows.clone(), s.dpi));
+    if !inside(list, x, y) {
+        return None;
+    }
+    for row in rows {
+        let top = list.top + row.y - scroll;
+        let r = RECT { left: list.left, top, right: list.right, bottom: top + row.h };
+        if inside(chevron_box(r, dpi), x, y) {
+            return Some(row.tab);
+        }
+    }
+    None
 }
 
 fn hit_row(x: i32, y: i32) -> Option<usize> {
@@ -1268,6 +1721,7 @@ unsafe fn paint(dc: HDC, _rc: RECT) {
         shown: s.shown.clone(),
         rows: s.rows.clone(),
         chips: s.chips.clone(),
+        badges: s.badges.clone(),
         scroll: s.scroll,
         sel: s.sel,
         hot_row: s.hot_row,
@@ -1333,6 +1787,8 @@ unsafe fn paint(dc: HDC, _rc: RECT) {
             fill(dc, RECT { right: r.left + sc(dpi, 3).max(3), ..r }, crate::basket::CERULEAN);
         }
         fill(dc, RECT { top: r.bottom - 1, bottom: r.bottom, ..r }, p.line);
+        let mark = if row.open { "\u{E70D}" } else { "\u{E76C}" };
+        text(dc, chevron_box(r, dpi), mark, st.icon, p.sub, DT_CENTER);
         paint_name(dc, r, row, dpi, &st, bg);
         paint_layout(dc, r, row, dpi, &st);
         let count = RECT { left: x2, top: r.top, right: x3 - sc(dpi, 2), bottom: r.bottom };
@@ -1367,6 +1823,7 @@ struct PaintSnap {
     shown: Vec<Row>,
     rows: Vec<RowBox>,
     chips: Vec<ChipBox>,
+    badges: Vec<BadgeBox>,
     scroll: i32,
     sel: usize,
     hot_row: Option<usize>,
@@ -1456,7 +1913,7 @@ unsafe fn paint_name(dc: HDC, row: RECT, data: &Row, dpi: i32, st: &PaintSnap, g
         r.right = lock.left;
         text(dc, lock, ICON_LOCK, st.icon, pal().sub, DT_CENTER);
     }
-    text(dc, r, &data.name, st.bold, pal().text, DT_LEFT);
+    paint_marked(dc, r, &data.name, st.bold, pal().text, &st.query, ground);
 }
 
 unsafe fn paint_layout(dc: HDC, row: RECT, data: &Row, dpi: i32, st: &PaintSnap) {
@@ -1506,15 +1963,11 @@ unsafe fn paint_grid_icon(dc: HDC, r: RECT, heights: &[usize]) {
     }
 }
 
-unsafe fn paint_folder_text(dc: HDC, r: RECT, s: &str, font: HFONT, rgb: u32) {
-    if s.contains('\\') || s.contains('/') {
-        text_path(dc, r, s, font, rgb, DT_LEFT);
-    } else {
-        text(dc, r, s, font, rgb, DT_LEFT);
-    }
-}
-
 unsafe fn paint_chips(dc: HDC, row: &Row, st: &PaintSnap, ground: u32) {
+    if !row.open {
+        paint_summary(dc, row, st, ground);
+        return;
+    }
     let dpi = st.dpi;
     let p = pal();
     for spot in st.chips.iter().filter(|c| c.tab == row.index) {
@@ -1531,7 +1984,7 @@ unsafe fn paint_chips(dc: HDC, row: &Row, st: &PaintSnap, ground: u32) {
                 let dot = RECT { left: r.left + sc(dpi, 4), top: mid - d / 2, right: r.left + sc(dpi, 4) + d, bottom: mid + d / 2 };
                 ellipse(dc, dot, chip_dot(chip.tint), None);
                 let text_r = RECT { left: dot.right + sc(dpi, 3), right: r.right - sc(dpi, 4), ..r };
-                paint_folder_text(dc, text_r, &chip.head, st.small, p.text);
+                paint_marked(dc, text_r, &chip.head, st.small, p.text, &st.query, ground);
             }
             Some(k) => {
                 let Some(leaf) = chip.tabs.iter().find(|t| t.index == k) else { continue };
@@ -1545,14 +1998,93 @@ unsafe fn paint_chips(dc: HDC, row: &Row, st: &PaintSnap, ground: u32) {
                     fill(dc, RECT { right: r.left + bar, ..r }, crate::basket::CERULEAN);
                     let mark = RECT { left: r.left + bar, right: r.left + bar + mark_w, ..r };
                     text(dc, mark, "\u{E73E}", st.icon, crate::basket::CERULEAN, DT_CENTER);
-                    paint_folder_text(dc, text_r, label, st.bold, p.text);
+                    paint_marked(dc, text_r, label, st.bold, p.text, &st.query, ground);
                 } else {
                     aa_rfill(dc, r, sc(dpi, 2).max(1), p.pill, Some(p.line), ground);
-                    paint_folder_text(dc, text_r, label, st.small, p.text);
+                    paint_marked(dc, text_r, label, st.small, p.text, &st.query, ground);
                 }
             }
         }
     }
+}
+
+/// Collapsed tab: one folder chip and, when other pane folders exist, a `+N` badge.
+unsafe fn paint_summary(dc: HDC, row: &Row, st: &PaintSnap, ground: u32) {
+    let dpi = st.dpi;
+    let p = pal();
+    let summary = summary_text(row);
+    let tint = summary_target(row).2;
+    for spot in st.chips.iter().filter(|c| c.tab == row.index) {
+        let r = spot.rect;
+        if r.bottom <= st.list.top || r.top >= st.list.bottom {
+            continue;
+        }
+        aa_rfill(dc, r, sc(dpi, 2).max(1), p.pill, Some(p.line), ground);
+        let d = sc(dpi, 7);
+        let mid = (r.top + r.bottom) / 2;
+        let dot = RECT { left: r.left + sc(dpi, 4), top: mid - d / 2, right: r.left + sc(dpi, 4) + d, bottom: mid + d / 2 };
+        ellipse(dc, dot, chip_dot(tint), None);
+        let text_r = RECT { left: dot.right + sc(dpi, 3), right: r.right - sc(dpi, 4), ..r };
+        paint_marked(dc, text_r, &summary, st.small, p.text, &st.query, ground);
+    }
+    let Some(label) = extra_label(row.extra) else { return };
+    let dark = DARK_ON.load(Ordering::Relaxed);
+    let wash = if dark { blend(ground, crate::basket::CERULEAN, 0.45) } else { blend(ground, crate::basket::CERULEAN, 0.20) };
+    let ink = if dark { crate::basket::CERULEAN_MIST } else { crate::basket::CERULEAN_DEEP };
+    for b in st.badges.iter().filter(|b| b.tab == row.index) {
+        let r = b.rect;
+        if r.bottom <= st.list.top || r.top >= st.list.bottom || r.right <= r.left {
+            continue;
+        }
+        aa_rfill(dc, r, sc(dpi, 2).max(1), wash, None, ground);
+        text(dc, r, &label, st.small, ink, DT_CENTER);
+    }
+}
+
+/// Filter matches draw in cerulean. A path that does not fit keeps its last segment.
+unsafe fn paint_marked(dc: HDC, r: RECT, s: &str, font: HFONT, rgb: u32, query: &str, ground: u32) {
+    if r.right <= r.left || s.is_empty() {
+        return;
+    }
+    let path = s.contains('\\') || s.contains('/');
+    let avail = r.right - r.left;
+    let measure = |t: &str| unsafe { text_px(dc, font, t) };
+    let runs = if path { fit_marked_path(s, query, avail, measure) } else { fit_marked_end(&mark_runs(s, query), avail, measure) };
+    if runs.iter().all(|run| !run.hit) {
+        if path {
+            text_path(dc, r, s, font, rgb, DT_LEFT);
+        } else {
+            text(dc, r, s, font, rgb, DT_LEFT);
+        }
+        return;
+    }
+    let saved = SaveDC(dc);
+    IntersectClipRect(dc, r.left, r.top, r.right, r.bottom);
+    let dark = DARK_ON.load(Ordering::Relaxed);
+    let wash = if dark { blend(ground, crate::basket::CERULEAN, 0.55) } else { blend(ground, crate::basket::CERULEAN, 0.34) };
+    let ink = if dark { crate::basket::CERULEAN_MIST } else { crate::basket::CERULEAN_DEEP };
+    let mut x = r.left;
+    for run in &runs {
+        if run.text.is_empty() {
+            continue;
+        }
+        let w = text_px(dc, font, &run.text).max(0);
+        if w == 0 {
+            continue;
+        }
+        let piece = RECT { left: x, top: r.top, right: (x + w).min(r.right), bottom: r.bottom };
+        if run.hit {
+            let m = line_metrics(dc, font);
+            let top = ink_line_top(r.top, r.bottom - r.top, m, ink_kind(&run.text));
+            let band = RECT { left: x, top, right: x + w, bottom: top + m.height().max(1) };
+            fill(dc, band, wash);
+            draw_ink_line(dc, piece, &run.text, font, ink, DT_LEFT | DT_NOCLIP);
+        } else {
+            draw_ink_line(dc, piece, &run.text, font, rgb, DT_LEFT | DT_NOCLIP);
+        }
+        x += w;
+    }
+    let _ = RestoreDC(dc, saved);
 }
 
 unsafe extern "system" fn edit_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM, _id: usize, _data: usize) -> LRESULT {
@@ -1627,6 +2159,13 @@ fn tablist_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                     });
                     SetCapture(h);
                     _ = InvalidateRect(Some(h), None, false);
+                } else if let Some(tab) = hit_chevron(x, y) {
+                    with_st(|s| s.arm = None);
+                    apply_fold(tab, None);
+                    let edit = with_st(|s| s.edit);
+                    if !edit.0.is_null() {
+                        _ = SetFocus(Some(edit));
+                    }
                 } else if let Some(chip) = hit_chip(x, y) {
                     with_st(|s| {
                         s.sel = chip.tab;
@@ -1681,7 +2220,9 @@ fn tablist_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
             }
             WM_LBUTTONDBLCLK => {
                 let (x, y) = xy(lp);
-                if let Some(chip) = hit_chip(x, y) {
+                if hit_chevron(x, y).is_some() {
+                    // The first click already toggled the row.
+                } else if let Some(chip) = hit_chip(x, y) {
                     go_pane(chip.tab, chip.pane, chip.sub);
                 } else if hit_row(x, y).is_some() {
                     go();
@@ -1769,10 +2310,20 @@ fn tablist_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     }
 }
 
-/// Name column after the colour dot. The lock glyph is drawn in this rect when the row is not being renamed.
+/// Disclosure arrow at the left of a tab row. Down is open, right is shut.
+pub(crate) fn chevron_box(row: RECT, dpi: i32) -> RECT {
+    let w = sc(dpi, 16);
+    let h = sc(dpi, 16);
+    let left = row.left + sc(dpi, 4);
+    let mid = (row.top + row.bottom) / 2;
+    RECT { left, top: mid - h / 2, right: left + w, bottom: mid + h / 2 }
+}
+
+/// Name column after the disclosure arrow and the colour dot.
+/// The lock glyph is drawn in this rect when the row is not being renamed.
 fn name_text_rect(row: RECT, color: bool, dpi: i32) -> RECT {
-    let (x0, x1, _, _, _) = cols(RECT { left: row.left, right: row.right, ..row }, dpi);
-    let mut left = x0;
+    let (_, x1, _, _, _) = cols(RECT { left: row.left, right: row.right, ..row }, dpi);
+    let mut left = chevron_box(row, dpi).right + sc(dpi, 2);
     if color {
         let d = sc(dpi, 8);
         left += d + sc(dpi, 4);
@@ -2022,6 +2573,9 @@ mod tests {
                     Leaf { index: 1, name: "old".into(), tip: r"D:\archive\old".into(), current: false },
                 ],
             }],
+            active: 0,
+            open: true,
+            extra: 1,
             current: false,
         };
         assert!(row_ok(&row, "archive"));
@@ -2086,10 +2640,13 @@ mod tests {
 
     #[test]
     fn footer_offers_f2_to_rename() {
-        let s = tr(Key::TabListKeys);
+        // English is the compiled table. tr() follows the process language, which other tests change.
+        let s = crate::langkey::EN[Key::TabListKeys as usize];
         assert!(s.contains("{F2}"), "{s}");
         assert!(s.contains("rename"), "{s}");
-        assert!(kbd_segs(&s).iter().any(|seg| matches!(seg, KbdSeg::Key(k) if k == "F2")));
+        assert!(s.contains("{Right}"), "{s}");
+        assert!(s.contains("{Left}"), "{s}");
+        assert!(kbd_segs(s).iter().any(|seg| matches!(seg, KbdSeg::Key(k) if k == "F2")));
     }
 
     fn ini_value(text: &str, key: &str) -> String {
@@ -2197,8 +2754,118 @@ mod tests {
         assert_eq!(chip_tip(r"C:\Work\docs\"), r"C:\Work\docs\");
         assert!(chip_tip("").is_empty());
         let pc = "::{20D04FE0-3AEA-1069-A2D8-08002B30309D}";
-        assert_eq!(chip_name(pc), "This PC");
-        assert_eq!(chip_tip(pc), "This PC");
+        let this_pc = tr(Key::ThisPc);
+        assert_eq!(chip_name(pc), this_pc);
+        assert_eq!(chip_tip(pc), this_pc);
         assert!(!chip_tip(pc).contains("20D04FE0"));
+    }
+
+    fn fold(index: usize, name: &str, folders: &[(&str, &str)]) -> TabFold {
+        TabFold { index, name: name.into(), folders: folders.iter().map(|(n, p)| (n.to_string(), p.to_string())).collect() }
+    }
+
+    #[test]
+    fn collapsed_rows_show_the_other_folder_count_and_the_current_tab_opens() {
+        let tabs = vec![
+            fold(0, "Work", &[("docs", r"C:\work\docs"), ("src", r"C:\work\src"), ("notes", r"C:\work\notes")]),
+            fold(1, "Photos", &[("a", r"C:\p\a"), ("b", r"C:\p\b"), ("c", r"C:\p\c")]),
+            fold(2, "Inbox", &[("in", r"C:\in")]),
+        ];
+        let rows = visible_fold_rows(&tabs, &BTreeSet::new(), &BTreeSet::new(), "", 0);
+        assert_eq!(
+            rows,
+            vec![
+                FoldRow::Open { tab: 0 },
+                FoldRow::Collapsed { tab: 1, extra: 2 },
+                FoldRow::Collapsed { tab: 2, extra: 0 },
+            ]
+        );
+    }
+
+    #[test]
+    fn an_expanded_tab_opens_and_collapsing_the_current_tab_shuts_it() {
+        let tabs = vec![fold(0, "Work", &[("docs", r"C:\docs"), ("src", r"C:\src")]), fold(1, "Photos", &[("a", r"C:\a"), ("b", r"C:\b")])];
+        let mut expanded = BTreeSet::new();
+        let mut collapsed = BTreeSet::new();
+        set_fold(1, true, &mut expanded, &mut collapsed);
+        let rows = visible_fold_rows(&tabs, &expanded, &collapsed, "", 0);
+        assert_eq!(rows[1], FoldRow::Open { tab: 1 });
+        set_fold(0, false, &mut expanded, &mut collapsed);
+        let rows = visible_fold_rows(&tabs, &expanded, &collapsed, "", 0);
+        assert_eq!(rows[0], FoldRow::Collapsed { tab: 0, extra: 1 });
+        toggle_fold(0, false, &mut expanded, &mut collapsed);
+        let rows = visible_fold_rows(&tabs, &expanded, &collapsed, "", 0);
+        assert_eq!(rows[0], FoldRow::Open { tab: 0 });
+        assert!(tab_is_open(0, &expanded, &collapsed, false, 0));
+        assert!(!tab_is_open(0, &BTreeSet::new(), &BTreeSet::from([0]), false, 0));
+    }
+
+    #[test]
+    fn a_filter_hides_misses_and_expands_only_the_matches() {
+        let tabs = vec![
+            fold(0, "Work", &[("docs", r"C:\work\docs")]),
+            fold(1, "Cedar", &[("plans", r"C:\cedar\plans"), ("old", r"C:\other")]),
+            fold(2, "Desk", &[("notes", r"C:\desk\cedar-notes")]),
+            fold(3, "Inbox", &[("in", r"C:\inbox")]),
+        ];
+        let expanded: BTreeSet<usize> = BTreeSet::from([3]);
+        let mut collapsed: BTreeSet<usize> = BTreeSet::from([1]);
+        reveal_matches(&tabs, &mut collapsed, "  cedar  ");
+        let rows = visible_fold_rows(&tabs, &expanded, &collapsed, "  cedar  ", 0);
+        assert_eq!(rows, vec![FoldRow::Open { tab: 1 }, FoldRow::Open { tab: 2 }]);
+        set_fold(2, false, &mut BTreeSet::new(), &mut collapsed);
+        let rows = visible_fold_rows(&tabs, &expanded, &collapsed, "cedar", 0);
+        assert_eq!(rows, vec![FoldRow::Open { tab: 1 }, FoldRow::Collapsed { tab: 2, extra: 0 }]);
+    }
+
+    #[test]
+    fn representative_folder_is_the_active_panes_current_folder() {
+        let folders = [RepFolder { pane: 0, current: true }, RepFolder { pane: 0, current: false }, RepFolder { pane: 1, current: true }];
+        assert_eq!(representative_index(&folders, 1), 2);
+        assert_eq!(representative_index(&folders, 0), 0);
+        assert_eq!(representative_index(&folders, 4), 0);
+        assert_eq!(extra_label(0), None);
+        assert_eq!(extra_label(2).as_deref(), Some("+2"));
+    }
+
+    #[test]
+    fn closing_a_tab_shifts_later_expand_state() {
+        let mut expanded: BTreeSet<usize> = BTreeSet::from([0, 2, 4]);
+        let mut collapsed: BTreeSet<usize> = BTreeSet::from([2, 3]);
+        shift_fold_sets(&mut expanded, &mut collapsed, 2);
+        assert_eq!(expanded, BTreeSet::from([0, 3]));
+        assert_eq!(collapsed, BTreeSet::from([2]));
+    }
+
+    #[test]
+    fn match_runs_keep_the_original_letters_and_a_long_path_keeps_its_tail() {
+        assert_eq!(
+            mark_runs("Projects", "pro"),
+            vec![MarkedRun { text: "Pro".into(), hit: true }, MarkedRun { text: "jects".into(), hit: false }]
+        );
+        assert_eq!(mark_runs("Photos", ""), vec![MarkedRun { text: "Photos".into(), hit: false }]);
+        assert!(mark_runs("Photos", "zzz").iter().all(|r| !r.hit));
+        let two = mark_runs("Cedar and cedar", "CEDAR");
+        assert_eq!(two.iter().filter(|r| r.hit).map(|r| r.text.as_str()).collect::<Vec<_>>(), vec!["Cedar", "cedar"]);
+        let ko = mark_runs("문서함", "문");
+        assert_eq!(ko[0], MarkedRun { text: "문".into(), hit: true });
+        let path = fit_marked_path(r"C:\work\very\long\cedar", "cedar", 8, |s| s.chars().count() as i32);
+        let shown: String = path.iter().map(|r| r.text.as_str()).collect();
+        assert!(shown.contains("cedar"), "{shown}");
+        assert!(path.iter().any(|r| r.hit && r.text.to_lowercase().contains("cedar")), "{shown}");
+        assert!(shown.chars().count() <= 8, "{shown}");
+    }
+
+    #[test]
+    fn the_chevron_sits_ahead_of_the_tab_name() {
+        let row = RECT { left: 10, top: 20, right: 400, bottom: 44 };
+        let chev = chevron_box(row, 96);
+        assert_eq!(chev.right - chev.left, 16);
+        assert_eq!(chev.bottom - chev.top, 16);
+        assert!(chev.left >= row.left);
+        let name = name_text_rect(row, false, 96);
+        assert!(name.left >= chev.right);
+        let color = name_text_rect(row, true, 96);
+        assert!(color.left > name.left);
     }
 }
