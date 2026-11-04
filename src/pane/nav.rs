@@ -700,12 +700,16 @@ unsafe fn text_px(dc: HDC, font: HFONT, s: &str) -> i32 {
     sz.cx
 }
 
+/// Path and fonts for the share-failure overlay. Uses the caller's `App` borrow:
+/// `pane_of` calls `app()` and would panic on the paint and hit-test path.
+fn net_fail_view(a: &App, h: HWND) -> Option<(String, bool, i32, HFONT)> {
+    let i = pane_at(a, h)?;
+    let n = a.panes.get(i).and_then(|p| p.as_ref())?.net.as_ref().filter(|n| n.bad)?;
+    Some((n.path.clone(), n.timed_out, a.dpi, a.font))
+}
+
 unsafe fn fail_boxes(h: HWND, dc: HDC) -> Option<(FailLayout, String, String, String)> {
-    let (path, timed, dpi, font) = app(|a| {
-        let i = pane_of(h)?;
-        let n = a.panes.get(i).and_then(|p| p.as_ref())?.net.as_ref().filter(|n| n.bad)?;
-        Some((n.path.clone(), n.timed_out, a.dpi, a.font))
-    })?;
+    let (path, timed, dpi, font) = app_try(|a| net_fail_view(a, h))??;
     let msg = net_fail_message(&path, timed.then_some(net_wait_secs()));
     let (retry, back) = net_fail_buttons();
     let mut rc = RECT::default();
@@ -760,7 +764,9 @@ unsafe fn paint_fail_btn(dc: HDC, r: RECT, label: &str, font: HFONT, hot: bool, 
 
 unsafe fn paint_net_fail(h: HWND) {
     let hot = GetWindowLongPtrW(h, GWLP_USERDATA) as i32;
-    let (accent, font) = app(|a| (a.s.accent_now(), a.font));
+    // Skip the frame when a window proc re-entered while `app()` is held. Validating
+    // the paint from here would send WM_ERASEBKGND back into this proc.
+    let Some((accent, font)) = app_try(|a| (a.s.accent_now(), a.font)) else { return };
     buffered(h, |dc, rc| {
         fill(dc, rc, pal().card);
         let Some((lay, msg, retry, back)) = fail_boxes(h, dc) else { return };
@@ -4314,6 +4320,18 @@ mod swap_dup_tests {
         // The only visible pane stays on the left. The right column is a different slot.
         let home = [None; crate::MAXP];
         assert_eq!(right_slot_before(&[1], &home), Some(1));
+    }
+}
+
+#[cfg(test)]
+mod net_fail_borrow_tests {
+    use super::net_fail_view;
+
+    #[test]
+    fn the_overlay_reads_its_pane_on_the_open_borrow() {
+        // This is the paint and hit-test lookup. `pane_of` here would panic: it calls `app()`.
+        let got = crate::app::app(|a| net_fail_view(a, windows::Win32::Foundation::HWND::default()));
+        assert!(got.is_none());
     }
 }
 

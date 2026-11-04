@@ -54,6 +54,28 @@ static CAP: Cap = Cap {
 
 thread_local! {
     static GUARD_DEPTH: Cell<u32> = const { Cell::new(0) };
+    static WND_DEPTH: Cell<u32> = const { Cell::new(0) };
+}
+
+/// Panic payload for a release-build `app()` re-entered from a window proc.
+/// `catch_ui` returns the fallback. The hook writes no crash report.
+pub(crate) struct QuietReentry;
+
+pub(crate) fn skip_reenter(msg: &str) -> ! {
+    log(msg);
+    std::panic::panic_any(QuietReentry);
+}
+
+struct WndDepth;
+impl Drop for WndDepth {
+    fn drop(&mut self) {
+        WND_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+    }
+}
+
+/// True while a window procedure wrapped by `catch_wnd` is on the stack.
+pub(crate) fn in_wndproc() -> bool {
+    WND_DEPTH.with(|d| d.get() > 0)
 }
 
 struct PanicNote {
@@ -91,6 +113,10 @@ pub(crate) fn catch_ui<R>(fallback: R, f: impl FnOnce() -> R + std::panic::Unwin
     match guard(f) {
         Ok(v) => v,
         Err(payload) => {
+            // A window proc re-entered `app()` in a release build. Keep the process up.
+            if payload.downcast_ref::<QuietReentry>().is_some() {
+                return fallback;
+            }
             // The hook already stored file:line. `&*payload` is the panic value.
             // `&payload` is the Box; downcast then misses `&str` and `String` and the dialog said "panic".
             let (hook_msg, hook_loc) = take_panic_note();
@@ -103,6 +129,8 @@ pub(crate) fn catch_ui<R>(fallback: R, f: impl FnOnce() -> R + std::panic::Unwin
 }
 
 pub(crate) fn catch_wnd(f: impl FnOnce() -> LRESULT + std::panic::UnwindSafe) -> LRESULT {
+    WND_DEPTH.with(|d| d.set(d.get().saturating_add(1)));
+    let _depth = WndDepth;
     catch_ui(LRESULT(0), f)
 }
 
@@ -192,6 +220,10 @@ pub(crate) fn install() {
         let _ = std::fs::create_dir_all(dir.join("crashes"));
         let _ = DIR.set(dir.clone());
         std::panic::set_hook(Box::new(|info| {
+            // Release re-entry from a window proc is logged by `skip_reenter` and caught by `catch_ui`.
+            if info.payload().is::<QuietReentry>() {
+                return;
+            }
             // `catch_ui` sets the guard before `catch_unwind`, so a UI panic used to return
             // here and never write `crashes/crash-*.txt`. The dialog then had no file:line.
             let msg = panic_payload(info.payload());
@@ -764,6 +796,27 @@ mod tests {
         assert_eq!(third, vec![r"C:\Program Files\Codec\codec.dll".to_string()]);
         let hit = matching_shell(&paths, &["codec.dll".into(), "shell32.dll".into()]);
         assert_eq!(hit, vec![r"C:\Program Files\Codec\codec.dll".to_string()]);
+    }
+
+    #[test]
+    fn catch_wnd_marks_and_clears_the_window_proc() {
+        assert!(!super::in_wndproc());
+        let n = super::catch_wnd(|| {
+            assert!(super::in_wndproc());
+            LRESULT(3)
+        });
+        assert_eq!(n.0, 3);
+        let _ = super::catch_wnd(|| panic!("wnd"));
+        assert!(!super::in_wndproc());
+    }
+
+    #[test]
+    fn quiet_reentry_returns_the_fallback() {
+        let got = super::catch_ui(4u8, || super::skip_reenter("app() already borrowed"));
+        assert_eq!(got, 4);
+        let wnd = super::catch_wnd(|| super::skip_reenter("app() already borrowed"));
+        assert_eq!(wnd.0, 0);
+        assert!(!super::in_wndproc());
     }
 
     #[test]

@@ -7,7 +7,9 @@ use crate::session::*;
 
 // ---------- app state ----------
 // Single UI thread, one or more top-level windows. `app()` is the window bound to the
-// message being handled. Rule: never call into Win32/COM that can re-enter our window procs while inside app().
+// message being handled. Rule: never call `app()` (or a helper such as `pane_of`) from
+// inside `app()`, and never call Win32/COM that can re-enter a window proc while borrowed.
+// Paint and hit-test use `app_try`, which skips the call when the state is already borrowed.
 
 static NEXT_WIN: AtomicUsize = AtomicUsize::new(1);
 
@@ -731,8 +733,83 @@ pub(crate) unsafe fn across_windows(mut f: impl FnMut()) {
     }
 }
 
+// `file:line:column` of the `app` / `app_try` call that holds `APP`.
+thread_local! {
+    static HELD_AT: Cell<Option<&'static std::panic::Location<'static>>> = const { Cell::new(None) };
+}
+
+struct Hold(Option<&'static std::panic::Location<'static>>);
+impl Drop for Hold {
+    fn drop(&mut self) {
+        HELD_AT.with(|c| c.set(self.0));
+    }
+}
+
+fn push_hold(here: &'static std::panic::Location<'static>) -> Hold {
+    Hold(HELD_AT.with(|c| c.replace(Some(here))))
+}
+
+fn nest_message(here: &std::panic::Location<'_>) -> String {
+    match HELD_AT.with(|c| c.get()) {
+        Some(outer) => format!(
+            "app() already borrowed at {}:{}:{}; nested call at {}:{}:{}",
+            outer.file(),
+            outer.line(),
+            outer.column(),
+            here.file(),
+            here.line(),
+            here.column()
+        ),
+        None => format!("app() already borrowed; nested call at {}:{}:{}", here.file(), here.line(), here.column()),
+    }
+}
+
+fn borrow_app<R>(here: &'static std::panic::Location<'static>, f: impl FnOnce(&mut App) -> R) -> std::result::Result<R, String> {
+    APP.with(|cell| match cell.try_borrow_mut() {
+        Ok(mut a) => {
+            let _hold = push_hold(here);
+            Ok(f(&mut a))
+        }
+        Err(_) => Err(nest_message(here)),
+    })
+}
+
+/// Release builds swallow a nested `app()` that arrived from a window proc.
+/// Debug builds, and any nested call outside a window proc, still panic.
+pub(crate) fn reenter_skips(debug: bool, in_wnd: bool) -> bool {
+    !debug && in_wnd
+}
+
+fn refuse_reenter(msg: String) -> ! {
+    if reenter_skips(cfg!(debug_assertions), crate::crash::in_wndproc()) {
+        crate::crash::skip_reenter(&msg);
+    }
+    panic!("{msg}");
+}
+
+/// Borrow the UI state. A nested call panics and names both call sites.
+/// In a release build, a nested call from a window proc is logged and that proc
+/// returns its fallback instead of crashing. See `app_try` for paint and hit-test.
+#[track_caller]
 pub(crate) fn app<R>(f: impl FnOnce(&mut App) -> R) -> R {
-    APP.with(|a| f(&mut a.borrow_mut()))
+    let here = std::panic::Location::caller();
+    match borrow_app(here, f) {
+        Ok(v) => v,
+        Err(msg) => refuse_reenter(msg),
+    }
+}
+
+/// Like `app`, for paint and hit-test. A nested call is logged and skipped.
+#[track_caller]
+pub(crate) fn app_try<R>(f: impl FnOnce(&mut App) -> R) -> Option<R> {
+    let here = std::panic::Location::caller();
+    match borrow_app(here, f) {
+        Ok(v) => Some(v),
+        Err(msg) => {
+            crate::crash::log(&format!("app() skipped: {msg}"));
+            None
+        }
+    }
 }
 
 /// Pane that commands act on. A tab strip would return the active tab's pane from here.
@@ -748,10 +825,14 @@ pub(crate) unsafe fn view_of<T: Interface>(i: usize) -> Option<T> {
     eb_of(i)?.GetCurrentView::<T>().ok()
 }
 
+/// Pane whose window is `h`, read from a borrow the caller already holds.
+/// `pane_of` calls `app()` and must not be used inside an `app` closure.
+pub(crate) fn pane_at(a: &App, h: HWND) -> Option<usize> {
+    a.panes.iter().position(|p| p.as_ref().is_some_and(|p| p.hwnd == h || unsafe { IsChild(p.hwnd, h).as_bool() }))
+}
+
 pub(crate) fn pane_of(h: HWND) -> Option<usize> {
-    app(|a| {
-        a.panes.iter().position(|p| p.as_ref().is_some_and(|p| p.hwnd == h || unsafe { IsChild(p.hwnd, h).as_bool() }))
-    })
+    app(|a| pane_at(a, h))
 }
 
 pub(crate) fn pane_ctl(i: usize, id: i32) -> Option<HWND> {
@@ -809,5 +890,70 @@ mod empty_desks_deref {
             }
             a.cur = 0;
         });
+    }
+}
+
+#[cfg(test)]
+mod borrow_tests {
+    use super::*;
+
+    fn panic_text(payload: Box<dyn std::any::Any + Send>) -> String {
+        if let Some(s) = payload.downcast_ref::<&str>() {
+            (*s).to_string()
+        } else if let Some(s) = payload.downcast_ref::<String>() {
+            s.clone()
+        } else {
+            String::new()
+        }
+    }
+
+    #[test]
+    fn nested_app_names_the_outer_call_and_the_inner_call() {
+        let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            app(|_outer| {
+                app(|_inner| ());
+            });
+        }))
+        .expect_err("nested app()");
+        let msg = panic_text(err);
+        assert!(msg.contains("already borrowed"), "{msg}");
+        assert!(msg.contains("nested call"), "{msg}");
+        assert!(msg.matches("state.rs").count() >= 2, "{msg}");
+        // The borrow is dropped with the panic, so the next call still runs.
+        assert_eq!(app(|a| a.cur), app(|a| a.cur));
+    }
+
+    #[test]
+    fn app_try_skips_a_reentrant_call_and_leaves_the_borrow_usable() {
+        let ran = Cell::new(false);
+        let got = app(|_a| {
+            app_try(|_b| {
+                ran.set(true);
+                1
+            })
+        });
+        assert_eq!(got, None);
+        assert!(!ran.get());
+        assert_eq!(app(|_| 7), 7);
+    }
+
+    #[test]
+    fn pane_at_reads_inside_app_and_pane_of_does_not() {
+        assert!(app(|a| pane_at(a, HWND::default())).is_none());
+        let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            app(|_a| {
+                let _ = pane_of(HWND::default());
+            });
+        }));
+        assert!(err.is_err());
+        assert!(app(|a| pane_at(a, HWND::default())).is_none());
+    }
+
+    #[test]
+    fn release_window_proc_reentry_is_the_only_skip() {
+        assert!(!reenter_skips(true, true));
+        assert!(!reenter_skips(true, false));
+        assert!(!reenter_skips(false, false));
+        assert!(reenter_skips(false, true));
     }
 }
