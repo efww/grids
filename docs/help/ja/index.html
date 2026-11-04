@@ -32,6 +32,9 @@ body {
   font-family: "Segoe UI", "Malgun Gothic", "Yu Gothic UI", "Meiryo", sans-serif;
   background: var(--bg); color: var(--text); line-height: 1.65; font-size: 15px;
 }
+body:lang(ja) {
+  font-family: Meiryo, "Yu Gothic UI", sans-serif;
+}
 a { color: var(--brand-dark); text-decoration: none; }
 a:hover { text-decoration: underline; }
 .layout { display: grid; grid-template-columns: var(--sidebar-w) 1fr; min-height: 100vh; }
@@ -70,7 +73,14 @@ a:hover { text-decoration: underline; }
   font-size: 13.5px; text-decoration: none;
 }
 .toc a:hover, .toc a:focus { background: var(--surface-2); color: var(--text); text-decoration: none; }
-.main { max-width: 880px; padding: 28px 28px 96px; }
+.main {
+  width: min(880px, 100%);
+  max-width: 880px;
+  margin-left: auto;
+  margin-right: auto;
+  justify-self: center;
+  padding: 28px 28px 96px;
+}
 .hero h1 { margin: 0 0 6px; font-size: 28px; letter-spacing: -0.02em; }
 .hero .tag { color: var(--muted); margin: 0 0 20px; }
 .section-block {
@@ -92,7 +102,7 @@ a:hover { text-decoration: underline; }
   margin: 0; background: var(--surface-2); border: 1px solid var(--line);
   border-radius: 10px; overflow: hidden; padding: 0 0 10px;
 }
-.shot img { display: block; width: 100%; height: auto; padding: 26px 26px 8px; box-sizing: border-box; }
+.shot img { display: block; width: 100%; height: auto; padding: 26px 26px 8px; box-sizing: border-box; cursor: zoom-in; }
 .shot figcaption { padding: 0 14px; font-size: 12px; color: var(--muted); text-align: center; }
 .shortcuts-table { width: 100%; border-collapse: collapse; font-size: 13.5px; margin-top: 8px; }
 .shortcuts-table th, .shortcuts-table td {
@@ -165,6 +175,51 @@ kbd {
   .main { padding: 20px 16px 72px; }
   .section-block { scroll-margin-top: calc(var(--bar-h) + 10px); }
 }
+body.lb-open { overflow: hidden; }
+.lb {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(8, 16, 24, .88);
+  cursor: zoom-out;
+}
+.lb[hidden] { display: none !important; }
+.lb-stage {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  touch-action: none;
+}
+.lb-stage img {
+  position: absolute;
+  left: 0;
+  top: 0;
+  max-width: none;
+  transform-origin: 0 0;
+  user-select: none;
+  -webkit-user-drag: none;
+  cursor: zoom-in;
+}
+.lb.zoomed .lb-stage img { cursor: grab; }
+.lb.panning .lb-stage img { cursor: grabbing; }
+.lb-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 2;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, .55);
+  color: #fff;
+  font: 700 28px/1 "Segoe UI", sans-serif;
+  cursor: pointer;
+}
+.lb-close:hover { background: rgba(0, 0, 0, .78); }
+.lb-close:focus-visible { outline: 2px solid var(--brand-soft); outline-offset: 2px; }
 
 </style>
 </head>
@@ -536,6 +591,10 @@ kbd {
   </section>
 </main>
 </div>
+<div class="lb" id="shot-lb" hidden role="dialog" aria-modal="true" data-label="スクリーンショット">
+  <div class="lb-stage" id="shot-lb-stage"><img id="shot-lb-img" alt="" draggable="false"></div>
+  <button type="button" class="lb-close" id="shot-lb-close" aria-label="閉じる">&times;</button>
+</div>
 <script>
 (function () {
   var q = document.getElementById('q');
@@ -589,7 +648,9 @@ kbd {
     setTimeout(function () { sidebar.inert = true; }, 0);
   });
   document.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape') setOpen(false);
+    if (e.key !== 'Escape') return;
+    if (document.body.classList.contains('lb-open')) return;
+    setOpen(false);
   });
 
   function filter() {
@@ -604,6 +665,224 @@ kbd {
     noMatch.classList.toggle('show', shown === 0);
   }
   q.addEventListener('input', filter);
+})();
+</script>
+<script>
+(function () {
+  var lb = document.getElementById('shot-lb');
+  var stage = document.getElementById('shot-lb-stage');
+  var lbImg = document.getElementById('shot-lb-img');
+  var closeBtn = document.getElementById('shot-lb-close');
+  var opened = false;
+  var openToken = 0;
+  var userScale = 1;
+  var baseW = 0;
+  var baseH = 0;
+  var ox = 0;
+  var oy = 0;
+  var drag = null;
+  var suppressClick = false;
+  var downOnBackdrop = false;
+  var lastFocus = null;
+
+  function cssPx(n) {
+    var r = Math.round(n * 100) / 100;
+    return r === 0 ? '0' : String(r);
+  }
+  function cssScale(n) {
+    var r = Math.round(n * 10000) / 10000;
+    return String(r);
+  }
+  function apply() {
+    lbImg.style.width = cssPx(baseW) + 'px';
+    lbImg.style.height = cssPx(baseH) + 'px';
+    lbImg.style.transform = 'translate(' + cssPx(ox) + 'px,' + cssPx(oy) + 'px) scale(' + cssScale(userScale) + ')';
+    lb.classList.toggle('zoomed', userScale > 1.001);
+  }
+
+  function clampPan() {
+    var W = stage.clientWidth;
+    var H = stage.clientHeight;
+    var visW = baseW * userScale;
+    var visH = baseH * userScale;
+    if (visW <= W) ox = (W - visW) / 2;
+    else {
+      if (ox > 0) ox = 0;
+      if (ox < W - visW) ox = W - visW;
+    }
+    if (visH <= H) oy = (H - visH) / 2;
+    else {
+      if (oy > 0) oy = 0;
+      if (oy < H - visH) oy = H - visH;
+    }
+  }
+
+  function layout(preserve) {
+    var nw = lbImg.naturalWidth;
+    var nh = lbImg.naturalHeight;
+    var W = stage.clientWidth;
+    var H = stage.clientHeight;
+    if (!nw || !nh || !W || !H) return;
+    var oldBaseW = baseW;
+    var oldBaseH = baseH;
+    var fit = Math.min(W / nw, H / nh);
+    baseW = nw * fit;
+    baseH = nh * fit;
+    if (preserve && oldBaseW > 0 && userScale > 1.001) {
+      var cx = W / 2;
+      var cy = H / 2;
+      var lx = (cx - ox) / userScale;
+      var ly = (cy - oy) / userScale;
+      ox = cx - (lx / oldBaseW) * baseW * userScale;
+      oy = cy - (ly / oldBaseH) * baseH * userScale;
+      clampPan();
+    } else {
+      userScale = 1;
+      ox = (W - baseW) / 2;
+      oy = (H - baseH) / 2;
+    }
+    apply();
+  }
+
+  function openShot(srcImg) {
+    var token = ++openToken;
+    opened = true;
+    baseW = 0;
+    baseH = 0;
+    userScale = 1;
+    lastFocus = document.activeElement;
+    var label = srcImg.getAttribute('alt') || lb.getAttribute('data-label') || '';
+    lbImg.alt = label;
+    lb.setAttribute('aria-label', label);
+    lb.hidden = false;
+    document.body.classList.add('lb-open');
+    closeBtn.focus();
+    var next = srcImg.getAttribute('src');
+    function ready() {
+      if (!opened || token !== openToken) return;
+      layout(false);
+    }
+    lbImg.onload = null;
+    if (lbImg.getAttribute('src') === next && lbImg.complete && lbImg.naturalWidth) {
+      ready();
+      return;
+    }
+    lbImg.onload = function () {
+      lbImg.onload = null;
+      ready();
+    };
+    lbImg.setAttribute('src', next);
+    if (lbImg.complete && lbImg.naturalWidth) {
+      lbImg.onload = null;
+      ready();
+    }
+  }
+
+  function closeLb() {
+    if (!opened) return;
+    opened = false;
+    openToken++;
+    drag = null;
+    lb.hidden = true;
+    lb.classList.remove('zoomed', 'panning');
+    document.body.classList.remove('lb-open');
+    if (lastFocus && lastFocus.focus) lastFocus.focus();
+  }
+
+  document.addEventListener('click', function (e) {
+    var shot = e.target && e.target.closest ? e.target.closest('figure.shot img') : null;
+    if (!shot) return;
+    e.preventDefault();
+    openShot(shot);
+  });
+
+  document.addEventListener('dragstart', function (e) {
+    var shot = e.target && e.target.closest ? e.target.closest('figure.shot img') : null;
+    if (shot || e.target === lbImg) e.preventDefault();
+  });
+
+  closeBtn.addEventListener('click', function (e) {
+    e.preventDefault();
+    e.stopPropagation();
+    closeLb();
+  });
+
+  lb.addEventListener('click', function (e) {
+    if (suppressClick) {
+      suppressClick = false;
+      return;
+    }
+    if (e.target === stage && downOnBackdrop) closeLb();
+  });
+
+  document.addEventListener('keydown', function (e) {
+    if (!opened || e.key !== 'Escape') return;
+    e.preventDefault();
+    closeLb();
+  });
+
+  lb.addEventListener('wheel', function (e) {
+    if (!opened || !baseW) return;
+    e.preventDefault();
+    var dy = e.deltaY;
+    if (e.deltaMode === 1) dy *= 16;
+    else if (e.deltaMode === 2) dy *= stage.clientHeight;
+    if (!dy) return;
+    var rect = stage.getBoundingClientRect();
+    var cx = e.clientX - rect.left;
+    var cy = e.clientY - rect.top;
+    var next = userScale * Math.exp(-dy * 0.0015);
+    if (next < 1) next = 1;
+    if (next > 8) next = 8;
+    if (Math.abs(next - userScale) < 0.0001) return;
+    if (next <= 1.001) {
+      userScale = 1;
+      ox = (stage.clientWidth - baseW) / 2;
+      oy = (stage.clientHeight - baseH) / 2;
+    } else {
+      ox = cx - (cx - ox) * (next / userScale);
+      oy = cy - (cy - oy) * (next / userScale);
+      userScale = next;
+      clampPan();
+    }
+    apply();
+  }, { passive: false });
+
+  stage.addEventListener('pointerdown', function (e) {
+    downOnBackdrop = e.target === stage;
+    if (!opened || userScale <= 1.001 || e.button !== 0) return;
+    drag = { id: e.pointerId, x: e.clientX, y: e.clientY, moved: false };
+    try { stage.setPointerCapture(e.pointerId); } catch (err) {}
+    lb.classList.add('panning');
+    e.preventDefault();
+  });
+
+  stage.addEventListener('pointermove', function (e) {
+    if (!drag || e.pointerId !== drag.id) return;
+    var dx = e.clientX - drag.x;
+    var dy = e.clientY - drag.y;
+    if (Math.abs(dx) > 2 || Math.abs(dy) > 2) drag.moved = true;
+    drag.x = e.clientX;
+    drag.y = e.clientY;
+    ox += dx;
+    oy += dy;
+    clampPan();
+    apply();
+  });
+
+  function endDrag(e) {
+    if (!drag || e.pointerId !== drag.id) return;
+    if (drag.moved) suppressClick = true;
+    drag = null;
+    lb.classList.remove('panning');
+  }
+  stage.addEventListener('pointerup', endDrag);
+  stage.addEventListener('pointercancel', endDrag);
+
+  window.addEventListener('resize', function () {
+    if (!opened || !baseW) return;
+    layout(userScale > 1.001);
+  });
 })();
 </script>
 
