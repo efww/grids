@@ -40,89 +40,225 @@ Each pane is a real Windows Explorer view. The right-click menu, drag and drop, 
 
 Copy and move go through **IFileOperation**, so you get the Windows progress window, undo, and the usual conflict prompts. Network transfers can switch to robocopy when you want them to.
 
-## Layouts you can see at a glance
+## Features
 
-Click Layout for an even grid, or press and drag to set how many rows each column gets. Drag a splitter to resize. Double-click it to split evenly. Double-click a pane header, or press Ctrl+Shift+M, to maximise that pane.
+### 1. Layout gallery — every preset
 
-<p align="center"><img width="760" alt="Four panes" src="docs/images-v3/layout_4.png"></p>
+Start with one pane, then pick any built-in grid (up to 4×4). Drag boundaries to resize. Named sessions remember layout, folders, columns, and colour labels; opening a session adds a window tab beside the current one.
+
+<p align="center"><img width="760" alt="Multi-pane layout" src="docs/images-v3/layout.png"></p>
 
 <table>
 <tr>
-<td><img alt="One pane" src="docs/images-v3/layout_1.png"></td>
-<td><img alt="Two panes, one above the other" src="docs/images-v3/layout_2v.png"></td>
-<td><img alt="Three panes" src="docs/images-v3/layout_3.png"></td>
+<td><img alt="1 pane" src="docs/images-v3/layout_1.png"></td>
+<td><img alt="2 horizontal" src="docs/images-v3/layout_2h.png"></td>
+<td><img alt="2 vertical" src="docs/images-v3/layout_2v.png"></td>
 </tr>
 <tr>
-<td><img alt="Three stacked" src="docs/images-v3/layout_3_stack.png"></td>
-<td><img alt="Three columns" src="docs/images-v3/layout_3col.png"></td>
-<td><img alt="Four panes, tall" src="docs/images-v3/layout_4_tall.png"></td>
+<td><img alt="3 panes" src="docs/images-v3/layout_3.png"></td>
+<td><img alt="3 stack" src="docs/images-v3/layout_3_stack.png"></td>
+<td><img alt="3 columns" src="docs/images-v3/layout_3col.png"></td>
 </tr>
 <tr>
-<td><img alt="Five panes" src="docs/images-v3/layout_5.png"></td>
-<td><img alt="1+1+2" src="docs/images-v3/layout_preset_112.png"></td>
-<td><img alt="3+1" src="docs/images-v3/layout_preset_31.png"></td>
+<td><img alt="4 panes" src="docs/images-v3/layout_4.png"></td>
+<td><img alt="4 tall" src="docs/images-v3/layout_4_tall.png"></td>
+<td><img alt="5 panes" src="docs/images-v3/layout_5.png"></td>
+</tr>
+<tr>
+<td><img alt="1+1+2 preset" src="docs/images-v3/layout_preset_112.png"></td>
+<td><img alt="3+1 preset" src="docs/images-v3/layout_preset_31.png"></td>
+<td></td>
 </tr>
 </table>
 
-## Tabs, saved sessions, and a tab list
+### 2. Window tabs and nested pane tabs
 
-Window tabs hold a whole layout: panes, folders, columns, and colour labels. Pane tabs are extra folders inside one cell.
+Chrome-style tabs across the window, plus tabs inside each pane. A tab is named after its active folder (full path in the tooltip). Duplicate a tab, move it to a new window, or save it as a session.
 
-**Ctrl+Shift+L** opens the tab list for this window. Filter by tab name or folder — the search also matches the full path — hover a folder chip for that path, press **F2** to rename the tab, and press Enter to jump. The list button at the end of the tab row, and **Tab list…** on the tab menu, open the same window.
+<p align="center"><img width="760" alt="Window and pane tabs" src="docs/images-v3/tabs.png"></p>
 
-Named sessions are **`.maguro` files** in `maguro-sessions`. Maguro does not open `.grids`, `.qdr`, or `grids.ini`.
+### 3. Pin, lock, and colour tabs
 
-<p align="center">
-  <img width="480" alt="Window tabs and pane tabs" src="docs/images-v3/tabs.png">
-  <img width="280" alt="Tab list" src="docs/images-v3/tab_list.png">
-</p>
+Double-click or right-click a tab → Rename to pin your own name. Lock a tab so it cannot be closed by accident. Pick a tab colour so related work stands out at a glance.
 
-Drag a pane by its number to swap it with another. Hold **Ctrl** while you drag to duplicate that pane instead. A colour on the pane header keeps source and destination obvious.
+### 4. Drag a pane number to swap — Ctrl+drag to duplicate
 
-Drag files or folders from a pane, the file basket, or Explorer, and rest on another window tab or on a pane tab for about half a second. That tab opens, the way a browser tab does. Drop on a pane there to copy or move: the same drive moves, another drive copies, Ctrl copies, Shift moves. The Windows progress window runs on its own thread. Dropping on the tab itself puts the items in that tab's active folder when the drop is a plain set of files and the folder is a real one. Otherwise the tab only opens. Dragging a window tab along the row still reorders it.
-
-## Find, preview, rename
-
-**Ctrl+F** filters the folder as you type. Tick Subfolders and Maguro asks [voidtools Everything](https://www.voidtools.com/) when it is running, or walks the disk when it is not. Everything results are a table of name, path, size and date modified: drag a column border to resize it (kept in maguro.json; double-click that border to restore the column's default width) and hover a row for the full name, folder, exact size and date, in the same tooltip as the rest of Maguro.
-
-**Space** or **F3** opens Quick Look: pictures, PDF, Office, HTML, Markdown, code, CSV, ZIP, HWP, and more. Ctrl+wheel zooms from 10% to 800%. Left and Right step through the files. From the preview, **F2** renames and **Del** deletes.
-
-**Ctrl+Shift+R** opens Batch Rename. Rules stack on the left — replace, case, numbering, dates, regex, and more — and a live preview on the right shows every new name, and every name that would clash, before you commit. Undo puts the last batch back.
+Grab the pane number badge and drop it on another pane to swap their places. Hold **Ctrl** while dragging to duplicate that pane into the target slot instead of swapping.
 
 <p align="center">
-  <img width="360" alt="Search with subfolders" src="docs/images-v3/search.png">
-  <img width="360" alt="Batch rename" src="docs/images-v3/rename.png">
+  <img width="360" alt="Before pane drag" src="docs/images-v3/panedrag_before.png">
+  <img width="360" alt="After pane swap" src="docs/images-v3/panedrag_after.png">
+</p>
+<p align="center"><img width="560" alt="Ctrl+drag duplicates a pane" src="docs/images-v3/panedrag_dup.png"></p>
+
+### 5. Per-pane colours
+
+Give each pane its own accent so you always know which side is source and which is destination — useful in a busy multi-pane layout.
+
+<p align="center"><img width="760" alt="Per-pane colours" src="docs/images-v3/pane_colors.png"></p>
+
+### 6. Built for speed
+
+Cold start measured at **607 ms** on this portable demo build. Paste and drag to or from a network folder can use robocopy (Settings → File operations; off by default). Right-click → Fast paste always uses it, with Maguro's own progress and overwrite / skip / cancel.
+
+**Pane search via Everything.** Ctrl+F filters as you type; tick Subfolders and Maguro asks [voidtools Everything](https://www.voidtools.com/) for instant results (or walks the disk if Everything is not running).
+
+<p align="center"><img width="760" alt="Everything-powered pane search" src="docs/images-v3/search.png"></p>
+
+### 7. Favourites — folders and files, in groups
+
+The sidebar is split evenly: favourites on top, folder tree below. Favourites hold Explorer Quick-access pins plus your own groups (nest folders and files, drag to reorder). Ctrl+B opens the quick favourites list. Drop files or folders onto the panel to pin them.
+
+<p align="center"><img width="760" alt="Favourites with groups of folders and files" src="docs/images-v3/favorites.png"></p>
+
+### 8. Quick preview
+
+Space or F3 previews pictures, PDF, Office, HTML, Markdown, code, CSV, ZIP, HWP/HWPX (Hancom) and more. Ctrl+wheel zooms (10–800%), drag pans, the wheel scrolls, ←/→ step through files. From peek, **F2** renames and **Del** deletes the previewed file.
+
+<p align="center">
+  <img width="480" alt="Preview in a pane" src="docs/images-v3/preview.png">
+  <img width="240" alt="Peek preview window" src="docs/images-v3/preview_peek.png">
 </p>
 
-## Excel, the context menu, and Win+Shift+E
+### 9. Configurable context menu
 
-Right-click `.xlsx` or `.xlsm` and choose **Tidy to A1 · 100%**. Selection returns to A1, zoom to 100%, and you can activate the first sheet and keep a `.bak.xlsx`. **Open read-only** launches Excel with `/r` for `.xls`, `.xlsx`, `.xlsm`, and `.csv`, so a shared workbook stays unlocked for everyone else.
+Settings → Right-click menu items lets you show or hide Maguro's own commands on the Explorer context menu — keep the list lean, or bring every action back.
 
-The file list is Explorer’s menu, plus Maguro rows: add to Maguro favourites, batch rename, Fast paste, and who is using this file. Settings can hide third-party items and the Windows 11 packaged commands. Favourites live in the left panel, in groups, and **Ctrl+B** opens the quick list.
+<p align="center"><img width="560" alt="Configurable context menu settings" src="docs/images-v3/settings_ctxmenu.png"></p>
 
-**Win+Shift+E** brings Maguro forward from any app while it is running. Press it again and a single window opens a new tab; with single-window mode off, Maguro minimises. Win+E stays with Explorer.
+### 10. Batch rename with live name preview
 
-<p align="center"><img width="420" alt="Tidy an Excel workbook to A1 and 100% zoom" src="docs/images-v3/feature_excel_readonly_tidy.png"></p>
+Select files, press Ctrl+Shift+R. Find / replace, numbering, extensions, and presets update a live preview of every new name before you commit.
 
-The same window also keeps a file basket, folder watch, clipboard-path open (Win+Shift+V), nine workspaces, and SMB, WebDAV, SFTP, and FTP connections. The [help](https://samek86.github.io/maguro/help/en/) documents each one, plus every shortcut and setting.
+<p align="center"><img width="560" alt="Batch rename with name preview" src="docs/images-v3/rename.png"></p>
 
-Light and dark follow Windows, or you can pick one. The default accent is cerulean `#0A9BD6`. The interface ships in English, 한국어, 日本語, français, and Deutsch.
+### 11. Server connections
+
+Right-click the favourites panel (or a group) → **Add server connection…**. SMB and WebDAV open as normal Windows folders. SFTP and FTP are mounted with rclone and WinFsp, then browse like any other folder — including preview, the context menu, and fast copy. Passwords stay in Windows Credential Manager and are never written to `maguro.json`.
+
+<p align="center"><img width="420" alt="Server connection dialog with filled fields" src="docs/images-v3/servers.png"></p>
+
+
+### 12. Excel read-only open & tidy to A1 · 100%
+
+Right-click an `.xlsx` / `.xlsm` → **Open read-only** to open Excel without locking the file for others. **Tidy to A1 · 100%** resets selection to A1, zoom to 100%, optionally selects the first sheet, and can keep a `.bak.xlsx` backup.
+
+<p align="center"><img width="420" alt="Tidy Excel workbooks to A1 and 100% zoom" src="docs/images-v3/feature_excel_readonly_tidy.png"></p>
+
+### 13. File basket
+
+Ctrl+Shift+B opens a small always-on-top basket. Drop files into it (or Ctrl+Alt+B for the active selection); copy or move them later into any pane. Paths stay in `maguro.json`, not in session files. Missing originals stay listed until you remove them.
+
+<p align="center"><img width="420" alt="File basket with compact Settings-style rows" src="docs/images-v3/feature_basket.png"></p>
+
+### 14. Folder watch
+
+Ctrl+Shift+W opens folder watch. Add folders, the active pane, or **individual files**. Rows use the same tick checkbox as Settings. Maguro notifies you when something changes, but only while Maguro is running. A watched file that disappears shows as missing until you delete the row.
+
+<p align="center"><img width="560" alt="Folder watch with a folder and a file row" src="docs/images-v3/feature_folder_watch.png"></p>
+
+### 15. Open clipboard path (Win+Shift+V)
+
+With Maguro running, **Win+Shift+V** opens the folder or file path on the clipboard as a new tab — even when another app is in front.
+
+<p align="center"><img width="760" alt="Clipboard path opened as a new tab" src="docs/images-v3/feature_win_shift_v.png"></p>
+
+### 16. Tab list
+
+**Ctrl+Shift+L**, the list button at the right end of the tab row, or **Tab list…** on the tab menu shows every tab's layout, panes, and folders. Filter by name, jump with Enter or a double-click, and rename with F2.
+
+<p align="center"><img width="560" alt="Tab list of each tab's layout, panes, and folders" src="docs/images-v3/tab_list.png"></p>
+
+### Themes & accent
+
+Light and dark that follow Windows, six accent colours per theme (default cerulean `#0A9BD6`), and a settings window in English, 日本語, and 한국어.
+
+<table>
+<tr>
+<td><img alt="Settings" src="docs/images-v3/settings.png"></td>
+</tr>
+<tr>
+<td><img alt="Dark theme" src="docs/images-v3/hero_dark.png"></td>
+</tr>
+</table>
+
+📦 **A small single exe.** Nothing to install. Maguro’s own full-bleed tile is what Explorer shows as the file icon.
 
 ## Install
 
-Download `maguro.exe` from [Releases](https://github.com/Samek86/maguro/releases/latest). Put it anywhere and run it. Releases ship that exe and a `maguro.exe.sha256` checksum, not a zip.
+Download the latest `maguro.exe` from [Releases](https://github.com/Samek86/maguro/releases/latest). Put it in any folder and run it. Releases ship that raw exe and a `maguro.exe.sha256` checksum, not a zip.
 
-The exe is not code-signed, so SmartScreen may warn the first time. Choose **More info → Run anyway**.
+The exe is not code-signed, so Windows SmartScreen may warn the first time. Choose **More info → Run anyway**.
 
-**Requires** Windows 10 version 1903 or later, or Windows 11, x64. SFTP and FTP also need [rclone](https://rclone.org/) and [WinFsp](https://winfsp.dev/). Maguro can offer to install them when you add a connection.
+**Requirements:** Windows 10 (1903 or later) or Windows 11, x64. SFTP/FTP also need [rclone](https://rclone.org/) and [WinFsp](https://winfsp.dev/) (Maguro can install them when you add a connection).
 
-Settings live in `%APPDATA%\Maguro\maguro.json`. A `portable.txt` file next to the exe keeps `maguro.json` beside it. The key table is in [docs/settings.md](docs/settings.md). To build from source, see [CONTRIBUTING.md](CONTRIBUTING.md).
+Settings live in `%APPDATA%\Maguro\maguro.json`. Put a file named `portable.txt` next to `maguro.exe` to keep `maguro.json` beside the exe instead. Named sessions stay `.maguro` files in the `maguro-sessions` folder next to the exe.
+
+To build from source, see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Keyboard shortcuts
+
+Defaults; every one can be changed in Settings → Shortcuts.
+
+| Group | Keys | Action |
+| --- | --- | --- |
+| **Tabs** | Ctrl+T | New tab |
+|  | Ctrl+W | Close tab |
+|  | Ctrl+Tab / Ctrl+Shift+Tab | Next / previous tab |
+|  | Ctrl+Shift+T | Reopen closed tab |
+|  | Ctrl+Shift+L | Tab list |
+| **Panes** | Alt+1…9 | Focus pane |
+|  | Ctrl+\ | Layout picker |
+| **Preview** | Space / F3 | Preview |
+|  | Esc / Space / F3 | Close preview |
+|  | Alt+P | Show or hide the preview pane |
+| **File** | Ctrl+Shift+C | Copy full path |
+|  | Ctrl+Shift+B | File basket |
+|  | Ctrl+Alt+B | Add selection to basket |
+|  | Ctrl+Shift+W | Folder watch |
+|  | Win+Shift+V | Open clipboard path as a new tab |
+|  | Ctrl+Shift+R | Batch rename |
+|  | Ctrl+Alt+R | Recent files (Windows Recent, newest first) |
+|  | Ctrl+Enter | Show the selected recent file in its folder |
+|  | Num+ or Ctrl+Shift+A / Num− / Num* | Select / deselect / invert by pattern |
+|  | Ctrl+Alt+N | New text file |
+|  | Ctrl+Shift+N, F7 | New folder |
+|  | Ctrl+Alt+C | Compare the two panes in WinMerge |
+|  | F2, Del, Ctrl+C / V, F5 | Same as Explorer. F5 reloads the active pane; a failed network folder is tried again |
+| **Other** | Ctrl+B | Quick favourites list |
+|  | Ctrl+S | Save this tab |
+|  | Ctrl+, | Settings |
+|  | F1 / Ctrl+/ | Online help / shortcut list |
+|  | Ctrl+N | New window |
+|  | Ctrl+Alt+G | Jump to a Maguro folder in another app's Open or Save dialog |
+|  | Win+Shift+E | Bring Maguro to the front (global) |
+
+## Known issues
+
+**Don't run Maguro as administrator.** Tools such as PowerToys Mouse Crosshairs cannot follow the cursor over an elevated Maguro window (UIPI). Run Maguro normally, or run both Maguro and PowerToys as administrator.
+
+## Settings
+
+The gear on the tab row opens the view menu. Settings is in that menu (`Ctrl+,`).
+
+Language (Auto, English, and every language file), font, light / dark theme, accent, and shortcuts are all set there. How the file is written, and the full `maguro.json` key table, are in [docs/settings.md](docs/settings.md).
+
+## Language files
+
+English is compiled into the program and is the fallback. Korean, Japanese, French, and German ship as `lang/lang.ko.ini`, `lang/lang.ja.ini`, `lang/lang.fr.ini`, and `lang/lang.de.ini`. On first run, and again whenever the version changes, Maguro writes those four files into the `lang` folder next to the settings file. It always overwrites those four. It never writes, overwrites, or deletes a `lang.xx.user.ini`, or any other `lang.xx.ini` you add.
+
+A file is UTF-8 (a leading BOM is ignored). Lines are `key = text`. `[meta]` `name` is the label in the language list. `[meta]` `font` is an optional UI font. A missing key uses the English text. `lang.xx.user.ini` is loaded on top and wins.
+
+## Roadmap
+
+- [ ] Code-signed builds, so SmartScreen does not warn the first time you run `maguro.exe`
+- [x] Interface languages beyond English, 한국어, and 日本語
 
 ## Credits
 
 Maguro is a fork of [efww/grids](https://github.com/efww/grids) by efww.
 
-Inspired by [Q-Dir](https://www.softwareok.com/?seite=Freeware/Q-Dir) and [voidtools Everything](https://www.voidtools.com/). Maguro is an independent project and is not affiliated with Q-Dir or its author.
+Inspired by [Q-Dir](https://www.softwareok.com/?seite=Freeware/Q-Dir) and [voidtools Everything](https://www.voidtools.com/). Maguro is an independent project, not affiliated with Q-Dir or its author.
 
 ## License
 
