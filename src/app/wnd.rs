@@ -268,6 +268,7 @@ fn main_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                     crate::pane::recent::open_recent(i);
                 }
                 ID_REVEAL => {
+                    // Not on the gear menu. The recent-files menu and Ctrl+Enter still reveal.
                     let i = app(|a| a.s.active);
                     crate::pane::recent::show_selection(i);
                 }
@@ -334,6 +335,7 @@ fn main_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                     crate::winmerge::sync_gear(menu);
                     sync_workspace_menu(menu);
                 }
+                // MF_BYCOMMAND searches submenus, so checks still reach View, Appearance, and Behavior.
                 let check = |id: usize, on: bool| CheckMenuItem(menu, id as u32, (MF_BYCOMMAND | if on { MF_CHECKED } else { MF_UNCHECKED }).0);
                 check(ID_HIDDEN, hidden());
                 check(ID_PANEL, panel);
@@ -368,9 +370,8 @@ fn main_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                     _ = ModifyMenuW(menu, ID_GATHER as u32, MF_BYCOMMAND | MF_STRING, ID_GATHER as usize, &HSTRING::from(label));
                 }
                 _ = ModifyMenuW(menu, ID_RECENT as u32, MF_BYCOMMAND | MF_STRING, ID_RECENT, &HSTRING::from(crate::pane::recent::open_label()));
-                _ = ModifyMenuW(menu, ID_REVEAL as u32, MF_BYCOMMAND | MF_STRING, ID_REVEAL, &HSTRING::from(crate::pane::recent::reveal_label()));
-                let reveal_on = crate::pane::recent::can_show(app(|a| a.s.active));
-                _ = EnableMenuItem(menu, ID_REVEAL as u32, MF_BYCOMMAND | if reveal_on { MF_ENABLED } else { MF_GRAYED });
+                // Show in folder is not on this menu. Do not refresh ID_REVEAL here: that id used to
+                // match another gear row, and a refresh would rename or gray it.
                 if let Some(i) = crate::keys::index("sess.save") {
                     let label = format!("{}\t{}", tr(crate::Key::SaveThisTab), crate::keys::chord_text(i));
                     _ = ModifyMenuW(menu, ID_SESS_SAVE as u32, MF_BYCOMMAND | MF_STRING, ID_SESS_SAVE, &HSTRING::from(label));
@@ -1119,53 +1120,75 @@ pub(crate) unsafe fn set_language(lang: Lang) {
     save_session();
 }
 
-// The view popup opened from the gear on the tab row (no classic menu bar).
+// The popup opened from the gear on the tab row (no classic menu bar).
+// Show in folder is not here. It stays on the recent-files menu and on Ctrl+Enter.
 pub(crate) unsafe fn make_menus() -> Result<HMENU> {
     let view = CreatePopupMenu()?;
     let item = |menu: HMENU, flags: MENU_ITEM_FLAGS, id: usize, text: &str| AppendMenuW(menu, flags, id, &HSTRING::from(text));
-    let save_chord = crate::keys::index("sess.save").map(crate::keys::chord_text).unwrap_or_default();
-    item(view, MF_STRING, ID_SESS_SAVE, &format!("{}\t{}", tr(crate::Key::SaveThisTab), save_chord))?;
+    let sep = |menu: HMENU| AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
+    let chord = |id: &str| crate::keys::index(id).map(crate::keys::chord_text).unwrap_or_default();
+    let with_chord = |name: &str, id: &str| format!("{name}\t{}", chord(id));
+
+    // Session.
+    item(view, MF_STRING, ID_SESS_SAVE, &with_chord(tr(crate::Key::SaveThisTab), "sess.save"))?;
     item(view, MF_STRING, ID_SESS_OPEN, tr(crate::Key::OpenSession2))?;
     let workspaces = workspace_menu()?;
     item(view, MF_POPUP, workspaces.0 as usize, tr(crate::Key::Workspaces))?;
-    AppendMenuW(view, MF_SEPARATOR, 0, PCWSTR::null())?;
-    item(view, MF_STRING, ID_HIDDEN, tr(crate::Key::ShowHiddenFilesCtrlH))?;
-    item(view, MF_STRING, ID_PANEL, tr(crate::Key::LeftPanelCtrlShiftE))?;
-    let preview_chord = crate::keys::index("view.preview").map(crate::keys::chord_text).unwrap_or_default();
-    item(view, MF_STRING, ID_PREVIEW, &format!("{}\t{}", tr(crate::Key::PreviewPane), preview_chord))?;
-    item(
-        view,
-        MF_STRING,
-        ID_GATHER,
-        tr(crate::Key::OpenFoldersFromExplorerWindowsCtrlShift),
-    )?;
-    let basket_chord = crate::keys::index("file.basket").map(crate::keys::chord_text).unwrap_or_default();
-    item(view, MF_STRING, ID_BASKET, &format!("{}\t{}", tr(crate::Key::FileBasket), basket_chord))?;
+    sep(view)?;
+
+    // Tools. WinMerge inserts after Folder watch, before the next separator.
+    item(view, MF_STRING, ID_BASKET, &with_chord(tr(crate::Key::FileBasket), "file.basket"))?;
     item(view, MF_STRING, ID_RECENT, &crate::pane::recent::open_label())?;
-    item(view, MF_STRING, ID_REVEAL, &crate::pane::recent::reveal_label())?;
-    item(view, MF_STRING, ID_EXT, tr(crate::Key::ShowFileExtensions))?;
-    item(view, MF_STRING, ID_FOLLOW, tr(crate::Key::FollowWindowsLightDark))?;
-    item(view, MF_STRING, ID_THEME, theme_action_label())?;
-    item(view, MF_STRING, ID_HOTKEY, &format!("{}\t{}", tr(crate::Key::BringMaguroFrontFromAnywhere), crate::keys::chord_text(crate::keys::index("app.front").unwrap_or(0))))?;
-    item(view, MF_STRING, ID_DBLUP, tr(crate::Key::DoubleClickEmptySpaceParentFolder))?;
+    item(view, MF_STRING, ID_GATHER, tr(crate::Key::OpenFoldersFromExplorerWindowsCtrlShift))?;
+    item(view, MF_STRING, ID_WATCH, &with_chord(tr(crate::Key::FolderWatch), "watch.open"))?;
+    sep(view)?;
+
+    // View.
+    let sub = CreatePopupMenu()?;
+    item(sub, MF_STRING, ID_HIDDEN, tr(crate::Key::ShowHiddenFilesCtrlH))?;
+    item(sub, MF_STRING, ID_EXT, tr(crate::Key::ShowFileExtensions))?;
+    item(sub, MF_STRING, ID_PANEL, tr(crate::Key::LeftPanelCtrlShiftE))?;
+    item(sub, MF_STRING, ID_PREVIEW, &with_chord(tr(crate::Key::PreviewPane), "view.preview"))?;
+    item(view, MF_POPUP, sub.0 as usize, tr(crate::Key::View))?;
+    sep(view)?;
+
+    // Appearance. Theme names the theme a click will turn on.
+    let sub = CreatePopupMenu()?;
+    item(sub, MF_STRING, ID_THEME, theme_action_label())?;
+    item(sub, MF_STRING, ID_FOLLOW, tr(crate::Key::FollowWindowsLightDark))?;
     let colors = CreatePopupMenu()?;
     for k in 0..LIGHT.accents.len() {
         item(colors, MF_STRING, ID_ACCENT + k, accent_name(k))?;
     }
-    AppendMenuW(colors, MF_SEPARATOR, 0, PCWSTR::null())?;
+    sep(colors)?;
     item(colors, MF_STRING, ID_ACCENT_PICK, tr(crate::Key::Custom))?;
-    item(view, MF_POPUP, colors.0 as usize, tr(crate::Key::SelectionColour))?;
-    AppendMenuW(view, MF_SEPARATOR, 0, PCWSTR::null())?;
-    let watch_chord = crate::keys::index("watch.open").map(crate::keys::chord_text).unwrap_or_default();
-    item(view, MF_STRING, ID_WATCH, &format!("{}\t{}", tr(crate::Key::FolderWatch), watch_chord))?;
-    item(view, MF_STRING, ID_SETTINGS, tr(crate::Key::Settings))?;
+    item(sub, MF_POPUP, colors.0 as usize, tr(crate::Key::SelectionColour))?;
     let langs = CreatePopupMenu()?;
     item(langs, MF_STRING, ID_LANG_AUTO, tr(crate::Key::FollowWindows))?;
     for (i, (_, name)) in language_choices().iter().enumerate() {
         item(langs, MF_STRING, ID_LANG_FIRST + i, name)?;
     }
-    item(view, MF_POPUP, langs.0 as usize, tr(crate::Key::Language))?;
-    AppendMenuW(view, MF_SEPARATOR, 0, PCWSTR::null())?;
+    item(sub, MF_POPUP, langs.0 as usize, tr(crate::Key::Language))?;
+    item(view, MF_POPUP, sub.0 as usize, tr(crate::Key::Appearance))?;
+    sep(view)?;
+
+    // Behavior.
+    let sub = CreatePopupMenu()?;
+    item(sub, MF_STRING, ID_DBLUP, tr(crate::Key::DoubleClickEmptySpaceParentFolder))?;
+    item(
+        sub,
+        MF_STRING,
+        ID_HOTKEY,
+        &format!(
+            "{}\t{}",
+            tr(crate::Key::BringMaguroFrontFromAnywhere),
+            crate::keys::chord_text(crate::keys::index("app.front").unwrap_or(0))
+        ),
+    )?;
+    item(view, MF_POPUP, sub.0 as usize, tr(crate::Key::Behavior))?;
+    sep(view)?;
+
+    item(view, MF_STRING, ID_SETTINGS, tr(crate::Key::Settings))?;
     item(view, MF_STRING, ID_KEYS, tr(crate::Key::KeyboardShortcuts))?;
     item(view, MF_STRING, ID_HELP, tr(crate::Key::HelpOnlineF1))?;
     item(view, MF_STRING, ID_ABOUT, tr(crate::Key::AboutMaguro))?;

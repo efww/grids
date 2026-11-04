@@ -671,9 +671,15 @@ mod tests {
         UI.store(1, Ordering::Relaxed);
         assert_eq!(tr(Key::Close), "닫기");
         assert_eq!(tr(Key::FollowWindows), "Windows 설정 따르기");
+        assert_eq!(tr(Key::View), "보기");
+        assert_eq!(tr(Key::Appearance), "모양");
+        assert_eq!(tr(Key::Behavior), "동작");
         UI.store(2, Ordering::Relaxed);
         assert_eq!(tr(Key::Close), "閉じる");
         assert_eq!(tr(Key::FollowWindows), "Windows の設定に従う");
+        assert_eq!(tr(Key::View), "表示");
+        assert_eq!(tr(Key::Appearance), "外観");
+        assert_eq!(tr(Key::Behavior), "動作");
         UI.store(prev, Ordering::Relaxed);
     }
 

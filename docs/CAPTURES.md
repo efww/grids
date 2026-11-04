@@ -137,6 +137,24 @@ servers.png / servers.ko.png / servers.ja.png 는 **실제 호스트·자격 증
 | workspaces.ko.png | 워크스페이스 이름 | MaguroAsk 슬롯 이름 | light/ko | workspaces 시드 Desk | 2279 B (406×140) | Ctrl+Alt+Shift+1 → WM_COMMAND 1920 | DWM | MaguroAsk 제목=Rename/이름 바꾸기, 값=Desk |
 | workspaces.png | 워크스페이스 이름 | MaguroAsk 슬롯 이름 | light/en | workspaces 시드 Desk | 2319 B (406×140) | Ctrl+Alt+Shift+1 → WM_COMMAND 1920 | DWM | MaguroAsk 제목=Rename/이름 바꾸기, 값=Desk |
 
+## 톱니바퀴 메뉴 (gear popup) — 재촬영
+
+images-v3 안에는 **열린 톱니바퀴 메뉴**를 찍은 파일이 없다. 메뉴 내용이 바뀌었어도, 아래 샷은 닫힌 톱니 단추만 탭 줄에 보이므로 이 변경만으로 다시 찍지 않는다. 메뉴를 펼친 샷을 새로 만들 때는 묶음 순서대로 찍는다. 세션(이 탭 저장, 세션 열기, 작업 공간), 도구(파일 바구니, 최근 파일, 탐색기 창의 폴더 가져오기, 폴더 감시, WinMerge), 보기, 모양, 동작, 그리고 설정·단축키·도움말·정보. 폴더에서 표시는 톱니 메뉴에 없다.
+
+닫힌 톱니 단추가 프레임에 들어오는 메인 창 샷 (메뉴는 안 열림):
+
+- address_toolbar.png / address_toolbar.ko.png / address_toolbar.ja.png
+- hero_light.png / hero_light.ko.png / hero_light.ja.png
+- hero_dark.png / hero_dark.ko.png / hero_dark.ja.png
+- favorites.png / favorites.ko.png / favorites.ja.png
+- layout.png / layout.ko.png / layout.ja.png 와 layout_*.png, layout_preset_*.png
+- preview.png / preview.ko.png / preview.ja.png
+- pane_colors.png / pane_colors.ko.png / pane_colors.ja.png
+- tabs.png / tabs.ko.png / tabs.ja.png
+- search.png / search.ko.png / search.ja.png
+- feature_win_shift_v.png / feature_win_shift_v.ko.png / feature_win_shift_v.ja.png
+- panedrag_before.png / panedrag_after.png / panedrag_dup.png
+
 ## 환경 변수 예시
 
 ```powershell
@@ -152,5 +170,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File docs\capture\capture-main.ps
 
 ## 변경 이력 (관련)
 
+- **2026-11-04:** 톱니바퀴 메뉴를 세션 / 도구 / 보기 / 모양 / 동작 / 설정으로 나눔. 열린 메뉴 샷은 images-v3에 없음 (위 절). 닫힌 톱니 단추만 있는 메인 창 샷은 다시 찍지 않음.
 - **2026-11-04:** images-v3 전체(90장) 포터블 재촬영. servers*=가짜 sftp.example.com. preview_peek*=F3 MaguroPeek+실 JPG. feature_win_shift_v*=클립보드 경로 새 탭(Folder Watch 없음). settings_ctxmenu*=CTX_PAGE=8 Right-click menu items. workspaces*=MaguroAsk 슬롯명 Desk. docs/capture/* 재사용 스크립트. CAPTURES 크기 실측 갱신.
 - **2026-11-04 오전:** servers·settings_panes 가짜/페이지 수정 재촬영.

@@ -6,11 +6,22 @@ use crate::imports::*;
 use crate::tr;
 
 /// Gear menu. Direct commands, plus the popup parents so a later open can delete them.
-pub(crate) const ID_WM_NEXT: usize = 1123;
+/// 1123 is Show in folder (`ID_REVEAL`) and 1126 is the preview pane (`ID_PREVIEW`).
+/// Those rows now sit in other parts of the same menu. `MF_BYCOMMAND` searches submenus,
+/// so a shared id would check, rename, or delete the wrong row.
+pub(crate) const ID_WM_NEXT: usize = 1133;
 pub(crate) const ID_WM_FILES: usize = 1124;
-pub(crate) const ID_WM_SAME: usize = 1126;
+pub(crate) const ID_WM_SAME: usize = 1134;
 pub(crate) const ID_WM_POP_FOLDERS: usize = 1127;
 pub(crate) const ID_WM_POP_SAME: usize = 1128;
+
+const _: () = assert!(
+    ID_WM_NEXT != crate::ID_REVEAL
+        && ID_WM_SAME != crate::ID_PREVIEW
+        && ID_WM_NEXT != crate::ID_WATCH
+        && ID_WM_SAME != crate::ID_WATCH
+        && ID_WM_FILES != crate::ID_BASKET
+);
 pub(crate) const ID_WM_PANE: usize = 1300; // + pane index
 pub(crate) const ID_WM_SAMEP: usize = 1320; // + pane index
 
@@ -60,7 +71,12 @@ unsafe fn clear_gear(menu: HMENU) {
     }
 }
 
+/// The tools group ends at Folder watch. Rows are inserted there, before the separator
+/// that leads to View. A menu without that item falls back to just before Settings.
 unsafe fn insert_at(menu: HMENU) -> u32 {
+    if let Some(i) = crate::menu_index(menu, crate::ID_WATCH) {
+        return i + 1;
+    }
     crate::menu_index(menu, crate::ID_SETTINGS).unwrap_or_else(|| GetMenuItemCount(Some(menu)).max(0) as u32)
 }
 

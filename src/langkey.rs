@@ -796,11 +796,12 @@ pub(crate) enum Key {
     TabListKeys,
     CloseAllTabs,
     Reconnecting,
+    Behavior,
 }
 
-pub(crate) const KEY_COUNT: usize = 793;
+pub(crate) const KEY_COUNT: usize = 794;
 
-const _: () = assert!((Key::Reconnecting as usize) + 1 == KEY_COUNT);
+const _: () = assert!((Key::Behavior as usize) + 1 == KEY_COUNT);
 
 pub(crate) const EN: [&str; KEY_COUNT] = [
     "About",
@@ -1595,6 +1596,7 @@ pub(crate) const EN: [&str; KEY_COUNT] = [
     "{Enter} go · {F2} rename · {Del} close tab · {Esc} close",
     "Close all tabs",
     "Reconnecting…",
+    "Behavior",
 
 ];
 
@@ -2392,6 +2394,7 @@ pub(crate) const KEY_ID: [&str; KEY_COUNT] = [
     "tab_list_keys",
     "close_all_tabs",
     "reconnecting",
+    "behavior",
 
 ];
 

@@ -319,10 +319,6 @@ pub(crate) unsafe fn open_recent(i: usize) {
     focus_view(i);
 }
 
-pub(crate) unsafe fn can_show(i: usize) -> bool {
-    locked(i) && selected_path(i).is_some()
-}
-
 pub(crate) unsafe fn show_selection(i: usize) {
     let Some(path) = selected_path(i) else {
         _ = MessageBeep(MB_ICONWARNING);
