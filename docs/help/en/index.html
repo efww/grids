@@ -343,10 +343,10 @@ kbd {
     <div class="shot-grid"><figure class="shot"><img src="../../images-v3/rename.png" alt="Batch rename, rules on the left and a live preview on the right" loading="lazy"><figcaption>Batch rename</figcaption></figure></div>
   </section>
 
-  <section class="section-block" id="basket" data-search="basket always on top ctrl+shift+b copy move send">
+  <section class="section-block" id="basket" data-search="basket always on top ctrl+shift+b copy move select drag">
     <h2>File Basket</h2>
     <p>Ctrl+Shift+B toggles the File Basket, a small always-on-top window. Drop files or folders onto it, or press Ctrl+Alt+B to add the active selection. The list stores paths, not copies. The paths live in <code>maguro.json</code>, not in a <code>.maguro</code> session. Taking an item off the list leaves the original in place.</p>
-    <p><strong>Copy to active pane</strong> and <strong>Move to active pane</strong> use IFileOperation, the same engine as a pane paste. <strong>Send to active pane</strong> does not copy: it opens that item’s folder in the active pane. A file opens its parent and a folder opens itself. Dragging out of the basket copies. Shift-drag moves. Remove and Clear change the list only.</p>
+    <p><strong>Copy to active pane</strong> and <strong>Move to active pane</strong> use IFileOperation, the same engine as a pane paste. <strong>Select all</strong> selects every row. A click selects one row. Ctrl-click toggles a row. Shift-click selects the range from the anchor row. Drag the selection onto a pane or onto Explorer to copy those files. Ctrl copies. Shift moves. Alt and Ctrl+Shift do not create a shortcut. A drop on a pane runs on a worker thread and shows the Windows progress window. Explorer accepts the same drag. Remove and Clear change the list only.</p>
     <p>A missing original stays on the list, marked missing, until you remove it. Copy and move skip missing items.</p>
     <div class="shot-grid"><figure class="shot"><img src="../../images-v3/feature_basket.png" alt="File Basket with a missing file still listed" loading="lazy"><figcaption>File Basket. Missing files stay listed.</figcaption></figure></div>
   </section>

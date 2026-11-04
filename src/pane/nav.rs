@@ -4152,6 +4152,8 @@ pub(crate) struct PaneDrop {
     pub(crate) slot: Arc<AtomicUsize>,
     pub(crate) hwnd: HWND,
     pub(crate) ok: Cell<bool>, // the data being dragged holds shell items
+    /// This drag started in the file basket. Copy into the pane instead of opening the folder.
+    pub(crate) basket: Cell<bool>,
     pub(crate) helper: Option<IDropTargetHelper>,
 }
 
@@ -4160,6 +4162,17 @@ impl PaneDrop {
     pub(crate) unsafe fn pick(&self, effect: *mut DROPEFFECT) {
         *effect = if self.ok.get() { drop_pick(*effect) } else { DROPEFFECT_NONE };
         self.hover(*effect != DROPEFFECT_NONE);
+    }
+    unsafe fn offer_basket(&self, key: MODIFIERKEYS_FLAGS, effect: *mut DROPEFFECT) {
+        if effect.is_null() {
+            return;
+        }
+        let (ctrl, shift, alt) = crate::basket::drag_modifiers(key);
+        let want = crate::basket::drag_effect(ctrl, shift, alt);
+        let i = self.slot.load(Ordering::SeqCst);
+        let ok = want != 0 && app(|a| a.s.paths.get(i).is_some_and(|p| is_fs(p)));
+        *effect = if ok { DROPEFFECT(want) } else { DROPEFFECT_NONE };
+        self.hover(ok);
     }
     pub(crate) unsafe fn hover(&self, on: bool) {
         let h = self.hwnd;
@@ -4191,19 +4204,30 @@ impl PaneDrop {
 }
 
 impl IDropTarget_Impl for PaneDrop_Impl {
-    fn DragEnter(&self, d: Ref<IDataObject>, _: MODIFIERKEYS_FLAGS, pt: &POINTL, effect: *mut DROPEFFECT) -> Result<()> {
+    fn DragEnter(&self, d: Ref<IDataObject>, key: MODIFIERKEYS_FLAGS, pt: &POINTL, effect: *mut DROPEFFECT) -> Result<()> {
         unsafe {
-            self.ok.set(drop_items(&d).is_some());
-            self.pick(effect);
+            let basket = d.as_ref().is_some_and(|obj| crate::basket::is_basket_data(obj));
+            self.basket.set(basket);
+            if basket {
+                self.ok.set(true);
+                self.offer_basket(key, effect);
+            } else {
+                self.ok.set(drop_items(&d).is_some());
+                self.pick(effect);
+            }
             if let Some(hp) = &self.helper {
                 _ = hp.DragEnter(self.hwnd, d.as_ref(), &POINT { x: pt.x, y: pt.y }, *effect);
             }
         }
         Ok(())
     }
-    fn DragOver(&self, _: MODIFIERKEYS_FLAGS, pt: &POINTL, effect: *mut DROPEFFECT) -> Result<()> {
+    fn DragOver(&self, key: MODIFIERKEYS_FLAGS, pt: &POINTL, effect: *mut DROPEFFECT) -> Result<()> {
         unsafe {
-            self.pick(effect);
+            if self.basket.get() {
+                self.offer_basket(key, effect);
+            } else {
+                self.pick(effect);
+            }
             if let Some(hp) = &self.helper {
                 _ = hp.DragOver(&POINT { x: pt.x, y: pt.y }, *effect);
             }
@@ -4212,6 +4236,7 @@ impl IDropTarget_Impl for PaneDrop_Impl {
     }
     fn DragLeave(&self) -> Result<()> {
         unsafe {
+            self.basket.set(false);
             self.hover(false);
             if let Some(hp) = &self.helper {
                 _ = hp.DragLeave();
@@ -4219,8 +4244,23 @@ impl IDropTarget_Impl for PaneDrop_Impl {
         }
         Ok(())
     }
-    fn Drop(&self, d: Ref<IDataObject>, _: MODIFIERKEYS_FLAGS, pt: &POINTL, effect: *mut DROPEFFECT) -> Result<()> {
+    fn Drop(&self, d: Ref<IDataObject>, key: MODIFIERKEYS_FLAGS, pt: &POINTL, effect: *mut DROPEFFECT) -> Result<()> {
         unsafe {
+            let basket = self.basket.get();
+            self.basket.set(false);
+            if basket {
+                *effect = DROPEFFECT_NONE;
+                self.hover(false);
+                let srcs = drop_fs_paths(&d);
+                let i = self.slot.load(Ordering::SeqCst);
+                let dst = app(|a| a.s.paths.get(i).cloned().unwrap_or_default());
+                let (ctrl, shift, alt) = crate::basket::drag_modifiers(key);
+                *effect = DROPEFFECT(crate::basket::drop_transfer(srcs, dst, ctrl, shift, alt));
+                if let Some(hp) = &self.helper {
+                    _ = hp.Drop(d.as_ref(), &POINT { x: pt.x, y: pt.y }, *effect);
+                }
+                return Ok(());
+            }
             let allowed = *effect;
             *effect = DROPEFFECT_NONE;
             self.hover(false);

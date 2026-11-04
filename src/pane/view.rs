@@ -66,7 +66,7 @@ pub(crate) unsafe fn create_pane(i: usize) -> Result<Pane> {
     let ev: IExplorerBrowserEvents = Events(slot.clone()).into();
     let cookie = eb.Advise(&ev)?;
     let helper = CoCreateInstance(&CLSID_DragDropHelper, None, CLSCTX_INPROC_SERVER).ok(); // drag image over the bar
-    let dt: IDropTarget = PaneDrop { slot: slot.clone(), hwnd: h, ok: Cell::new(false), helper }.into();
+    let dt: IDropTarget = PaneDrop { slot: slot.clone(), hwnd: h, ok: Cell::new(false), basket: Cell::new(false), helper }.into();
     _ = RegisterDragDrop(h, &dt);
     let pending = Some(app(|a| a.s.cols[i].clone())); // the session's, for the first folder
     // Born under the theme that is current now, so a later switch is the only reason to rebuild.

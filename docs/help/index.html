@@ -343,10 +343,10 @@ kbd {
     <div class="shot-grid"><figure class="shot"><img src="../images-v3/rename.ko.png" alt="일괄 이름 바꾸기. 왼쪽은 규칙, 오른쪽은 실시간 미리보기" loading="lazy"><figcaption>일괄 이름 바꾸기</figcaption></figure></div>
   </section>
 
-  <section class="section-block" id="basket" data-search="basket always on top ctrl+shift+b copy move send 파일 바구니">
+  <section class="section-block" id="basket" data-search="basket always on top ctrl+shift+b copy move select drag 파일 바구니 모두 선택">
     <h2>파일 바구니</h2>
     <p>Ctrl+Shift+B는 파일 바구니를 켜고 끕니다. 항상 위에 있는 작은 창입니다. 파일이나 폴더를 그 위에 놓거나, Ctrl+Alt+B로 활성 선택을 담습니다. 목록은 사본이 아니라 경로를 저장합니다. 경로는 <code>.maguro</code> 세션이 아니라 <code>maguro.json</code>에 있습니다. 목록에서 빼도 원본은 그 자리에 남습니다.</p>
-    <p><strong>활성 패널에 복사</strong>와 <strong>활성 패널로 이동</strong>은 패널 붙여넣기와 같은 엔진인 IFileOperation을 사용합니다. <strong>활성 패널로 보내기</strong>는 복사하지 않습니다. 그 항목의 폴더를 활성 패널에서 엽니다. 파일은 부모 폴더를 열고, 폴더는 자기 자신을 엽니다. 바구니 밖으로 끌면 복사됩니다. Shift를 누른 채 끌면 이동합니다. 제거와 비우기는 목록만 바꿉니다.</p>
+    <p><strong>활성 패널에 복사</strong>와 <strong>활성 패널로 이동</strong>은 패널 붙여넣기와 같은 엔진인 IFileOperation을 사용합니다. <strong>모두 선택</strong>은 모든 줄을 고릅니다. 클릭은 한 줄, Ctrl+클릭은 그 줄을 켜고 끄기, Shift+클릭은 기준 줄부터 범위입니다. 선택한 항목을 패널이나 탐색기로 끌면 복사됩니다. Ctrl은 복사이고 Shift는 이동입니다. Alt와 Ctrl+Shift는 바로 가기를 만들지 않습니다. 패널에 놓으면 작업 스레드에서 Windows 진행 창이 나옵니다. 탐색기도 같은 끌기를 받습니다. 제거와 비우기는 목록만 바꿉니다.</p>
     <p>없는 원본은 제거할 때까지 원본 없음으로 목록에 남습니다. 복사와 이동은 없는 항목을 건너뜁니다.</p>
     <div class="shot-grid"><figure class="shot"><img src="../images-v3/feature_basket.ko.png" alt="없는 파일이 그대로 목록에 있는 파일 바구니" loading="lazy"><figcaption>파일 바구니. 없는 파일도 목록에 남습니다.</figcaption></figure></div>
   </section>

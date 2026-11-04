@@ -244,7 +244,7 @@ unsafe fn wrap_window(hwnd: HWND, fallback: &IDropTarget, where_: AskWhere) {
     // Drop the shell's registration. Highlight and non-ask drops go to the view's own
     // target, which is `fallback` (the shell view), not whatever pointer the property held.
     let _ = RevokeDragDrop(hwnd);
-    let dt: IDropTarget = AskDrop { hwnd, inner: fallback.clone(), where_, srcs: RefCell::new(Vec::new()) }.into();
+    let dt: IDropTarget = AskDrop { hwnd, inner: fallback.clone(), where_, srcs: RefCell::new(Vec::new()), basket: Cell::new(false) }.into();
     if RegisterDragDrop(hwnd, &dt).is_err() {
         let _ = RegisterDragDrop(hwnd, fallback);
         return;
@@ -309,9 +309,11 @@ pub(crate) struct AskDrop {
     hwnd: HWND,
     inner: IDropTarget,
     where_: AskWhere,
-    /// Filesystem paths seen on DragEnter for a tree drop. Kept so Drop does not have to
-    /// read the data object a second time, and so DragOver can allow the drop.
+    /// Filesystem paths seen on DragEnter. Kept so Drop does not have to read the data
+    /// object a second time, and so DragOver can allow the drop.
     srcs: RefCell<Vec<String>>,
+    /// This drag started in the file basket. Copy by default, on our worker, not the shell's.
+    basket: Cell<bool>,
 }
 
 impl AskDrop {
@@ -342,6 +344,28 @@ impl AskDrop {
             AskWhere::Pane(slot) => pane_destination(slot),
             AskWhere::Tree => tree_destination(pt),
         }
+    }
+
+    /// Enough to show a cursor. The precise folder, including a row under the pointer,
+    /// is resolved on Drop so DragOver does not walk accessibility on every move.
+    unsafe fn can_land(&self, pt: &POINTL) -> bool {
+        match &self.where_ {
+            AskWhere::Pane(slot) => {
+                let i = slot.load(Ordering::SeqCst);
+                app(|a| a.s.paths.get(i).is_some_and(|p| is_fs(p)))
+            }
+            AskWhere::Tree => tree_destination(pt).is_some(),
+        }
+    }
+
+    unsafe fn offer_basket(&self, key: MODIFIERKEYS_FLAGS, pt: &POINTL, effect: *mut DROPEFFECT) {
+        if effect.is_null() {
+            return;
+        }
+        let (ctrl, shift, alt) = crate::basket::drag_modifiers(key);
+        let want = crate::basket::drag_effect(ctrl, shift, alt);
+        let ok = want != 0 && !self.srcs.borrow().is_empty() && self.can_land(pt);
+        *effect = if ok { DROPEFFECT(want) } else { DROPEFFECT_NONE };
     }
 }
 
@@ -479,10 +503,15 @@ pub(crate) unsafe fn on_tree_drop_timer(h: HWND) {
 impl IDropTarget_Impl for AskDrop_Impl {
     fn DragEnter(&self, d: Ref<IDataObject>, key: MODIFIERKEYS_FLAGS, pt: &POINTL, effect: *mut DROPEFFECT) -> Result<()> {
         unsafe {
+            let basket = d.as_ref().is_some_and(|obj| crate::basket::is_basket_data(obj));
+            self.basket.set(basket);
             self.forward_enter(&d, key, pt, effect);
             // Remember the files now. A second read on Drop fails for some objects, and
             // DragOver has to know this is a file drop before it can offer an effect.
-            if matches!(self.where_, AskWhere::Tree) && app(|a| a.s.dropm) == 2 {
+            if basket {
+                *self.srcs.borrow_mut() = drop_fs_paths(&d);
+                self.offer_basket(key, pt, effect);
+            } else if matches!(self.where_, AskWhere::Tree) && app(|a| a.s.dropm) == 2 {
                 *self.srcs.borrow_mut() = drop_fs_paths(&d);
                 self.keep_tree_drop(pt, effect);
             }
@@ -492,12 +521,17 @@ impl IDropTarget_Impl for AskDrop_Impl {
     fn DragOver(&self, key: MODIFIERKEYS_FLAGS, pt: &POINTL, effect: *mut DROPEFFECT) -> Result<()> {
         unsafe {
             let _ = self.inner.DragOver(key, *pt, effect);
-            self.keep_tree_drop(pt, effect);
+            if self.basket.get() {
+                self.offer_basket(key, pt, effect);
+            } else {
+                self.keep_tree_drop(pt, effect);
+            }
         }
         Ok(())
     }
     fn DragLeave(&self) -> Result<()> {
         unsafe {
+            self.basket.set(false);
             self.srcs.borrow_mut().clear();
             let _ = self.inner.DragLeave();
         }
@@ -506,7 +540,24 @@ impl IDropTarget_Impl for AskDrop_Impl {
     fn Drop(&self, d: Ref<IDataObject>, key: MODIFIERKEYS_FLAGS, pt: &POINTL, effect: *mut DROPEFFECT) -> Result<()> {
         unsafe {
             bind_hwnd(self.hwnd);
+            let basket = self.basket.get();
+            self.basket.set(false);
             let stored = std::mem::take(&mut *self.srcs.borrow_mut());
+            // A basket drop copies unless Shift is held. The shell target would move on
+            // the same drive, and it would do the work on this thread. Leave it out.
+            if basket {
+                let _ = self.inner.DragLeave();
+                let srcs = if stored.is_empty() { drop_fs_paths(&d) } else { stored };
+                let (ctrl, shift, alt) = crate::basket::drag_modifiers(key);
+                let eff = match self.destination(pt) {
+                    Some(dst) => crate::basket::drop_transfer(srcs, dst, ctrl, shift, alt),
+                    None => DROPEFFECT_NONE.0,
+                };
+                if !effect.is_null() {
+                    *effect = DROPEFFECT(eff);
+                }
+                return Ok(());
+            }
             // Always ask owns every filesystem drop, same drive included. Falling through
             // to the shell here is what moved a same-drive file with no prompt.
             if app(|a| a.s.dropm) == 2 {

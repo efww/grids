@@ -1,6 +1,10 @@
 // File basket: a small always-on-top window. Paths stay in maguro.json.
 // Copy and move go through IFileOperation on a worker, the same path as a pane paste.
-// Remove and Clear edit the list only. A drag out copies unless Shift is held.
+// Remove and Clear edit the list only.
+// A drag out is an OLE drop: CF_HDROP plus a shell data object when every path parses.
+// It copies unless Shift is held. Ctrl forces a copy. Alt and Ctrl+Shift are the
+// Windows shortcut chord, and this window does not create links. A drop on a Maguro
+// pane or the folder tree runs IFileOperation on a worker, with the Windows progress.
 
 use std::cell::{Cell, RefCell};
 
@@ -32,7 +36,7 @@ const ACT_COPY: u8 = 1;
 const ACT_MOVE: u8 = 2;
 const ACT_REMOVE: u8 = 3;
 const ACT_CLEAR: u8 = 4;
-const ACT_SEND: u8 = 5;
+const ACT_ALL: u8 = 5;
 
 const ROW_DIP: i32 = 22;
 const BTN_H_DIP: i32 = 24;
@@ -42,12 +46,22 @@ const HINT_DIP: i32 = 28;
 const HEAD_DIP: i32 = 22;
 const BAR_DIP: i32 = 22;
 
+/// Mouse-down on a row. `keep` means the row was already selected and Shift is up,
+/// so the selection stays until mouse-up. A drag then carries every selected file.
+struct Press {
+    x: i32,
+    y: i32,
+    index: usize,
+    keep: bool,
+    ctrl: bool,
+}
+
 struct State {
     hwnd: HWND,
     scroll: i32,
     sel: Vec<usize>,
     anchor: usize,
-    press: Option<(i32, i32)>,
+    press: Option<Press>,
     track: Tracker<u8>,
     hot_row: Option<usize>,
     buttons: Vec<(u8, RECT)>,
@@ -170,28 +184,31 @@ pub(crate) fn parent_path(path: &str) -> String {
     t[..i].to_string()
 }
 
-/// Folder to open in the active pane. A file sends its parent.
-pub(crate) fn send_folder(path: &str, is_dir: bool) -> String {
-    let path = tidy_path(path).unwrap_or_else(|| path.to_string());
-    if is_dir {
-        path
-    } else {
-        parent_path(&path)
-    }
-}
-
-pub(crate) fn click_sel(sel: &[usize], index: usize, ctrl: bool) -> Vec<usize> {
-    if !ctrl {
-        return vec![index];
-    }
-    let mut s = sel.to_vec();
-    if let Some(p) = s.iter().position(|&i| i == index) {
-        s.remove(p);
-    } else {
-        s.push(index);
+/// Selection after a click, and the anchor to keep.
+/// Shift selects the inclusive range from `anchor` and leaves the anchor.
+/// Ctrl toggles one row and moves the anchor there. Shift+Ctrl adds that range.
+/// A plain click selects only `index` and moves the anchor there.
+pub(crate) fn click_sel(sel: &[usize], anchor: usize, index: usize, ctrl: bool, shift: bool) -> (Vec<usize>, usize) {
+    if shift {
+        let anchor = if sel.is_empty() { index } else { anchor };
+        let (lo, hi) = if anchor <= index { (anchor, index) } else { (index, anchor) };
+        let mut s = if ctrl { sel.iter().copied().filter(|&i| i < lo || i > hi).collect::<Vec<_>>() } else { Vec::new() };
+        s.extend(lo..=hi);
         s.sort_unstable();
+        s.dedup();
+        return (s, anchor);
     }
-    s
+    if ctrl {
+        let mut s = sel.to_vec();
+        if let Some(p) = s.iter().position(|&i| i == index) {
+            s.remove(p);
+        } else {
+            s.push(index);
+            s.sort_unstable();
+        }
+        return (s, index);
+    }
+    (vec![index], index)
 }
 
 pub(crate) fn all_sel(n: usize) -> Vec<usize> {
@@ -209,13 +226,39 @@ pub(crate) fn send_pick(sel: &[usize], anchor: usize) -> Option<usize> {
     }
 }
 
-/// Copy unless Shift is down. `DROPEFFECT_COPY` is 1, `DROPEFFECT_MOVE` is 2.
-pub(crate) fn drag_effect(shift: bool) -> u32 {
-    if shift {
+/// Copy by default. Ctrl copies. Shift moves.
+/// Alt, or Ctrl with Shift, is the Windows shortcut chord. The basket does not
+/// create links, so that chord is no effect (`0`).
+/// `DROPEFFECT_COPY` is 1 and `DROPEFFECT_MOVE` is 2.
+pub(crate) fn drag_effect(ctrl: bool, shift: bool, alt: bool) -> u32 {
+    if alt || (ctrl && shift) {
+        0
+    } else if shift {
         DROPEFFECT_MOVE.0
     } else {
         DROPEFFECT_COPY.0
     }
+}
+
+pub(crate) fn drag_modifiers(key: MODIFIERKEYS_FLAGS) -> (bool, bool, bool) {
+    (key.0 & MK_CONTROL.0 != 0, key.0 & MK_SHIFT.0 != 0, key.0 & MK_ALT != 0)
+}
+
+/// Start a copy or move of `srcs` into `dst` on a worker thread.
+/// IFileOperation shows the standard progress window. The value returned to the
+/// drag source is copy even for a move: MoveItem runs after Drop returns, and a
+/// reported move would let the source delete the files first.
+pub(crate) unsafe fn drop_transfer(srcs: Vec<String>, dst: String, ctrl: bool, shift: bool, alt: bool) -> u32 {
+    let want = drag_effect(ctrl, shift, alt);
+    if want == 0 || srcs.is_empty() || !is_fs(&dst) {
+        return DROPEFFECT_NONE.0;
+    }
+    let mv = want == DROPEFFECT_MOVE.0;
+    let Some(rename) = send_mode(&srcs, &dst, mv) else {
+        return DROPEFFECT_NONE.0;
+    };
+    let started = if mv { start_drop_move(srcs, dst) } else { start_copy(srcs, dst, rename, false) };
+    if started { DROPEFFECT_COPY.0 } else { DROPEFFECT_NONE.0 }
 }
 
 /// Name colour, path colour, row background. Missing rows are red. Selection is cerulean mist.
@@ -423,7 +466,7 @@ fn actions() -> [(u8, Key); 5] {
     [
         (ACT_COPY, Key::CopyToActivePane),
         (ACT_MOVE, Key::MoveToActivePane),
-        (ACT_SEND, Key::SendToActivePane),
+        (ACT_ALL, Key::BasketSelectAll),
         (ACT_REMOVE, Key::RemoveFromBasket),
         (ACT_CLEAR, Key::ClearBasket),
     ]
@@ -516,8 +559,8 @@ fn inside(r: RECT, x: i32, y: i32) -> bool {
 fn enabled(id: u8) -> bool {
     let (n, sel) = (paths().len(), with_st(|s| !s.sel.is_empty()));
     match id {
-        ACT_CLEAR => n > 0,
-        ACT_COPY | ACT_MOVE | ACT_REMOVE | ACT_SEND => sel,
+        ACT_CLEAR | ACT_ALL => n > 0,
+        ACT_COPY | ACT_MOVE | ACT_REMOVE => sel,
         _ => false,
     }
 }
@@ -532,9 +575,17 @@ unsafe fn act(id: u8) {
         ACT_MOVE => transfer(true),
         ACT_REMOVE => remove_sel(),
         ACT_CLEAR => commit(Vec::new()),
-        ACT_SEND => send_active(),
+        ACT_ALL => {
+            select_all_rows();
+            refresh();
+        }
         _ => {}
     }
+}
+
+fn select_all_rows() {
+    let n = paths().len();
+    with_st(|s| s.sel = all_sel(n));
 }
 
 fn chosen() -> Vec<String> {
@@ -574,27 +625,6 @@ fn remove_sel() {
     commit(list);
 }
 
-unsafe fn send_active() {
-    let list = paths();
-    let pick = with_st(|s| send_pick(&s.sel, s.anchor));
-    let Some(path) = pick.and_then(|i| list.get(i)).cloned() else {
-        _ = MessageBeep(MB_ICONWARNING);
-        return;
-    };
-    if missing(&path) {
-        _ = MessageBeep(MB_ICONWARNING);
-        return;
-    }
-    let dir = path_is_dir(&path);
-    let folder = send_folder(&path, dir);
-    let i = active_pane();
-    if !navigate(i, &folder) {
-        _ = MessageBeep(MB_ICONWARNING);
-        return;
-    }
-    focus_view(i);
-}
-
 unsafe fn path_is_dir(path: &str) -> bool {
     if unc_path(path) {
         return false;
@@ -628,7 +658,7 @@ pub(crate) unsafe fn on_key(vk: u16, ctrl: bool, shift: bool) -> bool {
     match VIRTUAL_KEY(vk) {
         VK_ESCAPE if !ctrl => close(),
         VK_A if ctrl => {
-            with_st(|s| s.sel = all_sel(n));
+            select_all_rows();
             refresh();
         }
         VK_C if ctrl => copy_selected(),
@@ -753,11 +783,73 @@ fn shift_down() -> bool {
     unsafe { GetKeyState(VK_SHIFT.0 as i32) < 0 }
 }
 
+fn ctrl_down() -> bool {
+    unsafe { GetKeyState(VK_CONTROL.0 as i32) < 0 }
+}
+
+fn alt_down() -> bool {
+    unsafe { GetKeyState(VK_MENU.0 as i32) < 0 }
+}
+
+fn current_effect() -> u32 {
+    drag_effect(ctrl_down(), shift_down(), alt_down())
+}
+
+fn basket_cf() -> u16 {
+    unsafe { RegisterClipboardFormatW(w!("MaguroBasket")) as u16 }
+}
+
+fn pref_cf() -> u16 {
+    unsafe { RegisterClipboardFormatW(w!("Preferred DropEffect")) as u16 }
+}
+
+/// True when `obj` is a drag that started in the file basket.
+pub(crate) unsafe fn is_basket_data(obj: &IDataObject) -> bool {
+    let cf = basket_cf();
+    if cf == 0 {
+        return false;
+    }
+    let fmt = FORMATETC {
+        cfFormat: cf,
+        ptd: std::ptr::null_mut(),
+        dwAspect: DVASPECT_CONTENT.0,
+        lindex: -1,
+        tymed: TYMED_HGLOBAL.0 as u32,
+    };
+    obj.QueryGetData(&fmt) == S_OK
+}
+
+/// Shell data object for every path. None when a path does not parse, so the
+/// drag still offers our own CF_HDROP for the full list.
+unsafe fn shell_data(paths: &[String]) -> Option<IDataObject> {
+    let mut pidls: Vec<*mut ITEMIDLIST> = Vec::new();
+    for p in paths {
+        let mut pidl = std::ptr::null_mut();
+        if SHParseDisplayName(&HSTRING::from(p), None, &mut pidl, 0, None).is_ok() && !pidl.is_null() {
+            pidls.push(pidl);
+        }
+    }
+    if pidls.len() != paths.len() {
+        for p in pidls {
+            CoTaskMemFree(Some(p as _));
+        }
+        return None;
+    }
+    let refs: Vec<*const ITEMIDLIST> = pidls.iter().copied().map(|p| p as *const ITEMIDLIST).collect();
+    let arr = SHCreateShellItemArrayFromIDLists(&refs).ok();
+    for p in pidls {
+        CoTaskMemFree(Some(p as _));
+    }
+    arr?.BindToHandler::<_, IDataObject>(None, &BHID_DataObject).ok()
+}
+
 unsafe fn begin_drag(paths: Vec<String>) {
     if paths.is_empty() {
+        _ = MessageBeep(MB_ICONWARNING);
         return;
     }
-    let data: IDataObject = BasketData { paths }.into();
+    let shell = shell_data(&paths);
+    let data: IDataObject = BasketData { paths, shell }.into();
     let Ok(source) = data.cast::<IDropSource>() else { return };
     let mut effect = DROPEFFECT::default();
     let _ = DoDragDrop(&data, &source, DROPEFFECT_COPY | DROPEFFECT_MOVE, &mut effect);
@@ -767,6 +859,7 @@ unsafe fn begin_drag(paths: Vec<String>) {
 #[implement(IDataObject, IDropSource)]
 struct BasketData {
     paths: Vec<String>,
+    shell: Option<IDataObject>,
 }
 
 fn fmt_ok(fmt: &FORMATETC, cf: u16) -> bool {
@@ -775,14 +868,25 @@ fn fmt_ok(fmt: &FORMATETC, cf: u16) -> bool {
 
 impl IDataObject_Impl for BasketData_Impl {
     fn GetData(&self, fmt: *const FORMATETC) -> Result<STGMEDIUM> {
-        let fmt = unsafe { &*fmt };
-        let pref = unsafe { RegisterClipboardFormatW(w!("Preferred DropEffect")) } as u16;
-        if fmt_ok(fmt, CF_HDROP.0) {
-            let mem = unsafe { hdrop_mem(&self.paths) }.ok_or_else(|| Error::from(E_OUTOFMEMORY))?;
+        let asked = unsafe { &*fmt };
+        let pref = pref_cf();
+        let mark = basket_cf();
+        // Preferred effect follows the keys now, not a value baked in at drag start.
+        if pref != 0 && fmt_ok(asked, pref) {
+            let mem = unsafe { effect_mem(current_effect()) }.ok_or_else(|| Error::from(E_OUTOFMEMORY))?;
             return Ok(medium(mem));
         }
-        if pref != 0 && fmt_ok(fmt, pref) {
-            let mem = unsafe { effect_mem(drag_effect(shift_down())) }.ok_or_else(|| Error::from(E_OUTOFMEMORY))?;
+        if mark != 0 && fmt_ok(asked, mark) {
+            let mem = unsafe { effect_mem(1) }.ok_or_else(|| Error::from(E_OUTOFMEMORY))?;
+            return Ok(medium(mem));
+        }
+        if let Some(shell) = &self.shell {
+            if let Ok(got) = unsafe { shell.GetData(fmt) } {
+                return Ok(got);
+            }
+        }
+        if fmt_ok(asked, CF_HDROP.0) {
+            let mem = unsafe { hdrop_mem(&self.paths) }.ok_or_else(|| Error::from(E_OUTOFMEMORY))?;
             return Ok(medium(mem));
         }
         Err(Error::from(DV_E_FORMATETC))
@@ -793,13 +897,16 @@ impl IDataObject_Impl for BasketData_Impl {
     }
 
     fn QueryGetData(&self, fmt: *const FORMATETC) -> HRESULT {
-        let fmt = unsafe { &*fmt };
-        let pref = unsafe { RegisterClipboardFormatW(w!("Preferred DropEffect")) } as u16;
-        if fmt_ok(fmt, CF_HDROP.0) || (pref != 0 && fmt_ok(fmt, pref)) {
-            S_OK
-        } else {
-            DV_E_FORMATETC
+        let asked = unsafe { &*fmt };
+        let pref = pref_cf();
+        let mark = basket_cf();
+        if fmt_ok(asked, CF_HDROP.0) || (pref != 0 && fmt_ok(asked, pref)) || (mark != 0 && fmt_ok(asked, mark)) {
+            return S_OK;
         }
+        if let Some(shell) = &self.shell {
+            return unsafe { shell.QueryGetData(fmt) };
+        }
+        DV_E_FORMATETC
     }
 
     fn GetCanonicalFormatEtc(&self, _: *const FORMATETC, out: *mut FORMATETC) -> HRESULT {
@@ -809,7 +916,12 @@ impl IDataObject_Impl for BasketData_Impl {
         E_NOTIMPL
     }
 
-    fn SetData(&self, _: *const FORMATETC, _: *const STGMEDIUM, _: BOOL) -> Result<()> {
+    fn SetData(&self, fmt: *const FORMATETC, medium: *const STGMEDIUM, release: BOOL) -> Result<()> {
+        // The shell object accepts Performed DropEffect. A move we finish ourselves
+        // still reports copy, so the source does not delete ahead of MoveItem.
+        if let Some(shell) = &self.shell {
+            return unsafe { shell.SetData(fmt, medium, release.as_bool()) };
+        }
         Err(Error::from(E_NOTIMPL))
     }
 
@@ -817,7 +929,7 @@ impl IDataObject_Impl for BasketData_Impl {
         if dir != DATADIR_GET.0 as u32 {
             return Err(Error::from(E_NOTIMPL));
         }
-        Ok(FmtEnum { items: drag_formats(), at: Cell::new(0) }.into())
+        Ok(FmtEnum { items: listed_formats(&self.shell), at: Cell::new(0) }.into())
     }
 
     fn DAdvise(&self, _: *const FORMATETC, _: u32, _: Ref<IAdviseSink>) -> Result<u32> {
@@ -833,20 +945,70 @@ impl IDataObject_Impl for BasketData_Impl {
     }
 }
 
-fn drag_formats() -> Vec<FORMATETC> {
-    let one = |cf: u16| FORMATETC {
+fn one_fmt(cf: u16) -> FORMATETC {
+    FORMATETC {
         cfFormat: cf,
         ptd: std::ptr::null_mut(),
         dwAspect: DVASPECT_CONTENT.0,
         lindex: -1,
         tymed: TYMED_HGLOBAL.0 as u32,
-    };
-    let mut items = vec![one(CF_HDROP.0)];
-    let pref = unsafe { RegisterClipboardFormatW(w!("Preferred DropEffect")) } as u16;
+    }
+}
+
+fn drag_formats() -> Vec<FORMATETC> {
+    let mut items = vec![one_fmt(CF_HDROP.0)];
+    let pref = pref_cf();
     if pref != 0 {
-        items.push(one(pref));
+        items.push(one_fmt(pref));
+    }
+    let mark = basket_cf();
+    if mark != 0 {
+        items.push(one_fmt(mark));
     }
     items
+}
+
+fn listed_formats(shell: &Option<IDataObject>) -> Vec<FORMATETC> {
+    let mut items = drag_formats();
+    let Some(shell) = shell else { return items };
+    for fmt in shell_formats(shell) {
+        if items.iter().any(|e| e.cfFormat == fmt.cfFormat) {
+            continue;
+        }
+        items.push(fmt);
+    }
+    items
+}
+
+fn shell_formats(shell: &IDataObject) -> Vec<FORMATETC> {
+    let Ok(en) = (unsafe { shell.EnumFormatEtc(DATADIR_GET.0 as u32) }) else { return Vec::new() };
+    let mut out = Vec::new();
+    loop {
+        let mut one = [FORMATETC {
+            cfFormat: 0,
+            ptd: std::ptr::null_mut(),
+            dwAspect: 0,
+            lindex: -1,
+            tymed: 0,
+        }];
+        let mut n = 0u32;
+        let hr = unsafe { en.Next(&mut one, Some(&mut n)) };
+        if n == 0 {
+            break;
+        }
+        let mut fmt = one[0];
+        if !fmt.ptd.is_null() {
+            unsafe { CoTaskMemFree(Some(fmt.ptd as _)) };
+            fmt.ptd = std::ptr::null_mut();
+        }
+        if hr == S_OK || hr == S_FALSE {
+            out.push(fmt);
+        }
+        if hr != S_OK || out.len() == 64 {
+            break;
+        }
+    }
+    out
 }
 
 #[implement(IEnumFORMATETC)]
@@ -1015,7 +1177,7 @@ fn basket_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
             }
             WM_LBUTTONDOWN => {
                 _ = SetFocus(Some(h));
-                on_down(h, xy(lp), wp.0 & MK_CONTROL.0 as usize != 0);
+                on_down(h, xy(lp), wp.0 & MK_CONTROL.0 as usize != 0, wp.0 & MK_SHIFT.0 as usize != 0);
                 LRESULT(0)
             }
             WM_MOUSEMOVE => {
@@ -1090,7 +1252,7 @@ fn xy(lp: LPARAM) -> (i32, i32) {
     (lp.0 as i16 as i32, (lp.0 >> 16) as i16 as i32)
 }
 
-unsafe fn on_down(h: HWND, at: (i32, i32), ctrl: bool) {
+unsafe fn on_down(h: HWND, at: (i32, i32), ctrl: bool, shift: bool) {
     layout(h);
     if let Some(id) = hit_button(at.0, at.1) {
         with_st(|s| {
@@ -1102,9 +1264,18 @@ unsafe fn on_down(h: HWND, at: (i32, i32), ctrl: bool) {
     }
     if let Some(i) = hit_row(at.0, at.1) {
         with_st(|s| {
-            s.sel = click_sel(&s.sel, i, ctrl);
-            s.anchor = i;
-            s.press = Some(at);
+            let n = paths().len();
+            let already = s.sel.contains(&i);
+            // Shift builds a new range immediately. Ctrl or a plain click on a
+            // selected row waits for mouse-up, so a drag keeps the whole selection.
+            let keep = already && !shift;
+            if !keep {
+                let anchor = if n == 0 { i } else { s.anchor.min(n - 1) };
+                let (sel, anchor) = click_sel(&s.sel, anchor, i, ctrl, shift);
+                s.sel = sel;
+                s.anchor = anchor;
+            }
+            s.press = Some(Press { x: at.0, y: at.1, index: i, keep, ctrl });
         });
         _ = SetCapture(h);
         _ = InvalidateRect(Some(h), None, false);
@@ -1112,12 +1283,12 @@ unsafe fn on_down(h: HWND, at: (i32, i32), ctrl: bool) {
 }
 
 unsafe fn on_move(h: HWND, at: (i32, i32)) {
-    let (press, down) = with_st(|s| (s.press, s.track.down()));
+    let (press, down) = with_st(|s| (s.press.as_ref().map(|p| (p.x, p.y)), s.track.down()));
     if let Some((x, y)) = press {
         let dx = at.0 - x;
         let dy = at.1 - y;
         if dx * dx + dy * dy >= 16 {
-            let paths = chosen();
+            let paths: Vec<String> = chosen().into_iter().filter(|p| !missing(p)).collect();
             with_st(|s| s.press = None);
             _ = ReleaseCapture();
             begin_drag(paths);
@@ -1146,13 +1317,26 @@ unsafe fn on_move(h: HWND, at: (i32, i32)) {
 
 unsafe fn on_up(h: HWND, at: (i32, i32)) {
     let over = hit_button(at.0, at.1);
-    let effect = with_st(|s| {
-        s.press = None;
-        s.track.pointer_up(over)
+    let (effect, press) = with_st(|s| {
+        let p = s.press.take();
+        (s.track.pointer_up(over), p)
     });
     _ = ReleaseCapture();
     if let TrackEffect::Click(id) = effect {
         act(id);
+    } else if let Some(p) = press {
+        if p.keep {
+            with_st(|s| {
+                if p.ctrl {
+                    let (sel, anchor) = click_sel(&s.sel, s.anchor, p.index, true, false);
+                    s.sel = sel;
+                    s.anchor = anchor;
+                } else {
+                    s.sel = vec![p.index];
+                    s.anchor = p.index;
+                }
+            });
+        }
     }
     _ = InvalidateRect(Some(h), None, false);
 }
@@ -1332,11 +1516,15 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_click_toggles_and_ctrl_a_selects_every_row() {
-        assert_eq!(click_sel(&[], 1, false), vec![1]);
-        assert_eq!(click_sel(&[1], 2, true), vec![1, 2]);
-        assert_eq!(click_sel(&[1, 2], 1, true), vec![2]);
-        assert_eq!(click_sel(&[0, 2], 2, false), vec![2]);
+    fn ctrl_click_toggles_shift_click_ranges_and_ctrl_a_selects_every_row() {
+        assert_eq!(click_sel(&[], 0, 1, false, false), (vec![1], 1));
+        assert_eq!(click_sel(&[1], 1, 2, true, false), (vec![1, 2], 2));
+        assert_eq!(click_sel(&[1, 2], 2, 1, true, false), (vec![2], 1));
+        assert_eq!(click_sel(&[0, 2], 0, 2, false, false), (vec![2], 2));
+        assert_eq!(click_sel(&[0], 0, 3, false, true), (vec![0, 1, 2, 3], 0));
+        assert_eq!(click_sel(&[0, 1, 2, 3], 0, 1, false, true), (vec![0, 1], 0));
+        assert_eq!(click_sel(&[5], 5, 2, false, true), (vec![2, 3, 4, 5], 5));
+        assert_eq!(click_sel(&[0, 4], 0, 2, true, true), (vec![0, 1, 2, 4], 0));
         assert_eq!(all_sel(3), vec![0, 1, 2]);
         assert_eq!(send_pick(&[2, 0], 2), Some(2));
         assert_eq!(send_pick(&[2, 0], 5), Some(0));
@@ -1344,14 +1532,21 @@ mod tests {
     }
 
     #[test]
-    fn drag_copies_unless_shift_and_send_opens_the_parent_of_a_file() {
-        assert_eq!(drag_effect(false), DROPEFFECT_COPY.0);
-        assert_eq!(drag_effect(true), DROPEFFECT_MOVE.0);
-        assert_ne!(drag_effect(false), drag_effect(true));
-        assert_eq!(send_folder(r"C:\Work", true), r"C:\Work");
-        assert_eq!(send_folder(r"C:\Work\a.txt", false), r"C:\Work");
+    fn drag_copies_by_default_and_shift_moves() {
+        assert_eq!(drag_effect(false, false, false), DROPEFFECT_COPY.0);
+        assert_eq!(drag_effect(true, false, false), DROPEFFECT_COPY.0);
+        assert_eq!(drag_effect(false, true, false), DROPEFFECT_MOVE.0);
+        assert_eq!(drag_effect(true, true, false), 0);
+        assert_eq!(drag_effect(false, false, true), 0);
+        assert_ne!(drag_effect(false, false, false), drag_effect(false, true, false));
         assert_eq!(parent_path(r"C:\a.txt"), r"C:\");
-        assert_eq!(send_folder(r"\\srv\share\dir\f.txt", false), r"\\srv\share\dir");
+        assert_eq!(parent_path(r"\\srv\share\dir\f.txt"), r"\\srv\share\dir");
+        let buf = hdrop_bytes(&[r"C:\a.txt".into(), r"D:\b".into()]);
+        assert_eq!(u32::from_le_bytes(buf[0..4].try_into().unwrap()), 20);
+        assert_eq!(u32::from_le_bytes(buf[16..20].try_into().unwrap()), 1);
+        let wide: Vec<u16> = buf[20..].chunks(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+        let text = String::from_utf16_lossy(&wide);
+        assert_eq!(text, "C:\\a.txt\0D:\\b\0\0");
     }
 
     #[test]
@@ -1375,13 +1570,14 @@ mod tests {
         assert_ne!(name, INK);
         assert_ne!(path, INK);
         assert_eq!(row_colors(false, false, false).2, 0xFFFFFF);
-        let widths = [(ACT_COPY, 80), (ACT_MOVE, 80), (ACT_REMOVE, 80), (ACT_CLEAR, 80), (ACT_SEND, 80)];
+        let widths = [(ACT_COPY, 80), (ACT_MOVE, 80), (ACT_ALL, 80), (ACT_REMOVE, 80), (ACT_CLEAR, 80)];
         let (h, rects) = place_buttons(200, &widths, 30, 6, 8);
         assert!(rects.len() == 5);
         assert!(h > 30);
         assert!(rects.iter().any(|(_, r)| r.top > 8));
         assert_eq!(scroll_by(10, -40, 100), 0);
         assert_eq!(scroll_by(90, 40, 100), 100);
+        assert_eq!(actions().map(|(id, _)| id), [ACT_COPY, ACT_MOVE, ACT_ALL, ACT_REMOVE, ACT_CLEAR]);
     }
 
     #[test]

@@ -343,10 +343,10 @@ kbd {
     <div class="shot-grid"><figure class="shot"><img src="../../images-v3/rename.ja.png" alt="一括リネーム。左にルール、右にライブ プレビュー" loading="lazy"><figcaption>一括リネーム</figcaption></figure></div>
   </section>
 
-  <section class="section-block" id="basket" data-search="basket always on top ctrl+shift+b copy move send ファイルバスケット">
+  <section class="section-block" id="basket" data-search="basket always on top ctrl+shift+b copy move select drag ファイルバスケット すべて選択">
     <h2>ファイルバスケット</h2>
     <p>Ctrl+Shift+B は、ファイルバスケットを切り替えます。常に手前に出る、小さなウィンドウです。ファイルやフォルダーをドロップするか、Ctrl+Alt+B でアクティブな選択を追加します。一覧が覚えるのはパスであり、コピーではありません。パスは <code>.maguro</code> のセッションではなく、<code>maguro.json</code> にあります。一覧から項目を外しても、元のファイルはその場所に残ります。</p>
-    <p><strong>アクティブペインにコピー</strong>と<strong>アクティブペインへ移動</strong>は、ペインの貼り付けと同じエンジンである IFileOperation を使います。<strong>アクティブペインへ送る</strong>はコピーしません。その項目のフォルダーを、アクティブなペインで開きます。ファイルは親を開き、フォルダーは自分自身を開きます。バスケットの外へドラッグすると、コピーです。Shift を押してドラッグすると、移動です。「取り除く」と「クリア」は、一覧だけを変えます。</p>
+    <p><strong>アクティブペインにコピー</strong>と<strong>アクティブペインへ移動</strong>は、ペインの貼り付けと同じエンジンである IFileOperation を使います。<strong>すべて選択</strong>はすべての行を選びます。クリックは 1 行、Ctrl+クリックは切り替え、Shift+クリックは基準の行からの範囲です。選択をペインまたはエクスプローラーへドラッグするとコピーです。Ctrl はコピー、Shift は移動です。Alt と Ctrl+Shift はショートカットを作りません。ペインへ落とすと、別スレッドで Windows の進行ウィンドウが出ます。エクスプローラーも同じドラッグを受け取ります。「取り除く」と「クリア」は、一覧だけを変えます。</p>
     <p>無い元は、取り除くまで、見つからないと印を付けたまま一覧に残ります。コピーと移動は、無い項目を飛ばします。</p>
     <div class="shot-grid"><figure class="shot"><img src="../../images-v3/feature_basket.ja.png" alt="無いファイルがまだ一覧に残るファイルバスケット" loading="lazy"><figcaption>ファイルバスケット。無いファイルも一覧に残ります。</figcaption></figure></div>
   </section>
