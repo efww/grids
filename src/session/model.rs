@@ -1502,11 +1502,6 @@ impl Session {
         self.close_pane_where(i, |k| k != keep)
     }
 
-    /// Closes every unlocked pane tab to the right of `k`. Locked tabs stay. The last tab stays.
-    pub(crate) fn close_pane_tabs_right(&mut self, i: usize, k: usize) -> Option<String> {
-        self.close_pane_where(i, |j| j > k)
-    }
-
     fn close_pane_where(&mut self, i: usize, drop: impl Fn(usize) -> bool) -> Option<String> {
         if i >= MAXP {
             return None;
@@ -3079,8 +3074,8 @@ mod crumb_tests {
         assert!(s.set_pane_tab_name(0, 1, "  Docs  "));
         assert_eq!(s.pane_tab_names(0)[1], "Docs");
         assert_eq!(s.close_pane_tab(0, 2), None);
-        // Right of A: Docs closes, the locked C stays, and the current tab stays C.
-        assert_eq!(s.close_pane_tabs_right(0, 0), None);
+        // Docs is not the current tab, so closing it leaves locked C on display.
+        assert_eq!(s.close_pane_tab(0, 1), None);
         assert_eq!(s.pane_tab_list(0), vec![r"C:\a".to_string(), r"C:\c".into()]);
         assert_eq!(s.pane_cur[0], 1);
         assert_eq!(s.pane_tab_locks(0), vec![false, true]);
@@ -3094,8 +3089,8 @@ mod crumb_tests {
         assert_eq!(s.pane_tab_locks(0), vec![true, false, false]);
         assert_eq!(s.pane_tab_list(0), vec![r"C:\c".to_string(), r"C:\a".into(), r"C:\a".into()]);
         assert_eq!(s.pane_tab_names(0), vec!["".to_string(), "Docs".into(), "Docs (2)".into()]);
-        // The locked tab stays. The current tab is to its right, so the browse returns to C.
-        assert_eq!(s.close_pane_tabs_right(0, 0).as_deref(), Some(r"C:\c"));
+        // The locked tab stays. The current tab is one of the others, so the browse returns to C.
+        assert_eq!(s.close_pane_tabs_other(0, 0).as_deref(), Some(r"C:\c"));
         assert_eq!(s.pane_tab_list(0), vec![r"C:\c".to_string()]);
         assert!(s.pane_folders[0].is_empty() && s.pane_tab_locked(0) && s.pane_strip_on(0));
 

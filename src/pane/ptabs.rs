@@ -116,10 +116,6 @@ pub(crate) unsafe fn close_other_pane_tabs(i: usize, keep: usize) {
     pane_tab_go(i, |s| s.close_pane_tabs_other(i, keep));
 }
 
-pub(crate) unsafe fn close_pane_tabs_to_the_right(i: usize, k: usize) {
-    pane_tab_go(i, |s| s.close_pane_tabs_right(i, k));
-}
-
 pub(crate) unsafe fn duplicate_pane_tab(i: usize, k: usize) {
     pane_tab_go(i, |s| s.duplicate_pane_tab(i, k));
 }
@@ -222,8 +218,63 @@ pub(crate) unsafe fn pane_tab_mouse(h: HWND, i: usize, x: i32, y: i32, middle: b
     true
 }
 
+/// Command ids for the pane-tab right-click menu. TrackPopupMenu returns 0 when nothing is chosen.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(usize)]
+enum PaneTabMenuId {
+    CloseOther = 1,
+    Duplicate = 2,
+    Lock = 3,
+    Rename = 4,
+    CopyPath = 5,
+}
+
+impl PaneTabMenuId {
+    fn from_pick(pick: usize) -> Option<Self> {
+        Some(match pick {
+            1 => Self::CloseOther,
+            2 => Self::Duplicate,
+            3 => Self::Lock,
+            4 => Self::Rename,
+            5 => Self::CopyPath,
+            _ => return None,
+        })
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct PaneTabMenuItem {
+    id: PaneTabMenuId,
+    label: Key,
+    enabled: bool,
+}
+
+/// One row of the pane-tab right-click menu. `Sep` is a separator.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum PaneTabMenuRow {
+    Cmd(PaneTabMenuItem),
+    Sep,
+}
+
+/// Rows of the pane-tab right-click menu, in order.
+/// Close pane tab, close tabs to the right, and Open in Explorer are not on this menu.
+/// `others` is true when another unlocked pane tab can be closed. `path_ready` enables Copy full path.
+fn pane_tab_menu_items(locked: bool, others: bool, path_ready: bool) -> Vec<PaneTabMenuRow> {
+    let cmd = |id, label, enabled| PaneTabMenuRow::Cmd(PaneTabMenuItem { id, label, enabled });
+    vec![
+        cmd(PaneTabMenuId::CloseOther, Key::CloseOtherTabs, others),
+        PaneTabMenuRow::Sep,
+        cmd(PaneTabMenuId::Duplicate, Key::DuplicateTab, true),
+        cmd(PaneTabMenuId::Lock, if locked { Key::UnlockTab } else { Key::LockTab }, true),
+        cmd(PaneTabMenuId::Rename, Key::RenameTab, true),
+        PaneTabMenuRow::Sep,
+        cmd(PaneTabMenuId::CopyPath, Key::CopyFullPath, path_ready),
+    ]
+}
+
 /// Right-click menu for the pane tab under the pointer. `+` does not open it.
 /// An empty part of the strip uses the tab on display. The click does not switch tabs.
+/// Closing a pane tab stays on its ×, a middle click, and Ctrl+Alt+W. Explorer stays on the pane header menu.
 pub(crate) unsafe fn pane_tab_menu(h: HWND, i: usize, x: i32, y: i32) {
     let Some(hit) = hit_at(h, i, x, y) else { return };
     let k = match hit {
@@ -236,45 +287,38 @@ pub(crate) unsafe fn pane_tab_menu(h: HWND, i: usize, x: i32, y: i32) {
     };
     hide_pane_tab_tip(h);
     set_active(i);
-    let (locked, n, others, right, path) = app(|a| {
+    let (locked, others, path) = app(|a| {
         let list = a.s.pane_tab_list(i);
         let locks = a.s.pane_tab_locks(i);
         let n = list.len();
         let locked = locks.get(k).copied().unwrap_or(false);
         let others = n > 1 && (0..n).any(|j| j != k && !locks.get(j).copied().unwrap_or(false));
-        let right = ((k + 1)..n).any(|j| !locks.get(j).copied().unwrap_or(false));
         let path = list.get(k).cloned().unwrap_or_default();
-        (locked, n, others, right, path)
+        (locked, others, path)
     });
     let Ok(menu) = CreatePopupMenu() else { return };
-    let add = |id: usize, text: &str, on: bool| {
-        let flags = if on { MF_STRING } else { MF_STRING | MF_GRAYED };
-        _ = AppendMenuW(menu, flags, id, &HSTRING::from(text));
-    };
-    add(1, tr(Key::ClosePaneTab), !locked && n > 1);
-    add(2, tr(Key::CloseOtherTabs), others);
-    add(3, tr(Key::CloseTabsToTheRight), right);
-    _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
-    add(4, tr(Key::DuplicateTab), true);
-    add(5, if locked { tr(Key::UnlockTab) } else { tr(Key::LockTab) }, true);
-    add(6, tr(Key::RenameTab), true);
-    _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
-    add(7, tr(Key::CopyFullPath), !path.is_empty());
-    add(8, tr(Key::OpenInExplorer), !path.is_empty());
+    for row in pane_tab_menu_items(locked, others, !path.is_empty()) {
+        match row {
+            PaneTabMenuRow::Sep => {
+                _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
+            }
+            PaneTabMenuRow::Cmd(item) => {
+                let flags = if item.enabled { MF_STRING } else { MF_STRING | MF_GRAYED };
+                _ = AppendMenuW(menu, flags, item.id as usize, &HSTRING::from(tr(item.label)));
+            }
+        }
+    }
     let mut pt = POINT { x, y };
     _ = ClientToScreen(h, &mut pt);
     let pick = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN, pt.x, pt.y, None, h, None).0 as usize;
     _ = DestroyMenu(menu);
-    match pick {
-        1 => close_pane_tab(i, k),
-        2 => close_other_pane_tabs(i, k),
-        3 => close_pane_tabs_to_the_right(i, k),
-        4 => duplicate_pane_tab(i, k),
-        5 => toggle_pane_tab_lock(i, k),
-        6 => rename_pane_tab(i, k),
-        7 => copy_pane_tab_path(i, k),
-        8 => open_pane_tab(i, k),
-        _ => {}
+    match PaneTabMenuId::from_pick(pick) {
+        Some(PaneTabMenuId::CloseOther) => close_other_pane_tabs(i, k),
+        Some(PaneTabMenuId::Duplicate) => duplicate_pane_tab(i, k),
+        Some(PaneTabMenuId::Lock) => toggle_pane_tab_lock(i, k),
+        Some(PaneTabMenuId::Rename) => rename_pane_tab(i, k),
+        Some(PaneTabMenuId::CopyPath) => copy_pane_tab_path(i, k),
+        None => {}
     }
 }
 
@@ -301,15 +345,6 @@ unsafe fn copy_pane_tab_path(i: usize, k: usize) {
     }
     app(|a| a.note = Some((tr(Key::CopiedPath).to_string(), Instant::now() + std::time::Duration::from_secs(3))));
     crate::update_status();
-}
-
-unsafe fn open_pane_tab(i: usize, k: usize) {
-    let path = tab_path(i, k);
-    if path.is_empty() {
-        _ = MessageBeep(MB_ICONWARNING);
-        return;
-    }
-    crate::folderapp::open_in_explorer(&path);
 }
 
 /// Full path under the tab, or "Locked" on the lock glyph. False when the point is not on the strip.
@@ -450,4 +485,104 @@ pub(crate) unsafe fn paint_pane_tabs(
         }
     }
     text(dc, plus, "+", font, pal().sub, DT_CENTER);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn commands(locked: bool, others: bool, path_ready: bool) -> Vec<PaneTabMenuItem> {
+        pane_tab_menu_items(locked, others, path_ready)
+            .into_iter()
+            .filter_map(|row| match row {
+                PaneTabMenuRow::Cmd(item) => Some(item),
+                PaneTabMenuRow::Sep => None,
+            })
+            .collect()
+    }
+
+    fn ini_value(text: &str, id: &str) -> String {
+        let prefix = format!("\n{id} = ");
+        let at = text.find(&prefix).unwrap_or_else(|| panic!("missing {id}"));
+        text[at + prefix.len()..].lines().next().unwrap_or("").to_string()
+    }
+
+    #[test]
+    fn pane_tab_menu_keeps_close_other_and_drops_three_commands() {
+        let rows = pane_tab_menu_items(false, true, true);
+        assert!(matches!(
+            rows.as_slice(),
+            [
+                PaneTabMenuRow::Cmd(_),
+                PaneTabMenuRow::Sep,
+                PaneTabMenuRow::Cmd(_),
+                PaneTabMenuRow::Cmd(_),
+                PaneTabMenuRow::Cmd(_),
+                PaneTabMenuRow::Sep,
+                PaneTabMenuRow::Cmd(_),
+            ]
+        ));
+        let items = commands(false, true, true);
+        assert_eq!(
+            items.iter().map(|item| item.label).collect::<Vec<_>>(),
+            vec![Key::CloseOtherTabs, Key::DuplicateTab, Key::LockTab, Key::RenameTab, Key::CopyFullPath]
+        );
+        assert_eq!(
+            items.iter().map(|item| item.id).collect::<Vec<_>>(),
+            vec![
+                PaneTabMenuId::CloseOther,
+                PaneTabMenuId::Duplicate,
+                PaneTabMenuId::Lock,
+                PaneTabMenuId::Rename,
+                PaneTabMenuId::CopyPath,
+            ]
+        );
+        for item in &items {
+            assert!(item.enabled);
+            assert_eq!(PaneTabMenuId::from_pick(item.id as usize), Some(item.id));
+        }
+        assert_eq!(PaneTabMenuId::from_pick(0), None);
+
+        let shown: Vec<&str> = items.iter().map(|item| crate::langkey::EN[item.label as usize]).collect();
+        assert_eq!(shown, ["Close other tabs", "Duplicate tab", "Lock tab", "Rename tab", "Copy full path"]);
+        for gone in ["Close pane tab", "Close tabs to the right", "Open in Explorer"] {
+            assert!(!shown.contains(&gone), "{gone}");
+        }
+
+        let ko = include_str!("../../lang/lang.ko.ini");
+        let ja = include_str!("../../lang/lang.ja.ini");
+        let fr = include_str!("../../lang/lang.fr.ini");
+        let de = include_str!("../../lang/lang.de.ini");
+        let bundles = [
+            (ko, "다른 탭 모두 닫기", ["패널 탭 닫기", "오른쪽 탭 닫기", "탐색기에서 열기"]),
+            (ja, "他のタブをすべて閉じる", ["ペイン タブを閉じる", "右のタブを閉じる", "エクスプローラーで開く"]),
+            (fr, "Fermer les autres onglets", ["Fermer l'onglet de panneau", "Fermer les onglets à droite", "Ouvrir dans l'Explorateur"]),
+            (de, "Andere Registerkarten schließen", ["Bereichsregisterkarte schließen", "Registerkarten rechts schließen", "Im Explorer öffnen"]),
+        ];
+        for (file, close_other, gone) in bundles {
+            let labels: Vec<String> = items.iter().map(|item| ini_value(file, crate::langkey::KEY_ID[item.label as usize])).collect();
+            assert_eq!(labels[0], close_other);
+            for phrase in gone {
+                assert!(!labels.iter().any(|label| label == phrase), "{phrase} in {labels:?}");
+            }
+            assert!(!file.contains("\nclose_tabs_to_the_right = "));
+        }
+        assert!(!crate::langkey::KEY_ID.contains(&"close_tabs_to_the_right"));
+        assert!(!crate::langkey::EN.contains(&"Close tabs to the right"));
+        // Ctrl+Alt+W still uses Close pane tab. The pane header menu still uses Open in Explorer.
+        assert!(crate::langkey::KEY_ID.contains(&"close_pane_tab"));
+        assert!(crate::langkey::KEY_ID.contains(&"open_in_explorer"));
+
+        let locked = commands(true, false, false);
+        assert_eq!(locked[0].label, Key::CloseOtherTabs);
+        assert!(!locked[0].enabled);
+        assert_eq!(locked[1].label, Key::DuplicateTab);
+        assert!(locked[1].enabled);
+        assert_eq!(locked[2].label, Key::UnlockTab);
+        assert!(locked[2].enabled);
+        assert_eq!(locked[3].label, Key::RenameTab);
+        assert!(locked[3].enabled);
+        assert_eq!(locked[4].label, Key::CopyFullPath);
+        assert!(!locked[4].enabled);
+    }
 }
