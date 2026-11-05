@@ -26,7 +26,6 @@ const ALLOW: &[&str] = &[
     "src/pane/pview.rs",
     "src/pane/select.rs",
     "src/pane/view.rs",
-    "src/shell/fastcopy.rs",
 ];
 
 /// This pull request. These paint through the shared module, allow-list or not.
@@ -179,6 +178,23 @@ const MIGRATED: &[(&str, &[&str])] = &[
             "paint_meta(",
             "style_dialog_caption(",
             "body_font(",
+        ],
+    ),
+    (
+        "src/shell/fastcopy.rs",
+        &[
+            "paint_window(",
+            "paint_meter(",
+            "paint_button(",
+            "paint_check(",
+            "paint_label(",
+            "paint_meta(",
+            "wrap_text(",
+            "style_dialog_caption(",
+            "style_popup_chrome(",
+            "body_font(",
+            "bold_ui_font(",
+            "meta_font(",
         ],
     ),
 ];

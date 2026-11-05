@@ -406,8 +406,101 @@ unsafe fn fallback_font(slot: &std::sync::atomic::AtomicIsize, face: &str, px: i
     font
 }
 
+struct DialogSlot {
+    body: HFONT,
+    bold: HFONT,
+    meta: HFONT,
+    icon: HFONT,
+}
+
+thread_local! {
+    static DIALOG_SLOT: std::cell::RefCell<Option<DialogSlot>> = std::cell::RefCell::new(None);
+}
+
+fn dialog_font(pick: impl FnOnce(&DialogSlot) -> HFONT) -> Option<HFONT> {
+    let font = DIALOG_SLOT.with(|slot| slot.borrow().as_ref().map(pick))?;
+    if font.0.is_null() || font.is_invalid() { None } else { Some(font) }
+}
+
+fn face_of(font: HFONT, fallback_face: &str, px: i32, weight: i32) -> LOGFONTW {
+    if !font.0.is_null() && !font.is_invalid() {
+        let mut lf = LOGFONTW::default();
+        let n = unsafe { GetObjectW(font.into(), size_of::<LOGFONTW>() as i32, Some(&mut lf as *mut LOGFONTW as *mut _)) };
+        if n >= size_of::<LOGFONTW>() as i32 {
+            return lf;
+        }
+    }
+    let mut lf = logfont(fallback_face, px);
+    lf.lfWeight = weight;
+    lf
+}
+
+/// Faces of the app UI fonts. Call on the UI thread. A worker builds its own fonts
+/// from this so a later `apply_font` cannot delete the ones it is still drawing with.
+pub(crate) struct DialogSnap {
+    body: LOGFONTW,
+    bold: LOGFONTW,
+    meta: LOGFONTW,
+    icon: LOGFONTW,
+}
+
+/// Fonts a dialog owns. Dropping them releases the GDI objects.
+pub(crate) struct DialogFonts {
+    body: HFONT,
+    bold: HFONT,
+    meta: HFONT,
+    icon: HFONT,
+}
+
+impl Drop for DialogFonts {
+    fn drop(&mut self) {
+        DIALOG_SLOT.with(|slot| {
+            let bound = slot.borrow().as_ref().is_some_and(|s| s.body.0 == self.body.0);
+            if bound {
+                *slot.borrow_mut() = None;
+            }
+        });
+        unsafe {
+            delete_font(self.body);
+            delete_font(self.bold);
+            delete_font(self.meta);
+            delete_font(self.icon);
+        }
+    }
+}
+
+/// Copy the live UI faces. The app font already carries the saved face and this DPI.
+pub(crate) unsafe fn dialog_snap() -> DialogSnap {
+    DialogSnap {
+        body: face_of(body_font(), crate::ui_face(), super::FONT_PX, 400),
+        bold: face_of(bold_ui_font(), crate::ui_face(), super::FONT_PX, 700),
+        meta: face_of(meta_font(), crate::ui_face(), super::FONT_META_PX, 400),
+        icon: face_of(icon_font(), "Segoe MDL2 Assets", 14, 400),
+    }
+}
+
+/// GDI fonts for one dialog. The caller binds them, then drops this when the dialog is gone.
+pub(crate) unsafe fn realize_dialog_fonts(snap: &DialogSnap) -> DialogFonts {
+    DialogFonts {
+        body: CreateFontIndirectW(&snap.body),
+        bold: CreateFontIndirectW(&snap.bold),
+        meta: CreateFontIndirectW(&snap.meta),
+        icon: CreateFontIndirectW(&snap.icon),
+    }
+}
+
+/// Make [`body_font`], [`bold_ui_font`], [`meta_font`], and [`icon_font`] return `fonts` on this thread.
+pub(crate) fn bind_dialog_fonts(fonts: &DialogFonts) {
+    DIALOG_SLOT.with(|slot| {
+        *slot.borrow_mut() = Some(DialogSlot { body: fonts.body, bold: fonts.bold, meta: fonts.meta, icon: fonts.icon });
+    });
+}
+
 /// The app UI face. Dialogs use this instead of creating their own fonts.
 pub(crate) unsafe fn body_font() -> HFONT {
+    if let Some(font) = dialog_font(|s| s.body) {
+        return font;
+    }
     if let Some(font) = crate::app_try(|a| a.font) {
         if !font.0.is_null() && !font.is_invalid() {
             return font;
@@ -418,6 +511,9 @@ pub(crate) unsafe fn body_font() -> HFONT {
 
 /// Segoe MDL2 Assets, for checks and the other chrome glyphs.
 pub(crate) unsafe fn icon_font() -> HFONT {
+    if let Some(font) = dialog_font(|s| s.icon) {
+        return font;
+    }
     if let Some(font) = crate::app_try(|a| a.icon_font) {
         if !font.0.is_null() && !font.is_invalid() {
             return font;
@@ -426,9 +522,25 @@ pub(crate) unsafe fn icon_font() -> HFONT {
     fallback_font(&FALLBACK_ICON, "Segoe MDL2 Assets", 14, 400)
 }
 
+/// Hints and paths. The app meta face, or the body face when that has not been built.
+pub(crate) unsafe fn meta_font() -> HFONT {
+    if let Some(font) = dialog_font(|s| s.meta) {
+        return font;
+    }
+    if let Some(font) = crate::app_try(|a| a.small_font) {
+        if !font.0.is_null() && !font.is_invalid() {
+            return font;
+        }
+    }
+    body_font()
+}
+
 /// Bold copy of the window's UI font. Built once, the first time a group row is painted,
 /// and thrown away by `apply_font` (a DPI or face change) or when the window closes.
 pub(crate) unsafe fn bold_ui_font() -> HFONT {
+    if let Some(font) = dialog_font(|s| s.bold) {
+        return font;
+    }
     let cached = app(|a| a.bold_font);
     if !cached.is_invalid() {
         return cached;
@@ -548,6 +660,28 @@ mod tests {
             let key = face_key(n);
             assert!(!seen.contains(&key), "duplicate {n}");
             seen.push(key);
+        }
+    }
+
+    #[test]
+    fn a_worker_dialog_uses_its_own_font_copies() {
+        unsafe {
+            let mut bold = logfont("Segoe UI", 12);
+            bold.lfWeight = 700;
+            let snap = DialogSnap {
+                body: logfont("Segoe UI", 12),
+                bold,
+                meta: logfont("Segoe UI", 11),
+                icon: logfont("Segoe MDL2 Assets", 14),
+            };
+            let fonts = realize_dialog_fonts(&snap);
+            bind_dialog_fonts(&fonts);
+            assert_eq!(body_font().0, fonts.body.0);
+            assert_eq!(bold_ui_font().0, fonts.bold.0);
+            assert_eq!(meta_font().0, fonts.meta.0);
+            assert_eq!(icon_font().0, fonts.icon.0);
+            drop(fonts);
+            assert!(dialog_font(|s| s.body).is_none());
         }
     }
 }

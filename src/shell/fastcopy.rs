@@ -114,7 +114,8 @@ pub(crate) fn parse_error_line(line: &str) -> Option<String> {
 pub(crate) struct FastJob {
     pub(crate) owner: isize,
     pub(crate) accent: u32,
-    pub(crate) face: String,
+    /// App UI faces, copied on the UI thread. Realized on this worker.
+    pub(crate) snap: crate::DialogSnap,
     pub(crate) srcs: Vec<String>,
     pub(crate) dst: String,
     pub(crate) rename: bool,
@@ -126,6 +127,9 @@ pub(crate) fn run_fast(job: FastJob) {
         complain(job.owner, &tr(Key::RobocopyWasNotFound).to_string());
         return;
     };
+    // Kept alive until this function returns, which is after the window closes.
+    let fonts = unsafe { crate::realize_dialog_fonts(&job.snap) };
+    crate::bind_dialog_fonts(&fonts);
     let mut ui = Progress::open(&job);
     ui.set_scan();
     ui.pump();
@@ -786,11 +790,6 @@ fn eta_remain_secs(done: u64, total: u64, elapsed_ms: u128) -> Option<u64> {
     (secs <= ETA_MAX_SECS).then_some(secs)
 }
 
-/// Groove plus a darker 1px edge. Both stay off the window ground so a 0% bar is still visible.
-fn track_colors(bg: u32, sub: u32) -> (u32, u32) {
-    (crate::blend(bg, sub, 0.35), crate::blend(bg, sub, 0.55))
-}
-
 /// Keep the head and tail of `text` and fold the middle into `…` until `measure` fits `width`.
 fn middle_ellipsis(text: &str, width: i32, measure: impl Fn(&str) -> i32) -> String {
     if text.is_empty() || width <= 0 {
@@ -850,29 +849,23 @@ struct ProgGeom {
 }
 
 fn progress_geom(dpi: i32) -> ProgGeom {
-    let pad = sc(dpi, 16);
-    let gap = sc(dpi, 8);
-    let line = sc(dpi, 16);
-    let bar_h = sc(dpi, 8);
-    let btn_w = sc(dpi, 96);
-    let btn_h = sc(dpi, crate::BTN_H_FOOTER);
+    let pad = crate::px(dpi, crate::PAD_BODY_X);
+    let gap = crate::px(dpi, crate::SPACE_8);
+    let line = crate::px(dpi, 16);
+    let bar_h = crate::px(dpi, crate::SPACE_8);
+    let btn_w = crate::px(dpi, 96);
+    let btn_h = crate::px(dpi, crate::BTN_H_FOOTER);
     let title_y = pad;
     let stats_y = title_y + line + gap;
     let bar_y = stats_y + line + gap;
     let file_y = bar_y + bar_h + gap;
     let row_y = file_y + line + gap;
     let h = row_y + btn_h + pad;
-    ProgGeom { w: sc(dpi, 480), h, pad, title_y, stats_y, bar_y, file_y, row_y, line, bar_h, btn_w, btn_h }
-}
-
-fn sc(dpi: i32, v: i32) -> i32 {
-    v * dpi.max(96) / 96
+    ProgGeom { w: crate::px(dpi, 480), h, pad, title_y, stats_y, bar_y, file_y, row_y, line, bar_h, btn_w, btn_h }
 }
 
 struct Progress {
     hwnd: HWND,
-    accent: u32,
-    face: String,
     cancel: Arc<AtomicBool>,
     files_done: u64,
     files_total: u64,
@@ -888,11 +881,9 @@ impl Progress {
     fn open(job: &FastJob) -> Self {
         let cancel = Arc::new(AtomicBool::new(false));
         let owner = HWND(job.owner as *mut _);
-        let hwnd = open_progress(owner, job.accent, &job.face, job.mv, cancel.clone());
+        let hwnd = open_progress(owner, job.accent, job.mv, cancel.clone());
         Self {
             hwnd,
-            accent: job.accent,
-            face: job.face.clone(),
             cancel,
             files_done: 0,
             files_total: 0,
@@ -993,7 +984,7 @@ impl Progress {
         self.pump();
         let choice = Arc::new(AtomicU8::new(0));
         let all = Arc::new(AtomicBool::new(false));
-        let hwnd = open_ask(self.hwnd, self.accent, &self.face, name, choice.clone(), all.clone());
+        let hwnd = open_ask(self.hwnd, name, choice.clone(), all.clone());
         if hwnd.0.is_null() {
             return None;
         }
@@ -1050,9 +1041,6 @@ struct View {
     hwnd: HWND,
     dpi: i32,
     accent: u32,
-    font: HFONT,
-    body: HFONT,
-    small: HFONT,
     title: String,
     stats: String,
     current: String,
@@ -1080,7 +1068,7 @@ fn view(hwnd: HWND) -> Option<*mut View> {
     }
 }
 
-fn open_progress(owner: HWND, accent: u32, face: &str, mv: bool, cancel: Arc<AtomicBool>) -> HWND {
+fn open_progress(owner: HWND, accent: u32, mv: bool, cancel: Arc<AtomicBool>) -> HWND {
     ensure_class(w!("MaguroFastCopy"), Some(progress_proc));
     let dpi = dpi_of(owner);
     let geom = progress_geom(dpi);
@@ -1091,9 +1079,6 @@ fn open_progress(owner: HWND, accent: u32, face: &str, mv: bool, cancel: Arc<Ato
         hwnd: HWND::default(),
         dpi,
         accent,
-        font: make_font(face, crate::FONT_PX, 600, dpi),
-        body: make_font(face, crate::FONT_PX, 400, dpi),
-        small: make_font(face, crate::FONT_META_PX, 400, dpi),
         title: title.to_string(),
         stats: String::new(),
         current: String::new(),
@@ -1133,7 +1118,7 @@ fn open_progress(owner: HWND, accent: u32, face: &str, mv: bool, cancel: Arc<Ato
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, ptr as isize);
         (*ptr).hwnd = hwnd;
         (*ptr).tip = make_tip(hwnd);
-        round_window(hwnd);
+        style_fast_window(hwnd);
         raise(hwnd);
     }
     hwnd
@@ -1141,9 +1126,6 @@ fn open_progress(owner: HWND, accent: u32, face: &str, mv: bool, cancel: Arc<Ato
 
 struct AskView {
     dpi: i32,
-    accent: u32,
-    font: HFONT,
-    small: HFONT,
     name: String,
     all: bool,
     hot: i32,
@@ -1156,16 +1138,13 @@ struct AskView {
     tip_on: bool,
 }
 
-fn open_ask(owner: HWND, accent: u32, face: &str, name: &str, choice: Arc<AtomicU8>, all_flag: Arc<AtomicBool>) -> HWND {
+fn open_ask(owner: HWND, name: &str, choice: Arc<AtomicU8>, all_flag: Arc<AtomicBool>) -> HWND {
     ensure_class(w!("MaguroFastAsk"), Some(ask_proc));
     let dpi = dpi_of(owner);
-    let (w, h) = (sc(dpi, 480), sc(dpi, 176));
+    let (w, h) = (crate::px(dpi, 480), crate::px(dpi, 176));
     let (x, y) = center_on(owner, w, h);
     let view = Box::new(AskView {
         dpi,
-        accent,
-        font: make_font(face, crate::FONT_PX, 600, dpi),
-        small: make_font(face, crate::FONT_PX, 400, dpi),
         name: name.to_string(),
         all: false,
         hot: -1,
@@ -1201,7 +1180,7 @@ fn open_ask(owner: HWND, accent: u32, face: &str, name: &str, choice: Arc<Atomic
     unsafe {
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, ptr as isize);
         (*ptr).tip = make_tip(hwnd);
-        round_window(hwnd);
+        style_fast_window(hwnd);
         raise(hwnd);
     }
     hwnd
@@ -1243,16 +1222,10 @@ fn center_on(owner: HWND, w: i32, h: i32) -> (i32, i32) {
     (80, 80)
 }
 
-fn round_window(hwnd: HWND) {
-    unsafe {
-        let pref: u32 = 2; // DWMWCP_ROUND
-        let _ = DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &pref as *const _ as _, 4);
-        let dark = crate::DARK_ON.load(Ordering::Relaxed);
-        let on = BOOL::from(dark);
-        let _ = DwmSetWindowAttribute(hwnd, DWMWINDOWATTRIBUTE(20), &on as *const _ as _, 4);
-        let border = crate::cref(crate::pal().bg);
-        let _ = DwmSetWindowAttribute(hwnd, DWMWINDOWATTRIBUTE(34), &border as *const _ as _, 4);
-    }
+unsafe fn style_fast_window(hwnd: HWND) {
+    // Caption colours follow the theme. The popup frame is last so its token border stays.
+    crate::style_dialog_caption(hwnd);
+    crate::style_popup_chrome(hwnd);
 }
 
 /// The worker thread does not own the foreground, so attach to it long enough to show the window.
@@ -1269,15 +1242,6 @@ fn raise(hwnd: HWND) {
             let _ = AttachThreadInput(fore_tid, tid, false);
         }
     }
-}
-
-fn make_font(face: &str, dip: i32, weight: i32, dpi: i32) -> HFONT {
-    let mut name = [0u16; 32];
-    for (i, u) in face.encode_utf16().take(31).enumerate() {
-        name[i] = u;
-    }
-    let lf = LOGFONTW { lfHeight: -(dip * dpi / 96).max(1), lfWeight: weight, lfFaceName: name, lfQuality: CLEARTYPE_QUALITY, ..Default::default() };
-    unsafe { CreateFontIndirectW(&lf) }
 }
 
 fn make_tip(owner: HWND) -> HWND {
@@ -1355,7 +1319,7 @@ unsafe extern "system" fn progress_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 let mut r = RECT::default();
                 let _ = GetClientRect(h, &mut r);
                 if let Some(v) = view(h) {
-                    if y < sc((*v).dpi, 16) + sc((*v).dpi, 16) && !inside((*v).cancel_rect, x, y) {
+                    if y < crate::px((*v).dpi, crate::PAD_BODY_X) + crate::px((*v).dpi, 16) && !inside((*v).cancel_rect, x, y) {
                         return LRESULT(HTCAPTION as isize);
                     }
                 }
@@ -1372,40 +1336,37 @@ unsafe fn paint_progress(h: HWND) {
         return;
     };
     let v = &mut *v;
+    style_fast_window(h);
     crate::buffered(h, |dc, rc| {
         let dpi = v.dpi;
         let g = progress_geom(dpi);
+        let body = crate::body_font();
+        let bold = crate::bold_ui_font();
+        let meta = crate::meta_font();
         crate::paint_window(dc, rc);
         let pad = g.pad;
         let title_r = RECT { left: pad, top: g.title_y, right: rc.right - pad, bottom: g.title_y + g.line };
-        crate::text(dc, title_r, &v.title, v.font, crate::pal().text, DT_LEFT);
+        crate::paint_label(dc, title_r, &v.title, bold);
         let stats_r = RECT { left: pad, top: g.stats_y, right: rc.right - pad, bottom: g.stats_y + g.line };
-        crate::text(dc, stats_r, &v.stats, v.small, crate::pal().sub, DT_LEFT);
+        crate::paint_meta(dc, stats_r, &v.stats, meta);
         let bar = RECT { left: pad, top: g.bar_y, right: rc.right - pad, bottom: g.bar_y + g.bar_h };
-        let (track, edge) = track_colors(crate::pal().bg, crate::pal().sub);
-        crate::aa_rfill(dc, bar, sc(dpi, 4), track, Some(edge), crate::pal().bg);
-        let span = (bar.right - bar.left).max(1);
-        let fill_w = ((span as f32) * v.frac).round() as i32;
-        if fill_w > 0 {
-            let fill = RECT { right: (bar.left + fill_w.max(sc(dpi, 8))).min(bar.right), ..bar };
-            crate::aa_rfill(dc, fill, sc(dpi, 4), v.accent, None, track);
-        }
+        crate::paint_meter(dc, bar, v.frac, dpi, v.accent);
         v.file_rect = RECT { left: pad, top: g.file_y, right: rc.right - pad, bottom: g.file_y + g.line };
         let avail = (v.file_rect.right - v.file_rect.left).saturating_sub(2).max(0);
-        let shown = middle_ellipsis(&v.current, avail, |s| unsafe { measure_dc(dc, v.small, s) });
-        crate::text(dc, v.file_rect, &shown, v.small, crate::pal().text, DT_LEFT);
+        let shown = middle_ellipsis(&v.current, avail, |s| unsafe { measure_dc(dc, meta, s) });
+        crate::paint_label(dc, v.file_rect, &shown, meta);
         v.cancel_rect = RECT {
             left: rc.right - pad - g.btn_w,
             top: g.row_y,
             right: rc.right - pad,
             bottom: g.row_y + g.btn_h,
         };
-        let eta_r = RECT { left: pad, top: g.row_y, right: v.cancel_rect.left - sc(dpi, 8), bottom: g.row_y + g.btn_h };
-        crate::text(dc, eta_r, &v.eta, v.small, crate::pal().sub, DT_LEFT);
+        let eta_r = RECT { left: pad, top: g.row_y, right: v.cancel_rect.left - crate::px(dpi, crate::SPACE_8), bottom: g.row_y + g.btn_h };
+        crate::paint_meta(dc, eta_r, &v.eta, meta);
         let hot = v.hot.then_some(1u8);
         let down = v.down.then_some(1u8);
         let visual = crate::visual_from_pointer(1u8, hot, down);
-        crate::paint_button(dc, v.cancel_rect, crate::ButtonKind::Secondary, visual, tr(Key::Cancel), v.body, dpi, crate::ui_tokens().bg, crate::FocusRing::Outside);
+        crate::paint_button(dc, v.cancel_rect, crate::ButtonKind::Secondary, visual, tr(Key::Cancel), body, dpi, crate::ui_tokens().bg, crate::FocusRing::Outside);
     });
 }
 
@@ -1492,7 +1453,7 @@ unsafe extern "system" fn ask_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) ->
             if hit.0 == HTCLIENT as isize {
                 let (_x, y) = lp_point(lp);
                 if let Some(v) = ask_view(h) {
-                    if y < sc((*v).dpi, 32) {
+                    if y < crate::px((*v).dpi, 32) {
                         return LRESULT(HTCAPTION as isize);
                     }
                 }
@@ -1511,41 +1472,41 @@ fn ask_view(hwnd: HWND) -> Option<*mut AskView> {
 unsafe fn paint_ask(h: HWND) {
     let Some(v) = ask_view(h) else { return };
     let v = &mut *v;
+    style_fast_window(h);
     crate::buffered(h, |dc, rc| {
         let dpi = v.dpi;
-        let pad = sc(dpi, 16);
+        let pad = crate::px(dpi, crate::PAD_BODY_X);
+        let gap = crate::px(dpi, crate::SPACE_8);
+        let line = crate::px(dpi, 16);
+        let body_font = crate::body_font();
+        let ground = crate::ui_tokens().bg;
         crate::paint_window(dc, rc);
         let mut y = pad;
-        let title = RECT { left: pad, top: y, right: rc.right - pad, bottom: y + sc(dpi, 16) };
-        crate::text(dc, title, tr(Key::FastCopy), v.font, crate::pal().text, DT_LEFT);
-        y += sc(dpi, 16) + sc(dpi, 8);
-        v.name_rect = RECT { left: pad, top: y, right: rc.right - pad, bottom: y + sc(dpi, 32) };
+        let title = RECT { left: pad, top: y, right: rc.right - pad, bottom: y + line };
+        crate::paint_label(dc, title, tr(Key::FastCopy), crate::bold_ui_font());
+        y += line + gap;
+        v.name_rect = RECT { left: pad, top: y, right: rc.right - pad, bottom: y + crate::px(dpi, 32) };
         let body = tf(Key::NameAlreadyInThisFolder, &[("name", &v.name)]);
-        crate::wrap_text(dc, v.name_rect, &body, v.small, crate::pal().text, false);
-        y += sc(dpi, 32) + sc(dpi, 8);
-        let tick = sc(dpi, 16);
+        crate::wrap_text(dc, v.name_rect, &body, body_font, crate::ui_tokens().text, false);
+        y += crate::px(dpi, 32) + gap;
+        let tick = crate::px(dpi, 16);
         v.rects[3] = RECT { left: pad, top: y, right: rc.right - pad, bottom: y + tick };
         let mark = RECT { left: pad, top: y, right: pad + tick, bottom: y + tick };
-        let fill = if v.all { v.accent } else { crate::pal().card };
-        crate::aa_rfill(dc, mark, sc(dpi, 4), fill, Some(if v.all { v.accent } else { crate::pal().line }), crate::pal().bg);
-        if v.all {
-            crate::text(dc, mark, "✓", v.small, 0xFFFFFF, DT_CENTER);
-        }
-        let label = RECT { left: mark.right + sc(dpi, 8), top: y, right: rc.right - pad, bottom: y + tick };
-        crate::text(dc, label, tr(Key::ApplyToAll), v.small, crate::pal().text, DT_LEFT);
-        let bw = (rc.right - pad * 2 - sc(dpi, crate::BTN_GAP) * 2) / 3;
-        let bh = sc(dpi, crate::BTN_H_FOOTER);
+        crate::paint_check(dc, mark, v.all, v.hot == 3, dpi, ground);
+        let label = RECT { left: mark.right + gap, top: y, right: rc.right - pad, bottom: y + tick };
+        crate::paint_label(dc, label, tr(Key::ApplyToAll), body_font);
+        let bw = (rc.right - pad * 2 - crate::px(dpi, crate::BTN_GAP) * 2) / 3;
+        let bh = crate::px(dpi, crate::BTN_H_FOOTER);
         let top = rc.bottom - pad - bh;
         let labels = [tr(Key::Overwrite), tr(Key::Skip), tr(Key::Cancel)];
         let hot = (v.hot >= 0).then_some(v.hot);
         let down = (v.down >= 0).then_some(v.down);
-        let ground = crate::ui_tokens().bg;
         for i in 0..3 {
-            let left = pad + i as i32 * (bw + sc(dpi, crate::BTN_GAP));
+            let left = pad + i as i32 * (bw + crate::px(dpi, crate::BTN_GAP));
             v.rects[i] = RECT { left, top, right: left + bw, bottom: top + bh };
             let kind = if i == 0 { crate::ButtonKind::Primary } else { crate::ButtonKind::Secondary };
             let visual = crate::visual_from_pointer(i as i32, hot, down);
-            crate::paint_button(dc, v.rects[i], kind, visual, labels[i], v.small, dpi, ground, crate::FocusRing::Outside);
+            crate::paint_button(dc, v.rects[i], kind, visual, labels[i], body_font, dpi, ground, crate::FocusRing::Outside);
         }
     });
 }
@@ -1596,10 +1557,7 @@ unsafe fn drop_view(h: HWND) {
         return;
     }
     SetWindowLongPtrW(h, GWLP_USERDATA, 0);
-    let v = Box::from_raw(p);
-    crate::delete_font(v.font);
-    crate::delete_font(v.body);
-    crate::delete_font(v.small);
+    drop(Box::from_raw(p));
 }
 
 unsafe fn drop_ask(h: HWND) {
@@ -1608,9 +1566,7 @@ unsafe fn drop_ask(h: HWND) {
         return;
     }
     SetWindowLongPtrW(h, GWLP_USERDATA, 0);
-    let v = Box::from_raw(p);
-    crate::delete_font(v.font);
-    crate::delete_font(v.small);
+    drop(Box::from_raw(p));
 }
 
 unsafe fn arm_leave(h: HWND) {
@@ -1687,13 +1643,15 @@ unsafe fn text_px(owner: HWND, text: &str) -> i32 {
     let n = GetClassNameW(owner, &mut buf) as usize;
     let class = String::from_utf16_lossy(&buf[..n]);
     if class == "MaguroFastAsk" {
-        if let Some(a) = ask_view(owner) {
-            return measure(owner, text, (*a).small);
+        if ask_view(owner).is_none() {
+            return i32::MAX;
         }
+        return measure(owner, text, crate::body_font());
+    }
+    if view(owner).is_none() {
         return i32::MAX;
     }
-    let Some(v) = view(owner) else { return i32::MAX };
-    measure(owner, text, (*v).small)
+    measure(owner, text, crate::meta_font())
 }
 
 unsafe fn measure(owner: HWND, text: &str, font: HFONT) -> i32 {
@@ -1833,14 +1791,14 @@ mod tests {
         assert!(g.h < 184);
         assert_eq!(g.row_y + g.btn_h + g.pad, g.h);
         assert_eq!(g.file_y + g.line + 8, g.row_y);
-        let (fill, edge) = track_colors(0xF3F1EC, 0x7C776F);
+        let (fill, edge) = crate::meter_colors(0xF3F1EC, 0x7C776F);
         let dist = |a: u32, b: u32| {
             let ch = |s: u32| (a >> s & 0xFF).abs_diff(b >> s & 0xFF) as u32;
             ch(16) + ch(8) + ch(0)
         };
         assert!(dist(fill, 0xF3F1EC) > 60, "{fill:06X}");
         assert_ne!(fill, edge);
-        let (dark, dark_edge) = track_colors(0x1C1D20, 0x9AA0A8);
+        let (dark, dark_edge) = crate::meter_colors(0x1C1D20, 0x9AA0A8);
         assert!(dist(dark, 0x1C1D20) > 40, "{dark:06X}");
         assert_ne!(dark, dark_edge);
     }

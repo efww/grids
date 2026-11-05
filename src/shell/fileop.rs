@@ -430,11 +430,9 @@ pub(crate) unsafe fn start_drop_move(srcs: Vec<String>, dst: String) -> bool {
 }
 
 unsafe fn start_transfer(srcs: Vec<String>, dst: String, rename: bool, mv: bool, after_drop: bool, force: bool) -> bool {
-    let (owner, accent, face, setting) = app(|a| {
-        let custom = a.s.font_face.trim();
-        let face = if custom.is_empty() { crate::ui_face().to_string() } else { custom.to_string() };
-        (a.main.0 as isize, a.s.accent_now(), face, a.s.fast_copy)
-    });
+    let (owner, accent, setting) = app(|a| (a.main.0 as isize, a.s.accent_now(), a.s.fast_copy));
+    // Captured here, on the UI thread. The worker realizes its own copies if FastCopy runs.
+    let snap = unsafe { crate::dialog_snap() };
     let busy = Busy::new();
     let job = std::thread::Builder::new().spawn(move || {
         let com = CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok();
@@ -449,7 +447,7 @@ unsafe fn start_transfer(srcs: Vec<String>, dst: String, rename: bool, mv: bool,
         if super::fastcopy::decide_fast(force, setting, network) {
             let srcs: Vec<String> = srcs.iter().map(|s| final_dos(s)).collect();
             let dst = final_dos(&dst);
-            super::fastcopy::run_fast(super::fastcopy::FastJob { owner, accent, face, srcs, dst, rename, mv });
+            super::fastcopy::run_fast(super::fastcopy::FastJob { owner, accent, snap, srcs, dst, rename, mv });
             return;
         }
         let owner_hwnd = HWND(owner as *mut _);

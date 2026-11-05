@@ -142,6 +142,29 @@ pub(crate) unsafe fn paint_wash(dc: HDC, r: RECT, dpi: i32, fill: u32, ground: u
     crate::aa_rfill(dc, r, px(dpi, RADIUS).max(1), fill, None, ground);
 }
 
+/// Groove fill and a darker edge. Both stay off `bg` so a 0% bar is still visible.
+pub(crate) fn meter_colors(bg: u32, sub: u32) -> (u32, u32) {
+    (crate::blend(bg, sub, 0.35), crate::blend(bg, sub, 0.55))
+}
+
+/// Progress groove. `frac` is clamped to 0..=1. The fill uses `accent`.
+/// Radius is 4 DIP: the groove is 8 DIP tall and stays a pill.
+pub(crate) unsafe fn paint_meter(dc: HDC, bar: RECT, frac: f32, dpi: i32, accent: u32) {
+    if bar.right <= bar.left || bar.bottom <= bar.top {
+        return;
+    }
+    let t = ui_tokens();
+    let (track, edge) = meter_colors(t.bg, t.sub);
+    let rad = px(dpi, 4);
+    crate::aa_rfill(dc, bar, rad, track, Some(edge), t.bg);
+    let span = (bar.right - bar.left).max(1);
+    let fill_w = ((span as f32) * frac.clamp(0.0, 1.0)).round() as i32;
+    if fill_w > 0 {
+        let fill = RECT { right: (bar.left + fill_w.max(px(dpi, SPACE_8))).min(bar.right), ..bar };
+        crate::aa_rfill(dc, fill, rad, accent, None, track);
+    }
+}
+
 /// Section title, token text, single line, left aligned. The font is the caller's 12px face.
 pub(crate) unsafe fn paint_section_header(dc: HDC, r: RECT, title: &str, font: HFONT) {
     crate::text(dc, r, title, font, ui_tokens().text, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
@@ -211,5 +234,15 @@ mod tests {
         assert_eq!(inner.right, 108);
         assert_eq!(inner.bottom, 44);
         assert_eq!(field_edit_rect(RECT::default(), 96), RECT::default());
+    }
+
+    #[test]
+    fn meter_groove_stays_off_the_window_ground() {
+        let (fill, edge) = meter_colors(BG_LIGHT, SUB_LIGHT);
+        assert_ne!(fill, BG_LIGHT);
+        assert_ne!(fill, edge);
+        let (dark, dark_edge) = meter_colors(BG_DARK, SUB_DARK);
+        assert_ne!(dark, BG_DARK);
+        assert_ne!(dark, dark_edge);
     }
 }
