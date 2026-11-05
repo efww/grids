@@ -284,8 +284,8 @@ pub(crate) fn fail_layout(w: i32, h: i32, dpi: i32, retry_w: i32, back_w: i32) -
     let back_l = retry.r + gap;
     let back = BoxI { l: back_l, t: btn_top, r: back_l + bw, b: btn_top + bh };
     let inset = s(20).min((w / 4).max(0));
-    let msg_top = s(8).min(btn_top);
-    let msg_b = (btn_top - s(8)).max(msg_top);
+    let msg_top = s(SPACE_8).min(btn_top);
+    let msg_b = (btn_top - s(SPACE_8)).max(msg_top);
     let message = BoxI { l: inset, t: msg_top, r: (w - inset).max(inset), b: msg_b };
     FailLayout { message, retry, back }
 }
@@ -300,7 +300,7 @@ pub(crate) fn fail_hit(lay: &FailLayout, x: i32, y: i32) -> FailHit {
     }
 }
 
-/// Break a long UNC path inside DrawText without changing the characters the user reads.
+/// Break a long UNC path inside the shared wrap without changing the characters the user reads.
 fn fail_draw_text(msg: &str) -> String {
     msg.replace('\\', "\\\u{200B}").replace('/', "/\u{200B}")
 }
@@ -780,37 +780,6 @@ unsafe fn fail_at(h: HWND, x: i32, y: i32) -> FailHit {
     hit
 }
 
-unsafe fn paint_message(dc: HDC, r: RECT, msg: &str, font: HFONT) {
-    if r.right <= r.left || r.bottom <= r.top {
-        return;
-    }
-    let mut w: Vec<u16> = fail_draw_text(msg).encode_utf16().collect();
-    if w.is_empty() {
-        return;
-    }
-    let old = SelectObject(dc, font.into());
-    SetBkMode(dc, TRANSPARENT);
-    SetTextColor(dc, cref(pal().text));
-    let flags = DT_CENTER | DT_WORDBREAK | DT_EDITCONTROL | DT_NOPREFIX;
-    let mut measure = r;
-    DrawTextW(dc, &mut w, &mut measure, flags | DT_CALCRECT);
-    let th = measure.bottom - measure.top;
-    let room = r.bottom - r.top;
-    let mut dest = r;
-    if th > 0 && th < room {
-        dest.top += (room - th) / 2;
-        dest.bottom = dest.top + th;
-        // The block was centered on tmHeight. Shift it onto the same glyph box as text().
-        let nudge = optical_nudge(dc, font, msg);
-        if dest.top + nudge >= r.top && dest.bottom + nudge <= r.bottom {
-            dest.top += nudge;
-            dest.bottom += nudge;
-        }
-    }
-    DrawTextW(dc, &mut w, &mut dest, flags);
-    SelectObject(dc, old);
-}
-
 unsafe fn paint_net_fail(h: HWND) {
     let hot = GetWindowLongPtrW(h, GWLP_USERDATA) as i32;
     let down = FAIL_PRESS.lock().unwrap_or_else(|e| e.into_inner())
@@ -826,7 +795,7 @@ unsafe fn paint_net_fail(h: HWND) {
     buffered(h, |dc, rc| {
         paint_window(dc, rc);
         let Some((lay, msg, retry, back)) = fail_boxes(h, dc) else { return };
-        paint_message(dc, lay.message.to_rect(), &msg, font);
+        paint_center_wrap(dc, lay.message.to_rect(), &fail_draw_text(&msg), font);
         paint_button(dc, lay.retry.to_rect(), ButtonKind::Primary, visual_from_pointer(1, hot_id, down_id), &retry, font, dpi, ground, FocusRing::Outside);
         paint_button(dc, lay.back.to_rect(), ButtonKind::Secondary, visual_from_pointer(2, hot_id, down_id), &back, font, dpi, ground, FocusRing::Outside);
     });
@@ -4316,7 +4285,7 @@ impl IDropTarget_Impl for PaneDrop_Impl {
 #[cfg(test)]
 mod missing_tests {
     use super::{
-        addr_keep, drive_root, edit_cur_ok, edit_target, fail_hit, fail_layout, fav_act, folder_step, local_hit, near_dir, net_bar_text, net_fail_buttons, net_fail_message, net_fail_text, net_wait_secs,
+        addr_keep, drive_root, edit_cur_ok, edit_target, fail_draw_text, fail_hit, fail_layout, fav_act, folder_step, local_hit, near_dir, net_bar_text, net_fail_buttons, net_fail_message, net_fail_text, net_wait_secs,
         net_wait_text, path_place, pidl_browse_ok, rec_step, retry_path, share_kind, unc_path, FailHit, FavAct, FolderStep, LocalHit, Nav, NetBook, NetOpen, NetWait, PathPlace, NET_WAIT_MS,
     };
     use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND};
@@ -4461,6 +4430,17 @@ mod missing_tests {
         assert!(narrow.retry.r <= 40 && narrow.back.r <= 40);
         assert!(narrow.back.l >= narrow.retry.r);
         assert_eq!(fail_hit(&narrow, -1, -1), FailHit::None);
+    }
+
+    #[test]
+    fn path_breaks_do_not_change_the_characters_or_the_glyph_box() {
+        let raw = r"\\server\share\folder";
+        let drawn = fail_draw_text(raw);
+        assert_eq!(drawn.replace('\u{200B}', ""), raw);
+        assert_ne!(drawn, raw);
+        assert_eq!(crate::ink_kind(&drawn), crate::ink_kind(raw));
+        let mixed = "接続できません a/b";
+        assert_eq!(crate::ink_kind(&fail_draw_text(mixed)), crate::ink_kind(mixed));
     }
 
     #[test]

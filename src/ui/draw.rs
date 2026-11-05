@@ -229,6 +229,45 @@ pub(crate) unsafe fn wrap_text(dc: HDC, mut r: RECT, s: &str, font: HFONT, rgb: 
     (r.right - r.left, r.bottom - r.top)
 }
 
+/// Where a wrapped block of height `th` is drawn inside `r`.
+/// A shorter block is centred, then shifted by `nudge` when the shift stays inside `r`.
+/// A block as tall as `r`, or taller, keeps `r`.
+fn center_block(r: RECT, th: i32, nudge: i32) -> RECT {
+    let room = r.bottom - r.top;
+    if th <= 0 || th >= room {
+        return r;
+    }
+    let top = r.top + (room - th) / 2;
+    let mut dest = RECT { top, bottom: top + th, ..r };
+    if dest.top + nudge >= r.top && dest.bottom + nudge <= r.bottom {
+        dest.top += nudge;
+        dest.bottom += nudge;
+    }
+    dest
+}
+
+/// Word-wrapped text, centred in `r`, in the token text colour.
+/// Same break flags as [`wrap_text`], plus `DT_CENTER`. A shorter block uses [`center_block`]
+/// with [`optical_nudge`], so the glyphs sit on the same box as [`text`].
+pub(crate) unsafe fn paint_center_wrap(dc: HDC, r: RECT, s: &str, font: HFONT) {
+    if r.right <= r.left || r.bottom <= r.top {
+        return;
+    }
+    let mut w: Vec<u16> = s.encode_utf16().collect();
+    if w.is_empty() {
+        return;
+    }
+    let old = SelectObject(dc, font.into());
+    SetBkMode(dc, TRANSPARENT);
+    SetTextColor(dc, cref(ui_tokens().text));
+    let flags = DT_CENTER | DT_WORDBREAK | DT_EDITCONTROL | DT_NOPREFIX;
+    let mut measure = r;
+    DrawTextW(dc, &mut w, &mut measure, flags | DT_CALCRECT);
+    let mut dest = center_block(r, measure.bottom - measure.top, optical_nudge(dc, font, s));
+    DrawTextW(dc, &mut w, &mut dest, flags);
+    SelectObject(dc, old);
+}
+
 // Paints only the invalid area into an off-screen buffer and blits once (no flicker mid-drag).
 pub(crate) unsafe fn buffered(h: HWND, draw: impl FnOnce(HDC, RECT)) {
     buffered_inner(h, false, draw);
@@ -1633,6 +1672,43 @@ mod ink_tests {
         assert_eq!(gaps(24, at_150, InkKind::Cjk), (2, 2));
         assert_eq!(gaps(32, at_200, InkKind::Cjk), (3, 3));
         assert_ne!(latin(16, at_100), latin(32, at_200));
+    }
+}
+
+#[cfg(test)]
+mod center_wrap_tests {
+    use super::center_block;
+    use crate::imports::RECT;
+
+    fn cell() -> RECT {
+        RECT { left: 10, top: 20, right: 110, bottom: 80 }
+    }
+
+    #[test]
+    fn a_short_block_sits_in_the_middle_and_keeps_a_nudge_that_fits() {
+        let mid = center_block(cell(), 20, 0);
+        assert_eq!(mid.top, 40);
+        assert_eq!(mid.bottom, 60);
+        assert_eq!(mid.left, 10);
+        assert_eq!(mid.right, 110);
+        let nudged = center_block(cell(), 20, -2);
+        assert_eq!(nudged.top, 38);
+        assert_eq!(nudged.bottom, 58);
+    }
+
+    #[test]
+    fn a_nudge_that_would_leave_the_cell_is_dropped() {
+        let stayed = center_block(cell(), 20, -30);
+        assert_eq!(stayed.top, 40);
+        assert_eq!(stayed.bottom, 60);
+    }
+
+    #[test]
+    fn a_block_as_tall_as_the_cell_is_not_moved() {
+        let r = cell();
+        assert_eq!(center_block(r, 0, 3), r);
+        assert_eq!(center_block(r, 60, 3), r);
+        assert_eq!(center_block(r, 80, 3), r);
     }
 }
 
