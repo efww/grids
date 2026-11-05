@@ -71,7 +71,10 @@ pub(crate) const BTN_GAP: i32 = 8;
 pub(crate) const FIELD_H: i32 = 26;
 /// Field text inset, DIP.
 pub(crate) const FIELD_PAD_X: i32 = 8;
-/// Focus ring sits this many DIP outside the face. The ring itself is 1px.
+/// Edit client inset inside the painted field, DIP. The 1px border stays outside this.
+pub(crate) const FIELD_INSET: i32 = 2;
+/// Focus ring sits this many DIP outside a button face. The ring itself is 1px.
+/// Fields do not use it: a text box is a single 1px border, with no outer ring.
 pub(crate) const FOCUS_GAP: i32 = 2;
 
 /// Body padding from the mockup, DIP.
@@ -213,6 +216,7 @@ mod tests {
         assert_eq!(BTN_GAP, 8);
         assert_eq!(FIELD_H, 26);
         assert_eq!(FIELD_PAD_X, 8);
+        assert_eq!(FIELD_INSET, 2);
         assert_eq!(FOCUS_GAP, 2);
         assert_eq!(PAD_BODY_X, 16);
         assert_eq!(PAD_BODY_Y, 14);

@@ -261,14 +261,14 @@ thread_local! {
     static HOT: Cell<i32> = const { Cell::new(0) }; // hovered checkbox id, or 0
 }
 
-const MARGIN_DIP: i32 = 16;
+const MARGIN_DIP: i32 = crate::PAD_BODY_X;
 const ROW_DIP: i32 = 28;
-const ROW_GAP_DIP: i32 = 8;
+const ROW_GAP_DIP: i32 = crate::SPACE_8;
 const BOX_DIP: i32 = 16;
-const BOX_TEXT_GAP_DIP: i32 = 8;
+const BOX_TEXT_GAP_DIP: i32 = crate::SPACE_8;
 const BTN_W_DIP: i32 = 80;
-const BTN_H_DIP: i32 = 28;
-const BTN_GAP_DIP: i32 = 12;
+const BTN_H_DIP: i32 = crate::BTN_H_FOOTER;
+const BTN_GAP_DIP: i32 = crate::BTN_GAP;
 const CLIENT_W_DIP: i32 = 420;
 
 fn check_ids() -> [i32; 4] {
@@ -306,7 +306,7 @@ fn pref_set(p: &mut Prefs, id: i32, on: bool) {
 }
 
 fn sc(dpi: i32, dip: i32) -> i32 {
-    dip * dpi.max(96) / 96
+    crate::px(dpi, dip)
 }
 
 fn ask_style() -> WINDOW_STYLE {
@@ -375,48 +375,8 @@ fn lay(client_w: i32, client_h: i32, dpi: i32) -> Lay {
     Lay { marks, labels, rows, ok, cancel }
 }
 
-fn dialog_font() -> HFONT {
-    let font = crate::app(|a| a.font);
-    if font.is_invalid() {
-        let mut lf = LOGFONTW { lfHeight: -14, lfWeight: 400, lfQuality: CLEARTYPE_QUALITY, ..Default::default() };
-        for (d, c) in lf.lfFaceName.iter_mut().take(31).zip(crate::ui_face().encode_utf16()) {
-            *d = c;
-        }
-        unsafe { CreateFontIndirectW(&lf) }
-    } else {
-        font
-    }
-}
-
-fn icon_font() -> HFONT {
-    let font = crate::app(|a| a.icon_font);
-    if font.is_invalid() {
-        let mut lf = LOGFONTW {
-            lfHeight: -14,
-            lfWeight: 400,
-            lfCharSet: DEFAULT_CHARSET,
-            lfQuality: CLEARTYPE_QUALITY,
-            ..Default::default()
-        };
-        for (d, c) in lf.lfFaceName.iter_mut().take(31).zip("Segoe MDL2 Assets".encode_utf16()) {
-            *d = c;
-        }
-        unsafe { CreateFontIndirectW(&lf) }
-    } else {
-        font
-    }
-}
-
-unsafe fn style_caption(h: HWND) {
-    // Same caption as Settings / basket / watch: theme bg, no cerulean fill, no gradient.
-    let dark = crate::DARK_ON.load(Ordering::Relaxed);
-    let on = BOOL::from(dark);
-    let _ = DwmSetWindowAttribute(h, DWMWINDOWATTRIBUTE(20), &on as *const _ as _, 4);
-    let caption = crate::cref(crate::pal().bg);
-    let _ = DwmSetWindowAttribute(h, DWMWA_CAPTION_COLOR, &caption as *const _ as _, 4);
-    let def = COLORREF(0xFFFF_FFFF);
-    let _ = DwmSetWindowAttribute(h, DWMWINDOWATTRIBUTE(36), &def as *const _ as _, 4);
-    let _ = DwmSetWindowAttribute(h, DWMWINDOWATTRIBUTE(34), &def as *const _ as _, 4);
+unsafe fn dialog_font() -> HFONT {
+    crate::body_font()
 }
 
 unsafe fn child(parent: HWND, class: PCWSTR, text: &str, style: u32, id: i32, font: HFONT) -> HWND {
@@ -443,16 +403,14 @@ unsafe fn paint(h: HWND) {
     let prefs = PREFS.with(|p| p.get());
     let hot = HOT.with(|c| c.get());
     let font = dialog_font();
-    let icon = icon_font();
     crate::buffered(h, |dc, rc| {
         crate::paint_window(dc, rc);
         let l = lay(rc.right - rc.left, rc.bottom - rc.top, dpi);
         let ground = crate::ui_tokens().bg;
         for (i, id) in check_ids().into_iter().enumerate() {
             let on = pref_get(prefs, id);
-            let tick = if on { crate::shell::ctxmenu::Tick::On } else { crate::shell::ctxmenu::Tick::Off };
-            crate::draw_tick(dc, l.marks[i], tick, crate::ACCENT, dpi, icon, ground, hot == id);
-            crate::text(dc, l.labels[i], check_label(id), font, crate::pal().text, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+            crate::paint_check(dc, l.marks[i], on, hot == id, dpi, ground);
+            crate::paint_label(dc, l.labels[i], check_label(id), font);
         }
     });
 }
@@ -508,7 +466,7 @@ unsafe fn ask(owner: HWND, initial: Prefs) -> Option<Prefs> {
     if h.0.is_null() {
         return None;
     }
-    style_caption(h);
+    crate::style_dialog_caption(h);
     let font = dialog_font();
     let tab = 0x0001_0000u32;
     let ok = child(h, w!("BUTTON"), tr(Key::Ok), 0xB | tab, ID_OK, font);
@@ -656,6 +614,16 @@ mod tests {
         assert!(text.contains("2") && text.contains("C:\\a.xlsx"), "{text}");
         assert!(text.contains("in use") || text.contains("사용") || text.contains("使用"), "{text}");
         assert!(text.contains("not a zip archive"), "{text}");
+    }
+
+    #[test]
+    fn tidy_dialog_uses_shared_footer_metrics() {
+        let dpi = 96;
+        let l = super::lay(super::sc(dpi, super::CLIENT_W_DIP), super::client_h(dpi), dpi);
+        assert_eq!(l.ok.bottom - l.ok.top, crate::BTN_H_FOOTER);
+        assert_eq!(l.cancel.left - l.ok.right, crate::BTN_GAP);
+        assert_eq!(l.rows[0].left, crate::PAD_BODY_X);
+        assert_eq!(l.marks[0].bottom - l.marks[0].top, 16);
     }
 
     #[test]

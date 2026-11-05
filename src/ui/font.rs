@@ -388,6 +388,43 @@ unsafe fn refit_text_edits() {
     crate::fit_load();
 }
 
+static FALLBACK_BODY: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+static FALLBACK_ICON: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+
+unsafe fn fallback_font(slot: &std::sync::atomic::AtomicIsize, face: &str, px: i32, weight: i32) -> HFONT {
+    let cur = HFONT(slot.load(Ordering::Relaxed) as *mut _);
+    if !cur.0.is_null() && !cur.is_invalid() {
+        return cur;
+    }
+    let mut lf = logfont(face, px);
+    lf.lfWeight = weight;
+    let font = CreateFontIndirectW(&lf);
+    if !font.is_invalid() {
+        slot.store(font.0 as isize, Ordering::Relaxed);
+    }
+    font
+}
+
+/// The app UI face. Dialogs use this instead of creating their own fonts.
+pub(crate) unsafe fn body_font() -> HFONT {
+    if let Some(font) = crate::app_try(|a| a.font) {
+        if !font.0.is_null() && !font.is_invalid() {
+            return font;
+        }
+    }
+    fallback_font(&FALLBACK_BODY, crate::ui_face(), super::FONT_PX, 400)
+}
+
+/// Segoe MDL2 Assets, for checks and the other chrome glyphs.
+pub(crate) unsafe fn icon_font() -> HFONT {
+    if let Some(font) = crate::app_try(|a| a.icon_font) {
+        if !font.0.is_null() && !font.is_invalid() {
+            return font;
+        }
+    }
+    fallback_font(&FALLBACK_ICON, "Segoe MDL2 Assets", 14, 400)
+}
+
 /// Bold copy of the window's UI font. Built once, the first time a group row is painted,
 /// and thrown away by `apply_font` (a DPI or face change) or when the window closes.
 pub(crate) unsafe fn bold_ui_font() -> HFONT {

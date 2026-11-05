@@ -1,14 +1,22 @@
-//! Add / edit server connection. Owner-drawn card, standard edit fields, bold accent Save.
+//! Add / edit server connection.
+//! Chips, fields, the HTTPS check, and the footer are painted by this module.
+//! A field is one 1px border: the token line at rest, cerulean while that edit has focus.
 //! The password stays in the edit and in Credential Manager. It is not written onto the favourite.
 
 use std::sync::atomic::{AtomicIsize, Ordering};
 
 use crate::app::{app, text_of};
-use crate::i18n::{title_style, tr, ui_face};
+use windows::Win32::UI::HiDpi::AdjustWindowRectExForDpi;
+
+use crate::i18n::tr;
 use crate::imports::*;
 use crate::remote::{self, cred_target, cred_used, fields_from_link, fields_from_parsed, mount_key, normalize, still_used, Fail, Fields, Parsed, KINDS, KIND_LABELS};
 use crate::session::{append_node, node_ref, path_clash, write_server, FavNode, ServerLink};
-use super::{aa_rfill, blend, buffered, cref, delete_font, on_color, pal, text, paint_button, paint_window, ButtonKind, FocusRing, ui_tokens, visual_from_pointer};
+use super::{
+    body_font, bold_ui_font, buffered, color_field_edit, field_edit_rect, paint_button, paint_check, paint_field, paint_label, paint_meta, paint_section_header, paint_segment,
+    paint_window, style_popup_chrome, visual_from_pointer, ButtonKind, FocusRing, BTN_GAP, BTN_H_FOOTER, FIELD_H, FIELD_PAD_X, FONT_PX, PAD_BODY_X, PAD_BODY_Y, SPACE_4, SPACE_8,
+    px,
+};
 
 const SAVE_MSG: u32 = WM_APP + 1;
 /// EC_LEFTMARGIN | EC_RIGHTMARGIN. Same message the settings search box and name prompt use.
@@ -31,8 +39,6 @@ struct Dlg {
     edit_id: Vec<usize>,
     parent: Vec<usize>,
     old: Option<ServerLink>,
-    font: HFONT,
-    bold: HFONT,
     edits: [HWND; 6],
     hot: i32,
     down: i32,
@@ -40,8 +46,6 @@ struct Dlg {
     https_r: RECT,
     save_r: RECT,
     cancel_r: RECT,
-    brush: HBRUSH,
-    accent: u32,
 }
 
 struct Geom {
@@ -54,9 +58,6 @@ struct Geom {
 
 pub(crate) unsafe fn open_server_dialog(owner: HWND, parent: &[usize], edit: Option<&[usize]>, prefill: Option<Parsed>) {
     let dpi = dpi_of(owner);
-    let (face, weight) = title_style();
-    let body = ui_face();
-    let accent = app(|a| a.s.accent_now());
     let mut dlg = Dlg {
         dpi,
         kind: 0,
@@ -66,8 +67,6 @@ pub(crate) unsafe fn open_server_dialog(owner: HWND, parent: &[usize], edit: Opt
         edit_id: Vec::new(),
         parent: parent.to_vec(),
         old: None,
-        font: make_font(body, 14, 400, dpi),
-        bold: make_font(face, 14, weight, dpi),
         edits: [HWND::default(); 6],
         hot: -1,
         down: -1,
@@ -75,13 +74,10 @@ pub(crate) unsafe fn open_server_dialog(owner: HWND, parent: &[usize], edit: Opt
         https_r: RECT::default(),
         save_r: RECT::default(),
         cancel_r: RECT::default(),
-        brush: CreateSolidBrush(cref(pal().card)),
-        accent,
     };
     if let Some(id) = edit {
         let loaded = app(|a| node_ref(&a.s.tree, id).and_then(|n| n.server.clone().map(|s| (n.name.clone(), s))));
         let Some((name, link)) = loaded else {
-            drop_fonts(&dlg);
             return;
         };
         dlg.editing = true;
@@ -94,8 +90,9 @@ pub(crate) unsafe fn open_server_dialog(owner: HWND, parent: &[usize], edit: Opt
         apply_fields(&mut dlg, &fields_from_parsed(p));
     }
     ensure_class();
-    let w = sc(dpi, 400);
-    let h = sc(dpi, 560);
+    let client_w = sc(dpi, 400);
+    let client_h = client_height(dpi, client_w);
+    let (w, h) = outer_size(client_w, client_h, dpi);
     let (x, y) = center_on(owner, w, h);
     let title = if dlg.editing { tr(crate::Key::EditServerConnection) } else { tr(crate::Key::AddServerConnection) };
     let hwnd = CreateWindowExW(
@@ -113,12 +110,11 @@ pub(crate) unsafe fn open_server_dialog(owner: HWND, parent: &[usize], edit: Opt
         None,
     );
     let Ok(hwnd) = hwnd else {
-        drop_fonts(&dlg);
         return;
     };
     let ptr = Box::into_raw(Box::new(dlg));
     SetWindowLongPtrW(hwnd, GWLP_USERDATA, ptr as isize);
-    let font = (*ptr).font;
+    let font = body_font();
     let ids = [ID_NAME, ID_HOST, ID_PORT, ID_REMOTE, ID_USER, ID_PASS];
     for (i, id) in ids.iter().enumerate() {
         // Borderless. The dialog paints the frame; a WS_BORDER edit sized to that frame
@@ -185,50 +181,52 @@ unsafe fn fill_edits(ptr: *mut Dlg) {
 }
 
 fn sc(dpi: i32, dip: i32) -> i32 {
-    (dip * dpi / 96).max(if dip == 0 { 0 } else { 1 })
-}
-
-/// Inset of a single-line edit inside its painted frame. Equal on every side,
-/// so the font cell `place_edit` centres in here is also centred in the frame.
-/// Same 2 DIP inset as the rename dialog's `field_inner` and the settings ask field.
-fn field_inner(outer: RECT, dpi: i32) -> RECT {
-    let h = outer.bottom - outer.top;
-    let w = outer.right - outer.left;
-    if h <= 0 || w <= 0 {
-        return outer;
-    }
-    let d = sc(dpi.max(96), 2).min(h / 2).min(w / 2);
-    RECT { left: outer.left + d, top: outer.top + d, right: (outer.right - d).max(outer.left + d), bottom: (outer.bottom - d).max(outer.top + d) }
+    px(dpi, dip)
 }
 
 fn geom(dpi: i32, width: i32) -> Geom {
-    let pad = sc(dpi, 16);
-    let gap = sc(dpi, 8);
-    let gap4 = sc(dpi, 4);
-    let lab = sc(dpi, 16);
-    let edit_h = sc(dpi, 32);
+    let pad = sc(dpi, PAD_BODY_X);
+    let gap = sc(dpi, SPACE_8);
+    let gap4 = sc(dpi, SPACE_4);
+    let lab = sc(dpi, FONT_PX + SPACE_4);
+    let edit_h = sc(dpi, FIELD_H);
+    let chip_h = sc(dpi, BTN_H_FOOTER);
     let mut y = pad + lab + gap + lab + gap4;
-    let inner = width - pad * 2;
+    let inner = (width - pad * 2).max(1);
     let slot = (inner - gap * 3) / 4;
     let mut kind_r = [RECT::default(); 4];
     for i in 0..4 {
         let left = pad + i as i32 * (slot + gap);
-        kind_r[i] = RECT { left, top: y, right: left + slot, bottom: y + sc(dpi, 32) };
+        kind_r[i] = RECT { left, top: y, right: left + slot, bottom: y + chip_h };
     }
-    y += sc(dpi, 32) + gap;
+    y += chip_h + gap;
     let mut edits = [RECT::default(); 6];
     for i in 0..6 {
         y += lab + gap4;
-        edits[i] = RECT { left: pad, top: y, right: width - pad, bottom: y + edit_h };
+        edits[i] = RECT { left: pad, top: y, right: (width - pad).max(pad + 1), bottom: y + edit_h };
         y += edit_h + gap;
     }
-    let https_r = RECT { left: pad, top: y, right: width - pad, bottom: y + lab };
+    let https_r = RECT { left: pad, top: y, right: (width - pad).max(pad + 1), bottom: y + lab };
     y += lab + gap + lab + gap;
-    let bw = (inner - sc(dpi, super::BTN_GAP)) / 2;
-    let bh = sc(dpi, super::BTN_H_FOOTER);
+    let bw = (inner - sc(dpi, BTN_GAP)) / 2;
+    let bh = sc(dpi, BTN_H_FOOTER);
     let save_r = RECT { left: pad, top: y, right: pad + bw, bottom: y + bh };
-    let cancel_r = RECT { left: save_r.right + sc(dpi, super::BTN_GAP), top: y, right: width - pad, bottom: y + bh };
+    let cancel_r = RECT { left: save_r.right + sc(dpi, BTN_GAP), top: y, right: (width - pad).max(save_r.right + 1), bottom: y + bh };
     Geom { kind_r, edits, https_r, save_r, cancel_r }
+}
+
+fn client_height(dpi: i32, width: i32) -> i32 {
+    geom(dpi, width).save_r.bottom + sc(dpi, PAD_BODY_Y)
+}
+
+unsafe fn outer_size(client_w: i32, client_h: i32, dpi: i32) -> (i32, i32) {
+    let mut r = RECT { left: 0, top: 0, right: client_w, bottom: client_h };
+    let style = WS_POPUP | WS_CLIPCHILDREN;
+    if AdjustWindowRectExForDpi(&mut r, style, false, WS_EX_DLGMODALFRAME, dpi.max(96) as u32).is_ok() {
+        ((r.right - r.left).max(client_w), (r.bottom - r.top).max(client_h))
+    } else {
+        (client_w, client_h)
+    }
 }
 
 unsafe fn place_edits(hwnd: HWND) {
@@ -243,13 +241,13 @@ unsafe fn place_edits(hwnd: HWND) {
     (*v).cancel_r = g.cancel_r;
     // 8 DIP matches the settings search box and the name prompt. The 2 DIP frame inset
     // is outside this margin, so the glyphs sit clearly off the left edge.
-    let m = sc(dpi, 8) as isize;
+    let m = sc(dpi, FIELD_PAD_X) as isize;
     for (i, h) in (*v).edits.iter().enumerate() {
         if h.0.is_null() {
             continue;
         }
         _ = SendMessageW(*h, EM_SETMARGINS, Some(WPARAM(3)), Some(LPARAM(m | (m << 16))));
-        crate::place_edit(*h, field_inner(g.edits[i], dpi), true);
+        crate::place_edit(*h, field_edit_rect(g.edits[i], dpi), true);
     }
 }
 
@@ -274,10 +272,17 @@ unsafe extern "system" fn srv_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) ->
         }
         WM_CTLCOLOREDIT => {
             let dc = HDC(wp.0 as *mut _);
-            let Some(v) = view(h) else { return DefWindowProcW(h, msg, wp, lp) };
-            SetTextColor(dc, cref(pal().text));
-            SetBkColor(dc, cref(pal().card));
-            LRESULT((*v).brush.0 as isize)
+            if view(h).is_none() {
+                return DefWindowProcW(h, msg, wp, lp);
+            }
+            color_field_edit(dc)
+        }
+        WM_COMMAND => {
+            let code = ((wp.0 >> 16) & 0xffff) as u32;
+            if code == 0x0100 || code == 0x0200 {
+                let _ = InvalidateRect(Some(h), None, false);
+            }
+            LRESULT(0)
         }
         WM_PAINT => {
             paint(h);
@@ -327,7 +332,8 @@ unsafe extern "system" fn srv_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) ->
             let hit = DefWindowProcW(h, msg, wp, lp);
             if hit.0 == HTCLIENT as isize {
                 let (_x, y) = lp_xy(lp);
-                if y < sc(dpi_of(h), 32) {
+                // The painted title band. Dragging it moves the popup; the chips sit below it.
+                if y < sc(dpi_of(h), PAD_BODY_X + FONT_PX + SPACE_4) {
                     return LRESULT(HTCAPTION as isize);
                 }
             }
@@ -348,56 +354,50 @@ unsafe fn paint(h: HWND) {
     let v = &mut *v;
     buffered(h, |dc, rc| {
         let dpi = v.dpi;
-        let pad = sc(dpi, 16);
+        let pad = sc(dpi, PAD_BODY_X);
         let g = geom(dpi, (rc.right - rc.left).max(1));
         v.kind_r = g.kind_r;
         v.https_r = g.https_r;
         v.save_r = g.save_r;
         v.cancel_r = g.cancel_r;
         paint_window(dc, rc);
+        let body = body_font();
+        let bold = bold_ui_font();
+        let ground = super::ui_tokens().bg;
         let title = if v.editing { tr(crate::Key::EditServerConnection) } else { tr(crate::Key::AddServerConnection) };
-        let title_r = RECT { left: pad, top: pad, right: rc.right - pad, bottom: pad + sc(dpi, 16) };
-        text(dc, title_r, title, v.bold, pal().text, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
-        let y = g.kind_r[0].top - sc(dpi, 4) - sc(dpi, 16);
-        let type_r = RECT { left: pad, top: y, right: rc.right - pad, bottom: y + sc(dpi, 16) };
-        text(dc, type_r, tr(crate::Key::ServerType), v.font, pal().sub, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
+        let title_r = RECT { left: pad, top: pad, right: rc.right - pad, bottom: pad + sc(dpi, FONT_PX + SPACE_4) };
+        paint_section_header(dc, title_r, title, bold);
+        let y = g.kind_r[0].top - sc(dpi, SPACE_4) - sc(dpi, FONT_PX + SPACE_4);
+        let type_r = RECT { left: pad, top: y, right: rc.right - pad, bottom: y + sc(dpi, FONT_PX + SPACE_4) };
+        paint_meta(dc, type_r, tr(crate::Key::ServerType), body);
+        let hot = (v.hot >= 0).then_some(v.hot);
+        let down = (v.down >= 0).then_some(v.down);
+        let focus = GetFocus();
         for i in 0..4 {
-            let on = v.kind == i;
-            let hot = v.hot == i as i32;
-            let fill_c = if on { v.accent } else if hot { blend(pal().card, pal().text, 0.06) } else { pal().card };
-            let border = if on { None } else { Some(pal().line) };
-            aa_rfill(dc, g.kind_r[i], sc(dpi, 8), fill_c, border, pal().bg);
-            let ink = if on { on_color(v.accent) } else { pal().text };
-            let font = if on { v.bold } else { v.font };
-            text(dc, g.kind_r[i], KIND_LABELS[i], font, ink, DT_CENTER | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
+            let vis = visual_from_pointer(i as i32, hot, down);
+            paint_segment(dc, g.kind_r[i], KIND_LABELS[i], v.kind == i, vis, dpi, ground);
         }
         let names = [tr(crate::Key::DisplayName), tr(crate::Key::Address), tr(crate::Key::Port), tr(crate::Key::RemotePath), tr(crate::Key::UserName), tr(crate::Key::Password)];
         for (i, name) in names.iter().enumerate() {
             let r = g.edits[i];
-            // The frame stays this rect. The borderless edit sits inside `field_inner`.
-            aa_rfill(dc, r, sc(dpi, 4), pal().card, Some(pal().line), pal().bg);
-            let lab = RECT { left: pad, top: r.top - sc(dpi, 4) - sc(dpi, 16), right: rc.right - pad, bottom: r.top - sc(dpi, 4) };
-            text(dc, lab, name, v.font, pal().sub, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
+            let focused = !v.edits[i].0.is_null() && focus == v.edits[i];
+            paint_field(dc, r, dpi, focused);
+            let lab = RECT { left: pad, top: r.top - sc(dpi, SPACE_4) - sc(dpi, FONT_PX + SPACE_4), right: rc.right - pad, bottom: r.top - sc(dpi, SPACE_4) };
+            paint_meta(dc, lab, name, body);
         }
         if KINDS[v.kind] == "webdav" {
-            let mark = RECT { left: g.https_r.left, top: g.https_r.top, right: g.https_r.left + sc(dpi, 16), bottom: g.https_r.top + sc(dpi, 16) };
-            let fill_c = if v.tls { v.accent } else { pal().card };
-            aa_rfill(dc, mark, sc(dpi, 4), fill_c, Some(if v.tls { v.accent } else { pal().line }), pal().bg);
-            if v.tls {
-                text(dc, mark, "✓", v.font, on_color(v.accent), DT_CENTER | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
-            }
-            let lab = RECT { left: mark.right + sc(dpi, 8), top: g.https_r.top, right: rc.right - pad, bottom: g.https_r.bottom };
-            text(dc, lab, tr(crate::Key::Https), v.font, pal().text, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
+            let box_s = sc(dpi, 16);
+            let mark = RECT { left: g.https_r.left, top: g.https_r.top, right: g.https_r.left + box_s, bottom: g.https_r.top + box_s };
+            paint_check(dc, mark, v.tls, v.hot == 9, dpi, ground);
+            let lab = RECT { left: mark.right + sc(dpi, SPACE_8), top: g.https_r.top, right: rc.right - pad, bottom: g.https_r.bottom };
+            paint_label(dc, lab, tr(crate::Key::Https), body);
         }
         if v.editing {
-            let hint = RECT { left: pad, top: g.https_r.bottom + sc(dpi, 8), right: rc.right - pad, bottom: g.save_r.top - sc(dpi, 8) };
-            text(dc, hint, tr(crate::Key::LeaveBlankToKeepTheSavedPassword), v.font, pal().sub, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
+            let hint = RECT { left: pad, top: g.https_r.bottom + sc(dpi, SPACE_8), right: rc.right - pad, bottom: g.save_r.top - sc(dpi, SPACE_8) };
+            paint_meta(dc, hint, tr(crate::Key::LeaveBlankToKeepTheSavedPassword), body);
         }
-        let hot = (v.hot >= 0).then_some(v.hot);
-        let down = (v.down >= 0).then_some(v.down);
-        let ground = ui_tokens().bg;
-        paint_button(dc, g.save_r, ButtonKind::Primary, visual_from_pointer(10, hot, down), tr(crate::Key::Save), v.bold, dpi, ground, FocusRing::Outside);
-        paint_button(dc, g.cancel_r, ButtonKind::Secondary, visual_from_pointer(11, hot, down), tr(crate::Key::Cancel), v.font, dpi, ground, FocusRing::Outside);
+        paint_button(dc, g.save_r, ButtonKind::Primary, visual_from_pointer(10, hot, down), tr(crate::Key::Save), bold, dpi, ground, FocusRing::Outside);
+        paint_button(dc, g.cancel_r, ButtonKind::Secondary, visual_from_pointer(11, hot, down), tr(crate::Key::Cancel), body, dpi, ground, FocusRing::Outside);
     });
 }
 
@@ -654,34 +654,7 @@ fn center_on(owner: HWND, w: i32, h: i32) -> (i32, i32) {
 }
 
 fn round_window(hwnd: HWND) {
-    unsafe {
-        let pref: u32 = 2;
-        let _ = DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &pref as *const _ as _, 4);
-        let dark = crate::DARK_ON.load(Ordering::Relaxed);
-        let on = BOOL::from(dark);
-        let _ = DwmSetWindowAttribute(hwnd, DWMWINDOWATTRIBUTE(20), &on as *const _ as _, 4);
-        let border = cref(pal().bg);
-        let _ = DwmSetWindowAttribute(hwnd, DWMWINDOWATTRIBUTE(34), &border as *const _ as _, 4);
-    }
-}
-
-fn make_font(face: &str, dip: i32, weight: i32, dpi: i32) -> HFONT {
-    let mut name = [0u16; 32];
-    for (i, u) in face.encode_utf16().take(31).enumerate() {
-        name[i] = u;
-    }
-    let lf = LOGFONTW { lfHeight: -(dip * dpi / 96).max(1), lfWeight: weight, lfFaceName: name, lfQuality: CLEARTYPE_QUALITY, ..Default::default() };
-    unsafe { CreateFontIndirectW(&lf) }
-}
-
-fn drop_fonts(dlg: &Dlg) {
-    unsafe {
-        delete_font(dlg.font);
-        delete_font(dlg.bold);
-        if !dlg.brush.0.is_null() {
-            let _ = DeleteObject(dlg.brush.into());
-        }
-    }
+    unsafe { style_popup_chrome(hwnd) }
 }
 
 unsafe fn drop_view(h: HWND) {
@@ -694,5 +667,33 @@ unsafe fn drop_view(h: HWND) {
     if !dlg.edits[5].0.is_null() {
         _ = SetWindowTextW(dlg.edits[5], w!(""));
     }
-    drop_fonts(&dlg);
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn server_dialog_uses_shared_field_chip_and_footer_metrics() {
+        let g = super::geom(96, 400);
+        assert_eq!(g.kind_r[0].bottom - g.kind_r[0].top, crate::BTN_H_FOOTER);
+        assert_eq!(g.kind_r[1].left - g.kind_r[0].right, crate::SPACE_8);
+        assert_eq!(g.edits[0].bottom - g.edits[0].top, crate::FIELD_H);
+        assert_eq!(g.edits[0].top - g.kind_r[0].bottom, crate::SPACE_8 + (crate::FONT_PX + crate::SPACE_4) + crate::SPACE_4);
+        assert_eq!(g.save_r.bottom - g.save_r.top, crate::BTN_H_FOOTER);
+        assert_eq!(g.cancel_r.left - g.save_r.right, crate::BTN_GAP);
+        assert_eq!(g.kind_r[0].left, crate::PAD_BODY_X);
+        assert!(g.kind_r[3].right <= 400 - crate::PAD_BODY_X);
+        assert_eq!(super::client_height(96, 400), g.save_r.bottom + crate::PAD_BODY_Y);
+    }
+
+    #[test]
+    fn server_dialog_metrics_scale_with_dpi() {
+        let dpi = 144;
+        let width = super::sc(dpi, 400);
+        let g = super::geom(dpi, width);
+        assert_eq!(g.edits[0].bottom - g.edits[0].top, super::sc(dpi, crate::FIELD_H));
+        assert_eq!(g.kind_r[0].bottom - g.kind_r[0].top, super::sc(dpi, crate::BTN_H_FOOTER));
+        assert_eq!(g.kind_r[1].left - g.kind_r[0].right, super::sc(dpi, crate::SPACE_8));
+        assert_eq!(g.save_r.bottom - g.save_r.top, super::sc(dpi, crate::BTN_H_FOOTER));
+        assert_eq!(g.cancel_r.left - g.save_r.right, super::sc(dpi, crate::BTN_GAP));
+    }
 }

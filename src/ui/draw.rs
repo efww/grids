@@ -182,7 +182,7 @@ pub(crate) unsafe fn draw_ink_line(dc: HDC, mut r: RECT, s: &str, font: HFONT, r
     draw_line(dc, &mut r, s, font, rgb, extra);
 }
 
-/// Settings checkbox. 16 DIP is the caller's box; the corner radius is 3 DIP.
+/// Shared checkbox. 16 DIP is the caller's box. The corner radius lives here.
 /// `hot` uses the same accent wash as a hovered settings button. Light and dark come from `pal()`.
 pub(crate) unsafe fn draw_tick(dc: HDC, r: RECT, tick: crate::shell::ctxmenu::Tick, accent: u32, dpi: i32, icon: HFONT, ground: u32, hot: bool) {
     let s = |v: i32| v * dpi.max(96) / 96;
@@ -207,6 +207,12 @@ pub(crate) unsafe fn draw_tick(dc: HDC, r: RECT, tick: crate::shell::ctxmenu::Ti
             aa_rfill(dc, r, rad, wash, Some(edge), ground);
         }
     }
+}
+
+/// Checkbox on the token ground. On is cerulean. The mark is the shared icon font.
+pub(crate) unsafe fn paint_check(dc: HDC, r: RECT, on: bool, hot: bool, dpi: i32, ground: u32) {
+    let tick = if on { crate::shell::ctxmenu::Tick::On } else { crate::shell::ctxmenu::Tick::Off };
+    draw_tick(dc, r, tick, super::ACCENT, dpi, super::icon_font(), ground, hot);
 }
 
 /// Multi-line text wrapped at `r`'s width. `calc` only measures, with the same font and flags.

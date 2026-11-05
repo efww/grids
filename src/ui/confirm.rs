@@ -324,15 +324,7 @@ unsafe fn outer_size(client_w: i32, client_h: i32, dpi: i32) -> (i32, i32) {
 }
 
 unsafe fn style_caption(h: HWND) {
-    // Same caption as Settings and the name prompt: token ground, no cerulean fill.
-    let dark = ui_tokens().dark;
-    let on = BOOL::from(dark);
-    let _ = DwmSetWindowAttribute(h, DWMWINDOWATTRIBUTE(20), &on as *const _ as _, 4);
-    let caption = crate::cref(ui_tokens().bg);
-    let _ = DwmSetWindowAttribute(h, DWMWA_CAPTION_COLOR, &caption as *const _ as _, 4);
-    let def = COLORREF(0xFFFF_FFFF);
-    let _ = DwmSetWindowAttribute(h, DWMWINDOWATTRIBUTE(36), &def as *const _ as _, 4);
-    let _ = DwmSetWindowAttribute(h, DWMWINDOWATTRIBUTE(34), &def as *const _ as _, 4);
+    super::style_dialog_caption(h);
 }
 
 fn ensure_class() {
