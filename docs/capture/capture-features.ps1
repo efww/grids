@@ -84,7 +84,7 @@ foreach($x in @(@{c='preview.json';n='search'},@{c='preview.ko.json';n='search.k
   $st=StartMag $x.c; if(-not $st){ continue }
   [void][CapFeat]::SetForegroundWindow($st.Hwnd); Start-Sleep -Milliseconds 400
   [MaguroCap]::ChordTo($st.Hwnd, [uint32]$st.Pid, 0x11,0x46); Start-Sleep -Milliseconds 400
-  if (-not [MaguroCap]::SetChildText($st.Hwnd, [uint32]$st.Pid, $null, 'sunset')) { [MaguroCap]::TypeChars($st.Hwnd, [uint32]$st.Pid, 'sunset') }; Start-Sleep -Milliseconds 1400
+  foreach($ch in 'SUNSET'.ToCharArray()){ [MaguroCap]::ChordTo($st.Hwnd, [uint32]$st.Pid, [byte][char]$ch); Start-Sleep -Milliseconds 60 }  # real keys into the focused search box; posted WM_CHAR was dropped; Start-Sleep -Milliseconds 1400
   SaveCap $st.Hwnd $dest
   CloseMag $st
 }
@@ -146,33 +146,35 @@ function SeedFeat([string]$lang){
   $py = @"
 import json
 from pathlib import Path
-p=Path(r'$($Json.Replace('\','\\'))')
-src=Path(r'$($CfgDir.Replace('\','\\'))')/'hero_light.json'
+p=Path('$($Json.Replace('\','\\'))')
+src=Path('$($CfgDir.Replace('\','\\'))')/'hero_light.json'
 base=json.loads(src.read_text(encoding='utf-8'))
 base['lang']='$lang'
 base['theme']='light'; base['dark']=False
 base['accent']='0A9BD6'; base['accent_dark']='0A9BD6'
-root=r'$($Root.Replace('\','\\'))'
-excel=r'$($Excel.Replace('\','\\'))'
+root='$($Root.Replace('\','\\'))'
+excel='$($Excel.Replace('\','\\'))'
 base['file_basket']=[
-  root+r'\\demo-253\\basket-src\\demo-file-01.txt',
-  root+r'\\demo-253\\basket-src\\demo-file-02.txt',
-  root+r'\\demo-253\\basket-src\\demo-file-03.txt',
-  root+r'\\demo-253\\basket-src\\demo-file-04.txt',
-  root+r'\\demo-253\\basket-src\\demo-file-05.txt',
+  root+'\\demo-253\\basket-src\\demo-file-01.txt',
+  root+'\\demo-253\\basket-src\\demo-file-02.txt',
+  root+'\\demo-253\\basket-src\\demo-file-03.txt',
+  root+'\\demo-253\\basket-src\\demo-file-04.txt',
+  root+'\\demo-253\\basket-src\\demo-file-05.txt',
 ]
 base['folder_watches']=[
-  {'path': root+r'\\demo-readme-watch\\photos', 'subfolders': True, 'paused': False},
+  {'path': root+'\\demo-readme-watch\\photos', 'subfolders': True, 'paused': False},
 ]
-pane0=root+r'\\readme-demo'
+pane0=root+'\\readme-demo'
 if excel:
     import os
     if os.path.isdir(excel):
         pane0=excel
 base['panes']=[{'index':0,'path':pane0,'tint':1,'view':[4,16]},{'index':1,'path':'::{20D04FE0-3AEA-1069-A2D8-08002B30309D}','tint':5,'view':[4,16]}]
 base['start_path']=pane0
-base['favorites']=[{'path':root+r'\\readme-demo','name':'readme-demo'}]
+base['favorites']=[{'path':root+'\\readme-demo','name':'readme-demo'}]
 base['tabs']=[{'active':True,'locked':False,'name':'readme-demo','layout':base.get('layout',{'columns':[1,1],'colr':[0.5,0.5],'rowr':[[1.0],[1.0]],'active':0}),'panes':base['panes']}]
+for w in base.get('windows',[]):
+    w['tabs']=base['tabs']
 p.write_text(json.dumps(base,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
 print('seeded feat', '$lang')
 "@
@@ -198,6 +200,39 @@ foreach($pair in @(
   [void][MaguroCap]::RedrawWindow($st.Hwnd, [IntPtr]::Zero, [IntPtr]::Zero, 0x0105)
   Start-Sleep -Milliseconds 800
 
+  # Excel runs first, while the shell view still has focus (popups below steal it).
+  if($Force -or -not (Test-Path (Join-Path $Out $pair.excel))){
+    # Context-menu command 0x8007 (excel tidy). There is no gear id for it.
+    # Excel tidy is a context-menu command (0x8007), not a main-window WM_COMMAND.
+    [void][CapFeat]::SetForegroundWindow($st.Hwnd)
+    $r=[MaguroCap]::Ext($st.Hwnd)
+    
+    [MaguroCap]::ClickClient($st.Hwnd, 520, 360); Start-Sleep -Milliseconds 400
+    # (was screen Click Left+520,Top+360)
+
+    [MaguroCap]::ChordTo($st.Hwnd, [uint32]$st.Pid, 0x53)  # 'S' type-ahead selects sheet.xlsx (only file); posted WM_CHAR never reached the shell view; Start-Sleep -Milliseconds 700
+    [MaguroCap]::ChordTo($st.Hwnd, [uint32]$st.Pid, 0x10,0x79)
+    Start-Sleep -Milliseconds 700
+    Save-MaguroDebugShot "excel-menu-$($pair.lang)"
+    if(-not (Invoke-MaguroMenuName 'A1')){ Write-Host "no excel menu $($pair.lang)" }
+    $ex=WaitCls $st.Pid 'MaguroExcelTidy' 8
+    if($ex -ne [IntPtr]::Zero){
+      Start-Sleep -Milliseconds 500
+      SaveCap $ex (Join-Path $Out $pair.excel)
+      [void][CapFeat]::PostMessage($ex,[CapFeat]::WM_CLOSE,[UIntPtr]::Zero,[IntPtr]::Zero)
+    }
+    else { Write-Host "no excel tidy $($pair.lang)" }
+  }
+  # Win+Alt+V after Excel (new tab) and before basket/watch (their popups must not sit over the main window).
+  if($Force -or -not (Test-Path (Join-Path $Out $pair.wsv))){
+    Set-Clipboard -Value $(if($env:MAGURO_WSV_PATH){$env:MAGURO_WSV_PATH}else{'G:\Photos 2026'})
+    Start-Sleep -Milliseconds 300
+    [void][CapFeat]::SetForegroundWindow($st.Hwnd)
+    # Win+Alt+V (VK_LWIN, VK_MENU, V)
+    [MaguroCap]::ChordTo($st.Hwnd, [uint32]$st.Pid, 0x5B,0x12,0x56)
+    Start-Sleep -Milliseconds 1200
+    SaveCap $st.Hwnd (Join-Path $Out $pair.wsv)
+  }
   if($Force -or -not (Test-Path (Join-Path $Out $pair.basket))){
     [void][CapFeat]::PostMessage($st.Hwnd,[CapFeat]::WM_COMMAND,[UIntPtr]::new(1125),[IntPtr]::Zero)
     $hb=WaitCls $st.Pid 'MaguroBasket' 6
@@ -208,39 +243,16 @@ foreach($pair in @(
     $hw=WaitCls $st.Pid 'MaguroWatch' 6
     if($hw -ne [IntPtr]::Zero){ Start-Sleep -Milliseconds 800; SaveCap $hw (Join-Path $Out $pair.watch); [void][CapFeat]::DestroyWindow($hw); Start-Sleep -Milliseconds 300 }
   }
-  if($Force -or -not (Test-Path (Join-Path $Out $pair.wsv))){
-    Set-Clipboard -Value (Join-Path $Root 'readme-demo')
-    Start-Sleep -Milliseconds 300
-    [void][CapFeat]::SetForegroundWindow($st.Hwnd)
-    # Win+Alt+V (VK_LWIN, VK_MENU, V)
-    [MaguroCap]::ChordTo($st.Hwnd, [uint32]$st.Pid, 0x5B,0x12,0x56)
-    Start-Sleep -Milliseconds 1200
-    SaveCap $st.Hwnd (Join-Path $Out $pair.wsv)
-  }
-  if($Force -or -not (Test-Path (Join-Path $Out $pair.excel))){
-    # Context-menu command 0x8007 (excel tidy). There is no gear id for it.
-    # Excel tidy is a context-menu command (0x8007), not a main-window WM_COMMAND.
-    [void][CapFeat]::SetForegroundWindow($st.Hwnd)
-    $r=[MaguroCap]::Ext($st.Hwnd)
-    
-    [MaguroCap]::ClickClient($st.Hwnd, 520, 360); Start-Sleep -Milliseconds 400
-    # (was screen Click Left+520,Top+360)
-
-    if (-not [MaguroCap]::SetChildText($st.Hwnd, [uint32]$st.Pid, $null, 'sheet.xlsx')) { [MaguroCap]::TypeChars($st.Hwnd, [uint32]$st.Pid, 'sheet.xlsx') }; Start-Sleep -Milliseconds 700
-    [MaguroCap]::ChordTo($st.Hwnd, [uint32]$st.Pid, 0x10,0x79)
-    Start-Sleep -Milliseconds 700
-    if(-not (Invoke-MaguroMenuName 'A1')){ Write-Host "no excel menu $($pair.lang)" }
-    $ex=WaitCls $st.Pid 'MaguroExcelTidy' 8
-    if($ex -ne [IntPtr]::Zero){
-      Start-Sleep -Milliseconds 500
-      SaveCap $ex (Join-Path $Out $pair.excel)
-      [void][CapFeat]::PostMessage($ex,[CapFeat]::WM_CLOSE,[UIntPtr]::Zero,[IntPtr]::Zero)
-    }
-    else { Write-Host "no excel tidy $($pair.lang)" }
-  }
   CloseMag $st
 }
 Write-Host 'capture-features DONE'
+
+
+
+
+
+
+
 
 
 

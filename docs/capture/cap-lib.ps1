@@ -259,7 +259,7 @@ function Crop-MaguroFrame([Drawing.Bitmap]$bmp) {
   return $null
 }
 
-function Invoke-MaguroMenuName([string]$pattern) {
+function Invoke-MaguroMenuNameUia([string]$pattern) {
   Add-Type -AssemblyName UIAutomationClient | Out-Null
   Add-Type -AssemblyName UIAutomationTypes | Out-Null
   $root = [System.Windows.Automation.AutomationElement]::RootElement
@@ -347,5 +347,57 @@ function Click-MaguroSettingsPage([IntPtr]$h, [int]$page) {
   [MaguroCap]::ClickClient($h, $x, $y)
 }
 
+# Win32 popup menu (#32768) fallback: UIA often sees no menu from a background pwsh.
+# Finds the item by text via MN_GETHMENU and clicks its rect. Only touches a visible popup menu.
+if (-not ('MaguroMenuW' -as [type])) {
+Add-Type @"
+using System; using System.Runtime.InteropServices; using System.Text;
+public static class MaguroMenuW {
+ [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern IntPtr FindWindowEx(IntPtr p, IntPtr a, string c, string t);
+ [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+ [DllImport("user32.dll")] public static extern int GetMenuItemCount(IntPtr m);
+ [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern int GetMenuString(IntPtr m, uint id, StringBuilder s, int n, uint f);
+ [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L,T,R,B; }
+ [DllImport("user32.dll")] public static extern bool GetMenuItemRect(IntPtr h, IntPtr m, uint i, out RECT r);
+ [DllImport("user32.dll")] public static extern bool SetCursorPos(int x,int y);
+ [DllImport("user32.dll")] public static extern void mouse_event(uint f,int x,int y,uint d,UIntPtr e);
+ [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+}
+"@
+}
+function Invoke-MaguroMenuNameWin32([string]$pattern) {
+  $w = [IntPtr]::Zero
+  while (($w = [MaguroMenuW]::FindWindowEx([IntPtr]::Zero, $w, '#32768', $null)) -ne [IntPtr]::Zero) {
+    if (-not [MaguroMenuW]::IsWindowVisible($w)) { continue }
+    $hm = [MaguroMenuW]::SendMessage($w, 0x1E1, [IntPtr]::Zero, [IntPtr]::Zero)  # MN_GETHMENU
+    if ($hm -eq [IntPtr]::Zero) { continue }
+    $n = [MaguroMenuW]::GetMenuItemCount($hm)
+    for ($i = 0; $i -lt $n; $i++) {
+      $sb = New-Object System.Text.StringBuilder 256
+      [void][MaguroMenuW]::GetMenuString($hm, [uint32]$i, $sb, 256, 0x400)
+      $s = $sb.ToString() -replace '&', ''
+      if ($s -and $s -match $pattern) {
+        $r = New-Object MaguroMenuW+RECT
+        [void][MaguroMenuW]::GetMenuItemRect([IntPtr]::Zero, $hm, [uint32]$i, [ref]$r)
+        [void][MaguroMenuW]::SetCursorPos([int](($r.L + $r.R) / 2), [int](($r.T + $r.B) / 2))
+        Start-Sleep -Milliseconds 150
+        [MaguroMenuW]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero); [MaguroMenuW]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
+        return $true
+      }
+    }
+  }
+  return $false
+}
+function Invoke-MaguroMenuName([string]$pattern) {
+  if (Invoke-MaguroMenuNameUia $pattern) { return $true }
+  return (Invoke-MaguroMenuNameWin32 $pattern)
+}
 
-
+# Optional full-screen debug frame (set MAGURO_DEBUG_DIR). Off by default.
+function Save-MaguroDebugShot([string]$name) {
+  if (-not $env:MAGURO_DEBUG_DIR) { return }
+  Add-Type -AssemblyName System.Drawing | Out-Null
+  $b = New-Object System.Drawing.Bitmap 1600, 1000
+  $g = [System.Drawing.Graphics]::FromImage($b); $g.CopyFromScreen(0, 0, 0, 0, $b.Size); $g.Dispose()
+  $b.Save((Join-Path $env:MAGURO_DEBUG_DIR "$name.png")); $b.Dispose()
+}

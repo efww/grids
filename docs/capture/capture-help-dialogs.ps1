@@ -94,14 +94,21 @@ d={
   'accent':'0A9BD6','accent_dark':'0A9BD6','use_everything':False,'ev_asked':True,
   'dialog_jump':True,'fast_copy':True,'confirm':False,
   'window':{'left':40,'top':30,'right':1266,'bottom':853,'maximized':False},
-  'side':0,'side_dpi':96,'tree':False,'explorer_pins_open':False,'explorer_files_open':False,
+  'side':240,'side_dpi':96,'side_split':0.5,'tree':True,'fav_panel':True,'tree_panel':True,'explorer_pins_open':False,'explorer_files_open':False,
   'favorites':[],'recent':[],'bar':True,'stat':True,'ext':True,'single':True,
   'layout':{'columns':[1,1],'colr':[0.5,0.5],'rowr':[[1.0],[1.0]],'active':0},
-  'panes':[{'index':0,'path':r'$path0','view':[4,16]},{'index':1,'path':r'$path1','view':[4,16]}],
+  'panes':[{'index':0,'path':'$path0','view':[4,16]},{'index':1,'path':'$path1','view':[4,16]}],
   'workspaces':[{'slot':1,'name':'Desk'},{'slot':2,'name':'Code'}]
 }
+# Same favourites as the hero seed, so the sidebar matches the other main-window shots.
+cfg=r'$($env:MAGURO_CFG_DIR)'
+import os
+if cfg and os.path.isfile(os.path.join(cfg,'hero_light.json')):
+  d['favorites_tree']=json.loads(open(os.path.join(cfg,'hero_light.json'),encoding='utf-8-sig').read()).get('favorites_tree',[])
+if '$mode' == 'copy':
+  d['layout']['active']=1
 if '$mode' != 'copy':
-  d['panes'][0]['folders']=[r'$a',r'$b',r'$c']
+  d['panes'][0]['folders']=['$a','$b','$c']
   d['panes'][0]['folder']=0
 p.write_text(json.dumps(d,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
 print('seeded', '$lang', '$mode')
@@ -120,7 +127,7 @@ foreach($lang in @('en','ko','ja')){
   Write-Host "==== help LANG $lang ===="
   KillP; CloseNotepad
   Seed $lang 'main'
-  Get-ChildItem (Join-Path $Demo 'dst') -File -EA SilentlyContinue | Remove-Item -Force
+  Get-ChildItem (Join-Path $Demo 'dst') -File -EA SilentlyContinue | Remove-Item -Force -EA SilentlyContinue
   $proc=Start-Process $Exe -WorkingDirectory $Portable -PassThru
   $pidMag=[uint32]$proc.Id
   $main=WaitCls $pidMag 'MaguroMain' 25
@@ -148,17 +155,18 @@ foreach($lang in @('en','ko','ja')){
 
   # dialog_jump via Notepad Open + Ctrl+Alt+G
   CloseNotepad
-  $null=Start-Process notepad -PassThru
+  # Our own common Open dialog (no Notepad, no keystrokes into a foreign window).
+  $dlgHost=Start-Process powershell -ArgumentList '-NoProfile','-STA','-Command',"Add-Type -AssemblyName System.Windows.Forms; `$d=New-Object System.Windows.Forms.OpenFileDialog; `$d.Title='Open'; `$d.InitialDirectory='$Demo'; [void]`$d.ShowDialog()" -PassThru -WindowStyle Hidden
   Start-Sleep -Milliseconds 1000
   $npH=[IntPtr]::Zero
   foreach($cand in ([CapHelp]::FindByClass('Notepad') + [CapHelp]::FindByClass('NotepadWindow') + [CapHelp]::FindByClass('ApplicationFrameWindow'))){
     $t=[CapHelp]::Title($cand)
     if($t -match 'Notepad|메모장|ノート|Untitled|제목 없음'){ $npH=$cand; break }
   }
-  if($npH -eq [IntPtr]::Zero){ $all=[CapHelp]::FindByClass('Notepad'); if($all.Count -gt 0){ $npH=$all[0] } }
+  if($npH -eq [IntPtr]::Zero){ $npH=[IntPtr]1 }
   if($npH -ne [IntPtr]::Zero){
     [void][CapHelp]::SetForegroundWindow($npH); Start-Sleep -Milliseconds 300
-    [MaguroCap]::ChordTo($main, [uint32]$pidMag, 0x11,0x4F); Start-Sleep -Milliseconds 1000
+    Start-Sleep -Milliseconds 1500
     $dlg=[IntPtr]::Zero
     $deadline=(Get-Date).AddSeconds(8)
     do {
@@ -171,7 +179,7 @@ foreach($lang in @('en','ko','ja')){
     } while((Get-Date) -lt $deadline)
     if($dlg -ne [IntPtr]::Zero){
       [void][CapHelp]::SetForegroundWindow($dlg); Start-Sleep -Milliseconds 300
-      [MaguroCap]::ChordTo($main, [uint32]$pidMag, 0x11,0x12,0x47) # Ctrl+Alt+G
+      [void][CapHelp]::PostMessage($main,0x0312,[UIntPtr]::new(2),[IntPtr]((0x47 -shl 16) -bor 0x3)) # WM_HOTKEY DIALOG_HOTKEY_ID=2 (Ctrl+Alt+G) — no global keys
       # MaguroDlgJump is a 1x1 host. The picture is the open menu (#32768).
       $menu=[IntPtr]::Zero
       $deadline=(Get-Date).AddSeconds(4)
@@ -190,15 +198,16 @@ foreach($lang in @('en','ko','ja')){
       } else { Write-Host "no jump menu $lang" }
       [MaguroCap]::TapTo($main, [uint32]$pidMag, 0x1B); Start-Sleep -Milliseconds 200; [MaguroCap]::TapTo($main, [uint32]$pidMag, 0x1B)
     } else { Write-Host "no Open dialog $lang" }
+    if($dlgHost){ Stop-Process -Id $dlgHost.Id -Force -EA SilentlyContinue }
   } else { Write-Host "no Notepad $lang" }
-  CloseNotepad
+  CloseNotepad; if($dlgHost){ Stop-Process -Id $dlgHost.Id -Force -EA SilentlyContinue }
 
   [void][CapHelp]::PostMessage($main,[CapHelp]::WM_CLOSE,[UIntPtr]::Zero,[IntPtr]::Zero)
   Start-Sleep -Milliseconds 500; KillP
 
   # copy_progress
   Seed $lang 'copy'
-  Get-ChildItem (Join-Path $Demo 'dst') -File -EA SilentlyContinue | Remove-Item -Force
+  Get-ChildItem (Join-Path $Demo 'dst') -File -EA SilentlyContinue | Remove-Item -Force -EA SilentlyContinue
   $proc=Start-Process $Exe -WorkingDirectory $Portable -PassThru
   $pidMag=[uint32]$proc.Id
   $main=WaitCls $pidMag 'MaguroMain' 25
@@ -207,13 +216,15 @@ foreach($lang in @('en','ko','ja')){
   $r=[MaguroCap]::Ext($main)
   $cx=[int](($r.Left+$r.Right)/2); $cy=[int](($r.Top+$r.Bottom)/2)
   Open-MaguroBackdrop ($cx-280) ($cy-120) ($cx+280) ($cy+120)
-  [MaguroCap]::ClickClient($main, 300, 400); Start-Sleep -Milliseconds 300
-  [MaguroCap]::ChordTo($main, [uint32]$pidMag, 0x11,0x41); Start-Sleep -Milliseconds 300
-  [MaguroCap]::ChordTo($main, [uint32]$pidMag, 0x11,0x43); Start-Sleep -Milliseconds 300
-  [MaguroCap]::ClickClient($main, 900, 400); Start-Sleep -Milliseconds 300
+  # Put the big file on the clipboard (file drop list) and paste into the active right pane (seed active=1).
+  # Posted clicks never reach the shell view, so Ctrl+A/Ctrl+C in pane 1 copied nothing.
+  $big=(Get-ChildItem (Join-Path $Demo 'src') -File | Select-Object -First 1).FullName
+  powershell -NoProfile -STA -Command "Set-Clipboard -Path '$big'"
+  Start-Sleep -Milliseconds 300
   # Local paste stays on IFileOperation. Fast paste is the Maguro progress window.
   [MaguroCap]::ChordTo($main, [uint32]$pidMag, 0x10,0x79)
   Start-Sleep -Milliseconds 600
+  Save-MaguroDebugShot "fast-menu-$lang"
   if(-not (Invoke-MaguroMenuName 'Fast paste|고속 붙여넣기|高速貼り付け')){ Write-Host "no fast-paste row $lang" }
   $fc=[IntPtr]::Zero
   $deadline=(Get-Date).AddSeconds(15)
@@ -226,9 +237,18 @@ foreach($lang in @('en','ko','ja')){
     }
     Start-Sleep -Milliseconds 40
   } while((Get-Date) -lt $deadline)
+  Save-MaguroDebugShot "fast-after-$lang"
   if($fc -ne [IntPtr]::Zero){ SaveCap $fc (Join-Path $Out "copy_progress$sfx.png") | Out-Null }
   else { Write-Host "no FastCopy $lang" }
   Close-MaguroBackdrop; KillP
 }
 Write-Host 'capture-help-dialogs DONE'
+
+
+
+
+
+
+
+
 
