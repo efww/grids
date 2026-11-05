@@ -634,7 +634,6 @@ fn edit_xml(xml: &[u8], kind: Kind, edit: &ViewEdit) -> Vec<u8> {
     let mut saw_view = false;
     let mut saw_book = false;
     let mut injected = false;
-    let mut sheet_n = 0usize;
     while i < xml.len() {
         if xml[i] != b'<' {
             let s = i;
@@ -679,11 +678,11 @@ fn edit_xml(xml: &[u8], kind: Kind, edit: &ViewEdit) -> Vec<u8> {
             i = next;
             continue;
         }
-        // `<sheet>` in workbook.xml, not `<sheets>`. The first one in document order is the selected tab.
+        // CT_Sheet allows only name/sheetId/state/r:id. tabSelected on <sheet> is illegal and
+        // makes Excel repair the workbook; strip it if a prior buggy rewrite left it behind.
+        // Which tab is active is workbookView/@activeTab plus sheetView/@tabSelected.
         if !tag.closing && tag.local == b"sheet" && edit.book && kind == Kind::Workbook {
-            let change = if sheet_n == 0 { Change::SetOn(b"tabSelected") } else { Change::Remove(b"tabSelected") };
-            sheet_n += 1;
-            out.extend(patch_tag(tag.raw, &[change]));
+            out.extend(patch_tag(tag.raw, &[Change::Remove(b"tabSelected")]));
             i = n;
             if !tag.self_closing {
                 depth += 1;
@@ -769,12 +768,42 @@ fn prefix_of(tag: &Tag) -> Vec<u8> {
     tag.prefix.to_vec()
 }
 
+
+fn skip_element_after_open(xml: &[u8], mut i: usize, self_closing: bool) -> usize {
+    if self_closing {
+        return i;
+    }
+    let mut d = 1i32;
+    while i < xml.len() && d > 0 {
+        if xml[i] != b'<' {
+            i += 1;
+            continue;
+        }
+        if let Some(n) = skip_special(xml, i) {
+            i = n;
+            continue;
+        }
+        let Some((t, n)) = parse_tag(xml, i) else {
+            i += 1;
+            continue;
+        };
+        if t.closing {
+            d -= 1;
+        } else if !t.self_closing {
+            d += 1;
+        }
+        i = n;
+    }
+    i
+}
+
 fn rewrite_sheet_view(xml: &[u8], start: usize, edit: &ViewEdit) -> (Vec<u8>, usize) {
     let Some((tag, next)) = parse_tag(xml, start) else { return (xml[start..].to_vec(), xml.len()) };
     let mut changes = Vec::new();
     if edit.a1 {
         changes.push(Change::Set(b"topLeftCell", b"A1"));
         changes.push(Change::SetIfPresent(b"activeCell", b"A1"));
+        changes.push(Change::Remove(b"activePane"));
     }
     if edit.zoom {
         changes.push(Change::Set(b"zoomScale", b"100"));
@@ -825,21 +854,14 @@ fn rewrite_sheet_view(xml: &[u8], start: usize, edit: &ViewEdit) -> (Vec<u8>, us
             out.extend_from_slice(inner.raw);
             return (out, n);
         }
-        if !inner.closing && inner.local == b"selection" && edit.a1 {
-            saw_sel = true;
-            out.extend(patch_tag(inner.raw, &[Change::Set(b"activeCell", b"A1"), Change::Set(b"sqref", b"A1")]));
-            i = n;
-            if !inner.self_closing {
-                depth += 1;
+        // A1 reset must drop freeze/split panes: pane/@topLeftCell and selection/@pane
+        // pointing at A1 are invalid outside the corner pane and Excel repairs the file.
+        if edit.a1 && !inner.closing && (inner.local == b"pane" || inner.local == b"selection") {
+            if inner.local == b"selection" && !saw_sel {
+                out.extend(selection_el(tag.prefix));
+                saw_sel = true;
             }
-            continue;
-        }
-        if !inner.closing && inner.local == b"pane" && edit.a1 {
-            out.extend(patch_tag(inner.raw, &[Change::Set(b"topLeftCell", b"A1")]));
-            i = n;
-            if !inner.self_closing {
-                depth += 1;
-            }
+            i = skip_element_after_open(xml, n, inner.self_closing);
             continue;
         }
         out.extend_from_slice(inner.raw);
@@ -1295,7 +1317,7 @@ mod tests {
 <bookViews><workbookView xWindow="0" yWindow="0" activeTab="1" firstSheet="1"/></bookViews>
 <sheets>
 <sheet name="Second" sheetId="2" r:id="rId2"/>
-<sheet name="First" sheetId="1" r:id="rId1" tabSelected="1"/>
+<sheet name="First" sheetId="1" r:id="rId1"/>
 </sheets>
 </workbook>"#;
         let rels = br#"<?xml version="1.0" encoding="UTF-8"?>
@@ -1362,9 +1384,10 @@ mod tests {
         assert!(s1.contains(r#"topLeftCell="A1""#), "{s1}");
         assert!(s1.contains(r#"zoomScale="100""#), "{s1}");
         assert!(s1.contains(r#"zoomScaleNormal="100""#), "{s1}");
-        assert!(s1.contains(r#"<pane xSplit="1" ySplit="2" topLeftCell="A1" activePane="bottomRight" state="frozen"/>"#), "{s1}");
-        assert!(s1.contains(r#"pane="topLeft" activeCell="A1" sqref="A1""#), "{s1}");
-        assert!(s1.contains(r#"pane="bottomRight" activeCell="A1" sqref="A1""#), "{s1}");
+        assert!(!s1.contains("<pane"), "A1 reset must drop frozen/split panes\n{s1}");
+        assert!(!s1.contains(r#"pane=""#), "A1 reset must not leave selection pane refs\n{s1}");
+        assert!(s1.contains(r#"<selection activeCell="A1" sqref="A1"/>"#), "{s1}");
+        assert_eq!(s1.matches("<selection ").count(), 1, "one selection only\n{s1}");
         assert!(s1.contains(r#"<!-- zoomScale="40" activeCell="Z9" -->"#), "{s1}");
         assert!(s1.contains("<v>1</v>"), "{s1}");
         assert!(!s1.contains(r#"tabSelected"#), "sheet1 is not the first tab\n{s1}");
@@ -1383,9 +1406,9 @@ mod tests {
         assert!(book.contains(r#"activeTab="0""#), "{book}");
         assert!(book.contains(r#"firstSheet="0""#), "{book}");
         assert!(book.contains(r#"xWindow="0" yWindow="0""#), "{book}");
-        assert!(book.contains(r#"<sheet name="Second" sheetId="2" r:id="rId2" tabSelected="1"/>"#), "{book}");
+        assert!(book.contains(r#"<sheet name="Second" sheetId="2" r:id="rId2"/>"#), "{book}");
         assert!(book.contains(r#"<sheet name="First" sheetId="1" r:id="rId1"/>"#), "{book}");
-        assert!(!book.contains("name=\"First\" sheetId=\"1\" r:id=\"rId1\" tabSelected"), "{book}");
+        assert!(!book.contains("tabSelected"), "workbook <sheet> must not carry tabSelected\n{book}");
     }
 
     #[test]
@@ -1399,8 +1422,7 @@ mod tests {
         assert!(s1.contains(r#"topLeftCell="D8""#), "{s1}");
         let book = String::from_utf8(part(&zoom_only, "xl/workbook.xml").2).unwrap();
         assert!(book.contains(r#"activeTab="1""#), "{book}");
-        assert!(book.contains(r#"r:id="rId1" tabSelected="1""#), "{book}");
-        assert!(!book.contains(r#"r:id="rId2" tabSelected"#), "{book}");
+        assert!(!book.contains("tabSelected"), "{book}");
 
         let move_only = tidy_package(&src, opts(true, false, false)).unwrap();
         let s1 = String::from_utf8(part(&move_only, "xl/worksheets/sheet1.xml").2).unwrap();
@@ -1417,8 +1439,9 @@ mod tests {
         assert!(s1.contains(r#"zoomScale="85""#), "{s1}");
         let book = String::from_utf8(part(&first_only, "xl/workbook.xml").2).unwrap();
         assert!(book.contains(r#"activeTab="0""#) && book.contains(r#"firstSheet="0""#), "{book}");
-        assert!(book.contains(r#"<sheet name="Second" sheetId="2" r:id="rId2" tabSelected="1"/>"#), "{book}");
+        assert!(book.contains(r#"<sheet name="Second" sheetId="2" r:id="rId2"/>"#), "{book}");
         assert!(book.contains(r#"<sheet name="First" sheetId="1" r:id="rId1"/>"#), "{book}");
+        assert!(!book.contains("tabSelected"), "{book}");
     }
 
     #[test]
@@ -1445,7 +1468,8 @@ mod tests {
         assert!(!s2.contains("tabSelected"), "{s2}");
         let book = String::from_utf8(part(&out, "xl/workbook.xml").2).unwrap();
         assert!(book.contains(r#"<bookViews><workbookView activeTab="0" firstSheet="0"/></bookViews><sheets>"#), "{book}");
-        assert!(book.contains(r#"<sheet name="Only" sheetId="1" r:id="rId1" tabSelected="1"/>"#), "{book}");
+        assert!(book.contains(r#"<sheet name="Only" sheetId="1" r:id="rId1"/>"#), "{book}");
+        assert!(!book.contains("tabSelected"), "{book}");
 
         let again = tidy_package(&out, all()).unwrap();
         assert_eq!(again, out);
@@ -1454,7 +1478,7 @@ mod tests {
     #[test]
     fn prefixed_sheet_view_and_true_tab_selected_stay_put_when_already_right() {
         let sheet = br#"<x:worksheet xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><x:sheetViews><x:sheetView tabSelected="true" zoomScale="100" zoomScaleNormal="100" topLeftCell="A1" workbookViewId="0"><x:selection activeCell="A1" sqref="A1"/></x:sheetView></x:sheetViews><x:sheetData/></x:worksheet>"#;
-        let book = br#"<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><bookViews><workbookView activeTab="0" firstSheet="0"/></bookViews><sheets><sheet name="S" sheetId="1" r:id="rId1" tabSelected="true"/></sheets></workbook>"#;
+        let book = br#"<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><bookViews><workbookView activeTab="0" firstSheet="0"/></bookViews><sheets><sheet name="S" sheetId="1" r:id="rId1"/></sheets></workbook>"#;
         let rels = br#"<Relationships><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>"#;
         let src = zip_of(&[("xl/workbook.xml", book, false), ("xl/_rels/workbook.xml.rels", rels, false), ("xl/worksheets/sheet1.xml", sheet, false)]);
         let out = tidy_package(&src, all()).unwrap();
@@ -1463,7 +1487,7 @@ mod tests {
 
     #[test]
     fn a_chartsheet_tab_follows_workbook_order_and_is_not_zoomed() {
-        let book = br#"<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><bookViews><workbookView activeTab="1"/></bookViews><sheets><sheet name="Chart" sheetId="1" r:id="rId1"/><sheet name="Data" sheetId="2" r:id="rId2" tabSelected="1"/></sheets></workbook>"#;
+        let book = br#"<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><bookViews><workbookView activeTab="1"/></bookViews><sheets><sheet name="Chart" sheetId="1" r:id="rId1"/><sheet name="Data" sheetId="2" r:id="rId2"/></sheets></workbook>"#;
         let rels = br#"<Relationships><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chartsheet" Target="chartsheets/chart1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>"#;
         let chart = br#"<chartsheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView tabSelected="0" workbookViewId="0"/></sheetViews><drawing r:id="rId1"/></chartsheet>"#;
         let sheet = br#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView tabSelected="1" zoomScale="80" workbookViewId="0"><selection activeCell="B2" sqref="B2"/></sheetView></sheetViews><sheetData/></worksheet>"#;
@@ -1484,7 +1508,47 @@ mod tests {
         assert!(sheet.contains(r#"zoomScale="100""#) && sheet.contains(r#"activeCell="A1""#), "{sheet}");
         let book = String::from_utf8(part(&out, "xl/workbook.xml").2).unwrap();
         assert!(book.contains(r#"activeTab="0""#) && book.contains(r#"firstSheet="0""#), "{book}");
-        assert!(book.contains(r#"name="Chart" sheetId="1" r:id="rId1" tabSelected="1""#), "{book}");
+        assert!(book.contains(r#"name="Chart" sheetId="1" r:id="rId1"/>"#), "{book}");
         assert!(book.contains(r#"name="Data" sheetId="2" r:id="rId2"/>"#), "{book}");
+        assert!(!book.contains("tabSelected"), "{book}");
+    }
+
+    #[test]
+    fn first_sheet_does_not_put_tab_selected_on_workbook_sheet() {
+        let src = sample();
+        let out = tidy_package(&src, opts(false, false, true)).unwrap();
+        let book = String::from_utf8(part(&out, "xl/workbook.xml").2).unwrap();
+        assert!(book.contains(r#"activeTab="0""#) && book.contains(r#"firstSheet="0""#), "{book}");
+        assert!(!book.contains("tabSelected"), "CT_Sheet has no tabSelected\n{book}");
+        let s2 = String::from_utf8(part(&out, "xl/worksheets/sheet2.xml").2).unwrap();
+        assert!(s2.contains(r#"tabSelected="1""#), "{s2}");
+        let s1 = String::from_utf8(part(&out, "xl/worksheets/sheet1.xml").2).unwrap();
+        assert!(!s1.contains("tabSelected"), "{s1}");
+    }
+
+    #[test]
+    fn a1_drops_frozen_panes_and_pane_selection_refs() {
+        let src = sample();
+        let out = tidy_package(&src, opts(true, false, false)).unwrap();
+        let s1 = String::from_utf8(part(&out, "xl/worksheets/sheet1.xml").2).unwrap();
+        assert!(!s1.contains("<pane"), "{s1}");
+        assert!(!s1.contains(r#"pane=""#), "{s1}");
+        assert!(s1.contains(r#"topLeftCell="A1""#), "{s1}");
+        assert!(s1.contains(r#"<selection activeCell="A1" sqref="A1"/>"#), "{s1}");
+        assert_eq!(s1.matches("<selection ").count(), 1, "{s1}");
+        assert!(s1.contains("<v>1</v>"), "{s1}");
+    }
+
+    #[test]
+    fn strips_illegal_tab_selected_left_on_workbook_sheet() {
+        let book = br#"<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><bookViews><workbookView activeTab="1"/></bookViews><sheets><sheet name="A" sheetId="1" r:id="rId1"/><sheet name="B" sheetId="2" r:id="rId2" tabSelected="1"/></sheets></workbook>"#;
+        let rels = br#"<Relationships><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/></Relationships>"#;
+        let s1 = br#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><selection activeCell="B2" sqref="B2"/></sheetView></sheetViews><sheetData/></worksheet>"#;
+        let s2 = br#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView tabSelected="1" workbookViewId="0"><selection activeCell="C3" sqref="C3"/></sheetView></sheetViews><sheetData/></worksheet>"#;
+        let src = zip_of(&[("xl/workbook.xml", book, false), ("xl/_rels/workbook.xml.rels", rels, false), ("xl/worksheets/sheet1.xml", s1, false), ("xl/worksheets/sheet2.xml", s2, false)]);
+        let out = tidy_package(&src, opts(false, false, true)).unwrap();
+        let book = String::from_utf8(part(&out, "xl/workbook.xml").2).unwrap();
+        assert!(!book.contains("tabSelected"), "{book}");
+        assert!(book.contains(r#"activeTab="0""#), "{book}");
     }
 }
