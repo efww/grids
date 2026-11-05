@@ -331,9 +331,6 @@ struct ToastUi {
     path: String,
     file: bool,
     dpi: i32,
-    font: HFONT,
-    bold: HFONT,
-    small: HFONT,
     track: crate::Tracker<u8>,
     body_down: bool,
 }
@@ -347,9 +344,6 @@ thread_local! {
         path: String::new(),
         file: false,
         dpi: 96,
-        font: HFONT::default(),
-        bold: HFONT::default(),
-        small: HFONT::default(),
         track: crate::Tracker::new(),
         body_down: false,
     });
@@ -457,17 +451,10 @@ unsafe fn show_window(title: &str, body: &str, detail: &str, path: &str, file: b
         ui.dpi = dpi;
         ui.track = crate::Tracker::new();
         ui.body_down = false;
-        rebuild_toast_fonts(&mut ui, dpi);
     });
     let style = WS_POPUP | WS_VISIBLE | WS_CLIPCHILDREN;
     let ex = WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE;
     let Ok(h) = CreateWindowExW(ex, w!("MaguroWatchToast"), w!("Maguro"), style, x, y, ww, hh, None, None, None, None) else {
-        TOAST.with(|t| {
-            let mut ui = t.borrow_mut();
-            drop_font(&mut ui.font);
-            drop_font(&mut ui.bold);
-            drop_font(&mut ui.small);
-        });
         return;
     };
     TOAST.with(|t| {
@@ -487,40 +474,6 @@ unsafe fn toast_origin(ww: i32, hh: i32) -> (i32, i32) {
     }
     let margin = 16;
     ((rc.right - ww - margin).max(rc.left), (rc.bottom - hh - margin).max(rc.top))
-}
-
-unsafe fn rebuild_toast_fonts(ui: &mut ToastUi, dpi: i32) {
-    drop_font(&mut ui.font);
-    drop_font(&mut ui.bold);
-    drop_font(&mut ui.small);
-    let face = toast_face();
-    ui.bold = make_font(&face, crate::FONT_PX, 600, dpi);
-    ui.font = make_font(&face, crate::FONT_PX, 400, dpi);
-    ui.small = make_font(&face, crate::FONT_META_PX, 400, dpi);
-}
-
-fn toast_face() -> String {
-    let custom = crate::app(|a| a.s.font_face.clone());
-    if custom.is_empty() { crate::ui_face().to_string() } else { custom }
-}
-
-fn drop_font(font: &mut HFONT) {
-    unsafe { crate::delete_font(*font) };
-    *font = HFONT::default();
-}
-
-fn make_font(face: &str, px: i32, weight: i32, dpi: i32) -> HFONT {
-    let mut lf = LOGFONTW {
-        lfHeight: -(px * dpi / 96).max(1),
-        lfWeight: weight,
-        lfCharSet: DEFAULT_CHARSET,
-        lfQuality: CLEARTYPE_QUALITY,
-        ..Default::default()
-    };
-    for (d, c) in lf.lfFaceName.iter_mut().take(31).zip(face.encode_utf16()) {
-        *d = c;
-    }
-    unsafe { CreateFontIndirectW(&lf) }
 }
 
 fn ensure_toast_class() {
@@ -544,7 +497,7 @@ unsafe extern "system" fn toast_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
     match msg {
         WM_ERASEBKGND => LRESULT(1),
         WM_PAINT => {
-            crate::buffered(h, |dc, rc| paint_toast(dc, rc));
+            crate::buffered(h, |dc, rc| paint_toast(h, dc, rc));
             LRESULT(0)
         }
         WM_MOUSEMOVE => {
@@ -640,9 +593,6 @@ unsafe extern "system" fn toast_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     ui.hwnd = HWND::default();
                     ui.track = crate::Tracker::new();
                     ui.body_down = false;
-                    drop_font(&mut ui.font);
-                    drop_font(&mut ui.bold);
-                    drop_font(&mut ui.small);
                 }
             });
             LRESULT(0)
@@ -651,8 +601,18 @@ unsafe extern "system" fn toast_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
     }
 }
 
-unsafe fn paint_toast(dc: HDC, rc: RECT) {
-    let (title, body, detail, path, file, font, bold, small, dpi, close_vis, open_vis) = TOAST.with(|t| {
+/// Hint and detail. The app meta face, or the body face before it exists.
+unsafe fn meta_font() -> HFONT {
+    if let Some(font) = crate::app_try(|a| a.small_font) {
+        if !font.0.is_null() && !font.is_invalid() {
+            return font;
+        }
+    }
+    crate::body_font()
+}
+
+unsafe fn paint_toast(h: HWND, dc: HDC, rc: RECT) {
+    let (title, body, detail, path, file, dpi, close_vis, open_vis) = TOAST.with(|t| {
         let ui = t.borrow();
         (
             ui.title.clone(),
@@ -660,30 +620,32 @@ unsafe fn paint_toast(dc: HDC, rc: RECT) {
             ui.detail.clone(),
             ui.path.clone(),
             ui.file,
-            ui.font,
-            ui.bold,
-            ui.small,
             ui.dpi.max(96),
             ui.track.visual(TOAST_CLOSE, false),
             ui.track.visual(TOAST_OPEN, false),
         )
     });
+    // A theme change redraws this popup. The caption colour has to follow that paint.
+    crate::style_dialog_caption(h);
+    let font = crate::body_font();
+    let bold = crate::bold_ui_font();
+    let small = meta_font();
     let t = crate::ui_tokens();
     let lay = toast_layout((rc.right - rc.left).max(0), (rc.bottom - rc.top).max(0), dpi);
     crate::paint_window(dc, rc);
     crate::fill(dc, RECT { bottom: rc.top + crate::px(dpi, 3).max(2), ..rc }, crate::ACCENT);
-    crate::aa_rfill(dc, lay.icon, crate::px(dpi, crate::RADIUS).max(1), t.card, Some(t.line), t.bg);
+    crate::ui::paint_card(dc, lay.icon, dpi);
     if let Some((list, idx, dim)) = crate::shell_icon(&path, file) {
         let icon_px = crate::px(dpi, 16);
         let inset = ((lay.icon.right - lay.icon.left) - icon_px) / 2;
         crate::draw_fav_icon(dc, list, idx, lay.icon.left + inset, lay.icon.top + inset, icon_px, dim);
     }
-    crate::text(dc, lay.title, &title, bold, t.text, DT_LEFT);
-    crate::text(dc, lay.body, &body, font, t.sub, DT_LEFT);
-    crate::text(dc, lay.detail, &detail, small, t.text, DT_LEFT);
+    crate::paint_label(dc, lay.title, &title, bold);
+    crate::paint_meta(dc, lay.body, &body, font);
+    crate::paint_label(dc, lay.detail, &detail, small);
     let rule = lay.detail.bottom + crate::px(dpi, crate::SPACE_8);
     crate::fill(dc, RECT { left: rc.left, top: rule, right: rc.right, bottom: rule + 1 }, t.line);
-    crate::text(dc, lay.hint, crate::tr(crate::Key::WatchToastHint), small, t.sub, DT_LEFT);
+    crate::paint_meta(dc, lay.hint, crate::tr(crate::Key::WatchToastHint), small);
     let ground = t.bg;
     crate::paint_button(dc, lay.close, crate::ButtonKind::Secondary, close_vis, crate::tr(crate::Key::Close), font, dpi, ground, crate::FocusRing::Outside);
     crate::paint_button(dc, lay.open, crate::ButtonKind::Primary, open_vis, crate::tr(crate::Key::Open), font, dpi, ground, crate::FocusRing::Outside);
