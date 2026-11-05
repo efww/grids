@@ -1,5 +1,6 @@
 // Select, deselect, or invert by a name pattern. Num+ / Num− / Num*, and Ctrl+Shift+A.
 // One shot per key hold. At most 10,000 items, drawn in one batch. The result stays on the status line for 5 s.
+// The pattern box paints through the shared window, caption, field, label, and edit colours.
 
 use crate::imports::*;
 use crate::SEND_MAX;
@@ -8,6 +9,9 @@ use crate::ui::*;
 use crate::session::*;
 use crate::i18n::*;
 use super::*;
+
+/// EC_LEFTMARGIN | EC_RIGHTMARGIN.
+const EM_SETMARGINS: u32 = 0x00D3;
 
 pub(crate) fn held_key(held: Option<u16>, vk: u16, repeat: bool) -> (bool, Option<u16>) {
     match held {
@@ -31,8 +35,9 @@ pub(crate) fn match_geo(label_w: i32, fh: i32, dpi: i32) -> MatchGeo {
     let label = RECT { left: s(12), top: 0, right: s(12) + label_w, bottom: h };
     let w = s(320).max(label.right + s(10) + s(120) + s(6));
     let field = RECT { left: label.right + s(10), top: s(5), right: w - s(6), bottom: h - s(5) };
-    let inner = RECT { left: field.left + s(8), top: field.top, right: (field.right - s(8)).max(field.left + s(8)), bottom: field.bottom };
-    let edit = centered_edit_rect(inner, fh);
+    // The edit window sits inside the painted border. Glyphs stay one field pad in,
+    // via the edit margin set in `place_match_edit`.
+    let edit = field_edit_rect(field, dpi);
     MatchGeo { w, h, label, field, edit }
 }
 
@@ -45,7 +50,8 @@ pub(crate) fn match_label(desel: bool) -> &'static str {
 }
 
 pub(crate) unsafe fn match_geo_now(desel: bool) -> MatchGeo {
-    let (font, fh, dpi) = app(|a| (a.font, a.fh, a.dpi));
+    let (fh, dpi) = app(|a| (a.fh, a.dpi));
+    let font = body_font();
     let dc = GetDC(None);
     let old = SelectObject(dc, font.into());
     let mut sz = SIZE::default();
@@ -56,7 +62,7 @@ pub(crate) unsafe fn match_geo_now(desel: bool) -> MatchGeo {
 }
 
 pub(crate) unsafe fn open_match(i: usize, desel: bool) {
-    let (main, font, open, last, path) = app(|a| (a.main, a.font, a.matcher.is_some(), a.match_last.clone(), a.s.paths[i].clone()));
+    let (main, open, last, path) = app(|a| (a.main, a.matcher.is_some(), a.match_last.clone(), a.s.paths[i].clone()));
     if open || view_of::<IFolderView2>(i).is_none() {
         return;
     }
@@ -80,21 +86,24 @@ pub(crate) unsafe fn open_match(i: usize, desel: bool) {
     let Ok(h) = CreateWindowExW(WS_EX_TOOLWINDOW, w!("MaguroMatch"), w!(""), WS_POPUP | WS_VISIBLE | WS_CLIPCHILDREN, x, y, g.w, g.h, Some(main), None, None, None) else {
         return;
     };
+    style_dialog_caption(h);
+    // Square on purpose: the popup is a tool window, and the client draws its own hairline.
     let square = DWMWCP_DONOTROUND;
     _ = DwmSetWindowAttribute(h, DWMWA_WINDOW_CORNER_PREFERENCE, &square as *const _ as _, 4);
-    let edit = child(h, w!("EDIT"), PCWSTR(HSTRING::from(last).as_ptr()), ES_AUTOHSCROLL as u32, WINDOW_EX_STYLE(0), 1, font);
+    let edit = child(h, w!("EDIT"), PCWSTR(HSTRING::from(last).as_ptr()), ES_AUTOHSCROLL as u32, WINDOW_EX_STYLE(0), 1, body_font());
     place_match_edit(edit, &g);
     app(|a| a.matcher = Some(MatchBox { hwnd: h, edit, pane: i, path, desel }));
     _ = SetFocus(Some(edit));
     SendMessageW(edit, EM_SETSEL, Some(WPARAM(0)), Some(LPARAM(-1)));
 }
 
-fn match_edit_box(g: &MatchGeo) -> RECT {
-    RECT { left: g.edit.left, top: g.field.top, right: g.edit.right, bottom: g.field.bottom }
-}
-
 unsafe fn place_match_edit(edit: HWND, g: &MatchGeo) {
-    place_edit(edit, match_edit_box(g), true);
+    let dpi = app(|a| a.dpi);
+    // `g.edit` is already `FIELD_INSET` inside the frame. The rest of the shared
+    // field pad is the edit margin, so the glyphs stay where the old 8 DIP inset put them.
+    let m = px(dpi, FIELD_PAD_X - FIELD_INSET).max(0) as isize;
+    let _ = SendMessageW(edit, EM_SETMARGINS, Some(WPARAM(3)), Some(LPARAM(m | (m << 16))));
+    place_edit(edit, g.edit, true);
 }
 
 /// Font or DPI changed while the pattern box is open.
@@ -201,12 +210,15 @@ pub(crate) unsafe fn invert_selection(i: usize) {
 }
 
 pub(crate) unsafe fn paint_match(h: HWND) {
-    let (desel, dpi, font) = app(|a| (a.matcher.as_ref().is_some_and(|m| m.desel), a.dpi, a.font));
+    let (desel, dpi) = app(|a| (a.matcher.as_ref().is_some_and(|m| m.desel), a.dpi));
     let g = match_geo_now(desel);
+    // A theme change redraws this popup. The caption colour has to follow that paint.
+    style_dialog_caption(h);
+    let font = body_font();
     buffered(h, |dc, rc| {
         paint_window(dc, rc);
         frame(dc, rc, 1, ui_tokens().line);
-        text(dc, g.label, match_label(desel), font, pal().sub, DT_LEFT);
+        paint_meta(dc, g.label, match_label(desel), font);
         paint_field(dc, g.field, dpi, true);
     });
 }
@@ -221,13 +233,7 @@ fn match_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
         match msg {
             WM_PAINT => paint_match(h),
             WM_ERASEBKGND => return LRESULT(1),
-            WM_CTLCOLOREDIT => {
-                let dc = HDC(wp.0 as _);
-                SetBkColor(dc, cref(ui_tokens().field_bg));
-                SetTextColor(dc, cref(pal().text));
-                SetDCBrushColor(dc, cref(ui_tokens().field_bg));
-                return LRESULT(GetStockObject(DC_BRUSH).0 as isize);
-            }
+            WM_CTLCOLOREDIT => return color_field_edit(HDC(wp.0 as _)),
             WM_ACTIVATE if (wp.0 & 0xffff) as u32 == WA_INACTIVE => _ = PostMessageW(Some(h), WM_CLOSE, WPARAM(0), LPARAM(0)),
             WM_DESTROY => app(|a| a.matcher = None),
             _ => return DefWindowProcW(h, msg, wp, lp),
@@ -258,6 +264,7 @@ mod tests {
                 let g = match_geo(label_w, s(16), dpi);
                 assert!(g.w >= s(320) && g.label.right - g.label.left == label_w);
                 assert!(g.field.left >= g.label.right && g.field.right - g.field.left >= s(120) && g.field.right < g.w);
+                assert_eq!(g.edit, crate::field_edit_rect(g.field, dpi));
                 assert!(g.edit.left > g.field.left && g.edit.right < g.field.right);
                 assert!(g.edit.top >= g.field.top && g.edit.bottom <= g.field.bottom && g.field.bottom < g.h);
             }

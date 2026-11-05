@@ -20,7 +20,6 @@ const BANNED: &[&str] = &[
 /// Follow-up windows. Each one still contains a banned call. A new file that
 /// paints on its own fails the test, and so does leaving a finished file here.
 const ALLOW: &[&str] = &[
-    "src/pane/select.rs",
     "src/pane/view.rs",
 ];
 
@@ -231,6 +230,17 @@ const MIGRATED: &[(&str, &[&str])] = &[
             "bold_ui_font(",
             "icon_font(",
             "visual_from_pointer(",
+        ],
+    ),
+    (
+        "src/pane/select.rs",
+        &[
+            "paint_window(",
+            "paint_field(",
+            "paint_meta(",
+            "style_dialog_caption(",
+            "body_font(",
+            "color_field_edit(",
         ],
     ),
     (
