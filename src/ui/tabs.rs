@@ -126,7 +126,7 @@ pub(crate) fn middle_closes(lay: &TabLay, hit: TabHit) -> bool {
 pub(crate) struct IconLay {
     /// Width the tabs may use. A gap sits between this and the group.
     pub(crate) tab_w: i32,
-    pub(crate) icons: [(i32, RECT); 5],
+    pub(crate) icons: [(i32, RECT); ICON_N],
     /// Drive buttons that fit, left to right. A prefix of the A→Z list; the rest are hidden.
     pub(crate) drives: [RECT; 26],
     pub(crate) drive_n: usize,
@@ -170,15 +170,22 @@ pub(crate) fn glyph_tool_button(id: i32) -> bool {
     matches!(id, ID_TB_SET | ID_TB_LIST)
 }
 
-fn icon_widths(dpi: i32) -> [i32; 5] {
+/// Layout, save, load, star, basket, watch, gear.
+pub(crate) const ICON_N: usize = 7;
+/// Index of the gear in [`IconLay::icons`]. It is the last one.
+pub(crate) const GEAR: usize = ICON_N - 1;
+
+fn icon_widths(dpi: i32) -> [i32; ICON_N] {
     let s = |v: i32| v * dpi / 96;
     let icon = tool_icon_px(dpi).0;
-    [s(70), icon, icon, icon, icon]
+    [s(70), icon, icon, icon, icon, icon, icon]
 }
 
 /// The gear stays when the toolbar is hidden. It is the mouse path to settings.
-fn icon_on(bar: bool) -> [bool; 5] {
-    if bar { [true; 5] } else { [false, false, false, false, true] }
+fn icon_on(bar: bool) -> [bool; ICON_N] {
+    let mut on = [bar; ICON_N];
+    on[GEAR] = true;
+    on
 }
 
 /// Narrowest tab row that still keeps one minimum tab clear of the icon group.
@@ -197,12 +204,12 @@ pub(crate) fn icon_group_min(dpi: i32, bar: bool) -> i32 {
 /// Letters sit to the left of Layout. The last ones drop when the row cannot also keep `tab_reserve`.
 /// `drives == 0` (see `drive_slots`) hides every letter and gives that width to the tabs.
 /// `bar == false` keeps the gear and the tab-list button. The other icons and the letters are not placed, and the tabs use that width.
-/// The star is the icon immediately left of the gear.
+/// The star, the file basket, and folder watch sit in that order immediately left of the gear.
 pub(crate) fn icon_slots(row_w: i32, top: i32, dpi: i32, drives: usize, bar: bool) -> IconLay {
     let s = |v: i32| v * dpi / 96;
     let (icon_w, bh) = tool_icon_px(dpi);
     let (pad, gap) = (s(8), s(4));
-    let specs = [ID_TB_LAYOUT, ID_TB_SAVE, ID_TB_LOAD, ID_TB_FAV, ID_TB_SET];
+    let specs = [ID_TB_LAYOUT, ID_TB_SAVE, ID_TB_LOAD, ID_TB_FAV, ID_TB_BASKET, ID_TB_WATCH, ID_TB_SET];
     let widths = icon_widths(dpi);
     // The gear is the mouse path to settings, so a hidden toolbar still reserves its slot.
     let on = icon_on(bar);
@@ -226,7 +233,7 @@ pub(crate) fn icon_slots(row_w: i32, top: i32, dpi: i32, drives: usize, bar: boo
         drive_rects[i] = RECT { left: x, top, right: x + dw, bottom: top + bh };
         x += stride;
     }
-    let mut icons = [(0, RECT::default()); 5];
+    let mut icons = [(0, RECT::default()); ICON_N];
     for i in 0..specs.len() {
         if !on[i] {
             icons[i] = (specs[i], RECT { left: x, top, right: x, bottom: top });
@@ -1238,6 +1245,14 @@ pub(crate) unsafe fn refresh_tab_list_tip() {
     let Ok(b) = GetDlgItem(Some(main), ID_TB_LIST) else { return };
     _ = SetWindowTextW(b, &HSTRING::from(tr(crate::Key::TabList)));
     tip_text(b, &tab_list_tip(), TTM_UPDATETIPTEXTW);
+    // Basket and watch tooltips carry their chords, so a rebind updates them here too.
+    for (id, _, hint) in crate::toolbar_tips() {
+        if id == ID_TB_BASKET || id == ID_TB_WATCH {
+            if let Ok(t) = GetDlgItem(Some(main), id) {
+                tip_text(t, &hint, TTM_UPDATETIPTEXTW);
+            }
+        }
+    }
 }
 
 pub(crate) unsafe fn tab_mouse(x: i32, y: i32) -> TabHit {
@@ -1521,18 +1536,22 @@ mod tests {
     fn icon_slots_stay_right_aligned_without_drives() {
         let lay = icon_slots(1000, 6, 96, 0, true);
         assert_eq!(lay.drive_n, 0);
-        assert_eq!(lay.tab_w, 738);
-        assert_eq!(lay.list, RECT { left: 742, top: 6, right: 774, bottom: 30 });
+        assert_eq!(lay.tab_w, 666);
+        assert_eq!(lay.list, RECT { left: 670, top: 6, right: 702, bottom: 30 });
         assert_eq!(lay.list.right + 4, lay.icons[0].1.left);
-        assert_eq!(lay.icons.map(|s| s.0), [ID_TB_LAYOUT, ID_TB_SAVE, ID_TB_LOAD, ID_TB_FAV, ID_TB_SET]);
-        assert_eq!(lay.icons[0].1, RECT { left: 778, top: 6, right: 848, bottom: 30 });
-        assert_eq!(lay.icons[1].1.left, 852);
-        assert_eq!(lay.icons[4].1.right, 992);
-        // The star is the 32px button immediately left of the gear, 4px gap.
+        assert_eq!(lay.icons.map(|s| s.0), [ID_TB_LAYOUT, ID_TB_SAVE, ID_TB_LOAD, ID_TB_FAV, ID_TB_BASKET, ID_TB_WATCH, ID_TB_SET]);
+        assert_eq!(lay.icons[0].1, RECT { left: 706, top: 6, right: 776, bottom: 30 });
+        assert_eq!(lay.icons[1].1.left, 780);
+        assert_eq!(lay.icons[GEAR].1.right, 992);
+        // Star, basket, watch, gear: 32px buttons, 4px gaps, one line.
         assert_eq!(lay.icons[3].0, ID_TB_FAV);
-        assert_eq!(lay.icons[3].1.right + 4, lay.icons[4].1.left);
-        assert_eq!(lay.icons[3].1.right - lay.icons[3].1.left, 32);
-        assert_eq!((lay.icons[3].1.top, lay.icons[3].1.bottom), (lay.icons[4].1.top, lay.icons[4].1.bottom));
+        assert_eq!(lay.icons[4].0, ID_TB_BASKET);
+        assert_eq!(lay.icons[5].0, ID_TB_WATCH);
+        assert_eq!(lay.icons[5].1.right + 4, lay.icons[GEAR].1.left);
+        for i in 3..ICON_N {
+            assert_eq!(lay.icons[i].1.right - lay.icons[i].1.left, 32);
+            assert_eq!((lay.icons[i].1.top, lay.icons[i].1.bottom), (lay.icons[GEAR].1.top, lay.icons[GEAR].1.bottom));
+        }
         assert!(lay.icons.windows(2).all(|w| w[0].1.right + 4 == w[1].1.left));
         assert_eq!(tab_area_width(1000, 96, true, 0), lay.tab_w);
         // Hidden toolbar keeps the gear (right 992, 32px) and the gap in front of it.
@@ -1576,11 +1595,11 @@ mod tests {
         assert!(edge(&tabs) <= lay.drives[0].left);
 
         // A narrow row hides the last letters first. The ones that remain are the prefix.
-        let tight = icon_slots(420, 4, 96, 8, true);
+        let tight = icon_slots(500, 4, 96, 8, true);
         assert!(tight.drive_n > 0 && tight.drive_n < 8);
-        assert_eq!(tight.icons[0].1.left, icon_slots(420, 4, 96, 0, true).icons[0].1.left);
+        assert_eq!(tight.icons[0].1.left, icon_slots(500, 4, 96, 0, true).icons[0].1.left);
         assert!(tight.tab_w >= reserve && tight.drives[0].left >= reserve);
-        assert_eq!(icon_slots(420, 4, 96, tight.drive_n + 1, true).drive_n, tight.drive_n);
+        assert_eq!(icon_slots(500, 4, 96, tight.drive_n + 1, true).drive_n, tight.drive_n);
         let shown = tab_lay(tight.tab_w, 12, &[false; 12], 96, 0);
         assert!(edge(&shown) <= tight.drives[0].left);
 
@@ -1622,15 +1641,15 @@ mod tests {
         let on = icon_slots(1000, 6, 96, 5, true);
         let off = icon_slots(1000, 6, 96, 5, false);
         assert_eq!(off.drive_n, 0);
-        assert_eq!(off.icons[4].0, ID_TB_SET);
+        assert_eq!(off.icons[GEAR].0, ID_TB_SET);
         // Same gear slot as with the toolbar on. The other icons, including the star, collapse to nothing.
-        assert_eq!(off.icons[4].1, on.icons[4].1);
-        assert!(off.icons[4].1.right > off.icons[4].1.left);
-        for i in 0..4 {
-            assert_eq!(off.icons[i].1.left, off.icons[4].1.left);
+        assert_eq!(off.icons[GEAR].1, on.icons[GEAR].1);
+        assert!(off.icons[GEAR].1.right > off.icons[GEAR].1.left);
+        for i in 0..GEAR {
+            assert_eq!(off.icons[i].1.left, off.icons[GEAR].1.left);
             assert_eq!(off.icons[i].1.right, off.icons[i].1.left);
         }
-        assert_eq!(off.list.right + 4, off.icons[4].1.left);
+        assert_eq!(off.list.right + 4, off.icons[GEAR].1.left);
         assert_eq!(off.tab_w, off.list.left - 4);
         assert!(off.tab_w > on.tab_w);
         assert_eq!(tab_area_width(1000, 96, false, 5), off.tab_w);
@@ -1638,8 +1657,8 @@ mod tests {
 
         let hi_on = icon_slots(2000, 8, 192, 5, true);
         let hi_off = icon_slots(2000, 8, 192, 5, false);
-        assert_eq!(hi_off.icons[4].1, hi_on.icons[4].1);
-        assert_eq!(hi_off.list.right + 8, hi_off.icons[4].1.left);
+        assert_eq!(hi_off.icons[GEAR].1, hi_on.icons[GEAR].1);
+        assert_eq!(hi_off.list.right + 8, hi_off.icons[GEAR].1.left);
         assert_eq!(hi_off.tab_w, hi_off.list.left - 8);
         assert_eq!(tab_area_width(2000, 192, false, 5), hi_off.tab_w);
     }
@@ -1684,7 +1703,7 @@ mod tests {
         assert_ne!(glyph(ID_TB_LIST), glyph(ID_TB_SET));
         for (dpi, top, bar) in [(96, 4, true), (96, 4, false), (144, 6, true), (192, 8, false)] {
             let lay = icon_slots(2400, top, dpi, 4, bar);
-            let gear = lay.icons[4].1;
+            let gear = lay.icons[GEAR].1;
             let list = lay.list;
             let (w, h) = tool_icon_px(dpi);
             assert!(list.right > list.left, "dpi {dpi} bar {bar}");

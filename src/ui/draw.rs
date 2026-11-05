@@ -369,6 +369,12 @@ pub(crate) unsafe fn draw_button(d: &DRAWITEMSTRUCT) {
         draw_session_icon(dc, rc, kind, if dirty { GREEN } else { fg }, dpi);
         return;
     }
+    // Basket and watch: drawn 1px line icons, same ink, hover and press as the star and the gear.
+    if id == ID_TB_BASKET || id == ID_TB_WATCH {
+        let kind = if id == ID_TB_BASKET { SessionIcon::Basket } else { SessionIcon::Watch };
+        draw_session_icon(dc, rc, kind, fg, dpi);
+        return;
+    }
     // Gear and tab list: one MDL2 glyph on the face painted above. Same ink, hover, and press.
     if glyph_tool_button(id) {
         text(dc, rc, glyph(id), icon_font, fg, DT_CENTER);

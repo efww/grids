@@ -254,6 +254,9 @@ fn main_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                 ID_SESS_OPEN => open_session_list(),
                 id if workspace_command(id) => {}
                 id if id == ID_TB_FAV as usize => open_fav_manager(h),
+                // Same windows as the gear menu rows and Ctrl+Shift+B / Ctrl+Shift+W.
+                id if id == ID_TB_BASKET as usize => crate::basket::toggle(),
+                id if id == ID_TB_WATCH as usize => crate::watch::open(h),
                 id if id == ID_TB_SET as usize => popup_menu(app(|a| a.view_menu), ID_TB_SET),
                 id if (ID_DRIVE as usize..ID_DRIVE as usize + 26).contains(&id) => {
                     let i = app(|a| a.s.active);
@@ -1093,18 +1096,26 @@ pub(crate) unsafe fn about(owner: HWND) {
 }
 
 // Tab-row buttons: id, accessible name, tooltip.
-pub(crate) fn toolbar_tips() -> [(i32, &'static str, &'static str); 5] {
+pub(crate) fn toolbar_tips() -> [(i32, &'static str, String); 7] {
     [
-        (ID_TB_LAYOUT, "", tr(crate::Key::LayoutClickEvenGridDragRowsPer)),
-        (ID_TB_SAVE, tr(crate::Key::SaveThisTab), ""), // tooltip set by refresh_save_button
-        (ID_TB_LOAD, tr(crate::Key::OpenSession), tr(crate::Key::OpenSessionAsNewTab)),
+        (ID_TB_LAYOUT, "", tr(crate::Key::LayoutClickEvenGridDragRowsPer).into()),
+        (ID_TB_SAVE, tr(crate::Key::SaveThisTab), String::new()), // tooltip set by refresh_save_button
+        (ID_TB_LOAD, tr(crate::Key::OpenSession), tr(crate::Key::OpenSessionAsNewTab).into()),
         (
             ID_TB_FAV,
             tr(crate::Key::Favourites),
-            tr(crate::Key::FavouritesSearchEditAndOpenInActive),
+            tr(crate::Key::FavouritesSearchEditAndOpenInActive).into(),
         ),
-        (ID_TB_SET, tr(crate::Key::SettingsAndView), tr(crate::Key::SettingsAndView)),
+        (ID_TB_BASKET, tr(crate::Key::FileBasket), tip_with_chord(tr(crate::Key::FileBasket), "file.basket")),
+        (ID_TB_WATCH, tr(crate::Key::FolderWatch), tip_with_chord(tr(crate::Key::FolderWatch), "watch.open")),
+        (ID_TB_SET, tr(crate::Key::SettingsAndView), tr(crate::Key::SettingsAndView).into()),
     ]
+}
+
+/// "Name (Ctrl+Shift+B)" from the live key table, or the name alone when the chord is cleared.
+pub(crate) fn tip_with_chord(name: &str, id: &str) -> String {
+    let chord = crate::keys::index(id).map(crate::keys::chord_text).unwrap_or_default();
+    if chord.is_empty() { name.to_string() } else { format!("{name} ({chord})") }
 }
 
 /// View-menu label for the hand-picked theme. It names the theme a click will turn on.
@@ -1136,7 +1147,7 @@ pub(crate) unsafe fn set_language(lang: Lang) {
         }
         for (id, _, hint) in toolbar_tips() {
             if let Ok(b) = GetDlgItem(Some(main), id) {
-                tip_text(b, hint, TTM_UPDATETIPTEXTW);
+                tip_text(b, &hint, TTM_UPDATETIPTEXTW);
             }
         }
         refresh_tab_list_tip();

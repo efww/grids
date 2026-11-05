@@ -252,7 +252,7 @@ Defaults; every one can be changed in Settings → Shortcuts.
 
 ## Settings
 
-The gear on the tab row opens the view menu. Settings is in that menu (`Ctrl+,`).
+The gear on the tab row opens the view menu. Settings is in that menu (`Ctrl+,`). Between the favourites star and the gear, the basket button opens the file basket (`Ctrl+Shift+B`) and the eye button opens folder watch (`Ctrl+Shift+W`).
 
 Language (Auto, English, and every language file), font, light / dark theme, accent, and shortcuts are all set there. How the file is written, and the full `maguro.json` key table, are in [docs/settings.md](docs/settings.md).
 

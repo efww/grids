@@ -9,6 +9,52 @@
 pub(crate) enum SessionIcon {
     Save,
     Load,
+    /// File basket: a handle over a rim and a tapered basket with two slats.
+    Basket,
+    /// Folder watch: an open eye with a solid pupil.
+    Watch,
+}
+
+/// 16×16 masters for the basket and the eye, `#` on. Same 1px line as the session frames.
+const BASKET16: [&str; 16] = [
+    "................",
+    "................",
+    "......####......",
+    ".....#....#.....",
+    "....#......#....",
+    "....#......#....",
+    ".##############.",
+    "..#..#....#..#..",
+    "..#..#....#..#..",
+    "...#.#....#.#...",
+    "...#.#....#.#...",
+    "...#.#....#.#...",
+    "....##....##....",
+    "....########....",
+    "................",
+    "................",
+];
+const WATCH16: [&str; 16] = [
+    "................",
+    "................",
+    "................",
+    "................",
+    ".....######.....",
+    "...##......##...",
+    "..#....##....#..",
+    ".#....####....#.",
+    ".#....####....#.",
+    "..#....##....#..",
+    "...##......##...",
+    ".....######.....",
+    "................",
+    "................",
+    "................",
+    "................",
+];
+
+fn art(rows: &[&str; 16], x: i32, y: i32) -> bool {
+    rows[y as usize].as_bytes()[x as usize] == b'#'
 }
 
 /// Device pixels for the icon at `dpi` (96 = 100%). 16px at 96, tracking the 14px icon font
@@ -53,6 +99,11 @@ fn ink16(x: i32, y: i32, kind: SessionIcon) -> bool {
     if !(0..16).contains(&x) || !(0..16).contains(&y) {
         return false;
     }
+    match kind {
+        SessionIcon::Basket => return art(&BASKET16, x, y),
+        SessionIcon::Watch => return art(&WATCH16, x, y),
+        _ => {}
+    }
     if x >= 11 && y >= 11 {
         return mark5(x - 11, y - 11, kind);
     }
@@ -73,6 +124,7 @@ fn frame(x: i32, y: i32, l: i32, t: i32, r: i32, b: i32) -> bool {
 fn mark5(x: i32, y: i32, kind: SessionIcon) -> bool {
     match kind {
         SessionIcon::Save => x == 2 || y == 2,
+        SessionIcon::Basket | SessionIcon::Watch => false,
         SessionIcon::Load => {
             (y == 0 && x == 2)
                 || (y == 1 && (x == 1 || x == 3))
@@ -145,6 +197,24 @@ mod tests {
             assert!(save.iter().chain(&load).all(|&a| a == 0 || a == 255), "{n}");
             assert_ne!(save, load, "{n}");
         }
+    }
+
+    #[test]
+    fn basket_and_watch_are_hard_edged_line_icons() {
+        for n in [16, 20, 24, 32] {
+            let b = session_icon_coverage(n, SessionIcon::Basket);
+            let w = session_icon_coverage(n, SessionIcon::Watch);
+            assert!(b.iter().chain(&w).all(|&a| a == 0 || a == 255), "{n}");
+            assert!(b.iter().any(|&a| a == 255) && w.iter().any(|&a| a == 255), "{n}");
+            assert_ne!(b, w, "{n}");
+            assert_ne!(b, session_icon_coverage(n, SessionIcon::Save), "{n}");
+        }
+        // The rim spans the basket; the eye's pupil sits at the centre with a clear ring around it.
+        let b = session_icon_coverage(16, SessionIcon::Basket);
+        assert!((1..15).all(|x| at(&b, 16, x, 6) == 255));
+        let w = session_icon_coverage(16, SessionIcon::Watch);
+        assert_eq!((at(&w, 16, 7, 7), at(&w, 16, 8, 8)), (255, 255));
+        assert_eq!((at(&w, 16, 4, 7), at(&w, 16, 11, 8)), (0, 0));
     }
 
     #[test]

@@ -310,7 +310,7 @@ pub(crate) unsafe fn relayout() {
         let strip_h = s(32);
         let strip_top = 0;
         let btn_top = strip_top + (strip_h - tool_icon_px(a.dpi).1) / 2;
-        // Drive letters, then Layout, save, load, the favourites star and the gear, at the right of the tab row.
+        // Drive letters, then Layout, save, load, the favourites star, the file basket, folder watch and the gear, at the right of the tab row.
         // The tab-list button sits just left of that group, on the same row as those buttons.
         // The last letters hide first so a minimum tab stays clear of the group.
         // The gear and the tab list stay when the toolbar is off; the other icons and the letters do not.
@@ -351,7 +351,7 @@ pub(crate) unsafe fn relayout() {
         return;
     };
     move_all(&moves, None);
-    for id in [ID_TB_LIST, ID_TB_LAYOUT, ID_TB_SAVE, ID_TB_LOAD, ID_TB_FAV, ID_TB_SET] {
+    for id in [ID_TB_LIST, ID_TB_LAYOUT, ID_TB_SAVE, ID_TB_LOAD, ID_TB_FAV, ID_TB_BASKET, ID_TB_WATCH, ID_TB_SET] {
         if let Ok(b) = GetDlgItem(Some(main), id) {
             // The gear stays: with the toolbar hidden it is the only mouse path to settings.
             // The tab list stays with it, on the same button row.
@@ -380,7 +380,7 @@ pub(crate) unsafe fn relayout() {
         _ = InvalidateRect(Some(strip), None, true);
     }
     // The strip is full width underneath the icons. Raise the visible ones so they take the click.
-    for id in [ID_TB_LIST, ID_TB_LAYOUT, ID_TB_SAVE, ID_TB_LOAD, ID_TB_FAV, ID_TB_SET] {
+    for id in [ID_TB_LIST, ID_TB_LAYOUT, ID_TB_SAVE, ID_TB_LOAD, ID_TB_FAV, ID_TB_BASKET, ID_TB_WATCH, ID_TB_SET] {
         if let Ok(b) = GetDlgItem(Some(main), id) {
             if show_bar || id == ID_TB_SET || id == ID_TB_LIST {
                 _ = SetWindowPos(b, Some(HWND_TOP), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
