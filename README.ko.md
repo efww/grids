@@ -166,7 +166,7 @@ Maguro가 켜져 있으면 **Win+Alt+V**로 다른 창이 앞에 있어도 클�
 
 **Ctrl+Shift+L**, 탭 줄 오른쪽 끝의 목록 버튼, 또는 탭 우클릭의 **탭 목록…**으로 각 탭의 배치·패널·폴더를 봅니다. 이름으로 거르고, Enter나 두 번 클릭으로 이동하고, F2로 이름을 바꿉니다. 각 탭은 대표 폴더와 나머지 `+N`만 보이는 한 줄로 시작하고, **Right**로 펼치고 **Left**로 접습니다. 현재 탭은 처음부터 펼쳐집니다. 필터는 맞는 탭만 펼칩니다.
 
-<p align="center"><img width="560" alt="각 탭의 배치·패널·폴더를 보여주는 탭 목록" src="docs/images-v4/tab_list.png"></p>
+<p align="center"><img width="560" alt="각 탭의 배치·패널·폴더를 보여주는 탭 목록" src="docs/images-v4/tab_list.ko.png"></p>
 
 ### 17. 작업 공간
 
