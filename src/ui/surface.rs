@@ -119,6 +119,23 @@ pub(crate) unsafe fn color_field_ink(dc: HDC, ink: u32) -> LRESULT {
     LRESULT(field_brush().0 as isize)
 }
 
+/// Folder chip and key cap. Card fill, hairline, shared radius. Corners blend into `ground`.
+pub(crate) unsafe fn paint_chip(dc: HDC, r: RECT, dpi: i32, ground: u32) {
+    if r.right <= r.left || r.bottom <= r.top {
+        return;
+    }
+    let t = ui_tokens();
+    crate::aa_rfill(dc, r, px(dpi, RADIUS).max(1), t.card, Some(t.line), ground);
+}
+
+/// Accent wash with no border. Corners blend into `ground`.
+pub(crate) unsafe fn paint_wash(dc: HDC, r: RECT, dpi: i32, fill: u32, ground: u32) {
+    if r.right <= r.left || r.bottom <= r.top {
+        return;
+    }
+    crate::aa_rfill(dc, r, px(dpi, RADIUS).max(1), fill, None, ground);
+}
+
 /// Section title, token text, single line, left aligned. The font is the caller's 12px face.
 pub(crate) unsafe fn paint_section_header(dc: HDC, r: RECT, title: &str, font: HFONT) {
     crate::text(dc, r, title, font, ui_tokens().text, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);

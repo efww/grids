@@ -122,11 +122,6 @@ struct State {
     track: Tracker<u8>,
     chip_tip: bool,
     dpi: i32,
-    font: HFONT,
-    bold: HFONT,
-    small: HFONT,
-    mono: HFONT,
-    icon: HFONT,
     hint: RECT,
     search: RECT,
     chord: RECT,
@@ -166,11 +161,6 @@ impl State {
             track: Tracker::new(),
             chip_tip: false,
             dpi: 96,
-            font: HFONT::default(),
-            bold: HFONT::default(),
-            small: HFONT::default(),
-            mono: HFONT::default(),
-            icon: HFONT::default(),
             hint: RECT::default(),
             search: RECT::default(),
             chord: RECT::default(),
@@ -201,6 +191,32 @@ fn with_st<R>(f: impl FnOnce(&mut State) -> R) -> R {
 
 fn sc(dpi: i32, v: i32) -> i32 {
     v * dpi.max(96) / 96
+}
+
+/// List row ground. Selection is the shared mist. Hover is a light text wash on the card.
+fn row_fill(selected: bool, hot: bool, dark: bool) -> u32 {
+    let t = tokens_for(dark);
+    if selected {
+        t.sel_mist()
+    } else if hot {
+        blend(t.card, t.text, 0.04)
+    } else {
+        t.card
+    }
+}
+
+/// Footer and column titles. The app meta face, or the body face before it exists.
+unsafe fn meta_font() -> HFONT {
+    if let Some(font) = crate::app_try(|a| a.small_font) {
+        if !font.0.is_null() && !font.is_invalid() {
+            return font;
+        }
+    }
+    body_font()
+}
+
+fn button_width(text_w: i32, dpi: i32) -> i32 {
+    (text_w + px(dpi, BTN_PAD_X) * 2).max(px(dpi, BTN_MIN_W))
 }
 
 fn inside(r: RECT, x: i32, y: i32) -> bool {
@@ -884,7 +900,7 @@ pub(crate) unsafe fn restyle() {
     let title = HSTRING::from(tr(Key::TabList));
     _ = SetWindowTextW(h, &title);
     style_window(h);
-    rebuild_fonts();
+    apply_faces();
     theme_edit();
     cue();
     layout(h);
@@ -1034,8 +1050,6 @@ unsafe fn open(main: HWND) {
         s.dpi = GetDpiForWindow(hwnd).max(96) as i32;
     });
     style_window(hwnd);
-    rebuild_fonts();
-    let font = with_st(|s| s.font);
     let edit = CreateWindowExW(
         WINDOW_EX_STYLE(0),
         w!("EDIT"),
@@ -1053,10 +1067,10 @@ unsafe fn open(main: HWND) {
     .unwrap_or_default();
     with_st(|s| s.edit = edit);
     if !edit.0.is_null() {
-        SendMessageW(edit, WM_SETFONT, Some(WPARAM(font.0 as usize)), Some(LPARAM(1)));
         _ = SetWindowSubclass(edit, Some(edit_proc), 1, 0);
     }
     let _ = ensure_name_edit();
+    apply_faces();
     theme_edit();
     cue();
     layout(hwnd);
@@ -1084,52 +1098,14 @@ fn place(owner: HWND, ww: i32, hh: i32) -> (i32, i32) {
 }
 
 unsafe fn style_window(hwnd: HWND) {
-    let dark = DARK_ON.load(Ordering::Relaxed);
-    let on = BOOL::from(dark);
-    _ = DwmSetWindowAttribute(hwnd, DWMWINDOWATTRIBUTE(20), &on as *const _ as _, 4);
-    let caption = cref(pal().bg);
-    _ = DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, &caption as *const _ as _, 4);
-    let def = COLORREF(0xFFFF_FFFF);
-    _ = DwmSetWindowAttribute(hwnd, DWMWINDOWATTRIBUTE(36), &def as *const _ as _, 4);
-    _ = DwmSetWindowAttribute(hwnd, DWMWINDOWATTRIBUTE(34), &def as *const _ as _, 4);
+    style_dialog_caption(hwnd);
 }
 
-fn make_font(face: &str, px: i32, weight: i32, dpi: i32) -> HFONT {
-    let mut lf = LOGFONTW {
-        lfHeight: -(px * dpi / 96).max(1),
-        lfWeight: weight,
-        lfCharSet: DEFAULT_CHARSET,
-        lfQuality: CLEARTYPE_QUALITY,
-        ..Default::default()
-    };
-    for (d, c) in lf.lfFaceName.iter_mut().take(31).zip(face.encode_utf16()) {
-        *d = c;
-    }
-    unsafe { CreateFontIndirectW(&lf) }
-}
-
-unsafe fn rebuild_fonts() {
-    let (hwnd, dpi0) = with_st(|s| (s.hwnd, s.dpi));
-    let dpi = if hwnd.0.is_null() { dpi0.max(96) } else { GetDpiForWindow(hwnd).max(96) as i32 };
-    let face = ui_face();
-    let (title_face, title_w) = title_style();
-    let new = (
-        make_font(face, 12, 400, dpi),
-        make_font(title_face, 12, title_w, dpi),
-        make_font(face, 11, 400, dpi),
-        make_font("Consolas", 10, 400, dpi),
-        make_font("Segoe MDL2 Assets", 12, 400, dpi),
-    );
-    let old = with_st(|s| {
-        s.dpi = dpi;
-        let old = (s.font, s.bold, s.small, s.mono, s.icon);
-        (s.font, s.bold, s.small, s.mono, s.icon) = new;
-        old
-    });
-    for f in [old.0, old.1, old.2, old.3, old.4] {
-        delete_font(f);
-    }
-    let (edit, name, font, bold) = with_st(|s| (s.edit, s.name_edit, s.font, s.bold));
+/// Point the filter and the rename box at the shared faces.
+unsafe fn apply_faces() {
+    let (edit, name) = with_st(|s| (s.edit, s.name_edit));
+    let font = body_font();
+    let bold = bold_ui_font();
     if !edit.0.is_null() {
         SendMessageW(edit, WM_SETFONT, Some(WPARAM(font.0 as usize)), Some(LPARAM(1)));
     }
@@ -1179,30 +1155,33 @@ unsafe fn layout(hwnd: HWND) {
     }
     let width = (rc.right - rc.left).max(1);
     let height = (rc.bottom - rc.top).max(1);
-    let pad = sc(dpi, 8);
-    let gap = sc(dpi, 6);
-    let hint_h = sc(dpi, 18);
-    let search_h = sc(dpi, 26);
-    let btn_h = sc(dpi, 24);
-    let y0 = pad;
+    let pad = px(dpi, PAD_BODY_X);
+    let gap = px(dpi, SPACE_8);
+    let hint_h = px(dpi, FONT_PX + SPACE_8);
+    let search_h = px(dpi, FIELD_H);
+    let btn_h = px(dpi, BTN_H_FOOTER);
+    let y0 = px(dpi, PAD_BODY_Y);
     let hint = RECT { left: pad, top: y0, right: width - pad, bottom: y0 + hint_h };
     let search = RECT { left: pad, top: hint.bottom + gap, right: width - pad, bottom: hint.bottom + gap + search_h };
 
     let dc = GetDC(Some(hwnd));
-    let (font, bold, mono, small) = with_st(|s| (s.font, s.bold, s.mono, s.small));
+    let font = body_font();
+    let bold = bold_ui_font();
+    let small = meta_font();
     let chord = chord_label();
-    let chord_w = if chord.is_empty() { 0 } else { text_px(dc, mono, &chord) + sc(dpi, 10) };
+    let inner = field_edit_rect(search, dpi);
+    let chord_w = if chord.is_empty() { 0 } else { text_px(dc, small, &chord) + px(dpi, BTN_PAD_X) };
     let chord_r = if chord_w == 0 {
         RECT::default()
     } else {
-        let right = search.right - sc(dpi, 6);
-        let h = sc(dpi, 16);
+        let right = inner.right;
+        let h = px(dpi, 16);
         let top = search.top + (search_h - h) / 2;
-        RECT { left: right - chord_w, top, right, bottom: top + h }
+        RECT { left: (right - chord_w).max(inner.left), top, right, bottom: top + h }
     };
-    let edit_left = search.left + sc(dpi, 8) + sc(dpi, 16);
-    let edit_right = if chord_r.right > chord_r.left { chord_r.left - sc(dpi, 4) } else { search.right - sc(dpi, 6) };
-    let edit_r = RECT { left: edit_left, top: search.top + sc(dpi, 3), right: edit_right.max(edit_left + 1), bottom: search.bottom - sc(dpi, 3) };
+    let edit_left = inner.left + px(dpi, 18);
+    let edit_right = if chord_r.right > chord_r.left { chord_r.left - px(dpi, SPACE_4) } else { inner.right };
+    let edit_r = RECT { left: edit_left, top: inner.top, right: edit_right.max(edit_left + 1), bottom: inner.bottom };
 
     let rows_all = snapshot();
     let (edit, prev_q, prev_sel) = with_st(|s| (s.edit, s.query.clone(), s.sel));
@@ -1233,15 +1212,16 @@ unsafe fn layout(hwnd: HWND) {
     let line_h = sc(dpi, 22);
     let status_w = (width - pad * 2).max(1);
     let caption = status_caption(shown.len(), &q);
-    let piece_w = kbd_piece_widths(dc, small, mono, dpi);
+    let piece_w = kbd_piece_widths(dc, small, dpi);
     let footer = plan_footer(status_w, text_px(dc, small, &caption), &piece_w, sc(dpi, 8));
     let status_h = line_h * footer.rows.max(1);
     let btn_top = height - pad - status_h - gap - btn_h;
     let frame_top = search.bottom + gap;
     let frame_bot = (btn_top - gap).max(frame_top + sc(dpi, 40));
     let frame = RECT { left: pad, top: frame_top, right: width - pad, bottom: frame_bot };
-    let head_h = sc(dpi, 22);
-    let head = RECT { left: frame.left + 1, top: frame.top + 1, right: frame.right - 1, bottom: (frame.top + 1 + head_h).min(frame.bottom - 1) };
+    let head_h = px(dpi, 22);
+    let rad = px(dpi, RADIUS).max(1);
+    let head = RECT { left: frame.left + 1, top: frame.top + rad, right: frame.right - 1, bottom: (frame.top + rad + head_h).min(frame.bottom - 1) };
     let list = RECT { left: head.left, top: head.bottom, right: head.right, bottom: (frame.bottom - 1).max(head.bottom) };
     let status = RECT { left: pad, top: height - pad - status_h, right: width - pad, bottom: height - pad };
 
@@ -1373,13 +1353,13 @@ unsafe fn layout(hwnd: HWND) {
             continue;
         }
         let face = if primary { bold } else { font };
-        let w = text_px(dc, face, label) + sc(dpi, 24);
+        let w = button_width(text_px(dc, face, label), dpi);
         let on = if id == GO { go_on } else { close_on };
         buttons.push(Btn { id, rect: RECT { left: x, top: btn_top, right: x + w, bottom: btn_top + btn_h }, on });
-        x += w + sc(dpi, 4);
+        x += w + px(dpi, BTN_GAP);
     }
     let dismiss = tr(Key::Close);
-    let dw = text_px(dc, font, dismiss) + sc(dpi, 24);
+    let dw = button_width(text_px(dc, font, dismiss), dpi);
     buttons.push(Btn {
         id: DISMISS,
         rect: RECT { left: width - pad - dw, top: btn_top, right: width - pad, bottom: btn_top + btn_h },
@@ -1408,7 +1388,7 @@ unsafe fn layout(hwnd: HWND) {
     });
     let edit = with_st(|s| s.edit);
     if !edit.0.is_null() {
-        _ = SetWindowPos(edit, None, edit_r.left, edit_r.top, (edit_r.right - edit_r.left).max(1), (edit_r.bottom - edit_r.top).max(1), SWP_NOZORDER | SWP_NOACTIVATE);
+        place_edit(edit, edit_r, true);
     }
     place_name_edit();
     let info = SCROLLINFO {
@@ -1728,43 +1708,37 @@ unsafe fn paint(dc: HDC, _rc: RECT) {
         track: s.track,
         query: s.query.clone(),
         renaming: s.renaming,
-        font: s.font,
-        bold: s.bold,
-        small: s.small,
-        mono: s.mono,
-        icon: s.icon,
+        font: unsafe { body_font() },
+        bold: unsafe { bold_ui_font() },
+        small: unsafe { meta_font() },
+        icon: unsafe { icon_font() },
         search_focus: !s.edit.0.is_null() && unsafe { GetFocus() } == s.edit,
+        name_focus: !s.name_edit.0.is_null() && unsafe { GetFocus() } == s.name_edit,
     });
-    let p = pal();
+    let t = ui_tokens();
     let dpi = st.dpi;
     paint_window(dc, _rc);
-    text(dc, st.hint, tr(Key::TabListHint), st.small, p.sub, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
+    paint_meta(dc, st.hint, tr(Key::TabListHint), st.small);
     paint_field(dc, st.search, dpi, st.search_focus);
-    let glyph = RECT { left: st.search.left + sc(dpi, 6), top: st.search.top, right: st.search.left + sc(dpi, 22), bottom: st.search.bottom };
-    text(dc, glyph, ICON_SEARCH, st.icon, p.sub, DT_CENTER);
+    let glyph = RECT { left: st.search.left + px(dpi, FIELD_INSET), top: st.search.top, right: st.search.left + px(dpi, 22), bottom: st.search.bottom };
+    text(dc, glyph, ICON_SEARCH, st.icon, t.sub, DT_CENTER);
     if st.chord.right > st.chord.left {
-        aa_rfill(dc, st.chord, sc(dpi, 2).max(1), p.pill, Some(p.line), ui_tokens().field_bg);
-        // Heavier bottom edge, same as the status key chips.
-        fill(dc, RECT { top: st.chord.bottom - sc(dpi, 2).max(2), ..st.chord }, p.line);
-        text(dc, st.chord, &chord_label(), st.mono, p.sub, DT_CENTER);
+        paint_chip(dc, st.chord, dpi, t.field_bg);
+        text(dc, st.chord, &chord_label(), st.small, t.sub, DT_CENTER);
     }
     if st.frame.bottom > st.frame.top {
         crate::ui::paint_card(dc, st.frame, dpi);
     }
-    fill(dc, st.head, p.bg);
-    fill(dc, RECT { top: st.head.bottom - 1, bottom: st.head.bottom, ..st.head }, p.line);
+    fill(dc, st.head, t.bg);
+    fill(dc, RECT { top: st.head.bottom - 1, bottom: st.head.bottom, ..st.head }, t.line);
     let (x0, x1, x2, x3, x4) = cols(st.head, dpi);
-    let head_ink = p.sub;
-    text(dc, RECT { left: x0, right: x1 - sc(dpi, 6), ..st.head }, tr(Key::Tab), st.small, head_ink, DT_LEFT);
-    text(dc, RECT { left: x1, right: x2 - sc(dpi, 6), ..st.head }, tr(Key::TabListLayout), st.small, head_ink, DT_LEFT);
-    text(dc, RECT { left: x2, right: x3 - sc(dpi, 6), ..st.head }, tr(Key::TabListPanes), st.small, head_ink, DT_RIGHT);
-    text(dc, RECT { left: x3, right: x4, ..st.head }, tr(Key::Folder), st.small, head_ink, DT_LEFT);
+    paint_meta(dc, RECT { left: x0, right: x1 - sc(dpi, 6), ..st.head }, tr(Key::Tab), st.small);
+    paint_meta(dc, RECT { left: x1, right: x2 - sc(dpi, 6), ..st.head }, tr(Key::TabListLayout), st.small);
+    text(dc, RECT { left: x2, right: x3 - sc(dpi, 6), ..st.head }, tr(Key::TabListPanes), st.small, t.sub, DT_RIGHT);
+    paint_meta(dc, RECT { left: x3, right: x4, ..st.head }, tr(Key::Folder), st.small);
 
     let saved = SaveDC(dc);
     IntersectClipRect(dc, st.list.left, st.list.top, st.list.right, st.list.bottom);
-    let dark = DARK_ON.load(Ordering::Relaxed);
-    let current_bg = if dark { 0x1A3F4E } else { 0xD7F4FC };
-    let hover_bg = if dark { 0x2A2C30 } else { 0xF7F5F1 };
     for (row, slot) in st.shown.iter().zip(st.rows.iter()) {
         let top = st.list.top + slot.y - st.scroll;
         let r = RECT { left: st.list.left, top, right: st.list.right, bottom: top + slot.h };
@@ -1773,26 +1747,19 @@ unsafe fn paint(dc: HDC, _rc: RECT) {
         }
         let selected = row.index == st.sel;
         let hot = st.hot_row == Some(row.index);
-        let bg = if row.current {
-            current_bg
-        } else if selected {
-            blend(p.card, crate::basket::CERULEAN, 0.10)
-        } else if hot {
-            hover_bg
-        } else {
-            p.card
-        };
+        let bg = row_fill(selected, hot, t.dark);
         fill(dc, r, bg);
         if row.current {
-            fill(dc, RECT { right: r.left + sc(dpi, 3).max(3), ..r }, crate::basket::CERULEAN);
+            let inset = px(dpi, 3).min((r.bottom - r.top) / 4);
+            fill(dc, RECT { left: r.left, top: r.top + inset, right: r.left + px(dpi, 3).max(2), bottom: r.bottom - inset }, crate::basket::CERULEAN);
         }
-        fill(dc, RECT { top: r.bottom - 1, bottom: r.bottom, ..r }, p.line);
+        fill(dc, RECT { top: r.bottom - 1, bottom: r.bottom, ..r }, t.line);
         let mark = if row.open { "\u{E70D}" } else { "\u{E76C}" };
-        text(dc, chevron_box(r, dpi), mark, st.icon, p.sub, DT_CENTER);
+        text(dc, chevron_box(r, dpi), mark, st.icon, t.sub, DT_CENTER);
         paint_name(dc, r, row, dpi, &st, bg);
         paint_layout(dc, r, row, dpi, &st);
         let count = RECT { left: x2, top: r.top, right: x3 - sc(dpi, 2), bottom: r.bottom };
-        text(dc, count, &row.panes.to_string(), st.small, p.sub, DT_RIGHT);
+        text(dc, count, &row.panes.to_string(), st.small, t.sub, DT_RIGHT);
         paint_chips(dc, row, &st, bg);
     }
     let _ = RestoreDC(dc, saved);
@@ -1805,7 +1772,7 @@ unsafe fn paint(dc: HDC, _rc: RECT) {
             _ => tr(Key::Close),
         };
         let font = if *id == GO && *on { st.bold } else { st.font };
-        paint_button(dc, *rect, kind, st.track.visual(*id, !on), label, font, st.dpi, p.bg, FocusRing::Outside);
+        paint_button(dc, *rect, kind, st.track.visual(*id, !on), label, font, st.dpi, t.bg, FocusRing::Outside);
     }
     paint_footer(dc, st.status, &status_caption(st.shown.len(), &st.query), &st);
 }
@@ -1833,17 +1800,17 @@ struct PaintSnap {
     font: HFONT,
     bold: HFONT,
     small: HFONT,
-    mono: HFONT,
     icon: HFONT,
     search_focus: bool,
+    name_focus: bool,
 }
 
-unsafe fn kbd_piece_widths(dc: HDC, small: HFONT, mono: HFONT, dpi: i32) -> Vec<i32> {
+unsafe fn kbd_piece_widths(dc: HDC, small: HFONT, dpi: i32) -> Vec<i32> {
     kbd_segs(tr(Key::TabListKeys))
         .iter()
         .map(|seg| match seg {
             KbdSeg::Text(s) => text_px(dc, small, s),
-            KbdSeg::Key(s) => text_px(dc, mono, s) + sc(dpi, 8),
+            KbdSeg::Key(s) => text_px(dc, small, s) + sc(dpi, 8),
         })
         .collect()
 }
@@ -1853,14 +1820,14 @@ unsafe fn paint_footer(dc: HDC, status: RECT, caption: &str, st: &PaintSnap) {
     let dpi = st.dpi;
     let width = (status.right - status.left).max(1);
     let segs = kbd_segs(tr(Key::TabListKeys));
-    let widths = kbd_piece_widths(dc, st.small, st.mono, dpi);
+    let widths = kbd_piece_widths(dc, st.small, dpi);
     let plan = plan_footer(width, text_px(dc, st.small, caption), &widths, sc(dpi, 8));
     let line_h = sc(dpi, 22);
-    let p = pal();
+    let t = ui_tokens();
     if plan.count_w > 0 {
         let bottom = if plan.count_on_keys { status.bottom } else { (status.top + line_h).min(status.bottom) };
         let count = RECT { left: status.left, top: status.top, right: status.left + plan.count_w, bottom };
-        text(dc, count, caption, st.small, p.sub, DT_LEFT);
+        paint_meta(dc, count, caption, st.small);
     }
     let mut y = if plan.count_on_keys { status.top } else { status.top + line_h };
     let saved = SaveDC(dc);
@@ -1873,14 +1840,13 @@ unsafe fn paint_footer(dc: HDC, status: RECT, caption: &str, st: &PaintSnap) {
             let w = widths.get(i).copied().unwrap_or(0);
             let r = RECT { left: x, top: y, right: x + w, bottom: row_bot };
             match segs.get(i) {
-                Some(KbdSeg::Text(s)) => text(dc, r, s, st.small, p.sub, DT_LEFT),
+                Some(KbdSeg::Text(s)) => paint_meta(dc, r, s, st.small),
                 Some(KbdSeg::Key(s)) => {
                     let h = sc(dpi, 14);
                     let top = y + (line_h - h) / 2;
                     let kr = RECT { left: r.left, top, right: r.right, bottom: top + h };
-                    aa_rfill(dc, kr, sc(dpi, 2).max(1), p.pill, Some(p.line), p.bg);
-                    fill(dc, RECT { top: kr.bottom - sc(dpi, 2).max(2), ..kr }, p.line);
-                    text(dc, kr, s, st.mono, p.sub, DT_CENTER);
+                    paint_chip(dc, kr, dpi, t.bg);
+                    text(dc, kr, s, st.small, t.sub, DT_CENTER);
                 }
                 None => {}
             }
@@ -1901,9 +1867,10 @@ unsafe fn paint_name(dc: HDC, row: RECT, data: &Row, dpi: i32, st: &PaintSnap, g
     }
     if st.renaming == Some(data.index) {
         let field = name_field(row, data.color.is_some(), dpi);
-        aa_rfill(dc, field, sc(dpi, crate::settings::FIELD_RADIUS_DIP).max(1), pal().card, Some(pal().line), ground);
+        paint_field_on(dc, field, dpi, st.name_focus, ground);
         return;
     }
+    let t = ui_tokens();
     let mut r = text_r;
     if data.locked {
         let lock_w = sc(dpi, 14);
@@ -1911,9 +1878,9 @@ unsafe fn paint_name(dc: HDC, row: RECT, data: &Row, dpi: i32, st: &PaintSnap, g
         let tw = text_px(dc, st.bold, &data.name).min(room);
         let lock = RECT { left: r.left + tw, top: r.top, right: r.left + tw + lock_w, bottom: r.bottom };
         r.right = lock.left;
-        text(dc, lock, ICON_LOCK, st.icon, pal().sub, DT_CENTER);
+        text(dc, lock, ICON_LOCK, st.icon, t.sub, DT_CENTER);
     }
-    paint_marked(dc, r, &data.name, st.bold, pal().text, &st.query, ground);
+    paint_marked(dc, r, &data.name, st.bold, &st.query, ground);
 }
 
 unsafe fn paint_layout(dc: HDC, row: RECT, data: &Row, dpi: i32, st: &PaintSnap) {
@@ -1924,16 +1891,17 @@ unsafe fn paint_layout(dc: HDC, row: RECT, data: &Row, dpi: i32, st: &PaintSnap)
     let icon = RECT { left: x1, top: mid - ih / 2, right: x1 + iw, bottom: mid - ih / 2 + ih };
     paint_grid_icon(dc, icon, &data.heights);
     let label = RECT { left: icon.right + sc(dpi, 4), top: row.top, right: x2 - sc(dpi, 2), bottom: row.bottom };
-    text(dc, label, &data.grid, st.mono, pal().sub, DT_LEFT);
+    paint_meta(dc, label, &data.grid, st.small);
 }
 
 unsafe fn paint_grid_icon(dc: HDC, r: RECT, heights: &[usize]) {
     if r.right <= r.left || r.bottom <= r.top {
         return;
     }
-    fill(dc, r, pal().line);
+    let t = ui_tokens();
+    fill(dc, r, t.line);
     let inner = RECT { left: r.left + 1, top: r.top + 1, right: (r.right - 1).max(r.left + 2), bottom: (r.bottom - 1).max(r.top + 2) };
-    fill(dc, inner, pal().sub);
+    fill(dc, inner, t.sub);
     let spec: Vec<usize> = if heights.is_empty() { vec![1] } else { heights.to_vec() };
     let cols_n = spec.len().clamp(1, 8) as i32;
     let gap = 1;
@@ -1955,7 +1923,7 @@ unsafe fn paint_grid_icon(dc: HDC, r: RECT, heights: &[usize]) {
         for _ in 0..rows {
             let bottom = (y + rh).min(inner.bottom);
             if w > 0 && bottom > y {
-                fill(dc, RECT { left: x, top: y, right: (x + w).min(inner.right), bottom }, pal().card);
+                fill(dc, RECT { left: x, top: y, right: (x + w).min(inner.right), bottom }, t.card);
             }
             y = bottom + gap;
         }
@@ -1969,7 +1937,6 @@ unsafe fn paint_chips(dc: HDC, row: &Row, st: &PaintSnap, ground: u32) {
         return;
     }
     let dpi = st.dpi;
-    let p = pal();
     for spot in st.chips.iter().filter(|c| c.tab == row.index) {
         let r = spot.rect;
         if r.bottom <= st.list.top || r.top >= st.list.bottom {
@@ -1978,13 +1945,13 @@ unsafe fn paint_chips(dc: HDC, row: &Row, st: &PaintSnap, ground: u32) {
         let Some(chip) = row.chips.iter().find(|c| c.pane == spot.pane) else { continue };
         match spot.sub {
             None => {
-                aa_rfill(dc, r, sc(dpi, 2).max(1), p.pill, Some(p.line), ground);
+                paint_chip(dc, r, dpi, ground);
                 let d = sc(dpi, 7);
                 let mid = (r.top + r.bottom) / 2;
                 let dot = RECT { left: r.left + sc(dpi, 4), top: mid - d / 2, right: r.left + sc(dpi, 4) + d, bottom: mid + d / 2 };
                 ellipse(dc, dot, chip_dot(chip.tint), None);
                 let text_r = RECT { left: dot.right + sc(dpi, 3), right: r.right - sc(dpi, 4), ..r };
-                paint_marked(dc, text_r, &chip.head, st.small, p.text, &st.query, ground);
+                paint_marked(dc, text_r, &chip.head, st.small, &st.query, ground);
             }
             Some(k) => {
                 let Some(leaf) = chip.tabs.iter().find(|t| t.index == k) else { continue };
@@ -1993,15 +1960,14 @@ unsafe fn paint_chips(dc: HDC, row: &Row, st: &PaintSnap, ground: u32) {
                 let mark_w = sc(dpi, 14);
                 let text_r = RECT { left: r.left + bar + mark_w, right: r.right - sc(dpi, 4), ..r };
                 if leaf.current {
-                    let wash = blend(ground, crate::basket::CERULEAN, 0.18);
-                    aa_rfill(dc, r, sc(dpi, 2).max(1), wash, None, ground);
+                    paint_wash(dc, r, dpi, blend(ground, crate::basket::CERULEAN, 0.18), ground);
                     fill(dc, RECT { right: r.left + bar, ..r }, crate::basket::CERULEAN);
                     let mark = RECT { left: r.left + bar, right: r.left + bar + mark_w, ..r };
                     text(dc, mark, "\u{E73E}", st.icon, crate::basket::CERULEAN, DT_CENTER);
-                    paint_marked(dc, text_r, label, st.bold, p.text, &st.query, ground);
+                    paint_marked(dc, text_r, label, st.bold, &st.query, ground);
                 } else {
-                    aa_rfill(dc, r, sc(dpi, 2).max(1), p.pill, Some(p.line), ground);
-                    paint_marked(dc, text_r, label, st.small, p.text, &st.query, ground);
+                    paint_chip(dc, r, dpi, ground);
+                    paint_marked(dc, text_r, label, st.small, &st.query, ground);
                 }
             }
         }
@@ -2011,7 +1977,6 @@ unsafe fn paint_chips(dc: HDC, row: &Row, st: &PaintSnap, ground: u32) {
 /// Collapsed tab: one folder chip and, when other pane folders exist, a `+N` badge.
 unsafe fn paint_summary(dc: HDC, row: &Row, st: &PaintSnap, ground: u32) {
     let dpi = st.dpi;
-    let p = pal();
     let summary = summary_text(row);
     let tint = summary_target(row).2;
     for spot in st.chips.iter().filter(|c| c.tab == row.index) {
@@ -2019,16 +1984,16 @@ unsafe fn paint_summary(dc: HDC, row: &Row, st: &PaintSnap, ground: u32) {
         if r.bottom <= st.list.top || r.top >= st.list.bottom {
             continue;
         }
-        aa_rfill(dc, r, sc(dpi, 2).max(1), p.pill, Some(p.line), ground);
+        paint_chip(dc, r, dpi, ground);
         let d = sc(dpi, 7);
         let mid = (r.top + r.bottom) / 2;
         let dot = RECT { left: r.left + sc(dpi, 4), top: mid - d / 2, right: r.left + sc(dpi, 4) + d, bottom: mid + d / 2 };
         ellipse(dc, dot, chip_dot(tint), None);
         let text_r = RECT { left: dot.right + sc(dpi, 3), right: r.right - sc(dpi, 4), ..r };
-        paint_marked(dc, text_r, &summary, st.small, p.text, &st.query, ground);
+        paint_marked(dc, text_r, &summary, st.small, &st.query, ground);
     }
     let Some(label) = extra_label(row.extra) else { return };
-    let dark = DARK_ON.load(Ordering::Relaxed);
+    let dark = ui_tokens().dark;
     let wash = if dark { blend(ground, crate::basket::CERULEAN, 0.45) } else { blend(ground, crate::basket::CERULEAN, 0.20) };
     let ink = if dark { crate::basket::CERULEAN_MIST } else { crate::basket::CERULEAN_DEEP };
     for b in st.badges.iter().filter(|b| b.tab == row.index) {
@@ -2036,13 +2001,13 @@ unsafe fn paint_summary(dc: HDC, row: &Row, st: &PaintSnap, ground: u32) {
         if r.bottom <= st.list.top || r.top >= st.list.bottom || r.right <= r.left {
             continue;
         }
-        aa_rfill(dc, r, sc(dpi, 2).max(1), wash, None, ground);
+        paint_wash(dc, r, dpi, wash, ground);
         text(dc, r, &label, st.small, ink, DT_CENTER);
     }
 }
 
 /// Filter matches draw in cerulean. A path that does not fit keeps its last segment.
-unsafe fn paint_marked(dc: HDC, r: RECT, s: &str, font: HFONT, rgb: u32, query: &str, ground: u32) {
+unsafe fn paint_marked(dc: HDC, r: RECT, s: &str, font: HFONT, query: &str, ground: u32) {
     if r.right <= r.left || s.is_empty() {
         return;
     }
@@ -2050,19 +2015,19 @@ unsafe fn paint_marked(dc: HDC, r: RECT, s: &str, font: HFONT, rgb: u32, query: 
     let avail = r.right - r.left;
     let measure = |t: &str| unsafe { text_px(dc, font, t) };
     let runs = if path { fit_marked_path(s, query, avail, measure) } else { fit_marked_end(&mark_runs(s, query), avail, measure) };
+    let t = ui_tokens();
     if runs.iter().all(|run| !run.hit) {
         if path {
-            text_path(dc, r, s, font, rgb, DT_LEFT);
+            text_path(dc, r, s, font, t.text, DT_LEFT);
         } else {
-            text(dc, r, s, font, rgb, DT_LEFT);
+            paint_label(dc, r, s, font);
         }
         return;
     }
     let saved = SaveDC(dc);
     IntersectClipRect(dc, r.left, r.top, r.right, r.bottom);
-    let dark = DARK_ON.load(Ordering::Relaxed);
-    let wash = if dark { blend(ground, crate::basket::CERULEAN, 0.55) } else { blend(ground, crate::basket::CERULEAN, 0.34) };
-    let ink = if dark { crate::basket::CERULEAN_MIST } else { crate::basket::CERULEAN_DEEP };
+    let wash = if t.dark { blend(ground, crate::basket::CERULEAN, 0.32) } else { blend(t.card, crate::basket::CERULEAN, 0.28) };
+    let ink = if t.dark { crate::basket::CERULEAN_MIST } else { crate::basket::CERULEAN_DEEP };
     let mut x = r.left;
     for run in &runs {
         if run.text.is_empty() {
@@ -2080,7 +2045,7 @@ unsafe fn paint_marked(dc: HDC, r: RECT, s: &str, font: HFONT, rgb: u32, query: 
             fill(dc, band, wash);
             draw_ink_line(dc, piece, &run.text, font, ink, DT_LEFT | DT_NOCLIP);
         } else {
-            draw_ink_line(dc, piece, &run.text, font, rgb, DT_LEFT | DT_NOCLIP);
+            draw_ink_line(dc, piece, &run.text, font, t.text, DT_LEFT | DT_NOCLIP);
         }
         x += w;
     }
@@ -2259,10 +2224,7 @@ fn tablist_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
             }
             WM_CTLCOLOREDIT => {
                 let dc = HDC(wp.0 as _);
-                SetTextColor(dc, cref(pal().text));
-                SetBkColor(dc, cref(pal().card));
-                SetDCBrushColor(dc, cref(pal().card));
-                return LRESULT(GetStockObject(DC_BRUSH).0 as isize);
+                return color_field_edit(dc);
             }
             WM_GETMINMAXINFO => {
                 let dpi = GetDpiForWindow(h).max(96);
@@ -2277,7 +2239,7 @@ fn tablist_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
             WM_DPICHANGED => {
                 let r = &*(lp.0 as *const RECT);
                 _ = SetWindowPos(h, None, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE);
-                rebuild_fonts();
+                apply_faces();
                 layout(h);
                 _ = InvalidateRect(Some(h), None, false);
             }
@@ -2295,14 +2257,7 @@ fn tablist_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                 if !name.0.is_null() && IsWindow(Some(name)).as_bool() {
                     _ = RemoveWindowSubclass(name, Some(edit_proc), 2);
                 }
-                let old = with_st(|s| {
-                    let old = (s.font, s.bold, s.small, s.mono, s.icon);
-                    *s = State::new();
-                    old
-                });
-                for f in [old.0, old.1, old.2, old.3, old.4] {
-                    delete_font(f);
-                }
+                with_st(|s| *s = State::new());
             }
             _ => return DefWindowProcW(h, msg, wp, lp),
         }
@@ -2376,7 +2331,7 @@ unsafe fn ensure_name_edit() -> HWND {
     if !existing.0.is_null() && IsWindow(Some(existing)).as_bool() {
         return existing;
     }
-    let (hwnd, bold) = with_st(|s| (s.hwnd, s.bold));
+    let hwnd = with_st(|s| s.hwnd);
     if hwnd.0.is_null() {
         return HWND::default();
     }
@@ -2397,7 +2352,7 @@ unsafe fn ensure_name_edit() -> HWND {
     .unwrap_or_default();
     with_st(|s| s.name_edit = edit);
     if !edit.0.is_null() {
-        SendMessageW(edit, WM_SETFONT, Some(WPARAM(bold.0 as usize)), Some(LPARAM(1)));
+        SendMessageW(edit, WM_SETFONT, Some(WPARAM(bold_ui_font().0 as usize)), Some(LPARAM(1)));
         _ = SetWindowSubclass(edit, Some(edit_proc), 2, 0);
         let dark = DARK_ON.load(Ordering::Relaxed);
         let theme = if dark { w!("DarkMode_CFD") } else { w!("CFD") };
@@ -2426,14 +2381,7 @@ unsafe fn place_name_edit() {
     let color = shown.iter().find(|r| r.index == tab).is_some_and(|r| r.color.is_some());
     let row = RECT { left: list.left, top: list.top + slot.y - scroll, right: list.right, bottom: list.top + slot.y - scroll + slot.h };
     let field = name_field(row, color, dpi);
-    let pad = sc(dpi, crate::settings::FIELD_INSET_DIP);
-    let inner = RECT {
-        left: field.left + pad,
-        top: field.top + pad,
-        right: (field.right - pad).max(field.left + pad + 1),
-        bottom: (field.bottom - pad).max(field.top + pad + 1),
-    };
-    place_edit(edit, inner, true);
+    place_edit(edit, field_edit_rect(field, dpi), true);
 }
 
 unsafe fn begin_name_edit() {
@@ -2465,8 +2413,7 @@ unsafe fn begin_name_edit() {
         s.rename_shown = label.clone();
         s.rename_skip = false;
     });
-    let bold = with_st(|s| s.bold);
-    SendMessageW(edit, WM_SETFONT, Some(WPARAM(bold.0 as usize)), Some(LPARAM(1)));
+    SendMessageW(edit, WM_SETFONT, Some(WPARAM(bold_ui_font().0 as usize)), Some(LPARAM(1)));
     _ = SetWindowTextW(edit, &HSTRING::from(label.as_str()));
     layout(h);
     _ = SetFocus(Some(edit));
@@ -2854,6 +2801,16 @@ mod tests {
         assert!(shown.contains("cedar"), "{shown}");
         assert!(path.iter().any(|r| r.hit && r.text.to_lowercase().contains("cedar")), "{shown}");
         assert!(shown.chars().count() <= 8, "{shown}");
+    }
+
+    #[test]
+    fn selected_row_uses_the_shared_mist() {
+        assert_eq!(row_fill(true, true, false), LIGHT_TOKENS.sel_mist());
+        assert_eq!(row_fill(true, false, true), DARK_TOKENS.sel_mist());
+        assert_eq!(row_fill(false, false, false), LIGHT_TOKENS.card);
+        assert_eq!(row_fill(false, true, false), blend(LIGHT_TOKENS.card, LIGHT_TOKENS.text, 0.04));
+        assert_eq!(button_width(10, 96), BTN_MIN_W);
+        assert_eq!(button_width(80, 96), 80 + BTN_PAD_X * 2);
     }
 
     #[test]
