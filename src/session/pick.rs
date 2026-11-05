@@ -9,7 +9,7 @@ use crate::app::*;
 use crate::i18n::*;
 
 // ---------- session list: name and date on the left, a layout preview on the right ----------
-// Drawn like Settings (same fonts, cards, field, accent buttons). Not a stock list box.
+// Shared dialog chrome: caption, field, cards, footer buttons. Not a stock list box.
 
 const ID_OPEN: i32 = 1;
 const ID_CANCEL: i32 = 2;
@@ -337,11 +337,6 @@ struct Listed {
 
 struct PickUi {
     dpi: i32,
-    font: HFONT,
-    /// Same 14px face as `font`, weight 700. Accent Open only.
-    bold: HFONT,
-    small: HFONT,
-    semi: HFONT,
     search: HWND,
     with_save: bool,
     rows: Vec<Listed>,
@@ -359,10 +354,6 @@ impl PickUi {
     const fn empty() -> Self {
         Self {
             dpi: 96,
-            font: HFONT(std::ptr::null_mut()),
-            bold: HFONT(std::ptr::null_mut()),
-            small: HFONT(std::ptr::null_mut()),
-            semi: HFONT(std::ptr::null_mut()),
             search: HWND(std::ptr::null_mut()),
             with_save: false,
             rows: Vec::new(),
@@ -486,57 +477,34 @@ fn text_width(dc: HDC, font: HFONT, s: &str) -> i32 {
     r.right
 }
 
-fn make_font(face: &str, px: i32, weight: i32, dpi: i32) -> HFONT {
-    let mut lf = LOGFONTW {
-        lfHeight: -(px * dpi / 96).max(1),
-        lfWeight: weight,
-        lfCharSet: DEFAULT_CHARSET,
-        lfQuality: CLEARTYPE_QUALITY,
-        ..Default::default()
-    };
-    for (d, c) in lf.lfFaceName.iter_mut().take(31).zip(face.encode_utf16()) {
-        *d = c;
+/// Dates, paths, and the empty-state line. The app meta face, or the body face before it exists.
+unsafe fn meta_font() -> HFONT {
+    if let Some(font) = crate::app_try(|a| a.small_font) {
+        if !font.0.is_null() && !font.is_invalid() {
+            return font;
+        }
     }
-    unsafe { CreateFontIndirectW(&lf) }
+    crate::body_font()
 }
 
-fn face_pair() -> (String, i32, &'static str) {
-    let custom = app(|a| a.s.font_face.clone());
-    if custom.is_empty() {
-        let (title, w) = crate::title_style();
-        (ui_face().to_string(), w, title)
+fn search_focused() -> bool {
+    let search = UI.with(|u| u.borrow().search);
+    !search.0.is_null() && unsafe { GetFocus() } == search
+}
+
+/// List-row wash on the card. The current row is the shared mist. A multi-select mark is a
+/// lighter accent. Hover is a light text wash. A resting row stays on the card.
+fn row_wash(on: bool, marked: bool, hot: bool, dark: bool) -> Option<u32> {
+    let t = crate::tokens_for(dark);
+    if on {
+        Some(t.sel_mist())
+    } else if marked {
+        Some(crate::blend(t.card, crate::ACCENT, 0.10))
+    } else if hot {
+        Some(crate::blend(t.card, t.text, 0.04))
     } else {
-        (custom, 700, "")
+        None
     }
-}
-
-unsafe fn rebuild_fonts(dpi: i32) {
-    let (body, title_w, title_face) = face_pair();
-    let title = if title_face.is_empty() { body.as_str() } else { title_face };
-    let new = (
-        make_font(&body, 14, 400, dpi),
-        make_font(&body, 14, 700, dpi),
-        make_font(&body, 12, 400, dpi),
-        make_font(title, 16, title_w, dpi),
-    );
-    let old = UI.with(|u| {
-        let mut ui = u.borrow_mut();
-        let old = (ui.font, ui.bold, ui.small, ui.semi);
-        (ui.font, ui.bold, ui.small, ui.semi) = new;
-        ui.dpi = dpi;
-        old
-    });
-    for f in [old.0, old.1, old.2, old.3] {
-        crate::delete_font(f);
-    }
-}
-
-unsafe fn style_window(h: HWND) {
-    let dark = crate::DARK_ON.load(Ordering::Relaxed);
-    let on = BOOL::from(dark);
-    let _ = DwmSetWindowAttribute(h, DWMWINDOWATTRIBUTE(20), &on as *const _ as _, 4);
-    let caption = crate::cref(crate::pal().bg);
-    let _ = DwmSetWindowAttribute(h, DWMWA_CAPTION_COLOR, &caption as *const _ as _, 4);
 }
 
 unsafe fn theme_edit(h: HWND) {
@@ -547,13 +515,14 @@ unsafe fn theme_edit(h: HWND) {
 fn current_layout(h: HWND) -> PickLayout {
     let mut rc = RECT::default();
     unsafe { let _ = GetClientRect(h, &mut rc); }
-    let (dpi, n, scroll, detail_scroll, with_save, detail_h, font) = UI.with(|u| {
+    let (dpi, n, scroll, detail_scroll, with_save, detail_h) = UI.with(|u| {
         let ui = u.borrow();
         let detail_h = ui.sel.and_then(|i| ui.shown.get(i).copied()).map(|i| detail_plan(&ui.rows[i].name, &ui.rows[i].preview, ui.dpi).iter().map(|l| l.h).sum()).unwrap_or(0);
-        (ui.dpi, ui.shown.len(), ui.scroll, ui.detail_scroll, ui.with_save, detail_h, ui.font)
+        (ui.dpi, ui.shown.len(), ui.scroll, ui.detail_scroll, ui.with_save, detail_h)
     });
     // Screen DC: this runs from inside WM_PAINT, where GetDC(h) would fight BeginPaint.
     let dc = unsafe { GetDC(None) };
+    let font = unsafe { crate::body_font() };
     let widths = button_widths(dc, font, with_save, dpi);
     unsafe { let _ = ReleaseDC(None, dc); }
     let lay = pick_layout(rc.right, rc.bottom, dpi, n, scroll, detail_h, detail_scroll, with_save, widths);
@@ -581,9 +550,8 @@ unsafe fn place_buttons(h: HWND, lay: &PickLayout) {
     if let Some(b) = lay.several {
         mv(ID_SEVERAL, b);
     }
-    let inset = dip(UI.with(|u| u.borrow().dpi), crate::settings::FIELD_INSET_DIP);
-    let edit = BoxPx { left: lay.search.left + inset, top: lay.search.top + inset, right: lay.search.right - inset, bottom: lay.search.bottom - inset };
-    crate::place_edit(UI.with(|u| u.borrow().search), edit.rect(), true);
+    let dpi = UI.with(|u| u.borrow().dpi);
+    crate::place_edit(UI.with(|u| u.borrow().search), crate::field_edit_rect(lay.search.rect(), dpi), true);
 }
 
 unsafe fn sync_buttons(h: HWND) {
@@ -805,7 +773,7 @@ unsafe fn move_sel(h: HWND, d: i32, extend: bool) {
     layout_window(h);
 }
 
-unsafe fn draw_schematic(dc: HDC, r: RECT, columns: &[usize], accent: u32, dpi: i32) {
+unsafe fn draw_schematic(dc: HDC, r: RECT, columns: &[usize], dpi: i32) {
     if columns.is_empty() || r.right <= r.left || r.bottom <= r.top {
         return;
     }
@@ -817,16 +785,18 @@ unsafe fn draw_schematic(dc: HDC, r: RECT, columns: &[usize], accent: u32, dpi: 
     }
     let mut x = r.left;
     let mut n = 1usize;
-    let font = UI.with(|u| u.borrow().small);
+    let font = meta_font();
+    let ground = crate::ui_tokens().card;
+    let ink = crate::ui_tokens().sub;
     for (c, &rows) in columns.iter().enumerate() {
         let rows = rows.max(1) as i32;
         let rh = ((r.bottom - r.top) - gap * (rows - 1)) / rows;
         let mut y = r.top;
         for _ in 0..rows {
             let cell = RECT { left: x, top: y, right: x + cw, bottom: y + rh.max(1) };
-            crate::aa_rfill(dc, cell, dip(dpi, 3), crate::blend(crate::pal().card, accent, 0.20), Some(crate::pal().line), crate::pal().card);
+            crate::paint_chip(dc, cell, dpi, ground);
             if cw >= dip(dpi, 16) && rh >= dip(dpi, 14) {
-                crate::text(dc, cell, &n.to_string(), font, crate::pal().sub, DT_CENTER);
+                crate::text(dc, cell, &n.to_string(), font, ink, DT_CENTER);
             }
             n += 1;
             y += rh.max(1) + gap;
@@ -838,27 +808,31 @@ unsafe fn draw_schematic(dc: HDC, r: RECT, columns: &[usize], accent: u32, dpi: 
 }
 
 unsafe fn paint(h: HWND) {
-    let accent = crate::settings::chrome_color();
     let dpi = UI.with(|u| u.borrow().dpi.max(96));
     let lay = current_layout(h);
-    let (font, small, semi, shown, sel, hot, when_bad, picked) = UI.with(|u| {
+    let (shown, sel, hot, when_bad, picked) = UI.with(|u| {
         let ui = u.borrow();
         let shown: Vec<Listed> = ui.shown.iter().filter_map(|&i| ui.rows.get(i).cloned()).collect();
-        (ui.font, ui.small, ui.semi, shown, ui.sel, ui.hot, ui.rows.is_empty(), ui.picked.clone())
+        (shown, ui.sel, ui.hot, ui.rows.is_empty(), ui.picked.clone())
     });
     let query_empty = UI.with(|u| ui_query(&u.borrow()).trim().is_empty());
+    let font = crate::body_font();
+    let bold = crate::bold_ui_font();
+    let small = meta_font();
+    let t = crate::ui_tokens();
+    let focused = search_focused();
     crate::buffered(h, |dc, rc| {
-        crate::fill(dc, rc, crate::pal().bg);
-        crate::aa_rfill(dc, lay.search.rect(), dip(dpi, crate::settings::FIELD_RADIUS_DIP), crate::pal().card, Some(crate::pal().line), crate::pal().bg);
-        crate::aa_rfill(dc, lay.list.rect(), dip(dpi, 6), crate::pal().card, Some(crate::pal().line), crate::pal().bg);
-        crate::aa_rfill(dc, lay.detail.rect(), dip(dpi, 6), crate::pal().card, Some(crate::pal().line), crate::pal().bg);
+        crate::paint_window(dc, rc);
+        crate::paint_field(dc, lay.search.rect(), dpi, focused);
+        crate::ui::paint_card(dc, lay.list.rect(), dpi);
+        crate::ui::paint_card(dc, lay.detail.rect(), dpi);
         if shown.is_empty() {
             let msg = if when_bad && query_empty {
                 tr(crate::Key::NoSavedSessionsYet)
             } else {
                 tr(crate::Key::NoMatches)
             };
-            crate::text(dc, lay.list.rect(), msg, small, crate::pal().sub, DT_CENTER);
+            crate::text(dc, lay.list.rect(), msg, small, t.sub, DT_CENTER);
         }
         unsafe {
             let _ = SaveDC(dc);
@@ -872,19 +846,21 @@ unsafe fn paint(h: HWND) {
             let on = sel == Some(i);
             let marked = picked.contains(&i);
             let over = hot == Some(i);
+            if let Some(fill) = row_wash(on, marked, over, t.dark) {
+                crate::paint_wash(dc, b.rect(), dpi, fill, t.card);
+            }
             if on || marked {
-                let mix = if on { 0.16 } else { 0.10 };
-                crate::aa_rfill(dc, b.rect(), dip(dpi, 4), crate::blend(crate::pal().card, accent, mix), None, crate::pal().card);
-                crate::fill(dc, RECT { left: b.left, top: b.top + dip(dpi, 8), right: b.left + dip(dpi, 3), bottom: b.bottom - dip(dpi, 8) }, accent);
-            } else if over {
-                crate::aa_rfill(dc, b.rect(), dip(dpi, 4), crate::blend(crate::pal().card, accent, 0.08), None, crate::pal().card);
+                crate::fill(dc, RECT { left: b.left, top: b.top + dip(dpi, 8), right: b.left + dip(dpi, 3), bottom: b.bottom - dip(dpi, 8) }, crate::ACCENT);
             }
             let name_r = RECT { left: b.left + dip(dpi, 12), top: b.top + dip(dpi, 6), right: b.right - dip(dpi, 8), bottom: b.top + dip(dpi, 28) };
-            crate::text(dc, name_r, &row.name, font, crate::pal().text, DT_LEFT);
+            crate::paint_label(dc, name_r, &row.name, font);
             let date_r = RECT { left: name_r.left, top: name_r.bottom, right: name_r.right, bottom: b.bottom - dip(dpi, 4) };
             let date = row_stamp(&row.when, row.preview.readable);
-            let date_ink = if row.preview.readable { crate::pal().sub } else { 0xC42B1C };
-            crate::text(dc, date_r, &date, small, date_ink, DT_LEFT);
+            if row.preview.readable {
+                crate::paint_meta(dc, date_r, &date, small);
+            } else {
+                crate::text(dc, date_r, &date, small, t.danger, DT_LEFT);
+            }
         }
         // Reset the clip to the detail card. SaveDC/RestoreDC keeps the buffer's clip simple.
         unsafe {
@@ -902,10 +878,10 @@ unsafe fn paint(h: HWND) {
             } else {
                 tr(crate::Key::SelectSession)
             };
-            crate::text(dc, lay.detail.rect(), msg, font, crate::pal().sub, DT_CENTER);
+            crate::text(dc, lay.detail.rect(), msg, font, t.sub, DT_CENTER);
             if empty_folder {
                 let sub = RECT { top: (lay.detail.top + lay.detail.bottom) / 2 + dip(dpi, 4), ..lay.detail.rect() };
-                crate::text(dc, sub, &sessions_dir().display().to_string(), small, crate::pal().sub, DT_CENTER);
+                crate::text(dc, sub, &sessions_dir().display().to_string(), small, t.sub, DT_CENTER);
             }
         } else if let Some(row) = sel.and_then(|i| shown.get(i)) {
             let plan = detail_plan(&row.name, &row.preview, dpi);
@@ -919,24 +895,27 @@ unsafe fn paint(h: HWND) {
                     tr(crate::Key::SelectedOpenSeveralOpensEachAsIts)
                 );
                 let r = RECT { left, top: y, right, bottom: y + dip(dpi, 22) };
-                crate::text(dc, r, &note, small, crate::pal().sub, DT_LEFT);
+                crate::paint_meta(dc, r, &note, small);
                 y += dip(dpi, 22);
             }
             for line in &plan {
                 let r = RECT { left, top: y, right, bottom: y + line.h };
                 if r.bottom > lay.detail.top && r.top < lay.detail.bottom {
                     match line.kind {
-                        DetailKind::Title => crate::text(dc, r, &line.text, semi, crate::pal().text, DT_LEFT),
+                        DetailKind::Title => crate::paint_label(dc, r, &line.text, bold),
                         DetailKind::Meta => {
-                            let ink = if row.preview.readable { crate::pal().sub } else { 0xC42B1C };
-                            crate::text(dc, r, &line.text, font, ink, DT_LEFT);
+                            if row.preview.readable {
+                                crate::paint_meta(dc, r, &line.text, font);
+                            } else {
+                                crate::text(dc, r, &line.text, font, t.danger, DT_LEFT);
+                            }
                         }
-                        DetailKind::TabHead => crate::text(dc, r, &line.text, font, crate::pal().text, DT_LEFT),
+                        DetailKind::TabHead => crate::paint_label(dc, r, &line.text, font),
                         DetailKind::Schematic => {
                             let box_w = dip(dpi, 220).min(right - left);
-                            draw_schematic(dc, RECT { right: left + box_w, ..r }, &line.columns, accent, dpi);
+                            draw_schematic(dc, RECT { right: left + box_w, ..r }, &line.columns, dpi);
                         }
-                        DetailKind::Path => crate::text(dc, r, &line.text, small, crate::pal().text, DT_LEFT),
+                        DetailKind::Path => crate::paint_label(dc, r, &line.text, small),
                         DetailKind::Gap => {}
                     }
                 }
@@ -950,10 +929,8 @@ unsafe fn paint(h: HWND) {
 unsafe fn draw_btn(d: &DRAWITEMSTRUCT) {
     let id = d.CtlID as i32;
     let dpi = UI.with(|u| u.borrow().dpi.max(96));
-    let (font, bold) = UI.with(|u| {
-        let ui = u.borrow();
-        (ui.font, ui.bold)
-    });
+    let font = crate::body_font();
+    let bold = crate::bold_ui_font();
     let visual = crate::visual_from_item(d.itemState.0, app(|a| a.hover) == d.hwndItem);
     let kind = match id {
         ID_OPEN => crate::ButtonKind::Primary,
@@ -961,7 +938,7 @@ unsafe fn draw_btn(d: &DRAWITEMSTRUCT) {
         _ => crate::ButtonKind::Secondary,
     };
     let face = if kind == crate::ButtonKind::Primary && visual.state != crate::ButtonState::Disabled && !bold.is_invalid() { bold } else { font };
-    crate::paint_button(d.hDC, d.rcItem, kind, visual, &crate::text_of(d.hwndItem), face, dpi, crate::pal().bg, crate::FocusRing::Inside);
+    crate::paint_button(d.hDC, d.rcItem, kind, visual, &crate::text_of(d.hwndItem), face, dpi, crate::ui_tokens().bg, crate::FocusRing::Inside);
 }
 
 unsafe fn on_click(h: HWND, x: i32, y: i32, dbl: bool, ctrl: bool, shift: bool) {
@@ -1006,9 +983,8 @@ unsafe fn pick_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT 
         WM_CREATE => {
             let dpi = GetDpiForWindow(h).max(96) as i32;
             UI.with(|u| u.borrow_mut().dpi = dpi);
-            rebuild_fonts(dpi);
-            style_window(h);
-            let font = UI.with(|u| u.borrow().font);
+            crate::style_dialog_caption(h);
+            let font = crate::body_font();
             let tab = 0x0001_0000u32;
             let search = crate::child(h, w!("EDIT"), w!(""), 0x80 | tab, WINDOW_EX_STYLE(0), ID_SEARCH, font);
             theme_edit(search);
@@ -1039,8 +1015,8 @@ unsafe fn pick_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT 
         WM_SIZE | WM_DPICHANGED => {
             if msg == WM_DPICHANGED {
                 let dpi = (wp.0 & 0xffff) as i32;
-                rebuild_fonts(dpi.max(96));
-                let font = UI.with(|u| u.borrow().font);
+                UI.with(|u| u.borrow_mut().dpi = dpi.max(96));
+                let font = crate::body_font();
                 let search = UI.with(|u| u.borrow().search);
                 SendMessageW(search, WM_SETFONT, Some(WPARAM(font.0 as usize)), Some(LPARAM(1)));
                 for id in [ID_OPEN, ID_RENAME, ID_DELETE, ID_CANCEL, ID_SAVE, ID_SEVERAL] {
@@ -1050,7 +1026,7 @@ unsafe fn pick_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT 
                 }
                 let r = &*(lp.0 as *const RECT);
                 let _ = SetWindowPos(h, None, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE);
-                style_window(h);
+                crate::style_dialog_caption(h);
             }
             layout_window(h);
             return LRESULT(0);
@@ -1072,15 +1048,14 @@ unsafe fn pick_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT 
             return LRESULT(1);
         }
         WM_CTLCOLOREDIT => {
-            let dc = HDC(wp.0 as _);
-            SetBkMode(dc, TRANSPARENT);
-            SetBkColor(dc, crate::cref(crate::pal().card));
-            SetTextColor(dc, crate::cref(crate::pal().text));
-            SetDCBrushColor(dc, crate::cref(crate::pal().card));
-            return LRESULT(GetStockObject(DC_BRUSH).0 as isize);
+            return crate::color_field_edit(HDC(wp.0 as _));
         }
         WM_COMMAND => {
             let (id, code) = ((wp.0 & 0xffff) as i32, ((wp.0 >> 16) & 0xffff) as u32);
+            if id == ID_SEARCH && (code == EN_SETFOCUS || code == EN_KILLFOCUS) {
+                let _ = InvalidateRect(Some(h), None, false);
+                return LRESULT(0);
+            }
             if id == ID_SEARCH && code == 0x0300 {
                 let keep = selected_path();
                 apply_filter(keep);
@@ -1158,15 +1133,7 @@ unsafe fn pick_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT 
             return LRESULT(0);
         }
         WM_DESTROY => {
-            let old = UI.with(|u| {
-                let mut ui = u.borrow_mut();
-                let old = (ui.font, ui.bold, ui.small, ui.semi);
-                *ui = PickUi::empty();
-                old
-            });
-            for f in [old.0, old.1, old.2, old.3] {
-                crate::delete_font(f);
-            }
+            UI.with(|u| *u.borrow_mut() = PickUi::empty());
         }
         _ => return DefWindowProcW(h, msg, wp, lp),
     }
@@ -1225,7 +1192,7 @@ unsafe fn pick_session_ex(owner: HWND, title: &str, with_save: bool) -> Option<V
     let (x, y) = (orc.left + (orc.right - orc.left - ww) / 2, orc.top + (orc.bottom - orc.top - hh) / 2);
     let style = WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN;
     let h = CreateWindowExW(WINDOW_EX_STYLE(0), w!("MaguroSessionList"), &HSTRING::from(title), style, x, y, ww, hh, Some(owner), None, None, None).ok()?;
-    style_window(h);
+    crate::style_dialog_caption(h);
     let _ = ShowWindow(h, SW_SHOW);
     crate::keys::set_modal(true);
     let _ = EnableWindow(owner, false);
@@ -1467,5 +1434,14 @@ mod tests {
         assert_eq!(row_stamp("2026-10-26 05:04", true), "2026-10-26 05:04");
         assert_eq!(row_stamp("2026-10-26 05:04", false), "2026-10-26 05:04  ·  Unreadable");
         assert_eq!(row_stamp("", false), "Unreadable");
+    }
+
+    #[test]
+    fn row_wash_uses_the_shared_mist() {
+        assert_eq!(row_wash(true, true, true, false), Some(crate::LIGHT_TOKENS.sel_mist()));
+        assert_eq!(row_wash(true, false, false, true), Some(crate::DARK_TOKENS.sel_mist()));
+        assert!(row_wash(false, false, false, false).is_none());
+        assert_ne!(row_wash(false, true, false, false), row_wash(true, false, false, false));
+        assert!(row_wash(false, false, true, false).is_some());
     }
 }

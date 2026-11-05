@@ -27,7 +27,6 @@ const ALLOW: &[&str] = &[
     "src/pane/select.rs",
     "src/pane/view.rs",
     "src/session/load.rs",
-    "src/session/pick.rs",
     "src/shell/fastcopy.rs",
     "src/watch/notify.rs",
 ];
@@ -135,6 +134,23 @@ const MIGRATED: &[(&str, &[&str])] = &[
             "paint_meta(",
             "style_dialog_caption(",
             "body_font(",
+        ],
+    ),
+    (
+        "src/session/pick.rs",
+        &[
+            "paint_window(",
+            "paint_card(",
+            "paint_field(",
+            "paint_chip(",
+            "paint_wash(",
+            "paint_button(",
+            "paint_label(",
+            "paint_meta(",
+            "style_dialog_caption(",
+            "body_font(",
+            "color_field_edit(",
+            "sel_mist(",
         ],
     ),
 ];
