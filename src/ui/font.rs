@@ -288,6 +288,8 @@ pub(crate) unsafe fn apply_font() {
             }
         }
     }
+    // Batch rename keeps child edits and combos. Point them at this face before the old one is deleted.
+    crate::rename::refresh();
     for f in [old, old_icon, old_bold].into_iter().filter(|f| !f.is_invalid()) {
         delete_font(f);
     }

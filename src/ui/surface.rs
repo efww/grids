@@ -46,14 +46,32 @@ pub(crate) fn field_chrome(focused: bool, dark: bool) -> FieldChrome {
 }
 
 /// Single-line field. One 1px border on `r`: token line at rest, cerulean when focused.
+/// Corners blend into the window ground.
 pub(crate) unsafe fn paint_field(dc: HDC, r: RECT, dpi: i32, focused: bool) {
+    paint_field_on(dc, r, dpi, focused, ui_tokens().bg);
+}
+
+/// Same field as [`paint_field`], blending corners into `ground` (a card plate, not the window).
+pub(crate) unsafe fn paint_field_on(dc: HDC, r: RECT, dpi: i32, focused: bool, ground: u32) {
     if r.right <= r.left || r.bottom <= r.top {
         return;
     }
     let t = ui_tokens();
     let chrome = field_chrome(focused, t.dark);
     let rad = px(dpi, RADIUS).max(1);
-    crate::aa_rfill(dc, r, rad, t.field_bg, Some(chrome.border), t.bg);
+    crate::aa_rfill(dc, r, rad, t.field_bg, Some(chrome.border), ground);
+}
+
+/// Card plate. `on` false fades the fill and the hairline into the window ground.
+/// Radius is the shared token, the same as [`paint_card`].
+pub(crate) unsafe fn paint_plate(dc: HDC, r: RECT, dpi: i32, on: bool) {
+    if r.right <= r.left || r.bottom <= r.top {
+        return;
+    }
+    let t = ui_tokens();
+    let fill = if on { t.card } else { crate::blend(t.bg, t.card, 0.55) };
+    let line = if on { t.line } else { crate::blend(t.bg, t.line, 0.55) };
+    crate::aa_rfill(dc, r, px(dpi, RADIUS).max(1), fill, Some(line), t.bg);
 }
 
 /// Edit client inside a painted field. The 1px border stays in the inset.
@@ -91,9 +109,13 @@ pub(crate) unsafe fn field_brush() -> HBRUSH {
 
 /// `WM_CTLCOLOREDIT` for a shared field: token text on the field fill.
 pub(crate) unsafe fn color_field_edit(dc: HDC) -> LRESULT {
-    let t = ui_tokens();
-    SetTextColor(dc, crate::cref(t.text));
-    SetBkColor(dc, crate::cref(t.field_bg));
+    color_field_ink(dc, ui_tokens().text)
+}
+
+/// Same brush as [`color_field_edit`], with a caller ink. An off rule fades the letters.
+pub(crate) unsafe fn color_field_ink(dc: HDC, ink: u32) -> LRESULT {
+    SetTextColor(dc, crate::cref(ink));
+    SetBkColor(dc, crate::cref(ui_tokens().field_bg));
     LRESULT(field_brush().0 as isize)
 }
 

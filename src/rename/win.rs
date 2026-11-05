@@ -1,14 +1,13 @@
-// Separate window for the selected items. Painted like Settings: flat caption
-// (theme background, no gradient), card plates, and the shared draw_tick checkbox.
-// Rules sit on the left and the preview on the right. A single-line edit is only
-// as tall as its font cell and is centred in a frame that matches the combo beside it.
-// Labels go through `text`, so they use the glyph-centred line from the UI font.
+// Separate window for the selected items. Caption, cards, fields, checks, and
+// buttons come from the shared painters. Rules sit on the left and the preview
+// on the right. A single-line edit is only as tall as its font cell and is
+// centred in a field that matches the combo beside it. The field is one 1px
+// border: the token line at rest, cerulean when focused.
 
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::sync::Once;
 
-use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_CAPTION_COLOR, DWMWINDOWATTRIBUTE};
 use windows::Win32::System::Time::{GetTimeZoneInformation, TIME_ZONE_INFORMATION};
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 
@@ -41,13 +40,13 @@ const DLG_MIN_W_DIP: i32 = 1040;
 const DLG_MIN_H_DIP: i32 = 520;
 /// Neither column shrinks below this. Width past the two minimums is split evenly.
 const COL_MIN_DIP: i32 = 420;
-const COL_GAP_DIP: i32 = 12;
+const COL_GAP_DIP: i32 = crate::SPACE_12;
 /// Combo, button and edit-frame height on a rule card and in the toolbar.
-const FIELD_H_DIP: i32 = 26;
+const FIELD_H_DIP: i32 = crate::FIELD_H;
 /// Space inside a rule card, and the gap before the next card.
 const CARD_PAD_DIP: i32 = 10;
-const CARD_GAP_DIP: i32 = 8;
-const ROW_GAP_DIP: i32 = 8;
+const CARD_GAP_DIP: i32 = crate::SPACE_8;
+const ROW_GAP_DIP: i32 = crate::SPACE_8;
 /// Shared draw_tick box. The kind combo matches the mockup's 150 DIP.
 const TICK_DIP: i32 = 16;
 const KIND_W_DIP: i32 = 150;
@@ -81,6 +80,8 @@ const CB_SETCURSEL: u32 = 0x014E;
 const CB_GETCURSEL: u32 = 0x0147;
 const CBN_SELCHANGE: u32 = 1;
 const EN_CHANGE: u32 = 0x0300;
+const EN_SETFOCUS: u32 = 0x0100;
+const EN_KILLFOCUS: u32 = 0x0200;
 const BN_CLICKED: u32 = 0;
 const EM_SETCUEBANNER: u32 = 0x1501;
 const EM_SETMARGINS: u32 = 0x00D3;
@@ -97,12 +98,6 @@ struct St {
     hwnd: HWND,
     host: HWND,
     dpi: i32,
-    font: HFONT,
-    /// Same face and size as `font`, weight 700, for the accent Rename button and column titles.
-    bold: HFONT,
-    small: HFONT,
-    /// Segoe MDL2 check glyph used by `draw_tick`.
-    icon: HFONT,
     rules: Vec<Rule>,
     enabled: Vec<bool>,
     items: Vec<BatchItem>,
@@ -129,10 +124,6 @@ impl Default for St {
             hwnd: HWND::default(),
             host: HWND::default(),
             dpi: 96,
-            font: HFONT::default(),
-            bold: HFONT::default(),
-            small: HFONT::default(),
-            icon: HFONT::default(),
             rules: vec![Rule::Replace { find: String::new(), replace: String::new(), case_sensitive: false, include_ext: false }],
             enabled: vec![true],
             items: Vec::new(),
@@ -265,8 +256,7 @@ pub(crate) unsafe fn refresh() {
         return;
     }
     style_window(h);
-    rebuild_fonts();
-    let font = ST.with(|s| s.borrow().font);
+    let font = crate::body_font();
     apply_font(h, font);
     let host = ST.with(|s| s.borrow().host);
     if !host.0.is_null() {
@@ -391,7 +381,6 @@ unsafe fn rename_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESUL
                 st.items = items;
                 st.existing = existing;
             });
-            rebuild_fonts();
             build_shell(h);
             rebuild_rule_controls();
             style_window(h);
@@ -428,7 +417,6 @@ unsafe fn rename_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESUL
         WM_MOUSEMOVE => hover_at(lp),
         exec::WM_RENAME_DONE => on_done(h),
         WM_DESTROY => {
-            drop_fonts();
             ST.with(|s| {
                 let mut st = s.borrow_mut();
                 st.hwnd = HWND::default();
@@ -478,17 +466,15 @@ unsafe fn ctl_color(wp: WPARAM, lp: LPARAM) -> LRESULT {
     let dc = HDC(wp.0 as _);
     let ctl = HWND(lp.0 as _);
     let off = control_rule(ctl).is_some_and(|i| !rule_is_on(i));
-    let bg = plate(!off);
-    let fg = if off { crate::blend(bg, crate::pal().text, 0.55) } else { crate::pal().text };
-    SetBkMode(dc, TRANSPARENT);
-    SetBkColor(dc, crate::cref(bg));
-    SetTextColor(dc, crate::cref(fg));
-    SetDCBrushColor(dc, crate::cref(bg));
-    LRESULT(GetStockObject(DC_BRUSH).0 as isize)
+    if off {
+        let t = crate::ui_tokens();
+        return crate::color_field_ink(dc, crate::blend(t.field_bg, t.text, 0.55));
+    }
+    crate::color_field_edit(dc)
 }
 
 unsafe fn build_shell(h: HWND) {
-    let font = ST.with(|s| s.borrow().font);
+    let font = crate::body_font();
     let tab = 0x00010000u32;
     let btn = |id, label| {
         let c = child(h, w!("BUTTON"), label, 0xB | tab, id, font);
@@ -514,7 +500,7 @@ unsafe fn build_shell(h: HWND) {
     list(ID_FILTER);
     let ext = child(h, w!("EDIT"), "", 0x80 | tab, ID_EXT, font);
     theme_ctl(ext);
-    let m = sc(ST.with(|s| s.borrow().dpi), 6) as isize;
+    let m = sc(ST.with(|s| s.borrow().dpi), crate::FIELD_PAD_X - crate::FIELD_INSET) as isize;
     let _ = SendMessageW(ext, EM_SETMARGINS, Some(WPARAM(3)), Some(LPARAM(m | (m << 16))));
     drop(ID_PRESET);
     refill_filter();
@@ -539,7 +525,7 @@ unsafe fn rebuild_rule_controls() {
         }
     }
     let n = ST.with(|s| s.borrow().rules.len());
-    let font = ST.with(|s| s.borrow().font);
+    let font = crate::body_font();
     ST.with(|s| s.borrow_mut().filling = true);
     for i in 0..n {
         make_rule_controls(host, i, font);
@@ -563,12 +549,12 @@ unsafe fn make_rule_controls(host: HWND, i: usize, font: HFONT) {
     let edit = |f| {
         let c = child(host, w!("EDIT"), "", 0x80 | tab, id(i, f), font);
         theme_ctl(c);
-        let m = sc(ST.with(|s| s.borrow().dpi), 6) as isize;
+        let m = sc(ST.with(|s| s.borrow().dpi), crate::FIELD_PAD_X - crate::FIELD_INSET) as isize;
         let _ = SendMessageW(c, EM_SETMARGINS, Some(WPARAM(3)), Some(LPARAM(m | (m << 16))));
         c
     };
     let check = |f, label: &str| {
-        // Owner-draw so the box is the shared draw_tick, not a native checkbox.
+        // Owner-draw so the box is the shared paint_check, not a native checkbox.
         let c = child(host, w!("BUTTON"), label, 0xB | tab, id(i, f), font);
         theme_btn(c);
         c
@@ -888,6 +874,16 @@ fn mode_from(i: isize) -> CaseMode {
 }
 
 unsafe fn on_command(_h: HWND, id: i32, code: u32) {
+    if code == EN_SETFOCUS || code == EN_KILLFOCUS {
+        let win = hwnd();
+        if !win.0.is_null() {
+            let _ = InvalidateRect(Some(win), None, false);
+            let host = ST.with(|s| s.borrow().host);
+            if !host.0.is_null() {
+                let _ = InvalidateRect(Some(host), None, false);
+            }
+        }
+    }
     if ST.with(|s| s.borrow().filling) {
         return;
     }
@@ -1586,7 +1582,7 @@ fn column_widths(avail: i32, min_col: i32) -> (i32, i32) {
 /// The filter row is full width: it does not fit in the rules column once the window is split.
 fn geo(rc: RECT, dpi: i32) -> Geo {
     let dpi = dpi.max(96);
-    let pad = sc(dpi, 16);
+    let pad = sc(dpi, crate::PAD_BODY_X);
     let gap = sc(dpi, COL_GAP_DIP);
     let top = pad;
     let tool_h = sc(dpi, FIELD_H_DIP);
@@ -1611,10 +1607,10 @@ fn geo(rc: RECT, dpi: i32) -> Geo {
     let summary_left = (prev_lbl.right + sc(dpi, 8)).min(content_right);
     let summary = RECT { left: summary_left, top: head_top, right: content_right, bottom: head_top + head_h };
     let list = RECT { left: col_right, top: body_top, right: content_right, bottom: body_bot };
-    let btn_h = sc(dpi, 32);
+    let btn_h = sc(dpi, crate::BTN_H_FOOTER);
     let btn_y = foot_top + (foot_h - btn_h) / 2;
     let apply = RECT { left: rc.right - pad - sc(dpi, 128), top: btn_y, right: rc.right - pad, bottom: btn_y + btn_h };
-    let close = RECT { left: apply.left - sc(dpi, 8) - sc(dpi, 96), top: btn_y, right: apply.left - sc(dpi, 8), bottom: btn_y + btn_h };
+    let close = RECT { left: apply.left - sc(dpi, crate::BTN_GAP) - sc(dpi, 96), top: btn_y, right: apply.left - sc(dpi, crate::BTN_GAP), bottom: btn_y + btn_h };
     let undo = RECT { left: rc.left + pad, top: btn_y, right: rc.left + pad + sc(dpi, 112), bottom: btn_y + btn_h };
     Geo { rules_lbl, add, tools, host, prev_lbl, summary, list, undo, close, apply }
 }
@@ -1764,16 +1760,10 @@ fn row_hover(dark: bool) -> u32 {
     if dark { ROW_HOVER_DARK } else { ROW_HOVER_LIGHT }
 }
 
-/// Inset of a single-line edit inside its painted frame. Equal on every side,
+/// Inset of a single-line edit inside its painted field. Equal on every side,
 /// so the font cell `place_edit` centres in here is also centred in the frame.
 fn field_inner(outer: RECT, dpi: i32) -> RECT {
-    let h = outer.bottom - outer.top;
-    let w = outer.right - outer.left;
-    if h <= 0 || w <= 0 {
-        return outer;
-    }
-    let d = sc(dpi.max(96), 2).min(h / 2).min(w / 2);
-    RECT { left: outer.left + d, top: outer.top + d, right: (outer.right - d).max(outer.left + d), bottom: (outer.bottom - d).max(outer.top + d) }
+    crate::field_edit_rect(outer, dpi)
 }
 
 fn is_text_field(field: i32) -> bool {
@@ -1970,7 +1960,9 @@ unsafe fn place_field(parent: HWND, cid: i32, outer: RECT, dpi: i32) {
         let _ = ShowWindow(c, SW_HIDE);
         return;
     }
-    let m = sc(dpi.max(96), 6) as isize;
+    // The edit sits `FIELD_INSET` inside the painted border. The rest of the
+    // shared field pad is the edit margin, so the glyphs line up with a combo.
+    let m = sc(dpi.max(96), crate::FIELD_PAD_X - crate::FIELD_INSET) as isize;
     let _ = SendMessageW(c, EM_SETMARGINS, Some(WPARAM(3)), Some(LPARAM(m | (m << 16))));
     crate::place_edit(c, field_inner(outer, dpi), true);
 }
@@ -2027,25 +2019,26 @@ unsafe fn on_wheel(delta: i32) {
 
 unsafe fn paint(h: HWND) {
     let dpi = ST.with(|s| s.borrow().dpi.max(96));
-    let (font, bold, small) = ST.with(|s| {
-        let st = s.borrow();
-        (st.font, st.bold, st.small)
-    });
+    let font = crate::body_font();
+    let bold = crate::bold_ui_font();
+    let small = meta_font();
     crate::buffered(h, |dc, rc| {
         let g = geo(rc, dpi);
-        crate::fill(dc, rc, crate::pal().bg);
+        let t = crate::ui_tokens();
+        crate::paint_window(dc, rc);
         let rules_title = tx(crate::Key::Rules);
-        crate::text(dc, g.rules_lbl, rules_title, bold, crate::pal().text, DT_LEFT);
+        crate::paint_section_header(dc, g.rules_lbl, rules_title, bold);
         let hint_left = g.rules_lbl.left + text_w(dc, bold, rules_title) + sc(dpi, 12);
         if hint_left < g.rules_lbl.right {
-            crate::text(dc, RECT { left: hint_left, ..g.rules_lbl }, tx(crate::Key::TopBottom), small, crate::pal().sub, DT_LEFT);
+            crate::paint_meta(dc, RECT { left: hint_left, ..g.rules_lbl }, tx(crate::Key::TopBottom), small);
         }
-        paint_field_frame(dc, tool_rects(g.tools, dpi).ext, dpi, crate::pal().card, crate::pal().bg, crate::pal().line);
+        let ext_focus = GetFocus() == ctl(h, ID_EXT);
+        crate::paint_field(dc, tool_rects(g.tools, dpi).ext, dpi, ext_focus);
         if g.list.left > g.host.right {
             let x = g.host.right + (g.list.left - g.host.right) / 2;
-            crate::fill(dc, RECT { left: x, top: g.host.top, right: x + 1, bottom: g.host.bottom }, crate::pal().line);
+            crate::fill(dc, RECT { left: x, top: g.host.top, right: x + 1, bottom: g.host.bottom }, t.line);
         }
-        crate::text(dc, g.prev_lbl, tx(crate::Key::Preview), bold, crate::pal().text, DT_LEFT);
+        crate::paint_section_header(dc, g.prev_lbl, tx(crate::Key::Preview), bold);
         let note = ST.with(|s| s.borrow().note.clone());
         let rows = ST.with(|s| s.borrow().rows.clone());
         let summary = if note.is_empty() {
@@ -2053,10 +2046,10 @@ unsafe fn paint(h: HWND) {
         } else {
             note
         };
-        let sum_color = if engine::error_count(&rows) > 0 && ST.with(|s| s.borrow().note.is_empty()) { err_color() } else { crate::pal().sub };
+        let sum_color = if engine::error_count(&rows) > 0 && ST.with(|s| s.borrow().note.is_empty()) { err_color() } else { t.sub };
         crate::text(dc, g.summary, &summary, small, sum_color, DT_RIGHT);
         paint_list(dc, g.list, dpi, font, bold, small, &rows);
-        crate::fill(dc, RECT { left: rc.left, top: g.undo.top - sc(dpi, 12), right: rc.right, bottom: g.undo.top - sc(dpi, 11), ..rc }, crate::pal().line);
+        crate::fill(dc, RECT { left: rc.left, top: g.undo.top - sc(dpi, 12), right: rc.right, bottom: g.undo.top - sc(dpi, 11), ..rc }, t.line);
     });
 }
 
@@ -2064,23 +2057,21 @@ unsafe fn paint_list(dc: HDC, list: RECT, dpi: i32, font: HFONT, bold: HFONT, sm
     if list.bottom <= list.top {
         return;
     }
-    let rad = sc(dpi, 8);
     let head = sc(dpi, 28);
-    // Card body, then the header strip in the theme background so the top matches the caption ground.
-    crate::aa_rfill(dc, list, rad, crate::pal().card, Some(crate::pal().line), crate::pal().bg);
+    let t = crate::ui_tokens();
+    // Card, then a header strip in the window ground so the titles sit on the caption colour.
+    // The fill stays one pixel inside the card so the shared hairline remains.
+    crate::ui::paint_card(dc, list, dpi);
     let head_r = RECT { bottom: (list.top + head).min(list.bottom), ..list };
-    if head_r.bottom > list.top {
-        let _ = SaveDC(dc);
-        let _ = IntersectClipRect(dc, list.left, list.top, list.right, head_r.bottom);
-        crate::aa_rfill(dc, list, rad, crate::pal().bg, Some(crate::pal().line), crate::pal().bg);
-        let _ = RestoreDC(dc, -1);
+    if head_r.bottom > list.top + 1 {
+        crate::fill(dc, RECT { left: list.left + 1, top: list.top + 1, right: list.right - 1, bottom: head_r.bottom }, t.bg);
     }
     let split = list.left + (list.right - list.left) * 42 / 100;
     let new_left = split + sc(dpi, 28);
     let err_w = sc(dpi, 168);
-    crate::text(dc, RECT { left: list.left + sc(dpi, 12), right: split, ..head_r }, tx(crate::Key::Current), small, crate::pal().sub, DT_LEFT);
-    crate::text(dc, RECT { left: new_left, right: list.right - err_w, ..head_r }, tx(crate::Key::NewName), small, crate::pal().sub, DT_LEFT);
-    crate::fill(dc, RECT { left: list.left + 1, top: head_r.bottom - 1, right: list.right - 1, bottom: head_r.bottom }, crate::pal().line);
+    crate::paint_meta(dc, RECT { left: list.left + sc(dpi, 12), right: split, ..head_r }, tx(crate::Key::Current), small);
+    crate::paint_meta(dc, RECT { left: new_left, right: list.right - err_w, ..head_r }, tx(crate::Key::NewName), small);
+    crate::fill(dc, RECT { left: list.left + 1, top: head_r.bottom - 1, right: list.right - 1, bottom: head_r.bottom }, t.line);
     let _ = SaveDC(dc);
     let _ = IntersectClipRect(dc, list.left + 1, head_r.bottom, list.right - 1, list.bottom - 1);
     let row_h = sc(dpi, 36).max(1);
@@ -2098,7 +2089,7 @@ unsafe fn paint_list(dc: HDC, list: RECT, dpi: i32, font: HFONT, bold: HFONT, sm
         }
         let r = RECT { left: list.left, top: y, right: list.right, bottom: y + row_h };
         if i > 0 {
-            crate::fill(dc, RECT { bottom: r.top + 1, top: r.top, ..r }, crate::pal().line);
+            crate::fill(dc, RECT { bottom: r.top + 1, top: r.top, ..r }, t.line);
         }
         let dark = crate::DARK_ON.load(std::sync::atomic::Ordering::Relaxed);
         if ST.with(|s| s.borrow().hover) == Some(i) {
@@ -2143,17 +2134,18 @@ unsafe fn paint_list(dc: HDC, list: RECT, dpi: i32, font: HFONT, bold: HFONT, sm
 
 unsafe fn paint_host(h: HWND) {
     let dpi = ST.with(|s| s.borrow().dpi.max(96));
-    let font = ST.with(|s| s.borrow().small);
+    let font = meta_font();
     crate::buffered(h, |dc, rc| {
-        crate::fill(dc, rc, crate::pal().bg);
+        crate::paint_window(dc, rc);
         let rules = ST.with(|s| s.borrow().rules.clone());
         if rules.is_empty() {
             let r = RECT { left: sc(dpi, 8), top: sc(dpi, 12), right: rc.right - sc(dpi, 8), bottom: sc(dpi, 48) };
-            crate::text(dc, r, tx(crate::Key::AddRuleNamesStayAsTheyAre), font, crate::pal().sub, DT_LEFT);
+            crate::paint_meta(dc, r, tx(crate::Key::AddRuleNamesStayAsTheyAre), font);
             return;
         }
         let scroll = ST.with(|s| s.borrow().rule_scroll);
         let width = rc.right - rc.left;
+        let focus = GetFocus();
         let mut y = -scroll;
         for (i, rule) in rules.iter().enumerate() {
             let stride = rule_stride(rule, dpi);
@@ -2163,16 +2155,16 @@ unsafe fn paint_host(h: HWND) {
                 continue;
             }
             let on = rule_is_on(i);
-            let fill = plate(on);
-            crate::aa_rfill(dc, card, sc(dpi, 8), fill, Some(plate_line(on)), crate::pal().bg);
-            let ink = crate::blend(fill, crate::pal().text, 0.45);
+            crate::paint_plate(dc, card, dpi, on);
+            let ink = crate::blend(plate(on), crate::pal().text, 0.45);
             for dot in grip_dots(card, dpi) {
                 crate::fill(dc, dot, ink);
             }
             // Frame is the combo-height slot. The edit itself is only the font cell, centred in it.
             for (field, outer) in card_slots(card, dpi, rule) {
                 if is_text_field(field) {
-                    paint_field_frame(dc, outer, dpi, fill, fill, plate_line(on));
+                    let focused = focus == ctl(h, id(i, field));
+                    crate::paint_field_on(dc, outer, dpi, focused, plate(on));
                 }
             }
         }
@@ -2197,15 +2189,16 @@ unsafe fn paint_host(h: HWND) {
     });
 }
 
-unsafe fn paint_thumb(dc: HDC, r: RECT, scroll: i32, max: i32, dpi: i32, ground: u32) {
+unsafe fn paint_thumb(dc: HDC, r: RECT, scroll: i32, max: i32, dpi: i32, _ground: u32) {
     let track = RECT { left: r.right - sc(dpi, 8), top: r.top + sc(dpi, 6), right: r.right - sc(dpi, 4), bottom: r.bottom - sc(dpi, 6) };
     let track_c = crate::blend(crate::pal().bg, crate::pal().text, 0.08);
-    crate::aa_rfill(dc, track, sc(dpi, 2), track_c, None, ground);
+    let rad = sc(dpi, crate::RADIUS);
+    crate::rfill(dc, track, rad, track_c, None);
     let span = (track.bottom - track.top).max(1);
     let thumb_h = (span * span / (span + max)).clamp(sc(dpi, 18), span);
     let travel = (span - thumb_h).max(1);
     let y = track.top + scroll.clamp(0, max) * travel / max.max(1);
-    crate::aa_rfill(dc, RECT { left: track.left, top: y, right: track.right, bottom: y + thumb_h }, sc(dpi, 2), crate::blend(crate::pal().bg, crate::pal().text, 0.35), None, track_c);
+    crate::rfill(dc, RECT { left: track.left, top: y, right: track.right, bottom: y + thumb_h }, rad, crate::blend(crate::pal().bg, crate::pal().text, 0.35), None);
 }
 
 unsafe fn paint_marked(dc: HDC, rect: RECT, text: &str, span: Option<(usize, usize)>, font: HFONT, bold: HFONT, dpi: i32, normal: u32, wash: u32, mark: u32) {
@@ -2289,17 +2282,8 @@ unsafe fn draw_btn(d: &DRAWITEMSTRUCT) {
     let dpi = ST.with(|s| s.borrow().dpi.max(96));
     let in_card = id >= ID_BASE;
     let rule_on = if in_card { rule_is_on(((id - ID_BASE) / STRIDE) as usize) } else { true };
-    let (font, bold) = if in_card {
-        ST.with(|s| {
-            let st = s.borrow();
-            (st.small, st.small)
-        })
-    } else {
-        ST.with(|s| {
-            let st = s.borrow();
-            (st.font, st.bold)
-        })
-    };
+    let font = if in_card { meta_font() } else { crate::body_font() };
+    let bold = if in_card { font } else { crate::bold_ui_font() };
     let mut visual = crate::visual_from_item(d.itemState.0, crate::app(|a| a.hover) == d.hwndItem);
     if in_card && !rule_on {
         visual.state = crate::ButtonState::Disabled;
@@ -2307,7 +2291,7 @@ unsafe fn draw_btn(d: &DRAWITEMSTRUCT) {
     }
     let kind = if id == ID_APPLY { crate::ButtonKind::Primary } else { crate::ButtonKind::Secondary };
     let face = if kind == crate::ButtonKind::Primary && visual.state != crate::ButtonState::Disabled && !bold.is_invalid() { bold } else { font };
-    let ground = if in_card { plate(rule_on) } else { crate::pal().bg };
+    let ground = if in_card { plate(rule_on) } else { crate::ui_tokens().bg };
     let label = crate::text_of(d.hwndItem);
     crate::paint_button(d.hDC, d.rcItem, kind, visual, &label, face, dpi, ground, crate::FocusRing::Inside);
 }
@@ -2324,30 +2308,23 @@ unsafe fn draw_check(d: &DRAWITEMSTRUCT) {
     let side = sc(dpi, TICK_DIP);
     let top = d.rcItem.top + ((d.rcItem.bottom - d.rcItem.top) - side) / 2;
     let mark = RECT { left: d.rcItem.left, top, right: d.rcItem.left + side, bottom: top + side };
-    let icon = ST.with(|s| s.borrow().icon);
-    let tick = if stored_flag(i, field) { crate::shell::ctxmenu::Tick::On } else { crate::shell::ctxmenu::Tick::Off };
-    crate::draw_tick(d.hDC, mark, tick, CERULEAN, dpi, icon, ground, hot);
+    crate::paint_check(d.hDC, mark, stored_flag(i, field), hot, dpi, ground);
     let label = crate::text_of(d.hwndItem);
     if label.is_empty() {
         return;
     }
-    let font = ST.with(|s| s.borrow().font);
-    let ink = if on_rule { crate::pal().text } else { crate::blend(ground, crate::pal().text, 0.55) };
+    let font = crate::body_font();
     let lab = RECT { left: mark.right + sc(dpi, 6), ..d.rcItem };
-    crate::text(d.hDC, lab, &label, font, ink, DT_LEFT);
+    if on_rule {
+        crate::paint_label(d.hDC, lab, &label, font);
+    } else {
+        let ink = crate::blend(ground, crate::ui_tokens().text, 0.55);
+        crate::text(d.hDC, lab, &label, font, ink, DT_LEFT);
+    }
 }
 
 fn err_color() -> u32 {
     if crate::DARK_ON.load(std::sync::atomic::Ordering::Relaxed) { 0xFF7B72 } else { 0xC4314B }
-}
-
-/// Rounded field at `outer`. The borderless edit sits inside this rect, so the
-/// box stays the same height as the combo or button it lines up with.
-unsafe fn paint_field_frame(dc: HDC, outer: RECT, dpi: i32, fill: u32, ground: u32, border: u32) {
-    if outer.right <= outer.left || outer.bottom <= outer.top {
-        return;
-    }
-    crate::aa_rfill(dc, outer, sc(dpi, 4), fill, Some(border), ground);
 }
 
 fn current_filter() -> engine::Filter {
@@ -2702,70 +2679,17 @@ fn load_existing(items: &[BatchItem]) -> HashSet<(String, String)> {
 }
 
 unsafe fn style_window(h: HWND) {
-    // Same caption as Settings / Excel tidy: theme background, no cerulean fill, no gradient.
-    let dark = crate::DARK_ON.load(std::sync::atomic::Ordering::Relaxed);
-    let on = BOOL::from(dark);
-    let _ = DwmSetWindowAttribute(h, DWMWINDOWATTRIBUTE(20), &on as *const _ as _, 4);
-    let caption = crate::cref(crate::pal().bg);
-    let _ = DwmSetWindowAttribute(h, DWMWA_CAPTION_COLOR, &caption as *const _ as _, 4);
-    let def = COLORREF(0xFFFF_FFFF);
-    let _ = DwmSetWindowAttribute(h, DWMWINDOWATTRIBUTE(36), &def as *const _ as _, 4);
-    let _ = DwmSetWindowAttribute(h, DWMWINDOWATTRIBUTE(34), &def as *const _ as _, 4);
+    crate::style_dialog_caption(h);
 }
 
-fn make_font(face: &str, px: i32, weight: i32, dpi: i32) -> HFONT {
-    let mut lf = LOGFONTW {
-        lfHeight: -(px * dpi / 96).max(1),
-        lfWeight: weight,
-        lfCharSet: DEFAULT_CHARSET,
-        lfQuality: CLEARTYPE_QUALITY,
-        ..Default::default()
-    };
-    for (d, c) in lf.lfFaceName.iter_mut().take(31).zip(face.encode_utf16()) {
-        *d = c;
+/// Hints and column titles. The app meta face, or the body face before it exists.
+unsafe fn meta_font() -> HFONT {
+    if let Some(font) = crate::app_try(|a| a.small_font) {
+        if !font.0.is_null() && !font.is_invalid() {
+            return font;
+        }
     }
-    unsafe { CreateFontIndirectW(&lf) }
-}
-
-fn rebuild_fonts() {
-    let dpi = ST.with(|s| s.borrow().dpi.max(96));
-    let custom = crate::app(|a| a.s.font_face.clone());
-    let face = if custom.is_empty() { crate::ui_face() } else { custom.as_str() };
-    let new = (make_font(face, 14, 400, dpi), make_font(face, 14, 700, dpi), make_font(face, 12, 400, dpi), make_font("Segoe MDL2 Assets", 14, 400, dpi));
-    let old = ST.with(|s| {
-        let mut st = s.borrow_mut();
-        let old = (st.font, st.bold, st.small, st.icon);
-        (st.font, st.bold, st.small, st.icon) = new;
-        old
-    });
-    unsafe {
-        drop_font(old.0);
-        drop_font(old.1);
-        drop_font(old.2);
-        drop_font(old.3);
-    }
-}
-
-fn drop_fonts() {
-    let old = ST.with(|s| {
-        let mut st = s.borrow_mut();
-        let old = (st.font, st.bold, st.small, st.icon);
-        st.font = HFONT::default();
-        st.bold = HFONT::default();
-        st.small = HFONT::default();
-        st.icon = HFONT::default();
-        old
-    });
-    unsafe {
-        drop_font(old.0);
-        drop_font(old.1);
-        drop_font(old.2);
-        drop_font(old.3);
-    }
-}
-
-unsafe fn drop_font(f: HFONT) {
-    crate::delete_font(f);
+    crate::body_font()
 }
 
 unsafe fn apply_font(parent: HWND, font: HFONT) {
@@ -2975,7 +2899,7 @@ mod tests {
             let g = geo(client(sc(dpi, DLG_W_DIP), sc(dpi, DLG_H_DIP)), dpi);
             assert!(g.undo.right < g.close.left, "dpi {dpi}");
             assert!(g.close.right <= g.apply.left, "dpi {dpi}");
-            assert_eq!(g.apply.bottom - g.apply.top, sc(dpi, 32), "dpi {dpi}");
+            assert_eq!(g.apply.bottom - g.apply.top, sc(dpi, crate::BTN_H_FOOTER), "dpi {dpi}");
             assert_eq!(g.tools.bottom - g.tools.top, sc(dpi, FIELD_H_DIP), "dpi {dpi}");
         }
     }
@@ -3020,9 +2944,8 @@ mod tests {
         unsafe {
             let dc = CreateCompatibleDC(None);
             assert!(!dc.is_invalid());
-            let font = make_font("Segoe UI", 14, 400, 96);
-            let bold = make_font("Segoe UI", 14, 700, 96);
-            for (face, s) in [(font, "IMG_"), (bold, "여행_"), (font, "0012.jpg")] {
+            let font = HFONT(GetStockObject(DEFAULT_GUI_FONT).0);
+            for (face, s) in [(font, "IMG_"), (font, "여행_"), (font, "0012.jpg")] {
                 let got = text_w(dc, face, s);
                 let w: Vec<u16> = s.encode_utf16().collect();
                 let old = SelectObject(dc, face.into());
@@ -3033,8 +2956,6 @@ mod tests {
                 assert_eq!(got, sz.cx, "{s}");
                 assert!(got > 0, "{s}");
             }
-            drop_font(font);
-            drop_font(bold);
             let _ = DeleteDC(dc);
         }
     }
