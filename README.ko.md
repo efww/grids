@@ -12,7 +12,7 @@
   <a href="https://github.com/Samek86/maguro"><img alt="플랫폼: Windows" src="https://img.shields.io/badge/platform-Windows-0078D4?logo=windows&logoColor=white"></a>
   <a href="LICENSE"><img alt="라이선스: MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
   <a href="https://github.com/Samek86/maguro"><img alt="언어: Rust" src="https://img.shields.io/badge/language-Rust-000000?logo=rust&logoColor=white"></a>
-  <a href="https://github.com/Samek86/maguro/releases/latest"><img alt="릴리스 0.2.3" src="https://img.shields.io/badge/release-0.2.3-0A9BD6"></a>
+  <a href="https://github.com/Samek86/maguro/releases/latest"><img alt="릴리스 0.2.4" src="https://img.shields.io/badge/release-0.2.4-0A9BD6"></a>
 </p>
 
 <p align="center">
