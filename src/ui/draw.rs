@@ -25,6 +25,21 @@ pub(crate) unsafe fn frame(dc: HDC, r: RECT, w: i32, rgb: u32) {
     }
 }
 
+/// Y of chevron row `k` (`0..=arm`). `up` puts the point on `top`.
+fn chevron_row(top: i32, up: bool, arm: i32, k: i32) -> i32 {
+    top + if up { k } else { arm - k }
+}
+
+/// Sort and collapse mark. `top` is the first row. `up` puts the point on that row.
+/// `thick` is the stroke in pixels, the same square the list header used.
+pub(crate) unsafe fn paint_chevron_mark(dc: HDC, cx: i32, top: i32, up: bool, arm: i32, thick: i32, rgb: u32) {
+    for k in 0..=arm {
+        let y = chevron_row(top, up, arm, k);
+        fill(dc, RECT { left: cx - k, top: y, right: cx - k + thick, bottom: y + thick }, rgb);
+        fill(dc, RECT { left: cx + k, top: y, right: cx + k + thick, bottom: y + thick }, rgb);
+    }
+}
+
 pub(crate) unsafe fn text(dc: HDC, mut r: RECT, s: &str, font: HFONT, rgb: u32, align: DRAW_TEXT_FORMAT) {
     draw_line(dc, &mut r, s, font, rgb, align | DT_END_ELLIPSIS);
 }
@@ -201,6 +216,18 @@ pub(crate) unsafe fn paint_text_flags(dc: HDC, mut r: RECT, s: &str, font: HFONT
     SetTextColor(dc, cref(rgb));
     DrawTextW(dc, &mut w, &mut r, flags | DT_NOPREFIX);
     SelectObject(dc, old);
+}
+
+/// Width of `words` in `font`. Empty text is 0. A failed measure leaves 0, same as a zeroed `SIZE`.
+pub(crate) unsafe fn text_width(dc: HDC, font: HFONT, words: &[u16]) -> i32 {
+    if words.is_empty() {
+        return 0;
+    }
+    let old = SelectObject(dc, font.into());
+    let mut sz = SIZE::default();
+    let _ = GetTextExtentPoint32W(dc, words, &mut sz);
+    SelectObject(dc, old);
+    sz.cx
 }
 
 /// Shared checkbox. 16 DIP is the caller's box. The corner radius lives here.
@@ -1740,6 +1767,19 @@ mod center_wrap_tests {
         assert_eq!(center_block(r, 0, 3), r);
         assert_eq!(center_block(r, 60, 3), r);
         assert_eq!(center_block(r, 80, 3), r);
+    }
+}
+
+#[cfg(test)]
+mod chevron_tests {
+    use super::chevron_row;
+
+    #[test]
+    fn the_point_sits_on_the_first_row_when_the_mark_points_up() {
+        assert_eq!(chevron_row(10, true, 4, 0), 10);
+        assert_eq!(chevron_row(10, true, 4, 4), 14);
+        assert_eq!(chevron_row(10, false, 4, 0), 14);
+        assert_eq!(chevron_row(10, false, 4, 4), 10);
     }
 }
 

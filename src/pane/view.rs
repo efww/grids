@@ -122,7 +122,7 @@ unsafe fn filter_hint_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM, _a1:
         _ = GetClientRect(h, &mut rc);
         rc.left += (SendMessageW(h, EM_GETMARGINS, None, None).0 & 0xffff) as i32;
         let font = HFONT(SendMessageW(h, WM_GETFONT, None, None).0 as _);
-        text(dc, rc, tr(crate::Key::SearchCtrlF), font, blend(pal().sub, pal().text, 0.2), DT_LEFT);
+        paint_hint(dc, rc, tr(crate::Key::SearchCtrlF), font);
         _ = ReleaseDC(Some(h), dc);
     }
     r
@@ -615,10 +615,7 @@ pub(crate) unsafe fn set_accent(c: u32) {
         }
         (a.bars, a.panes.iter().flatten().map(|p| p.hwnd).collect::<Vec<_>>(), a.drives.iter().map(|d| d.2).collect::<Vec<_>>(), a.peek)
     });
-    let old = SetClassLongPtrW(bars[0], GCLP_HBRBACKGROUND, CreateSolidBrush(cref(c)).0 as isize);
-    if old != 0 {
-        _ = DeleteObject(HGDIOBJ(old as _));
-    }
+    install_class_brush(bars[0], c);
     for p in panes {
         repaint_header(p); // all of them: inactive panes show the accent in their filter badge
     }
@@ -801,7 +798,7 @@ pub(crate) unsafe fn draw_header_item(cd: &NMCUSTOMDRAW) {
     let (dc, rc, hdr) = (cd.hdc, cd.rc, cd.hdr.hwndFrom);
     let s = |v: i32| v * GetDpiForWindow(hdr) as i32 / 96;
     let hot = cd.uItemState.0 & (CDIS_HOT.0 | CDIS_SELECTED.0) != 0;
-    fill(dc, rc, if hot { blend(pal().card, pal().text, 0.08) } else { pal().card });
+    fill(dc, rc, column_header_fill(pal().card, pal().text, hot));
     fill(dc, RECT { left: rc.right - 1, ..rc }, pal().line);
     let mut text = [0u16; 260];
     let mut item = HDITEMW { mask: HDI_TEXT | HDI_FORMAT, pszText: PWSTR(text.as_mut_ptr()), cchTextMax: text.len() as i32, ..Default::default() };
@@ -817,17 +814,13 @@ pub(crate) unsafe fn draw_header_item(cd: &NMCUSTOMDRAW) {
         };
         let r = RECT { left: rc.left + s(7), right: rc.right - s(7), ..rc };
         let font = HFONT(SendMessageW(hdr, WM_GETFONT, None, None).0 as _);
-        crate::text(dc, r, &String::from_utf16_lossy(&text[..n]), font, pal().sub, align);
+        paint_meta_align(dc, r, &String::from_utf16_lossy(&text[..n]), font, align);
     }
     // sort chevron along the top edge, centred, as Windows 11 draws it
     let up = item.fmt.0 & HDF_SORTUP.0 != 0;
     if up || item.fmt.0 & HDF_SORTDOWN.0 != 0 {
-        let (cx, t, arm) = ((rc.left + rc.right) / 2, s(1).max(1), s(4));
-        for k in 0..=arm {
-            let y = rc.top + s(1) + if up { k } else { arm - k };
-            fill(dc, RECT { left: cx - k, top: y, right: cx - k + t, bottom: y + t }, pal().sub);
-            fill(dc, RECT { left: cx + k, top: y, right: cx + k + t, bottom: y + t }, pal().sub);
-        }
+        let (cx, t, arm) = ((rc.left + rc.right) / 2, s(1).max(1), s(SPACE_4));
+        paint_chevron_mark(dc, cx, rc.top + s(1), up, arm, t, pal().sub);
     }
 }
 
@@ -890,17 +883,12 @@ pub(crate) unsafe fn draw_group_header(cd: &NMLVCUSTOMDRAW) -> bool {
         return false;
     }
     let s = |v: i32| v * GetDpiForWindow(lv) as i32 / 96;
-    let bg = if st & LVGS_SELECTED.0 != 0 {
-        blend(pal().card, pal().text, 0.16)
-    } else if cd.nmcd.uItemState.0 & CDIS_HOT.0 != 0 {
-        blend(pal().card, pal().text, 0.08)
-    } else {
-        pal().card
-    };
-    fill(dc, rc, bg);
+    let selected = st & LVGS_SELECTED.0 != 0;
+    let hot = cd.nmcd.uItemState.0 & CDIS_HOT.0 != 0;
+    fill(dc, rc, group_title_fill(pal().card, pal().text, selected, hot));
     let collapsible = st & LVGS_COLLAPSIBLE.0 != 0;
     let bx = if collapsible { rc.bottom - rc.top } else { 0 };
-    let r = RECT { left: rc.left + s(8), right: rc.right - bx - s(8), ..rc };
+    let r = RECT { left: rc.left + s(SPACE_8), right: rc.right - bx - s(SPACE_8), ..rc };
     let align = if g.uAlign.0 & LVGA_HEADER_RIGHT.0 != 0 {
         DT_RIGHT
     } else if g.uAlign.0 & LVGA_HEADER_CENTER.0 != 0 {
@@ -909,26 +897,18 @@ pub(crate) unsafe fn draw_group_header(cd: &NMLVCUSTOMDRAW) -> bool {
         DT_LEFT
     };
     let font = HFONT(SendMessageW(lv, WM_GETFONT, None, None).0 as _);
-    text(dc, r, &String::from_utf16_lossy(&head[..n]), font, pal().text, align);
+    paint_label_align(dc, r, &String::from_utf16_lossy(&head[..n]), font, align);
     let cy = (rc.top + rc.bottom) / 2;
     if align == DT_LEFT {
-        let old = SelectObject(dc, font.into());
-        let mut sz = SIZE::default();
-        _ = GetTextExtentPoint32W(dc, &head[..n], &mut sz);
-        SelectObject(dc, old);
-        let x = r.left + sz.cx + s(8);
+        let x = r.left + text_width(dc, font, &head[..n]) + s(SPACE_8);
         if x < r.right {
             fill(dc, RECT { left: x, top: cy, right: r.right, bottom: cy + 1 }, pal().line);
         }
     }
     if collapsible {
         let up = st & LVGS_COLLAPSED.0 == 0;
-        let (cx, t, arm) = (rc.right - bx / 2, s(1).max(1), s(4));
-        for k in 0..=arm {
-            let y = cy - arm / 2 + if up { k } else { arm - k };
-            fill(dc, RECT { left: cx - k, top: y, right: cx - k + t, bottom: y + t }, pal().sub);
-            fill(dc, RECT { left: cx + k, top: y, right: cx + k + t, bottom: y + t }, pal().sub);
-        }
+        let (cx, t, arm) = (rc.right - bx / 2, s(1).max(1), s(SPACE_4));
+        paint_chevron_mark(dc, cx, cy - arm / 2, up, arm, t, pal().sub);
     }
     if cd.nmcd.uItemState.0 & CDIS_FOCUS.0 != 0 || st & LVGS_FOCUSED.0 != 0 {
         frame(dc, rc, 1, pal().sub);

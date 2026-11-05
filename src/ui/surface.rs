@@ -113,6 +113,15 @@ pub(crate) unsafe fn field_brush() -> HBRUSH {
     brush
 }
 
+/// Window-class background. The class keeps the brush. The previous one is deleted.
+pub(crate) unsafe fn install_class_brush(hwnd: HWND, rgb: u32) {
+    let brush = CreateSolidBrush(crate::cref(rgb));
+    let old = SetClassLongPtrW(hwnd, GCLP_HBRBACKGROUND, brush.0 as isize);
+    if old != 0 {
+        let _ = DeleteObject(HGDIOBJ(old as _));
+    }
+}
+
 /// `WM_CTLCOLOREDIT` for a shared field: token text on the field fill.
 pub(crate) unsafe fn color_field_edit(dc: HDC) -> LRESULT {
     color_field_ink(dc, ui_tokens().text)
@@ -199,6 +208,48 @@ pub(crate) unsafe fn paint_center_meta(dc: HDC, r: RECT, s: &str, font: HFONT) {
     crate::text(dc, r, s, font, ui_tokens().sub, DT_CENTER | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
 }
 
+fn horizontal(align: DRAW_TEXT_FORMAT) -> DRAW_TEXT_FORMAT {
+    DRAW_TEXT_FORMAT(align.0 & (DT_CENTER.0 | DT_RIGHT.0))
+}
+
+/// Body label, token text. `align` is `DT_LEFT`, `DT_CENTER`, or `DT_RIGHT`.
+/// Other flags are dropped. Vertical placement matches [`paint_label`].
+pub(crate) unsafe fn paint_label_align(dc: HDC, r: RECT, s: &str, font: HFONT, align: DRAW_TEXT_FORMAT) {
+    crate::text(dc, r, s, font, ui_tokens().text, horizontal(align) | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
+}
+
+/// Secondary label, token sub ink. Same box and alignments as [`paint_label_align`].
+pub(crate) unsafe fn paint_meta_align(dc: HDC, r: RECT, s: &str, font: HFONT, align: DRAW_TEXT_FORMAT) {
+    crate::text(dc, r, s, font, ui_tokens().sub, horizontal(align) | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
+}
+
+/// Placeholder ink. Sub mixed 20% toward text, the filter hint's old colour.
+pub(crate) fn hint_ink(sub: u32, text: u32) -> u32 {
+    crate::blend(sub, text, 0.2)
+}
+
+/// One line of placeholder text, left aligned, in [`hint_ink`].
+pub(crate) unsafe fn paint_hint(dc: HDC, r: RECT, s: &str, font: HFONT) {
+    let t = ui_tokens();
+    crate::text(dc, r, s, font, hint_ink(t.sub, t.text), DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
+}
+
+/// Dark list column. Hover and press share one mix: 8% text into the card.
+pub(crate) fn column_header_fill(card: u32, text: u32, hot: bool) -> u32 {
+    if hot { crate::blend(card, text, 0.08) } else { card }
+}
+
+/// Dark group title. Selected is 16% text into the card and wins over hover.
+pub(crate) fn group_title_fill(card: u32, text: u32, selected: bool, hot: bool) -> u32 {
+    if selected {
+        crate::blend(card, text, 0.16)
+    } else if hot {
+        crate::blend(card, text, 0.08)
+    } else {
+        card
+    }
+}
+
 /// Caption of a small dialog: token ground, no cerulean fill, no gradient.
 pub(crate) unsafe fn style_dialog_caption(h: HWND) {
     let dark = ui_tokens().dark;
@@ -270,5 +321,25 @@ mod tests {
         let (dark, dark_edge) = meter_colors(BG_DARK, SUB_DARK);
         assert_ne!(dark, BG_DARK);
         assert_ne!(dark, dark_edge);
+    }
+
+    #[test]
+    fn list_chrome_keeps_its_mixes() {
+        let (card, text, sub) = (CARD_DARK, TEXT_DARK, SUB_DARK);
+        assert_eq!(hint_ink(sub, text), crate::blend(sub, text, 0.2));
+        assert_eq!(column_header_fill(card, text, false), card);
+        assert_eq!(column_header_fill(card, text, true), crate::blend(card, text, 0.08));
+        assert_eq!(group_title_fill(card, text, false, false), card);
+        assert_eq!(group_title_fill(card, text, false, true), crate::blend(card, text, 0.08));
+        assert_eq!(group_title_fill(card, text, true, true), crate::blend(card, text, 0.16));
+        assert_ne!(column_header_fill(card, text, true), group_title_fill(card, text, true, false));
+    }
+
+    #[test]
+    fn label_align_keeps_only_the_horizontal_flags() {
+        assert_eq!(horizontal(DT_LEFT).0, DT_LEFT.0);
+        assert_eq!(horizontal(DT_CENTER).0, DT_CENTER.0);
+        assert_eq!(horizontal(DT_RIGHT).0, DT_RIGHT.0);
+        assert_eq!(horizontal(DT_CENTER | DT_VCENTER | DT_SINGLELINE).0, DT_CENTER.0);
     }
 }

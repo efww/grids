@@ -19,9 +19,7 @@ const BANNED: &[&str] = &[
 
 /// Follow-up windows. Each one still contains a banned call. A new file that
 /// paints on its own fails the test, and so does leaving a finished file here.
-const ALLOW: &[&str] = &[
-    "src/pane/view.rs",
-];
+const ALLOW: &[&str] = &[];
 
 /// This pull request. These paint through the shared module, allow-list or not.
 const MIGRATED: &[(&str, &[&str])] = &[
@@ -241,6 +239,21 @@ const MIGRATED: &[(&str, &[&str])] = &[
             "style_dialog_caption(",
             "body_font(",
             "color_field_edit(",
+        ],
+    ),
+    (
+        "src/pane/view.rs",
+        &[
+            "paint_hint(",
+            "paint_meta_align(",
+            "paint_label_align(",
+            "paint_chevron_mark(",
+            "text_width(",
+            "column_header_fill(",
+            "group_title_fill(",
+            "install_class_brush(",
+            "fill(",
+            "frame(",
         ],
     ),
     (
