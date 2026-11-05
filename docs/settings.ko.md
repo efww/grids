@@ -19,6 +19,7 @@ Maguro는 설정 폴더의 `maguro.json`만 읽고 씁니다(`%APPDATA%\Maguro`,
 | 키 | 설명 |
 | --- | --- |
 | `side_split` | 폴더 트리가 왼쪽 패널에서 차지하는 비율. 나머지는 즐겨찾기예요. 어느 쪽이 위든 다시 열 때 돌아옵니다. 왼쪽 패널 전체는 설정에서 숨길 수 있습니다. |
+| `fav_panel`, `tree_panel` | 왼쪽 패널의 즐겨찾기 / 트리뷰를 각각 표시할지. 기본값은 둘 다 `true`. 하나만 켜면 그쪽이 전체 높이를 쓰고, 둘 다 끄면 왼쪽 패널이 숨겨져요. 이 키가 없는 예전 파일은 `tree` 설정을 그대로 따릅니다. 보기 메뉴와 설정 → 패널·보기에서 바로 적용돼요. |
 | `side_order` | 왼쪽 패널에서 어느 쪽이 위인지. 키가 없으면 즐겨찾기가 위예요. `"tree"`이면 폴더 트리가 위예요. 구분선은 그대로 끌 수 있고, `side_split`은 폴더 트리의 높이 비율로 남아요. 설정 → 패널·보기에서 바꾸면 바로 적용돼요. 즐겨찾기가 위일 때는 키가 빠집니다. |
 | `use_everything` | `"use_everything": false`가 없으면 켜져 있습니다. 켜져 있으면 하위 폴더 검색이, Everything이 실행 중일 때 Everything에 묻습니다. 설정 → 일반에는 설치되어 실행 중, 설치되어 있지만 실행 중이 아님, 설치되어 있지 않음이 나오고, Everything이 버전을 알려 주면 함께 표시됩니다. Everything 시작은 설치된 `Everything.exe`를 실행합니다. 설치는 winget이 있으면 `winget install --id voidtools.Everything -e`를 실행하고, 없으면 voidtools 다운로드 페이지를 엽니다. |
 | `winmerge_path` | 비어 있으면 자동 감지이며, 키는 빠집니다. 설정 → 일반 → WinMerge에서 찾았는지 보이고, `WinMergeU.exe`나 그 폴더를 직접 지정할 수 있습니다. 그 경로, `HKLM`/`HKCU` `Software\Thingamahoochie\WinMerge`의 `Executable`, `WinMergeU.exe` App Paths, Program Files, `PATH` 순으로 찾습니다. 폴더 비교는 Ctrl+Alt+C, 톱니바퀴 메뉴, 파일 목록 메뉴입니다. |

@@ -1199,6 +1199,12 @@ fn flip(id: u8) {
             unsafe { crate::toggle_tree() };
             return;
         }
+        TG_SIDE_FAV | TG_SIDE_TREE => {
+            let fav = id == TG_SIDE_FAV;
+            let on = app(|a| if fav { a.s.show_fav() } else { a.s.show_tree() });
+            unsafe { crate::set_side_half(fav, !on) };
+            return;
+        }
         TG_PREVIEW => {
             unsafe { crate::toggle_preview() };
             return;

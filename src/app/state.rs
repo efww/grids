@@ -651,6 +651,8 @@ fn copy_shared(dst: &mut Session, src: &Session) {
     dst.start_path = src.start_path.clone();
     dst.ext = src.ext;
     dst.tree_on = src.tree_on;
+    dst.fav_pane = src.fav_pane;
+    dst.tree_pane = src.tree_pane;
     dst.preview_on = src.preview_on;
     dst.preview_w = src.preview_w;
     dst.fav_top = src.fav_top;

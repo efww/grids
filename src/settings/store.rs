@@ -269,6 +269,12 @@ struct SettingsFile {
     ext: bool,
     #[serde(default = "yes")]
     tree: bool,
+    /// Favourites half of the left panel. Missing (older files) means shown, so `tree` alone keeps its meaning.
+    #[serde(default = "yes")]
+    fav_panel: bool,
+    /// Folder-tree half of the left panel. Missing means shown.
+    #[serde(default = "yes")]
+    tree_panel: bool,
     /// Retired activity-bar choice ("tree" / "fav"). Read so it is not kept, never written.
     #[serde(default, skip_serializing)]
     #[allow(dead_code)]
@@ -481,6 +487,8 @@ impl SettingsFile {
             start_path: String::new(),
             ext: true,
             tree: true,
+            fav_panel: true,
+            tree_panel: true,
             panel: String::new(),
             side_split: 0.5,
             side_order: side_fav(),
@@ -598,6 +606,8 @@ impl SettingsFile {
             start_path: s.start_path.clone(),
             ext: s.ext,
             tree: s.tree_on,
+            fav_panel: s.fav_pane,
+            tree_panel: s.tree_pane,
             panel: String::new(),
             side_split: crate::sane_split(s.side_split),
             side_order: if s.fav_top { side_fav() } else { "tree".into() },
@@ -793,6 +803,8 @@ impl SettingsFile {
         s.start_path = self.start_path.clone();
         s.ext = self.ext;
         s.tree_on = self.tree;
+        s.fav_pane = self.fav_panel;
+        s.tree_pane = self.tree_panel;
         s.side_split = crate::persist_split(self.side_split);
         s.fav_top = self.side_order != "tree";
         s.pins_open = self.explorer_pins_open;
@@ -1793,6 +1805,20 @@ mod tests {
         assert!((one.side_split - 0.5).abs() < 1e-9);
         assert!(even.get("side_order").is_none());
         assert!(Session::default().fav_top);
+    }
+
+    #[test]
+    fn panel_halves_default_on_and_older_files_keep_the_single_toggle() {
+        let old_closed = adopt(r#"{"tree":false}"#).unwrap();
+        assert!(!old_closed.side_shown() && old_closed.fav_pane && old_closed.tree_pane);
+        let old_open = adopt(r#"{"tree":true}"#).unwrap();
+        assert!(old_open.show_fav() && old_open.show_tree());
+        let mut s = Session::default();
+        s.tree_pane = false;
+        let v: Value = serde_json::from_str(&sync_text(&s)).unwrap();
+        assert_eq!((v["fav_panel"].as_bool(), v["tree_panel"].as_bool()), (Some(true), Some(false)));
+        let back = adopt(&sync_text(&s)).unwrap();
+        assert!(back.show_fav() && !back.show_tree());
     }
 
     #[test]

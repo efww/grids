@@ -69,6 +69,8 @@ const TG_FAST: u8 = 24;
 const TG_DIALOG: u8 = 25;
 const TG_PREVIEW: u8 = 26;
 const TG_CLIP: u8 = 27;
+const TG_SIDE_FAV: u8 = 28;
+const TG_SIDE_TREE: u8 = 29;
 
 const CB_SETMINVISIBLE: u32 = 0x1701;
 const EM_SETCUEBANNER: u32 = 0x1501;
@@ -237,6 +239,8 @@ const VIEW: &[Spec] = &[
     Spec { title: crate::Key::FolderSizesForNetworkFolders, desc: crate::Key::UncAndMappedDrivesOffByDefault, live: true, ctl: Ctl::Toggle(TG_FSIZE_NET) },
     Spec { title: crate::Key::ShowLeftPanel, desc: crate::Key::FavouritesAndFolderTreeShareItDrag, live: true, ctl: Ctl::Toggle(TG_TREE) },
     Spec { title: crate::Key::LeftPanelOrder, desc: crate::Key::FavouritesOnTopOrFolderTreeOn, live: true, ctl: Ctl::SideOrder },
+    Spec { title: crate::Key::ShowFavouritesPanel, desc: crate::Key::ShowFavouritesPanelDesc, live: true, ctl: Ctl::Toggle(TG_SIDE_FAV) },
+    Spec { title: crate::Key::ShowFolderTreePanel, desc: crate::Key::ShowFolderTreePanelDesc, live: true, ctl: Ctl::Toggle(TG_SIDE_TREE) },
     Spec { title: crate::Key::EmphasiseActivePaneBorder, desc: crate::Key::Blank, live: true, ctl: Ctl::Toggle(TG_EDGE) },
     Spec { title: crate::Key::ShowPreviewPane, desc: crate::Key::PreviewPaneDesc, live: true, ctl: Ctl::Toggle(TG_PREVIEW) },
     Spec { title: crate::Key::PreviewWithSpace, desc: crate::Key::SameAsF3InFileListSpace, live: true, ctl: Ctl::Toggle(TG_SPACE) },
@@ -1033,7 +1037,9 @@ fn toggle_on(id: u8) -> bool {
         TG_DRIVES => app(|a| a.s.drive_buttons),
         TG_STATUS => app(|a| a.s.stat),
         TG_EXT => app(|a| a.s.ext),
-        TG_TREE => app(|a| a.s.tree_on),
+        TG_TREE => app(|a| a.s.side_shown()),
+        TG_SIDE_FAV => app(|a| a.s.show_fav()),
+        TG_SIDE_TREE => app(|a| a.s.show_tree()),
         TG_PREVIEW => app(|a| a.s.preview_on),
         TG_EDGE => app(|a| a.s.edge),
         TG_CONFIRM => app(|a| a.s.confirm),

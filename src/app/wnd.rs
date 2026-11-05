@@ -206,7 +206,7 @@ fn main_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                             a.s.preview_w = preview_dip(px, a.dpi);
                         }
                     }
-                    a.s.side = kept_side(a.s.tree_on, a.s.side, geo(a).side);
+                    a.s.side = kept_side(a.s.side_shown(), a.s.side, geo(a).side);
                     Some(())
                 });
                 if moved.is_some() {
@@ -268,6 +268,8 @@ fn main_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                 }
                 ID_HIDDEN => toggle_hidden(),
                 ID_PANEL => toggle_tree(),
+                ID_SIDE_FAV => crate::set_side_half(true, !app(|a| a.s.show_fav())),
+                ID_SIDE_TREE => crate::set_side_half(false, !app(|a| a.s.show_tree())),
                 ID_PREVIEW => toggle_preview(),
                 ID_GATHER => gather_explorer(),
                 ID_BASKET => crate::basket::toggle(),
@@ -337,7 +339,7 @@ fn main_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                 _ => {}
             },
             WM_INITMENUPOPUP => {
-                let (menu, dblup, accent, lang, panel, preview, ext, hot) = app(|a| (a.view_menu, a.s.dblup, a.s.accent_now(), a.s.lang, a.s.tree_on, a.s.preview_on, a.s.ext, a.hot_on));
+                let (menu, dblup, accent, lang, panel, preview, ext, hot) = app(|a| (a.view_menu, a.s.dblup, a.s.accent_now(), a.s.lang, a.s.side_shown(), a.s.preview_on, a.s.ext, a.hot_on));
                 // Submenus (language, colours, WinMerge panes) also send this. Rebuilding then destroys the one that just opened.
                 if HMENU(wp.0 as _) == menu {
                     crate::winmerge::sync_gear(menu);
@@ -347,6 +349,8 @@ fn main_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                 let check = |id: usize, on: bool| CheckMenuItem(menu, id as u32, (MF_BYCOMMAND | if on { MF_CHECKED } else { MF_UNCHECKED }).0);
                 check(ID_HIDDEN, hidden());
                 check(ID_PANEL, panel);
+                check(ID_SIDE_FAV, app(|a| a.s.show_fav()));
+                check(ID_SIDE_TREE, app(|a| a.s.show_tree()));
                 check(ID_PREVIEW, preview);
                 check(ID_EXT, ext);
                 check(ID_FOLLOW, app(|a| a.s.theme == 0));
@@ -1190,6 +1194,8 @@ pub(crate) unsafe fn make_menus() -> Result<HMENU> {
     item(sub, MF_STRING, ID_HIDDEN, tr(crate::Key::ShowHiddenFilesCtrlH))?;
     item(sub, MF_STRING, ID_EXT, tr(crate::Key::ShowFileExtensions))?;
     item(sub, MF_STRING, ID_PANEL, tr(crate::Key::LeftPanelCtrlShiftE))?;
+    item(sub, MF_STRING, ID_SIDE_FAV, tr(crate::Key::ShowFavouritesPanel))?;
+    item(sub, MF_STRING, ID_SIDE_TREE, tr(crate::Key::ShowFolderTreePanel))?;
     item(sub, MF_STRING, ID_PREVIEW, &with_chord(tr(crate::Key::PreviewPane), "view.preview"))?;
     item(view, MF_POPUP, sub.0 as usize, tr(crate::Key::View))?;
     sep(view)?;

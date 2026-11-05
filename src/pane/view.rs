@@ -330,7 +330,7 @@ pub(crate) unsafe fn relayout() {
             moves.push((h, r));
             drive_vis.push((h, show_bar && i < icons.drive_n));
         }
-        let show_side = a.s.tree_on;
+        let show_side = (a.s.show_tree(), a.s.show_fav());
         let (tree_h, side_h) = (a.tree_hwnd, a.side_hwnd);
         let show_preview = a.s.preview_on && g.preview > 0;
         let preview_h = a.preview_hwnd;
@@ -363,10 +363,10 @@ pub(crate) unsafe fn relayout() {
         _ = ShowWindow(*h, if *on { SW_SHOW } else { SW_HIDE });
     }
     if !tree_h.0.is_null() {
-        _ = ShowWindow(tree_h, if show_side { SW_SHOW } else { SW_HIDE });
+        _ = ShowWindow(tree_h, if show_side.0 { SW_SHOW } else { SW_HIDE });
     }
     if !side_h.0.is_null() {
-        _ = ShowWindow(side_h, if show_side { SW_SHOW } else { SW_HIDE });
+        _ = ShowWindow(side_h, if show_side.1 { SW_SHOW } else { SW_HIDE });
     }
     if !preview_h.0.is_null() && !show_preview {
         _ = ShowWindow(preview_h, SW_HIDE);
@@ -1586,6 +1586,26 @@ pub(crate) unsafe fn toggle_zoom() {
     focus_view(i);
 }
 
+/// Shows or hides one half of the left panel (`fav` true: favourites; false: folder tree).
+/// Both hidden closes the panel so the panes take the full width.
+pub(crate) unsafe fn set_side_half(fav: bool, on: bool) {
+    if app(|a| a.drag.is_some()) {
+        return;
+    }
+    let f = GetFocus();
+    let (had, i) = app(|a| {
+        a.s.set_side_half(fav, on);
+        let gone = |h: HWND, shown: bool| !shown && !h.0.is_null() && (h == f || IsChild(h, f).as_bool());
+        (gone(a.tree_hwnd, a.s.show_tree()) || gone(a.side_hwnd, a.s.show_fav()), a.s.active)
+    });
+    relayout();
+    redraw_all();
+    if had {
+        focus_view(i);
+    }
+    save_session();
+}
+
 /// The left panel (folder tree and favourites) gives its room to the panes. The width is kept.
 pub(crate) unsafe fn toggle_tree() {
     if app(|a| a.drag.is_some()) {
@@ -1593,7 +1613,7 @@ pub(crate) unsafe fn toggle_tree() {
     }
     let f = GetFocus();
     let (had, i) = app(|a| {
-        a.s.tree_on ^= true;
+        a.s.toggle_side();
         let on = |h: HWND| !h.0.is_null() && (h == f || IsChild(h, f).as_bool());
         (on(a.tree_hwnd) || on(a.side_hwnd), a.s.active)
     });

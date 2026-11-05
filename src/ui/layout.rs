@@ -192,7 +192,7 @@ fn monitor_work(h: HWND) -> Option<RECT> {
 /// so a layout the monitor cannot hold still leaves the window on screen.
 pub(crate) unsafe fn min_track_size(h: HWND) -> (i32, i32) {
     let (cw, ch, dpi) = app(|a| {
-        let (w, ht) = client_min(&a.s.heights, a.dpi, a.s.tree_on, a.s.bar, a.s.stat, a.s.preview_on);
+        let (w, ht) = client_min(&a.s.heights, a.dpi, a.s.side_shown(), a.s.bar, a.s.stat, a.s.preview_on);
         (w, ht, a.dpi)
     });
     let (mut tw, mut th) = frame_around(cw, ch, dpi);
@@ -235,7 +235,7 @@ pub(crate) unsafe fn ensure_window_fits() {
     }
     let Some(work) = monitor_work(main) else { return };
     let (cw, ch, dpi) = app(|a| {
-        let (w, ht) = client_min(&a.s.heights, a.dpi, a.s.tree_on, a.s.bar, a.s.stat, a.s.preview_on);
+        let (w, ht) = client_min(&a.s.heights, a.dpi, a.s.side_shown(), a.s.bar, a.s.stat, a.s.preview_on);
         (w, ht, a.dpi)
     });
     let (min_w, min_h) = frame_around(cw, ch, dpi);
@@ -312,6 +312,8 @@ pub(crate) struct Geo {
     pub(crate) side: i32,   // sidebar plate width
     pub(crate) tree_h: i32, // folder-tree height inside the plate
     pub(crate) fav_top: bool, // favourites above the tree; false puts the tree on top
+    pub(crate) show_fav: bool,  // favourites half shown
+    pub(crate) show_tree: bool, // folder-tree half shown
     pub(crate) gx: i32,     // grid left
     pub(crate) preview: i32, // preview plate width in px; 0 hides it. Zoom keeps it, like the left panel.
     pub(crate) xs: Vec<(i32, i32)>,
@@ -350,19 +352,29 @@ pub(crate) fn kept_side(panel: bool, stored: i32, clamped: i32) -> i32 {
     if panel { clamped } else { stored }
 }
 
+/// Folder-tree height inside the left plate. Both halves split it; the tree alone fills it;
+/// favourites alone, or no panel, leave the tree no room.
+pub(crate) fn side_tree_h(side: i32, plate: i32, split: f64, gap: i32, min: i32, fav: bool, tree: bool) -> i32 {
+    match (side > 0, fav, tree) {
+        (false, ..) | (_, _, false) => 0,
+        (true, true, true) => split_heights(plate, split, gap, min).0,
+        (true, false, true) => plate.max(0),
+    }
+}
+
 pub(crate) fn geo(a: &App) -> Geo {
     let mut rc = RECT::default();
     unsafe { _ = GetClientRect(a.main, &mut rc) };
     let s = |v: i32| v * a.dpi / 96;
     let (pad, gap) = (s(8), s(8));
-    let side = if a.s.tree_on { a.s.side.clamp(s(120), (rc.right - gap - pad - s(240)).max(s(120))) } else { 0 };
-    let gx = if a.s.tree_on { side + gap } else { pad };
+    let side = if a.s.side_shown() { a.s.side.clamp(s(120), (rc.right - gap - pad - s(240)).max(s(120))) } else { 0 };
+    let gx = if side > 0 { side + gap } else { pad };
     let preview = preview_plate(a.s.preview_on, a.s.preview_w, a.dpi, rc.right, gx, gap, pad);
     let grid_w = (rc.right - pad - gx - if preview > 0 { preview + gap } else { 0 }).max(0);
     let top = s(32); // tab strip. `bar` hides the icon group except the gear, not this row.
     let bot = if a.s.stat { (rc.bottom - s(24)).max(top) } else { rc.bottom };
     let plate = (bot - top).max(0);
-    let tree_h = if side > 0 { split_heights(plate, a.s.side_split, gap, side_min(a.dpi)).0 } else { 0 };
+    let tree_h = side_tree_h(side, plate, a.s.side_split, gap, side_min(a.dpi), a.s.show_fav(), a.s.show_tree());
     Geo {
         xs: cells_min(gx, grid_w, &a.s.colr, gap, pane_min_w(a.dpi)),
         ys: a.s.rowr.iter().map(|r| cells_min(top, bot - top, r, gap, pane_min_h(a.dpi))).collect(),
@@ -375,6 +387,8 @@ pub(crate) fn geo(a: &App) -> Geo {
         side,
         tree_h,
         fav_top: a.s.fav_top,
+        show_fav: a.s.show_fav(),
+        show_tree: a.s.show_tree(),
         gx,
         preview,
         zoom: a.zoom.is_some(),
@@ -398,6 +412,9 @@ impl Geo {
 
     /// Height of the upper half, above the divider. `tree_h` is always the folder tree.
     pub(crate) fn side_top_h(&self) -> i32 {
+        if !(self.show_fav && self.show_tree) {
+            return (self.bot - self.top).max(0); // one half fills the plate
+        }
         if self.fav_top {
             let plate = (self.bot - self.top).max(0);
             (plate - self.gap - self.tree_h).max(0)
@@ -409,7 +426,7 @@ impl Geo {
 
 /// Gap between the two halves of the left panel. None when the panel or the divider is hidden.
 pub(crate) fn side_gap_rect(g: &Geo) -> Option<RECT> {
-    if g.side <= 0 || g.tree_h <= 0 || g.gap <= 0 {
+    if g.side <= 0 || g.tree_h <= 0 || g.gap <= 0 || !(g.show_fav && g.show_tree) {
         return None;
     }
     let top = g.top + g.side_top_h();
@@ -422,6 +439,12 @@ pub(crate) fn side_panes(g: &Geo, inset: i32) -> (RECT, RECT) {
     let top_h = g.side_top_h();
     let upper = RECT { left: sr.left + inset, top: sr.top + inset, right: sr.right - inset, bottom: sr.top + top_h };
     let lower = RECT { left: sr.left + inset, top: sr.top + top_h + g.gap, right: sr.right - inset, bottom: sr.bottom - inset };
+    if !(g.show_fav && g.show_tree) {
+        // One half: it takes the whole plate, the hidden one an empty rect at the top.
+        let full = RECT { left: sr.left + inset, top: sr.top + inset, right: sr.right - inset, bottom: sr.bottom - inset };
+        let none = RECT { left: full.left, top: full.top, right: full.left, bottom: full.top };
+        return if g.show_tree { (full, none) } else { (none, full) };
+    }
     if g.fav_top { (lower, upper) } else { (upper, lower) }
 }
 
@@ -1200,6 +1223,8 @@ mod tests {
             side: 240,
             tree_h: 200,
             fav_top: false,
+            show_fav: true,
+            show_tree: true,
             gx: 248,
             preview: 0,
             zoom: false,
@@ -1381,6 +1406,8 @@ mod tests {
             side: 0,
             tree_h: 0,
             fav_top: false,
+            show_fav: true,
+            show_tree: true,
             gx: 8,
             preview: 280,
             xs: vec![(8, 704)],
@@ -1428,6 +1455,8 @@ mod tests {
             side: 240,
             tree_h: 300,
             fav_top: false,
+            show_fav: true,
+            show_tree: true,
             gx: 248,
             preview: 0,
             xs: vec![(248, 600), (608, 992)],
@@ -1455,12 +1484,47 @@ mod tests {
             side: 240,
             tree_h,
             fav_top,
+            show_fav: true,
+            show_tree: true,
             gx: 248,
             preview: 0,
             xs: vec![(248, 600)],
             ys: vec![vec![(66, 700)]],
             zoom: false,
         }
+    }
+
+    #[test]
+    fn sidebar_halves_lay_out_in_all_four_states() {
+        let (plate_h, gap, min) = (634, 8, 80);
+        for fav_top in [true, false] {
+            // Both: split with a divider, the tree keeps its share.
+            let tree_h = side_tree_h(240, plate_h, 0.5, gap, min, true, true);
+            let both = Geo { tree_h, ..plate(fav_top, tree_h) };
+            let (t, f) = side_panes(&both, 2);
+            assert!(t.bottom > t.top && f.bottom > f.top);
+            assert!(side_gap_rect(&both).is_some());
+            assert_eq!(fav_top, f.top < t.top);
+            // Folder tree alone: full plate height, favourites empty, no divider.
+            let tree_h = side_tree_h(240, plate_h, 0.5, gap, min, false, true);
+            assert_eq!(tree_h, plate_h);
+            let only_tree = Geo { show_fav: false, ..plate(fav_top, tree_h) };
+            let (t, f) = side_panes(&only_tree, 2);
+            assert_eq!((t.top, t.bottom), (66 + 2, 700 - 2));
+            assert!(f.right <= f.left || f.bottom <= f.top);
+            assert!(side_gap_rect(&only_tree).is_none());
+            // Favourites alone: full plate height, tree empty, no divider.
+            let tree_h = side_tree_h(240, plate_h, 0.5, gap, min, true, false);
+            assert_eq!(tree_h, 0);
+            let only_fav = Geo { show_tree: false, ..plate(fav_top, tree_h) };
+            let (t, f) = side_panes(&only_fav, 2);
+            assert_eq!((f.top, f.bottom), (66 + 2, 700 - 2));
+            assert!(t.right <= t.left || t.bottom <= t.top);
+            assert!(side_gap_rect(&only_fav).is_none());
+        }
+        // Neither: no plate, so the grid starts at the pad.
+        assert_eq!(side_tree_h(0, plate_h, 0.5, gap, min, false, false), 0);
+        assert_eq!(client_min(&[2, 2, 2], 96, false, false, true, false).0 + 120, client_min(&[2, 2, 2], 96, true, false, true, false).0);
     }
 
     #[test]

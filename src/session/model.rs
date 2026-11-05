@@ -410,6 +410,8 @@ pub(crate) struct Session {
     pub(crate) start_path: String,
     pub(crate) ext: bool,              // show file extensions (the Windows Explorer setting)
     pub(crate) tree_on: bool,          // left panel open
+    pub(crate) fav_pane: bool,         // favourites half of the left panel shown
+    pub(crate) tree_pane: bool,        // folder-tree half of the left panel shown
     /// Right-hand preview of the active pane. Missing means hidden.
     pub(crate) preview_on: bool,
     /// Preview plate width in DIP. 0 means the default until the user drags the splitter.
@@ -579,6 +581,8 @@ impl Default for Session {
             start_path: String::new(),
             ext: true,
             tree_on: true,
+            fav_pane: true,
+            tree_pane: true,
             preview_on: false,
             preview_w: 0,
             fav_top: true,
@@ -670,6 +674,8 @@ impl PartialEq for Session {
             && self.start_path == o.start_path
             && self.ext == o.ext
             && self.tree_on == o.tree_on
+            && self.fav_pane == o.fav_pane
+            && self.tree_pane == o.tree_pane
             && self.preview_on == o.preview_on
             && self.preview_w == o.preview_w
             && self.fav_top == o.fav_top
@@ -842,6 +848,47 @@ pub(crate) fn layout_label(h: &[usize]) -> String {
 }
 
 impl Session {
+    /// Favourites half is on screen: the left panel is open and this half is ticked.
+    pub(crate) fn show_fav(&self) -> bool {
+        self.tree_on && self.fav_pane
+    }
+
+    /// Folder-tree half is on screen.
+    pub(crate) fn show_tree(&self) -> bool {
+        self.tree_on && self.tree_pane
+    }
+
+    /// Any part of the left panel is on screen.
+    pub(crate) fn side_shown(&self) -> bool {
+        self.show_fav() || self.show_tree()
+    }
+
+    /// Ticks or clears one half from the menu or settings. Ticking a half while the panel is
+    /// closed opens the panel with only that half; clearing the last half closes the panel.
+    pub(crate) fn set_side_half(&mut self, fav: bool, on: bool) {
+        if on && !self.tree_on {
+            self.tree_on = true;
+            (self.fav_pane, self.tree_pane) = (fav, !fav);
+            return;
+        }
+        if fav { self.fav_pane = on } else { self.tree_pane = on }
+        if !self.fav_pane && !self.tree_pane {
+            self.tree_on = false;
+        }
+    }
+
+    /// The whole-panel toggle (Ctrl+Shift+E). Opening with both halves cleared brings both back.
+    pub(crate) fn toggle_side(&mut self) {
+        if self.side_shown() {
+            self.tree_on = false;
+        } else {
+            self.tree_on = true;
+            if !self.fav_pane && !self.tree_pane {
+                (self.fav_pane, self.tree_pane) = (true, true);
+            }
+        }
+    }
+
     /// Tabs as saved: the active tab's grid is the live fields, its name and lock stay.
     pub(crate) fn view_tabs(&self) -> Vec<Tab> {
         let mut tabs = if self.tabs.is_empty() {
@@ -1011,6 +1058,8 @@ impl Session {
                 "startp" => s.start_path = v.trim().to_string(),
                 "ext" => s.ext = v.trim() != "0",
                 "tree" => s.tree_on = v.trim() != "0",
+                "favpane" => s.fav_pane = v.trim() != "0",
+                "treepane" => s.tree_pane = v.trim() != "0",
                 "previewpane" => s.preview_on = v.trim() == "1",
                 "previeww" => {
                     let n = v.trim().parse::<i32>().unwrap_or(0);
@@ -1137,6 +1186,12 @@ impl Session {
             o += &format!("startp={}\n", self.start_path);
         }
         o += &format!("ext={}\ntree={}\nedge={}\n", self.ext as u8, self.tree_on as u8, self.edge as u8);
+        if !self.fav_pane {
+            o += "favpane=0\n";
+        }
+        if !self.tree_pane {
+            o += "treepane=0\n";
+        }
         if self.preview_on {
             o += "previewpane=1\n";
         }
@@ -3747,5 +3802,31 @@ mod view_menu_tests {
         assert!(!ini.contains("viewicon"));
         assert_eq!(Session::parse(&ini).view_new, 8);
         assert_eq!(Session::parse(&ini).view_icon, 0);
+    }
+}
+
+#[cfg(test)]
+mod side_half_tests {
+    use super::Session;
+
+    #[test]
+    fn halves_toggle_and_the_panel_closes_when_both_are_off() {
+        let mut s = Session::default();
+        assert!(s.show_fav() && s.show_tree());
+        s.set_side_half(true, false);
+        assert!(!s.show_fav() && s.show_tree() && s.side_shown());
+        s.set_side_half(false, false);
+        assert!(!s.side_shown() && !s.tree_on);
+        s.set_side_half(true, true); // ticking one half opens the panel with just that half
+        assert!(s.show_fav() && !s.show_tree());
+        s.toggle_side();
+        assert!(!s.side_shown());
+        s.toggle_side(); // keeps the chosen half
+        assert!(s.show_fav() && !s.show_tree());
+        s.set_side_half(true, false);
+        s.toggle_side(); // both cleared: Ctrl+Shift+E brings both back
+        assert!(s.show_fav() && s.show_tree());
+        let back = Session::parse(&{ let mut t = Session::default(); t.fav_pane = false; t.to_ini() });
+        assert!(!back.fav_pane && back.tree_pane);
     }
 }

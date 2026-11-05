@@ -825,11 +825,15 @@ pub(crate) enum Key {
     FavMoveUp,
     FavMoveDown,
     RecycleBinFolder,
+    ShowFavouritesPanel,
+    ShowFolderTreePanel,
+    ShowFavouritesPanelDesc,
+    ShowFolderTreePanelDesc,
 }
 
-pub(crate) const KEY_COUNT: usize = 822;
+pub(crate) const KEY_COUNT: usize = 826;
 
-const _: () = assert!((Key::RecycleBinFolder as usize) + 1 == KEY_COUNT);
+const _: () = assert!((Key::ShowFolderTreePanelDesc as usize) + 1 == KEY_COUNT);
 
 pub(crate) const EN: [&str; KEY_COUNT] = [
     "About",
@@ -1654,6 +1658,10 @@ pub(crate) const EN: [&str; KEY_COUNT] = [
     "Move down",
     "Recycle Bin",
 
+    "Show favourites panel",
+    "Show folder tree panel",
+    "Shown in the left panel. Alone, it fills the full height.",
+    "Turn off both panels to hide the left panel.",
 ];
 
 pub(crate) const KEY_ID: [&str; KEY_COUNT] = [
@@ -2480,4 +2488,8 @@ pub(crate) const KEY_ID: [&str; KEY_COUNT] = [
     "fav_move_down",
     "recycle_bin_folder",
 
+    "show_favourites_panel",
+    "show_folder_tree_panel",
+    "show_favourites_panel_desc",
+    "show_folder_tree_panel_desc",
 ];

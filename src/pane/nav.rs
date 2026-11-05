@@ -1559,7 +1559,7 @@ pub(crate) unsafe fn keep_focus(main: HWND) {
 /// Put focus back on the address, filter, list, folder tree, or favourites it left.
 /// The edits keep their text and caret.
 pub(crate) unsafe fn restore_focus() {
-    let (main, i, k, panel, th, side) = app(|a| (a.main, a.s.active, a.focus_keep, a.s.tree_on, a.tree_hwnd, a.side_hwnd));
+    let (main, i, k, panel, th, side) = app(|a| (a.main, a.s.active, a.focus_keep, a.s.side_shown(), a.tree_hwnd, a.side_hwnd));
     let shown = app(|a| a.panes.get(i).and_then(|p| p.as_ref()).map(|p| p.hwnd)).is_some_and(|p| IsWindowVisible(p).as_bool());
     let within = |root: HWND| !root.0.is_null() && (root == k || IsChild(root, k).as_bool());
     let ok = IsWindow(Some(k)).as_bool()

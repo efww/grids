@@ -1199,14 +1199,19 @@ pub(crate) fn tree_input_after(prev: bool, in_tree: bool, used: bool) -> bool {
 unsafe fn cycle_focus(back: bool) {
     let a = active_pane();
     let f = GetFocus();
-    let (panel, th, side, fav_top) = app(|x| (x.s.tree_on, x.tree_hwnd, x.side_hwnd, x.s.fav_top));
-    let shown = panel && !th.0.is_null() && IsWindowVisible(th).as_bool();
+    let (show_tree, show_fav, th, side, fav_top) = app(|x| (x.s.show_tree(), x.s.show_fav(), x.tree_hwnd, x.side_hwnd, x.s.fav_top));
+    let shown = (show_tree && !th.0.is_null() && IsWindowVisible(th).as_bool()) || (show_fav && !side.0.is_null());
     let addr = pane_ctl(a, ID_EDIT) == Some(f);
     let filt = pane_ctl(a, ID_FILTER) == Some(f);
     let in_tree = !th.0.is_null() && (th == f || IsChild(th, f).as_bool());
     let in_fav = !side.0.is_null() && (side == f || IsChild(side, f).as_bool());
     let pos = focus_at(addr, filt, in_tree, in_fav, fav_top);
-    match focus_ring(pos, back, shown) {
+    // A hidden half is skipped: the ring walks on to the next stop.
+    let mut n = focus_ring(pos, back, shown);
+    while (n == 3 || n == 4) && !match panel_stops(fav_top)[n - 3] { PanelStop::Tree => show_tree, PanelStop::Fav => show_fav } {
+        n = focus_ring(n, back, shown);
+    }
+    match n {
         1 => {
             _ = focus_ctl(a, ID_EDIT);
         }
