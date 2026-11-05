@@ -746,14 +746,44 @@ fn remain_time(secs: u64) -> String {
     tf(key, &[("m", &n(mins)), ("s", &n(rem))])
 }
 
-fn eta_text(done: u64, total: u64, started: Instant) -> String {
-    if done == 0 || total <= done {
-        return String::new();
+const ETA_MIN_BYTES: u64 = 256 * 1024;
+const ETA_MIN_ELAPSED_MS: u128 = 1_000;
+const ETA_MAX_SECS: u64 = 24 * 60 * 60;
+
+/// Same-unit `(done, total)` for the ETA. Bytes only after a real slice has moved; otherwise file counts.
+fn eta_basis(bytes_done: u64, bytes_total: u64, files_done: u64, files_total: u64) -> Option<(u64, u64)> {
+    if bytes_eta_ready(bytes_done, bytes_total) {
+        return Some((bytes_done, bytes_total));
     }
-    let elapsed = started.elapsed().as_millis().max(1);
-    let remain = elapsed.saturating_mul((total - done) as u128) / done as u128;
-    let secs = u64::try_from(remain / 1000).unwrap_or(u64::MAX).max(1);
-    tf(Key::AboutTimeLeft, &[("time", &remain_time(secs))])
+    if files_total > 0 && files_done > 0 && files_done < files_total {
+        return Some((files_done, files_total));
+    }
+    None
+}
+
+fn bytes_eta_ready(done: u64, total: u64) -> bool {
+    done > 0 && total > 0 && (done >= ETA_MIN_BYTES || done.saturating_mul(100) >= total)
+}
+
+fn eta_text(done: u64, total: u64, started: Instant) -> String {
+    eta_from(done, total, started.elapsed().as_millis())
+}
+
+fn eta_from(done: u64, total: u64, elapsed_ms: u128) -> String {
+    match eta_remain_secs(done, total, elapsed_ms) {
+        Some(secs) => tf(Key::AboutTimeLeft, &[("time", &remain_time(secs))]),
+        None => String::new(),
+    }
+}
+
+/// Remaining seconds, or `None` when the rate is missing, too fresh, or longer than a day.
+fn eta_remain_secs(done: u64, total: u64, elapsed_ms: u128) -> Option<u64> {
+    if done == 0 || total <= done || elapsed_ms < ETA_MIN_ELAPSED_MS {
+        return None;
+    }
+    let remain_ms = elapsed_ms.saturating_mul((total - done) as u128) / done as u128;
+    let secs = u64::try_from(remain_ms / 1000).unwrap_or(u64::MAX).max(1);
+    (secs <= ETA_MAX_SECS).then_some(secs)
 }
 
 /// Groove plus a darker 1px edge. Both stay off the window ground so a 0% bar is still visible.
@@ -938,7 +968,10 @@ impl Progress {
                 ("btotal", &format_bytes(self.bytes_total)),
             ],
         );
-        let eta = eta_text(self.bytes_done.max(self.files_done), self.bytes_total.max(self.files_total), self.started);
+        let eta = match eta_basis(self.bytes_done, self.bytes_total, self.files_done, self.files_total) {
+            Some((done, total)) => eta_text(done, total, self.started),
+            None => String::new(),
+        };
         unsafe {
             (*v).stats = stats;
             (*v).current = self.current.clone();
@@ -1821,5 +1854,66 @@ mod tests {
         assert!(parse_log_line("   Source : C:\\src\\").is_none());
         assert!(parse_error_line("2026/10/30 12:00:00 ERROR 32 (0x00000020) Copying File C:\\a.txt").is_some());
         assert!(parse_error_line("   Bytes :         4         4         0").is_none());
+    }
+
+    #[test]
+    fn format_bytes_and_log_lines_keep_multi_gigabyte_totals() {
+        assert_eq!(format_bytes(9_933), "9.7 KB");
+        assert_eq!(format_bytes(4_509_715_661), "4.2 GB");
+        assert_eq!(format_bytes(12_345_678_901), "11.5 GB");
+
+        let plain = "\t    New File  \t\t  12345678901\tD:\\data\\big.bin";
+        assert_eq!(parse_log_line(plain).unwrap(), ("D:\\data\\big.bin".to_string(), 12_345_678_901));
+        let commas = "\t    New File  \t\t  4,509,715,661\tD:\\data\\huge.bin";
+        assert_eq!(parse_log_line(commas).unwrap(), ("D:\\data\\huge.bin".to_string(), 4_509_715_661));
+        assert_eq!(parse_log_line("\t    New File  \t\t       4\tC:\\src\\hello.txt").unwrap().1, 4);
+    }
+
+    #[test]
+    fn eta_basis_uses_files_for_a_tiny_early_slice_of_a_large_total() {
+        // 3 / 14 files, 9.7 KB / 4.2 GB. Byte rate here is not a useful ETA.
+        let basis = eta_basis(9_933, 4_509_715_661, 3, 14).unwrap();
+        assert_eq!(basis, (3, 14));
+        let secs = eta_remain_secs(basis.0, basis.1, 20_000).unwrap();
+        assert!(secs < 600, "{secs}");
+        assert!(eta_remain_secs(9_933, 4_509_715_661, 20_000).is_none());
+    }
+
+    #[test]
+    fn eta_basis_does_not_mix_file_counts_with_byte_totals() {
+        let basis = eta_basis(0, 4_500_000_000, 3, 14).unwrap();
+        assert_eq!(basis, (3, 14));
+        assert_ne!(basis, (3, 4_500_000_000));
+        assert!(eta_remain_secs(basis.0, basis.1, 20_000).unwrap() < 600);
+    }
+
+    #[test]
+    fn eta_basis_uses_bytes_once_progress_is_meaningful() {
+        let total = 4_509_715_661u64;
+        let half = total / 2;
+        assert_eq!(eta_basis(half, total, 7, 14), Some((half, total)));
+        let secs = eta_remain_secs(half, total, 10_000).unwrap();
+        assert!(secs <= 11, "{secs}");
+
+        let chunk = 256 * 1024;
+        assert_eq!(eta_basis(chunk, total, 1, 14), Some((chunk, total)));
+
+        // Under 256 KiB, but at least 1% of a smaller total.
+        let small = 10 * 1024 * 1024;
+        let one_pct = small / 100 + 1;
+        assert!(one_pct < 256 * 1024);
+        assert_eq!(eta_basis(one_pct, small, 2, 10), Some((one_pct, small)));
+        assert_eq!(eta_basis(100_000, small, 2, 10), Some((2, 10)));
+    }
+
+    #[test]
+    fn eta_hides_when_there_is_no_basis_or_the_guess_is_too_long() {
+        assert_eq!(eta_basis(0, 4_500_000_000, 0, 14), None);
+        assert_eq!(eta_basis(0, 0, 0, 0), None);
+        assert_eq!(eta_remain_secs(3, 14, 999), None);
+        assert_eq!(eta_remain_secs(1, 2, 86_400_000), Some(86_400));
+        assert_eq!(eta_remain_secs(1, 2, 86_401_000), None);
+        assert_eq!(eta_from(3, 14, 20_000).is_empty(), false);
+        assert!(eta_from(9_933, 4_509_715_661, 20_000).is_empty());
     }
 }
