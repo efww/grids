@@ -4,8 +4,8 @@
 //! release, disabled, and focus. Mouse leave clears hover. Release over the button
 //! clicks. Release outside cancels. A lost capture cancels and does not leave hover stuck.
 //!
-//! The name prompt, the custom confirm, the favourites manager, About, Excel tidy,
-//! popups, and notices call [`paint_button`]. The settings window still has its own painters.
+//! The name prompt, the custom confirm, the favourites manager, About, Settings,
+//! Excel tidy, popups, and notices call [`paint_button`].
 
 use super::tokens::*;
 use crate::imports::*;
