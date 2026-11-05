@@ -61,6 +61,19 @@ const MIGRATED: &[(&str, &[&str])] = &[
             "style_popup_chrome(",
         ],
     ),
+    (
+        "src/basket.rs",
+        &[
+            "paint_window(",
+            "paint_card(",
+            "paint_button(",
+            "paint_meta(",
+            "paint_label(",
+            "style_dialog_caption(",
+            "body_font(",
+            "sel_mist(",
+        ],
+    ),
 ];
 
 fn crate_root() -> PathBuf {
@@ -172,7 +185,7 @@ mod tests {
     }
 
     #[test]
-    fn server_dialog_and_excel_tidy_paint_only_through_the_shared_module() {
+    fn migrated_windows_paint_only_through_the_shared_module() {
         for (rel, needles) in MIGRATED {
             assert!(
                 !ALLOW.contains(rel),

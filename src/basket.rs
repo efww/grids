@@ -24,13 +24,8 @@ use crate::ui::*;
 pub(crate) const CERULEAN: u32 = ACCENT;
 /// Pressed primary fill, #0786BC. Hover is a separate step in the shared button tokens.
 pub(crate) const CERULEAN_DEEP: u32 = ACCENT_PRESSED;
-/// Selection wash, #9BE3FA.
+/// Light cerulean the tab list still uses for search ink. Basket rows use the shared selection mist.
 pub(crate) const CERULEAN_MIST: u32 = 0x9BE3FA;
-const MINT: u32 = 0x2EC4A6;
-/// Missing-source ink on a light row, #9F1C14.
-const MISS: u32 = 0x9F1C14;
-/// Missing-source ink on a dark row.
-const MISS_DARK: u32 = 0xF07167;
 
 const ACT_COPY: u8 = 1;
 const ACT_MOVE: u8 = 2;
@@ -38,12 +33,10 @@ const ACT_REMOVE: u8 = 3;
 const ACT_CLEAR: u8 = 4;
 const ACT_ALL: u8 = 5;
 
+/// Same row and header as the favourites manager list.
 const ROW_DIP: i32 = 22;
-const BTN_H_DIP: i32 = 24;
-const PAD_DIP: i32 = 8;
-const GAP_DIP: i32 = 4;
-const HINT_DIP: i32 = 28;
 const HEAD_DIP: i32 = 22;
+/// Status line. One meta line plus a little air.
 const BAR_DIP: i32 = 22;
 
 /// Mouse-down on a row. `keep` means the row was already selected and Shift is up,
@@ -261,18 +254,21 @@ pub(crate) unsafe fn drop_transfer(srcs: Vec<String>, dst: String, ctrl: bool, s
     if started { DROPEFFECT_COPY.0 } else { DROPEFFECT_NONE.0 }
 }
 
-/// Name colour, path colour, row background. Missing rows are red. Selection is cerulean mist.
+/// Name colour, path colour, row background. A missing source uses the danger token.
+/// Selection is the shared mist, the same wash as the favourites manager.
 pub(crate) fn row_colors(missing: bool, selected: bool, dark: bool) -> (u32, u32, u32) {
-    let pal = if dark { &DARK } else { &LIGHT };
-    let bg = if selected { CERULEAN_MIST } else { pal.card };
-    let miss = if selected || !dark { MISS } else { MISS_DARK };
+    let t = tokens_for(dark);
+    let bg = if selected { t.sel_mist() } else { t.card };
     if missing {
-        (miss, miss, bg)
-    } else if selected {
-        (INK, INK, bg)
+        (t.danger, t.danger, bg)
     } else {
-        (pal.text, pal.sub, bg)
+        (t.text, t.sub, bg)
     }
+}
+
+/// Text-button width: the label plus the shared horizontal padding, and at least [`BTN_MIN_W`].
+pub(crate) fn button_width(text_w: i32, dpi: i32) -> i32 {
+    (text_w + px(dpi, BTN_PAD_X) * 2).max(px(dpi, BTN_MIN_W))
 }
 
 pub(crate) fn place_buttons(width: i32, widths: &[(u8, i32)], btn_h: i32, gap: i32, pad: i32) -> (i32, Vec<(u8, RECT)>) {
@@ -362,7 +358,7 @@ pub(crate) unsafe fn refresh() {
     if !h.0.is_null() && IsWindow(Some(h)).as_bool() {
         let title = HSTRING::from(tr(Key::FileBasket));
         _ = SetWindowTextW(h, &title);
-        paint_caption(h);
+        style_dialog_caption(h);
         layout(h);
         _ = InvalidateRect(Some(h), None, false);
     }
@@ -430,7 +426,7 @@ unsafe fn open() {
     let Ok(hwnd) = CreateWindowExW(ex, w!("MaguroBasket"), &title, style, x, y, w, h, None, None, None, None) else {
         return;
     };
-    paint_caption(hwnd);
+    style_dialog_caption(hwnd);
     note_side(hwnd);
     with_st(|s| {
         *s = State::new();
@@ -444,22 +440,6 @@ unsafe fn open() {
     _ = SetTimer(Some(hwnd), TIMER_POLL, 1000, None);
     _ = ShowWindow(hwnd, SW_SHOW);
     _ = SetForegroundWindow(hwnd);
-}
-
-unsafe fn paint_caption(hwnd: HWND) {
-    // Same caption as Settings: the theme background, no cerulean fill and no gradient.
-    let dark = DARK_ON.load(Ordering::Relaxed);
-    let on = BOOL::from(dark);
-    _ = DwmSetWindowAttribute(hwnd, DWMWINDOWATTRIBUTE(20), &on as *const _ as _, 4);
-    let caption = cref(pal().bg);
-    _ = DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, &caption as *const _ as _, 4);
-    let def = COLORREF(0xFFFF_FFFF);
-    _ = DwmSetWindowAttribute(hwnd, DWMWINDOWATTRIBUTE(36), &def as *const _ as _, 4);
-    _ = DwmSetWindowAttribute(hwnd, DWMWINDOWATTRIBUTE(34), &def as *const _ as _, 4);
-}
-
-fn sc(dpi: i32, v: i32) -> i32 {
-    v * dpi.max(96) / 96
 }
 
 fn actions() -> [(u8, Key); 5] {
@@ -488,30 +468,38 @@ unsafe fn layout(hwnd: HWND) {
         return;
     }
     let dc = GetDC(Some(hwnd));
-    let font = app(|a| a.font);
-    let pad = sc(dpi, PAD_DIP);
-    let gap = sc(dpi, GAP_DIP);
-    let btn_h = sc(dpi, BTN_H_DIP);
-    let widths: Vec<(u8, i32)> = actions().iter().map(|(id, key)| (*id, text_px(dc, font, tr(*key)) + sc(dpi, 20))).collect();
+    let font = body_font();
+    let pad_x = px(dpi, PAD_BODY_X);
+    let gap = px(dpi, BTN_GAP);
+    let btn_h = px(dpi, BTN_H_FOOTER);
+    let widths: Vec<(u8, i32)> = actions().iter().map(|(id, key)| (*id, button_width(text_px(dc, font, tr(*key)), dpi))).collect();
     let _ = ReleaseDC(Some(hwnd), dc);
-    let hint_h = sc(dpi, HINT_DIP);
-    let (tool_h, mut buttons) = place_buttons(rc.right - rc.left, &widths, btn_h, gap, pad);
-    for b in &mut buttons {
-        b.1.top += hint_h;
-        b.1.bottom += hint_h;
+    let hint = RECT { left: 0, top: px(dpi, PAD_BODY_Y), right: rc.right, bottom: px(dpi, PAD_BODY_Y) + px(dpi, FONT_PX + SPACE_8) };
+    let (_, mut buttons) = place_buttons(rc.right - rc.left, &widths, btn_h, gap, pad_x);
+    let space = px(dpi, SPACE_8);
+    let want_top = hint.bottom + space;
+    let cur_top = buttons.first().map(|(_, r)| r.top).unwrap_or(pad_x);
+    let dy = want_top - cur_top;
+    let mut buttons_bottom = want_top;
+    for (_, r) in &mut buttons {
+        r.top += dy;
+        r.bottom += dy;
+        buttons_bottom = buttons_bottom.max(r.bottom);
     }
-    let bar_h = sc(dpi, BAR_DIP);
-    let below = sc(dpi, 8);
-    let list_top = hint_h + tool_h;
-    let list_bottom = (rc.bottom - bar_h - below).max(list_top);
-    let inset = sc(dpi, PAD_DIP);
-    let frame = RECT { left: inset, top: list_top, right: (rc.right - inset).max(inset + 1), bottom: list_bottom };
-    let head_h = sc(dpi, HEAD_DIP);
-    let head = RECT { left: frame.left + 1, top: frame.top + 1, right: frame.right - 1, bottom: (frame.top + head_h).min(frame.bottom) };
+    let bar_h = px(dpi, BAR_DIP);
+    let list_top = buttons_bottom + space;
+    let list_bottom = (rc.bottom - bar_h - space).max(list_top);
+    let frame = RECT { left: pad_x, top: list_top, right: (rc.right - pad_x).max(pad_x + 1), bottom: list_bottom };
+    let rad = px(dpi, RADIUS).max(1);
+    let head = RECT {
+        left: frame.left + 1,
+        top: frame.top + rad,
+        right: (frame.right - 1).max(frame.left + 2),
+        bottom: (frame.top + rad + px(dpi, HEAD_DIP)).min(frame.bottom),
+    };
     let list = RECT { left: head.left, top: head.bottom, right: head.right, bottom: (frame.bottom - 1).max(head.bottom) };
     let status = RECT { left: 0, top: rc.bottom - bar_h, right: rc.right, bottom: rc.bottom };
-    let hint = RECT { left: 0, top: 0, right: rc.right, bottom: hint_h };
-    let row_h = sc(dpi, ROW_DIP).max(1);
+    let row_h = px(dpi, ROW_DIP).max(1);
     let n = paths().len() as i32;
     let view_h = (list.bottom - list.top).max(0);
     let max_scroll = (n * row_h - view_h).max(0);
@@ -1387,15 +1375,16 @@ unsafe fn on_scroll(h: HWND, wp: usize) {
 }
 
 fn row_cols(row: RECT, dpi: i32) -> (RECT, RECT, RECT, RECT) {
-    let icon_w = sc(dpi, 22);
-    let kind_w = sc(dpi, 76);
-    let gap = sc(dpi, 6);
-    let icon = RECT { left: row.left + sc(dpi, 2), top: row.top, right: row.left + icon_w, bottom: row.bottom };
+    let gutter = px(dpi, SPACE_8);
+    let icon_w = px(dpi, 22);
+    let kind_w = px(dpi, 76);
+    let gap = px(dpi, SPACE_8);
+    let icon = RECT { left: row.left + gutter, top: row.top, right: row.left + gutter + icon_w, bottom: row.bottom };
     let kind_left = (row.right - kind_w).max(icon.right);
-    let kind = RECT { left: kind_left, top: row.top, right: row.right - sc(dpi, 4), bottom: row.bottom };
+    let kind = RECT { left: kind_left, top: row.top, right: row.right - px(dpi, SPACE_4), bottom: row.bottom };
     let mid_r = (kind.left - gap).max(icon.right);
     let mid = (mid_r - icon.right).max(0);
-    let name_w = (mid * 2 / 5).max(sc(dpi, 48).min(mid));
+    let name_w = (mid * 2 / 5).max(px(dpi, 48).min(mid));
     let name = RECT { left: icon.right, top: row.top, right: icon.right + name_w, bottom: row.bottom };
     let path = RECT { left: (name.right + gap).min(mid_r), top: row.top, right: mid_r, bottom: row.bottom };
     (icon, name, path, kind)
@@ -1414,36 +1403,38 @@ unsafe fn paint(h: HWND, dc: HDC, rc: RECT) {
         with_st(|s| (s.list, s.scroll, s.row_h, s.buttons.clone(), s.track, s.hot_row, s.hint, s.frame, s.head, s.status));
     let list_paths = paths();
     let sel = with_st(|s| s.sel.clone());
-    let (font, small) = app(|a| (a.font, a.small_font));
+    let font = body_font();
+    let small = app(|a| a.small_font);
     let dpi = GetDpiForWindow(h).max(96) as i32;
-    let pal = pal();
-    let dark = DARK_ON.load(Ordering::Relaxed);
+    let t = ui_tokens();
+    let dark = t.dark;
     paint_window(dc, rc);
-    let hint_r = RECT { left: hint.left + sc(dpi, PAD_DIP), right: hint.right - sc(dpi, PAD_DIP), ..hint };
-    text(dc, hint_r, tr(Key::BasketHint), small, pal.sub, DT_LEFT);
+    let pad_x = px(dpi, PAD_BODY_X);
+    let hint_r = RECT { left: hint.left + pad_x, right: (hint.right - pad_x).max(hint.left + pad_x), ..hint };
+    paint_meta(dc, hint_r, tr(Key::BasketHint), small);
     for (id, r) in &buttons {
         let on = enabled(*id);
         let label = actions().iter().find(|(k, _)| k == id).map(|(_, key)| tr(*key)).unwrap_or("");
         let kind = if *id == ACT_COPY { ButtonKind::Primary } else { ButtonKind::Secondary };
-        paint_button(dc, *r, kind, track.visual(*id, !on), label, font, dpi, pal.bg, FocusRing::Outside);
+        paint_button(dc, *r, kind, track.visual(*id, !on), label, font, dpi, t.bg, FocusRing::Outside);
     }
     if frame_r.bottom > frame_r.top {
         crate::ui::paint_card(dc, frame_r, dpi);
     }
     if head.bottom > head.top {
-        fill(dc, head, pal.pill);
+        fill(dc, head, blend(t.card, t.bg, 0.70));
         let (_, name, path, kind) = row_cols(head, dpi);
-        text(dc, name, tr(Key::Name), small, pal.sub, DT_LEFT);
-        text(dc, path, tr(Key::Path), small, pal.sub, DT_LEFT);
-        text(dc, kind, tr(Key::BasketKind), small, pal.sub, DT_LEFT);
-        fill(dc, RECT { top: head.bottom - 1, bottom: head.bottom, left: head.left, right: head.right }, pal.line);
+        paint_meta(dc, name, tr(Key::Name), small);
+        paint_meta(dc, path, tr(Key::Path), small);
+        paint_meta(dc, kind, tr(Key::BasketKind), small);
+        fill(dc, RECT { top: head.bottom - 1, bottom: head.bottom, left: head.left, right: head.right }, t.line);
     }
     let saved = SaveDC(dc);
     if list.bottom > list.top && list.right > list.left {
         IntersectClipRect(dc, list.left, list.top, list.right, list.bottom);
     }
     if list_paths.is_empty() {
-        text(dc, list, tr(Key::BasketEmpty), font, pal.sub, DT_CENTER);
+        text(dc, list, tr(Key::BasketEmpty), font, t.sub, DT_CENTER);
     }
     let mut y = list.top - scroll;
     for (i, path) in list_paths.iter().enumerate() {
@@ -1456,9 +1447,19 @@ unsafe fn paint(h: HWND, dc: HDC, rc: RECT) {
         let gone = missing(path);
         let (name_c, path_c, mut bg) = row_colors(gone, on, dark);
         if !on && hot_row == Some(i) {
-            bg = blend(pal.card, pal.text, 0.04);
+            bg = blend(t.card, t.text, 0.04);
         }
         fill(dc, row, bg);
+        if on {
+            let inset = px(dpi, 3).min((row.bottom - row.top) / 4);
+            let bar = RECT {
+                left: row.left,
+                top: row.top + inset,
+                right: row.left + px(dpi, 3).max(2),
+                bottom: row.bottom - inset,
+            };
+            fill(dc, bar, ACCENT);
+        }
         let (icon, name_r, path_r, kind_r) = row_cols(row, dpi);
         let file = entry_is_file(path, gone);
         if gone {
@@ -1466,36 +1467,49 @@ unsafe fn paint(h: HWND, dc: HDC, rc: RECT) {
         } else {
             mark_present(path);
         }
-        let slot = sc(dpi, 16);
+        let slot = px(dpi, 16);
         if let Some((ilist, idx, dim)) = shell_icon(path, file) {
             let ix = icon.left + ((icon.right - icon.left) - slot).max(0) / 2;
             let iy = row.top + (row_h - slot).max(0) / 2;
             draw_fav_icon(dc, ilist, idx, ix, iy, slot, dim || gone);
         }
-        text(dc, name_r, &basket_name(path), font, name_c, DT_LEFT);
+        let shown = basket_name(path);
+        if gone {
+            text(dc, name_r, &shown, font, name_c, DT_LEFT);
+        } else {
+            paint_label(dc, name_r, &shown, font);
+        }
         let mut detail = parent_path(path);
         if gone {
             detail.push_str("  ·  ");
             detail.push_str(tr(Key::BasketMissing));
         }
-        text(dc, path_r, &detail, small, path_c, DT_LEFT);
+        if gone {
+            text(dc, path_r, &detail, small, path_c, DT_LEFT);
+        } else {
+            paint_meta(dc, path_r, &detail, small);
+        }
         let kind = if file { tr(Key::File) } else { tr(Key::Folder) };
-        text(dc, kind_r, kind, small, if gone { path_c } else { pal.sub }, DT_LEFT);
-        fill(dc, RECT { top: row.bottom - 1, bottom: row.bottom, left: row.left, right: row.right }, pal.line);
+        if gone {
+            text(dc, kind_r, kind, small, path_c, DT_LEFT);
+        } else {
+            paint_meta(dc, kind_r, kind, small);
+        }
+        fill(dc, RECT { top: row.bottom - 1, bottom: row.bottom, left: row.left, right: row.right }, t.line);
     }
     if saved != 0 {
         let _ = RestoreDC(dc, saved);
     }
-    fill(dc, RECT { bottom: status.top + 1, ..status }, pal.line);
+    fill(dc, RECT { bottom: status.top + 1, ..status }, t.line);
     let n = list_paths.len();
     let sel_n = sel.len();
     let miss_n = list_paths.iter().filter(|p| missing(p)).count();
     let count = tf(Key::BasketCount, &[("n", &n.to_string()), ("s", &sel_n.to_string())]);
-    let status_l = RECT { left: status.left + sc(dpi, PAD_DIP), right: status.right - sc(dpi, PAD_DIP), ..status };
-    text(dc, status_l, &count, small, pal.sub, DT_LEFT);
+    let status_l = RECT { left: status.left + pad_x, right: (status.right - pad_x).max(status.left + pad_x), ..status };
+    paint_meta(dc, status_l, &count, small);
     if miss_n > 0 {
         let label = tf(Key::BasketMissingCount, &[("n", &miss_n.to_string())]);
-        text(dc, status_l, &label, small, if dark { MISS_DARK } else { MISS }, DT_RIGHT);
+        text(dc, status_l, &label, small, t.danger, DT_RIGHT);
     }
 }
 
@@ -1554,8 +1568,7 @@ mod tests {
         let hover = button_colors(ButtonKind::Primary, ButtonState::Hover, false, BG_LIGHT).fill;
         let pressed = button_colors(ButtonKind::Primary, ButtonState::Pressed, false, BG_LIGHT).fill;
         for c in [CERULEAN, CERULEAN_DEEP, CERULEAN_MIST, hover.unwrap_or(0), pressed.unwrap_or(0)] {
-            assert_ne!(c, MINT, "{c:#08X}");
-            assert_ne!(c, 0x2EC4A6);
+            assert_ne!(c, 0x2EC4A6, "{c:#08X}");
         }
         assert_eq!(CERULEAN, 0x0A9BD6);
         assert_eq!(CERULEAN_DEEP, 0x0786BC);
@@ -1565,11 +1578,19 @@ mod tests {
         assert_ne!(hover, pressed);
         assert_eq!(button_colors(ButtonKind::Primary, ButtonState::Normal, false, BG_LIGHT).ink, 0xFFFFFF);
         let (name, path, bg) = row_colors(true, true, false);
-        assert_eq!(bg, CERULEAN_MIST);
-        assert_eq!(name, 0x9F1C14);
+        assert_eq!(bg, LIGHT_TOKENS.sel_mist());
+        assert_eq!(name, DANGER_LIGHT);
+        assert_eq!(path, DANGER_LIGHT);
         assert_ne!(name, INK);
         assert_ne!(path, INK);
-        assert_eq!(row_colors(false, false, false).2, 0xFFFFFF);
+        assert_ne!(bg, CERULEAN_MIST);
+        assert_eq!(row_colors(false, false, false), (TEXT_LIGHT, SUB_LIGHT, CARD_LIGHT));
+        assert_eq!(row_colors(false, true, true).2, DARK_TOKENS.sel_mist());
+        assert_eq!(row_colors(true, false, true).0, DANGER_DARK);
+        assert_eq!(row_colors(false, true, false).0, TEXT_LIGHT);
+        assert_eq!(button_width(10, 96), BTN_MIN_W);
+        assert_eq!(button_width(80, 96), 80 + BTN_PAD_X * 2);
+        assert_eq!(button_width(10, 192), BTN_MIN_W * 2);
         let widths = [(ACT_COPY, 80), (ACT_MOVE, 80), (ACT_ALL, 80), (ACT_REMOVE, 80), (ACT_CLEAR, 80)];
         let (h, rects) = place_buttons(200, &widths, 30, 6, 8);
         assert!(rects.len() == 5);
