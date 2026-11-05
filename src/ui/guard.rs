@@ -30,7 +30,6 @@ const ALLOW: &[&str] = &[
     "src/session/pick.rs",
     "src/shell/fastcopy.rs",
     "src/watch/notify.rs",
-    "src/watch/win.rs",
 ];
 
 /// This pull request. These paint through the shared module, allow-list or not.
@@ -123,6 +122,19 @@ const MIGRATED: &[(&str, &[&str])] = &[
             "body_font(",
             "color_field_edit(",
             "sel_mist(",
+        ],
+    ),
+    (
+        "src/watch/win.rs",
+        &[
+            "paint_window(",
+            "paint_card(",
+            "paint_button(",
+            "paint_check(",
+            "paint_label(",
+            "paint_meta(",
+            "style_dialog_caption(",
+            "body_font(",
         ],
     ),
 ];
