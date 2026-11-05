@@ -286,6 +286,8 @@ pub(crate) fn f5_act(plain: bool, repeat: bool, failed: bool, bound: bool) -> F5
 /// A share is probed off this thread. `IShellView::Refresh` on a dead UNC blocks until the
 /// redirector times out, so that call is only for a folder that is not a share.
 unsafe fn refresh_pane(a: usize) {
+    // The ring starts on the key, before the shell refresh comes back.
+    spin_refresh(a);
     resum_sizes();
     crate::ui::forget_missing();
     let (side, share) = app(|x| {

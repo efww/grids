@@ -117,6 +117,8 @@ pub(crate) struct Pane {
     /// before the browse. `on_nav` records the visit from here. Empty for an ordinary browse,
     /// where `paths` still names the folder being left.
     pub(crate) tab_left: Option<String>,
+    /// F5: the up arrow draws as a refresh ring from `.0`, and the glyph returns at `.1`.
+    pub(crate) spin: Option<(Instant, Instant)>,
 }
 
 pub(crate) struct Desk {

@@ -20,16 +20,22 @@ use crate::imports::*;
 const FILENAME_ID: i32 = 0x47C;
 /// Older #32770 dialogs use edt1.
 const EDT1_ID: i32 = 0x480;
+/// Save dialog filename Edit. It sits in an id-less ComboBox inside a FloatNotifySink.
+/// The address-bar toolbar uses this id too, so the id alone is not enough.
+const SAVE_NAME_ID: i32 = 0x3E9;
 /// Not `HOTKEY_ID` (1). That one is Win+Shift+E.
 pub(crate) const DIALOG_HOTKEY_ID: i32 = 2;
 
 const WATCH_MS: u32 = 400;
+const RETRY_MS: u32 = 200;
 const RESTORE_MS: u32 = 200;
 const RESTORE_TICKS: u8 = 12;
+/// A dialog just shown may not have its filename box yet. Look again this many times.
+pub(crate) const DLG_RETRIES: u8 = 5;
 
-struct Hit {
-    edit: HWND,
-    fallback: HWND,
+struct Best {
+    rank: u8,
+    hwnd: HWND,
 }
 
 struct Pending {
@@ -47,6 +53,10 @@ struct Watch {
     vk: u32,
     mods: u32,
     pending: Option<Pending>,
+    /// Window the last foreground event named. `GetForegroundWindow` can lag behind it.
+    seen: HWND,
+    /// Looks left for a `#32770` whose filename box is not built yet.
+    retries: u8,
 }
 
 impl Watch {
@@ -59,6 +69,8 @@ impl Watch {
             vk: 0,
             mods: 0,
             pending: None,
+            seen: HWND::default(),
+            retries: 0,
         }
     }
 }
@@ -77,12 +89,101 @@ pub(crate) fn should_register_hotkey(setting_on: bool, file_dialog: bool, bare_c
     setting_on && file_dialog && !bare_chord
 }
 
-/// `#32770` with a filename control, belonging to another process. A plain message box has neither id.
-pub(crate) fn looks_like_file_dialog(class: &str, self_pid: u32, window_pid: u32, control_ids: &[i32]) -> bool {
-    class == "#32770"
-        && window_pid != 0
-        && window_pid != self_pid
-        && control_ids.iter().any(|&id| id == FILENAME_ID || id == EDT1_ID)
+/// `#32770` with a filename box, belonging to another process. A plain message box has no name box.
+pub(crate) fn looks_like_file_dialog(class: &str, self_pid: u32, window_pid: u32, has_name_box: bool) -> bool {
+    class == "#32770" && window_pid != 0 && window_pid != self_pid && has_name_box
+}
+
+/// How good a filename box this control is (lower is better), from its class, id, and the
+/// parent and grandparent class names. Open's Edit is best. Save's Edit counts only in its
+/// ComboBox / FloatNotifySink place, so the address-bar toolbar's id 1001 does not.
+pub(crate) fn name_box_rank(class: &str, id: i32, parent: &str, grand: &str) -> Option<u8> {
+    match (class, id) {
+        ("Edit", FILENAME_ID | EDT1_ID) => Some(0),
+        ("Edit", SAVE_NAME_ID) if parent == "ComboBox" && grand == "FloatNotifySink" => Some(1),
+        (_, FILENAME_ID | EDT1_ID) => Some(2),
+        _ => None,
+    }
+}
+
+/// A foreground event always remembers that hwnd and gives the filename box five looks.
+pub(crate) fn note_foreground_retries() -> u8 {
+    DLG_RETRIES
+}
+
+/// Which window the hotkey should type into. The foreground window wins. `seen` covers the
+/// gap where the event named the dialog before `GetForegroundWindow` does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DialogSource {
+    Foreground,
+    Seen,
+    None,
+}
+
+pub(crate) fn dialog_source(fg_dialog: bool, seen_dialog: bool) -> DialogSource {
+    if fg_dialog {
+        DialogSource::Foreground
+    } else if seen_dialog {
+        DialogSource::Seen
+    } else {
+        DialogSource::None
+    }
+}
+
+/// Facts `reconcile` can decide from, without a window handle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct DialogSnap {
+    pub setting_on: bool,
+    pub chord_ok: bool,
+    /// `GetForegroundWindow` is a foreign file dialog (name box present).
+    pub fg_dialog: bool,
+    /// That window's class is `#32770`.
+    pub fg_32770: bool,
+    pub seen_set: bool,
+    /// `IsWindow(seen)`.
+    pub seen_alive: bool,
+    pub seen_32770: bool,
+    /// Name-box recheck: `seen` currently has a filename box and is a foreign dialog.
+    pub seen_name: bool,
+    pub retries: u8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct DialogPlan {
+    /// Register or keep the dialog hotkey.
+    pub want_hotkey: bool,
+    /// `seen` is closed, not a dialog, or the retries ran out with no name box.
+    pub clear_seen: bool,
+    pub retries: u8,
+    /// Store `retries` (a foreground event or a retry tick). The 400 ms watch does not.
+    pub write_retries: bool,
+    /// Arm `TIMER_DLG_RETRY` at 200 ms.
+    pub arm_retry: bool,
+}
+
+/// `count_retry` is false for the 400 ms watch. That pass still keeps a hotkey when `seen`
+/// is a live file dialog whose foreground report has not caught up, and it still clears a
+/// dead hwnd, but it does not spend one of the five looks.
+pub(crate) fn plan_watch(snap: DialogSnap, count_retry: bool) -> DialogPlan {
+    let seen_dialog = snap.seen_set && snap.seen_alive && snap.seen_name;
+    let seen_building = snap.seen_set && snap.seen_alive && snap.seen_32770 && !snap.seen_name;
+    let fg_building = snap.fg_32770 && !snap.fg_dialog;
+    let want = should_register_hotkey(snap.setting_on, snap.fg_dialog || seen_dialog, !snap.chord_ok);
+    let clear_seen = if !snap.seen_set {
+        false
+    } else if !snap.seen_alive {
+        true
+    } else if seen_dialog {
+        false
+    } else if seen_building && snap.retries > 0 {
+        false
+    } else {
+        true
+    };
+    let pending = !want && (fg_building || (seen_building && !clear_seen));
+    let retry = snap.setting_on && snap.chord_ok && pending && snap.retries > 0;
+    let retries = if retry && count_retry { snap.retries - 1 } else { snap.retries };
+    DialogPlan { want_hotkey: want, clear_seen, retries, write_retries: count_retry, arm_retry: count_retry && retry }
 }
 
 /// What gets typed. A drive root keeps its slash. Every other folder drops a trailing slash.
@@ -229,46 +330,45 @@ fn window_text(hwnd: HWND) -> String {
     String::from_utf16_lossy(&buf[..got.max(0) as usize])
 }
 
-unsafe extern "system" fn enum_ids(hwnd: HWND, lp: LPARAM) -> BOOL {
-    let ids = &mut *(lp.0 as *mut Vec<i32>);
-    ids.push(GetDlgCtrlID(hwnd));
-    TRUE
-}
-
-unsafe fn control_ids(hwnd: HWND) -> Vec<i32> {
-    let mut ids = Vec::new();
-    let _ = EnumChildWindows(Some(hwnd), Some(enum_ids), LPARAM(&mut ids as *mut Vec<i32> as isize));
-    ids
-}
-
 unsafe extern "system" fn enum_filename(hwnd: HWND, lp: LPARAM) -> BOOL {
-    let hit = &mut *(lp.0 as *mut Hit);
-    let id = GetDlgCtrlID(hwnd);
-    if id == FILENAME_ID || id == EDT1_ID {
-        if class_of(hwnd) == "Edit" {
-            hit.edit = hwnd;
-        } else if hit.fallback.0.is_null() {
-            hit.fallback = hwnd;
+    let best = &mut *(lp.0 as *mut Option<Best>);
+    let parent = GetParent(hwnd).unwrap_or_default();
+    let grand = if parent.0.is_null() { HWND::default() } else { GetParent(parent).unwrap_or_default() };
+    let parent_class = if parent.0.is_null() { String::new() } else { class_of(parent) };
+    let grand_class = if grand.0.is_null() { String::new() } else { class_of(grand) };
+    if let Some(rank) = name_box_rank(&class_of(hwnd), GetDlgCtrlID(hwnd), &parent_class, &grand_class) {
+        // Lowest rank wins: Open's Edit, then Save's Edit, then a combo that carries the id.
+        if best.as_ref().map(|b| rank < b.rank).unwrap_or(true) {
+            *best = Some(Best { rank, hwnd });
         }
     }
     TRUE
 }
 
+/// The filename box: Open's Edit, Save's Edit, or an older dialog's combo when no Edit carries the id.
 unsafe fn filename_edit(dialog: HWND) -> Option<HWND> {
-    let mut hit = Hit { edit: HWND::default(), fallback: HWND::default() };
-    let _ = EnumChildWindows(Some(dialog), Some(enum_filename), LPARAM(&mut hit as *mut Hit as isize));
-    let hwnd = if !hit.edit.0.is_null() { hit.edit } else { hit.fallback };
-    (!hwnd.0.is_null()).then_some(hwnd)
+    let mut best: Option<Best> = None;
+    let _ = EnumChildWindows(Some(dialog), Some(enum_filename), LPARAM(&mut best as *mut Option<Best> as isize));
+    best.map(|b| b.hwnd)
 }
 
-unsafe fn is_foreign_file_dialog(hwnd: HWND) -> bool {
-    if hwnd.0.is_null() {
-        return false;
+#[derive(Clone, Copy)]
+struct WinLook {
+    alive: bool,
+    class_32770: bool,
+    foreign_name: bool,
+}
+
+unsafe fn look_at(hwnd: HWND) -> WinLook {
+    if hwnd.0.is_null() || !IsWindow(Some(hwnd)).as_bool() {
+        return WinLook { alive: false, class_32770: false, foreign_name: false };
     }
     let mut pid = 0u32;
     let _ = GetWindowThreadProcessId(hwnd, Some(&mut pid));
-    let ids = control_ids(hwnd);
-    looks_like_file_dialog(&class_of(hwnd), GetCurrentProcessId(), pid, &ids) && filename_edit(hwnd).is_some()
+    let class = class_of(hwnd);
+    let class_32770 = class == "#32770";
+    let foreign_name = looks_like_file_dialog(&class, GetCurrentProcessId(), pid, filename_edit(hwnd).is_some());
+    WinLook { alive: true, class_32770, foreign_name }
 }
 
 fn chord_usable(chord: &crate::keys::Chord) -> bool {
@@ -322,22 +422,19 @@ unsafe fn drop_hotkey() {
     });
 }
 
-unsafe fn sync_fg(fg: HWND) {
-    let setting = crate::app(|a| a.s.dialog_jump);
-    let chord = crate::keys::dialog_chord().filter(chord_usable);
-    let dialog = is_foreign_file_dialog(fg);
-    let want = match &chord {
-        Some(_) => should_register_hotkey(setting, dialog, false),
-        None => false,
-    };
+unsafe fn apply_dialog_hotkey(want: bool) {
     if !want {
-        let live = with(|w| w.live);
-        if live {
+        if with(|w| w.live) {
             drop_hotkey();
         }
         return;
     }
-    let Some(chord) = chord else { return };
+    let Some(chord) = crate::keys::dialog_chord().filter(chord_usable) else {
+        if with(|w| w.live) {
+            drop_hotkey();
+        }
+        return;
+    };
     let (mods, vk) = chord_mods(&chord);
     let owner = pick_owner();
     let (live, cur_owner, cur_vk, cur_mods) = with(|w| (w.live, w.owner, w.vk, w.mods));
@@ -359,9 +456,57 @@ unsafe fn sync_fg(fg: HWND) {
     });
 }
 
-/// Foreground changed, the shortcut was edited, or the watch timer fired.
+/// Foreground window and the last event hwnd, together. `count_retry` spends one of the
+/// five looks and arms the 200 ms timer. The 400 ms watch passes false: a hotkey registered
+/// for `seen` stays while `GetForegroundWindow` is still the previous window.
+unsafe fn reconcile(count_retry: bool) {
+    let fg = GetForegroundWindow();
+    let (seen, retries) = with(|w| (w.seen, w.retries));
+    let fg_look = look_at(fg);
+    let seen_set = !seen.0.is_null();
+    let seen_look = if !seen_set {
+        WinLook { alive: false, class_32770: false, foreign_name: false }
+    } else if seen == fg {
+        fg_look
+    } else {
+        look_at(seen)
+    };
+    let setting = crate::app(|a| a.s.dialog_jump);
+    let chord_ok = crate::keys::dialog_chord().filter(chord_usable).is_some();
+    let plan = plan_watch(
+        DialogSnap {
+            setting_on: setting,
+            chord_ok,
+            fg_dialog: fg_look.foreign_name,
+            fg_32770: fg_look.class_32770,
+            seen_set,
+            seen_alive: seen_look.alive,
+            seen_32770: seen_look.class_32770,
+            seen_name: seen_look.foreign_name,
+            retries,
+        },
+        count_retry,
+    );
+    with(|w| {
+        if plan.clear_seen && w.seen == seen {
+            w.seen = HWND::default();
+        }
+        if plan.write_retries {
+            w.retries = plan.retries;
+        }
+    });
+    apply_dialog_hotkey(plan.want_hotkey);
+    if plan.arm_retry {
+        let host = with(|w| w.timer_hwnd);
+        if !host.0.is_null() {
+            let _ = SetTimer(Some(host), crate::TIMER_DLG_RETRY, RETRY_MS, None);
+        }
+    }
+}
+
+/// Foreground changed, the shortcut was edited, or a timer fired.
 pub(crate) unsafe fn sync() {
-    sync_fg(GetForegroundWindow());
+    reconcile(true);
 }
 
 unsafe extern "system" fn on_foreground(
@@ -373,8 +518,12 @@ unsafe extern "system" fn on_foreground(
     _thread: u32,
     _time: u32,
 ) {
-    let fg = if hwnd.0.is_null() { GetForegroundWindow() } else { hwnd };
-    sync_fg(fg);
+    let seen = if hwnd.0.is_null() { GetForegroundWindow() } else { hwnd };
+    with(|w| {
+        w.seen = seen;
+        w.retries = note_foreground_retries();
+    });
+    reconcile(true);
 }
 
 fn instance() -> HINSTANCE {
@@ -434,6 +583,7 @@ pub(crate) unsafe fn install(main: HWND) {
 pub(crate) unsafe fn release(h: HWND) {
     let _ = KillTimer(Some(h), crate::TIMER_DLG_WATCH);
     let _ = KillTimer(Some(h), crate::TIMER_DLG_JUMP);
+    let _ = KillTimer(Some(h), crate::TIMER_DLG_RETRY);
     let (live, owner, timer) = with(|w| (w.live, w.owner, w.timer_hwnd));
     if live && owner == h {
         let _ = UnregisterHotKey(Some(h), DIALOG_HOTKEY_ID);
@@ -455,6 +605,7 @@ pub(crate) unsafe fn shutdown() {
     if !timer.0.is_null() {
         let _ = KillTimer(Some(timer), crate::TIMER_DLG_WATCH);
         let _ = KillTimer(Some(timer), crate::TIMER_DLG_JUMP);
+        let _ = KillTimer(Some(timer), crate::TIMER_DLG_RETRY);
     }
     if !hook.is_invalid() {
         let _ = UnhookWinEvent(hook);
@@ -463,8 +614,16 @@ pub(crate) unsafe fn shutdown() {
 }
 
 pub(crate) unsafe fn on_timer(id: usize) {
-    if id == crate::TIMER_DLG_WATCH {
-        sync();
+    if id == crate::TIMER_DLG_RETRY {
+        let host = with(|w| w.timer_hwnd);
+        if !host.0.is_null() {
+            let _ = KillTimer(Some(host), crate::TIMER_DLG_RETRY);
+        }
+        reconcile(true);
+    } else if id == crate::TIMER_DLG_WATCH {
+        // Foreground can still name the previous window. Do not spend a retry, and do not
+        // drop a hotkey `seen` just registered.
+        reconcile(false);
     } else if id == crate::TIMER_DLG_JUMP {
         restore_tick();
     }
@@ -679,20 +838,35 @@ unsafe fn restore_tick() {
 }
 
 /// Hotkey, or the same chord pressed while Maguro itself is in front. No folders: no menu.
+/// The event hwnd counts when `GetForegroundWindow` has not caught up to it.
 pub(crate) unsafe fn on_hotkey() {
     if !crate::app(|a| a.s.dialog_jump) {
         return;
     }
     let fg = GetForegroundWindow();
-    if !is_foreign_file_dialog(fg) {
+    let seen = with(|w| w.seen);
+    let fg_look = look_at(fg);
+    let seen_look = if seen.0.is_null() {
+        WinLook { alive: false, class_32770: false, foreign_name: false }
+    } else {
+        look_at(seen)
+    };
+    let dlg = match dialog_source(fg_look.foreign_name, seen_look.alive && seen_look.foreign_name) {
+        DialogSource::Foreground => Some(fg),
+        DialogSource::Seen => Some(seen),
+        DialogSource::None => None,
+    };
+    let Some(dlg) = dlg else {
+        // Closed, or the name box is gone: do not leave the hotkey on that hwnd.
+        reconcile(true);
         return;
-    }
+    };
     let folders = current_folders();
     if folders.is_empty() {
         return;
     }
-    if let Some(path) = popup(fg, &folders) {
-        navigate(fg, &path);
+    if let Some(path) = popup(dlg, &folders) {
+        navigate(dlg, &path);
     }
 }
 
@@ -712,13 +886,124 @@ mod tests {
         assert!(!should_register_hotkey(false, true, false));
         assert!(!should_register_hotkey(true, false, false));
         assert!(!should_register_hotkey(true, true, true));
-        assert!(!looks_like_file_dialog("#32770", 4, 4, &[FILENAME_ID]));
-        assert!(!looks_like_file_dialog("#32770", 4, 9, &[1, 2]));
-        assert!(!looks_like_file_dialog("Notepad", 4, 9, &[FILENAME_ID]));
-        assert!(looks_like_file_dialog("#32770", 4, 9, &[FILENAME_ID]));
-        assert!(looks_like_file_dialog("#32770", 4, 9, &[EDT1_ID]));
-        let dialog = looks_like_file_dialog("#32770", 4, 9, &[FILENAME_ID]);
+        assert!(!looks_like_file_dialog("#32770", 4, 4, true));
+        assert!(!looks_like_file_dialog("#32770", 4, 9, false));
+        assert!(!looks_like_file_dialog("Notepad", 4, 9, true));
+        assert!(!looks_like_file_dialog("#32770", 4, 0, true));
+        assert!(looks_like_file_dialog("#32770", 4, 9, true));
+        let dialog = looks_like_file_dialog("#32770", 4, 9, true);
         assert!(should_register_hotkey(true, dialog, false));
+    }
+
+    #[test]
+    fn name_box_rank_picks_open_then_save_and_skips_the_address_bar() {
+        let open = name_box_rank("Edit", FILENAME_ID, "ComboBox", "ComboBoxEx32");
+        let older = name_box_rank("Edit", EDT1_ID, "#32770", "");
+        let save = name_box_rank("Edit", SAVE_NAME_ID, "ComboBox", "FloatNotifySink");
+        let combo = name_box_rank("ComboBox", FILENAME_ID, "ComboBoxEx32", "#32770");
+        // id 1001 on the address-bar toolbar, and an Edit with that id in the wrong place
+        let toolbar = name_box_rank("ToolbarWindow32", SAVE_NAME_ID, "Breadcrumb Parent", "msctls_progress32");
+        let loose = name_box_rank("Edit", SAVE_NAME_ID, "#32770", "");
+        let address = name_box_rank("Edit", 0xA205, "ComboBox", "ComboBoxEx32");
+        assert_eq!(open, Some(0));
+        assert_eq!(older, Some(0));
+        assert_eq!(save, Some(1));
+        assert_eq!(combo, Some(2));
+        assert_eq!(toolbar, None);
+        assert_eq!(loose, None);
+        assert_eq!(address, None);
+        // The lookup keeps the lowest rank, so the toolbar's 1001 never beats Save or Open.
+        let ranks = [toolbar, address, loose, save, combo, open];
+        assert_eq!(ranks.into_iter().flatten().min(), Some(0));
+        assert_eq!([toolbar, loose, save].into_iter().flatten().min(), Some(1));
+        assert_eq!([toolbar, address, loose].into_iter().flatten().min(), None);
+    }
+
+    #[test]
+    fn seen_and_retries_follow_the_foreground_event() {
+        assert_eq!(note_foreground_retries(), DLG_RETRIES);
+        assert_eq!(dialog_source(true, true), DialogSource::Foreground);
+        assert_eq!(dialog_source(false, true), DialogSource::Seen);
+        assert_eq!(dialog_source(false, false), DialogSource::None);
+
+        let building = |retries| DialogSnap {
+            setting_on: true,
+            chord_ok: true,
+            fg_dialog: false,
+            fg_32770: true,
+            seen_set: true,
+            seen_alive: true,
+            seen_32770: true,
+            seen_name: false,
+            retries,
+        };
+        let mut retries = note_foreground_retries();
+        for i in 0..DLG_RETRIES {
+            let plan = plan_watch(building(retries), true);
+            assert!(plan.arm_retry, "look {i}");
+            assert!(plan.write_retries);
+            assert!(!plan.want_hotkey);
+            assert!(!plan.clear_seen);
+            assert_eq!(plan.retries, retries - 1);
+            retries = plan.retries;
+        }
+        assert_eq!(retries, 0);
+        let done = plan_watch(building(0), true);
+        assert!(!done.arm_retry);
+        assert!(done.clear_seen);
+        assert!(!done.want_hotkey);
+
+        // The event hwnd is already a file dialog; GetForegroundWindow still says the old window.
+        // The 400 ms watch must keep the hotkey and must not spend a retry.
+        let lagged = DialogSnap {
+            setting_on: true,
+            chord_ok: true,
+            fg_dialog: false,
+            fg_32770: false,
+            seen_set: true,
+            seen_alive: true,
+            seen_32770: true,
+            seen_name: true,
+            retries: DLG_RETRIES,
+        };
+        let kept = plan_watch(lagged, false);
+        assert!(kept.want_hotkey);
+        assert!(!kept.clear_seen);
+        assert!(!kept.arm_retry);
+        assert!(!kept.write_retries);
+        assert_eq!(kept.retries, DLG_RETRIES);
+        let registered = plan_watch(lagged, true);
+        assert!(registered.want_hotkey && !registered.arm_retry);
+        assert_eq!(registered.retries, DLG_RETRIES);
+
+        // Closed window: IsWindow failed. The hotkey must not stay.
+        let closed = plan_watch(
+            DialogSnap { seen_alive: false, seen_32770: false, seen_name: false, fg_dialog: false, fg_32770: false, ..lagged },
+            false,
+        );
+        assert!(closed.clear_seen);
+        assert!(!closed.want_hotkey);
+        assert!(!closed.arm_retry);
+
+        // Name-box recheck failed and it is not a dialog we are still waiting on.
+        let notepad = plan_watch(
+            DialogSnap { seen_alive: true, seen_32770: false, seen_name: false, fg_dialog: false, fg_32770: false, ..lagged },
+            true,
+        );
+        assert!(notepad.clear_seen);
+        assert!(!notepad.want_hotkey);
+
+        // Foreground is the dialog even if `seen` is already dead.
+        let fg = plan_watch(DialogSnap { fg_dialog: true, fg_32770: true, seen_alive: false, seen_name: false, ..lagged }, true);
+        assert!(fg.want_hotkey);
+        assert!(fg.clear_seen);
+        assert!(!fg.arm_retry);
+
+        // Setting off, or a bare chord: no hotkey and no retry, even on a real dialog.
+        let off = plan_watch(DialogSnap { setting_on: false, ..lagged }, true);
+        assert!(!off.want_hotkey && !off.arm_retry && !off.clear_seen);
+        let bare = plan_watch(DialogSnap { chord_ok: false, ..lagged }, true);
+        assert!(!bare.want_hotkey && !bare.arm_retry);
     }
 
     #[test]

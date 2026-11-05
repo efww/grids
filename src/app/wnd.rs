@@ -150,7 +150,7 @@ fn main_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
             WM_TIMER if wp.0 == TIMER_CTX_WARM => crate::shell::warmup::on_timer(h),
             WM_TIMER if wp.0 == TIMER_DROP => on_tree_drop_timer(h),
             WM_TIMER if wp.0 == TIMER_TAB_HOVER => on_tab_hover_timer(h),
-            WM_TIMER if wp.0 == TIMER_DLG_WATCH || wp.0 == TIMER_DLG_JUMP => crate::dialogjump::on_timer(wp.0),
+            WM_TIMER if wp.0 == TIMER_DLG_WATCH || wp.0 == TIMER_DLG_JUMP || wp.0 == TIMER_DLG_RETRY => crate::dialogjump::on_timer(wp.0),
             WM_SETCURSOR if wp.0 == h.0 as usize && (lp.0 & 0xffff) as u32 == HTCLIENT => {
                 let Some(d) = app(|a| a.drag).or_else(|| cursor_for(h)) else {
                     return DefWindowProcW(h, msg, wp, lp);
@@ -584,6 +584,7 @@ fn pane_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
         };
         match msg {
             WM_TIMER if wp.0 == TIMER_SETTLE => settle_cols(h),
+            WM_TIMER if wp.0 == TIMER_SPIN => spin_tick(h),
             WM_TIMER if wp.0 == TIMER_DROP => on_pane_drop_timer(h),
             WM_THEME_SCROLL => apply_theme_scroll(h),
             WM_TIMER if wp.0 == TIMER_RECENT => crate::pane::recent::on_timer(h),

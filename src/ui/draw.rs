@@ -327,6 +327,13 @@ pub(crate) unsafe fn draw_button(d: &DRAWITEMSTRUCT) {
         return draw_star(dc, rc, fg, Star::Plus, dpi);
     }
     if !on_main {
+        // F5: the up arrow is a refresh ring for one turn, in the same ink as the glyph.
+        if id == ID_UP {
+            if let Some(turn) = spin_turn(parent) {
+                draw_refresh(dc, rc, fg, dpi, turn);
+                return;
+            }
+        }
         return text(dc, rc, glyph(id), icon_font, fg, DT_CENTER);
     }
     let s = |v: i32| v * dpi / 96;
@@ -357,6 +364,59 @@ pub(crate) unsafe fn draw_button(d: &DRAWITEMSTRUCT) {
         return;
     }
     text(dc, rc, glyph(id), icon_font, fg, DT_CENTER);
+}
+
+// One turn per second. A press while it spins keeps going at least half a turn more, and it
+// always stops on a whole turn, where the up arrow comes back.
+const SPIN_TURN: std::time::Duration = std::time::Duration::from_millis(1000);
+
+fn spin_window(now: Instant, existing: Option<(Instant, Instant)>) -> (Instant, Instant) {
+    let start = match existing {
+        Some((start, end)) if now < end => start,
+        _ => now,
+    };
+    let need = (now + SPIN_TURN / 2 - start).as_nanos();
+    let turns = need.div_ceil(SPIN_TURN.as_nanos()).max(1) as u32;
+    (start, start + SPIN_TURN * turns)
+}
+
+fn spin_turn(pane: HWND) -> Option<f32> {
+    let now = Instant::now();
+    let (start, end) = app(|a| a.panes.iter().flatten().find(|p| p.hwnd == pane)?.spin)?;
+    (now < end).then(|| (now - start).as_secs_f32() / SPIN_TURN.as_secs_f32() % 1.0)
+}
+
+/// F5 on this pane. The ring starts now; the pane timer advances it.
+pub(crate) unsafe fn spin_refresh(i: usize) {
+    let now = Instant::now();
+    let h = app(|a| {
+        let p = a.panes.get_mut(i)?.as_mut()?;
+        p.spin = Some(spin_window(now, p.spin));
+        Some(p.hwnd)
+    });
+    if let Some(h) = h {
+        SetTimer(Some(h), TIMER_SPIN, 15, None);
+        invalidate_up(h);
+    }
+}
+
+pub(crate) unsafe fn spin_tick(h: HWND) {
+    let now = Instant::now();
+    let going = app(|a| {
+        let p = a.panes.iter_mut().flatten().find(|p| p.hwnd == h)?;
+        p.spin = p.spin.filter(|&(_, end)| now < end);
+        Some(p.spin.is_some())
+    });
+    if going != Some(true) {
+        _ = KillTimer(Some(h), TIMER_SPIN);
+    }
+    invalidate_up(h);
+}
+
+unsafe fn invalidate_up(h: HWND) {
+    if let Ok(b) = GetDlgItem(Some(h), ID_UP) {
+        _ = InvalidateRect(Some(b), None, false);
+    }
 }
 
 unsafe fn draw_session_icon(dc: HDC, rc: RECT, kind: SessionIcon, rgb: u32, dpi: i32) {
@@ -500,6 +560,80 @@ pub(crate) unsafe fn draw_star(dc: HDC, rc: RECT, rgb: u32, kind: Star, dpi: i32
     _ = DeleteObject(bmp.into());
 }
 
+// ↻ from geometry, not a font glyph. A glyph turned by GDI snaps to whole pixels and is
+// re-hinted at every angle, and its ink box is not the ring's centre, so it shook. This one
+// turns about the ring's centre. Each pixel's coverage is its distance to the stroke, the
+// same premultiplied blit the star uses.
+pub(crate) fn refresh_coverage(n: i32, turn: f32) -> Vec<u8> {
+    let n = n.max(0);
+    let c = n as f32 / 2.0;
+    let (r, half) = (n as f32 * 0.35, (n as f32 / 16.0).max(1.0) / 2.0);
+    let (a0, sweep) = ((-50f32).to_radians(), 290f32.to_radians());
+    let a1 = a0 + sweep;
+    let end = (r * a1.cos(), r * a1.sin());
+    let tangent = (-a1.sin(), a1.cos()); // clockwise on screen (y down)
+    let (len, fan) = (n as f32 * 0.22, 45f32.to_radians());
+    let wings = [fan, -fan].map(|f| {
+        let (sf, cf) = f.sin_cos();
+        let (bx, by) = (-tangent.0, -tangent.1);
+        (end.0 + len * (bx * cf - by * sf), end.1 + len * (bx * sf + by * cf))
+    });
+    let start = (r * a0.cos(), r * a0.sin());
+    let seg = |p: (f32, f32), q: (f32, f32), x: f32, y: f32| {
+        let (dx, dy) = (q.0 - p.0, q.1 - p.1);
+        let t = (((x - p.0) * dx + (y - p.1) * dy) / (dx * dx + dy * dy)).clamp(0.0, 1.0);
+        (x - p.0 - t * dx).hypot(y - p.1 - t * dy)
+    };
+    let (sn, cs) = (turn * std::f32::consts::TAU).sin_cos();
+    let mut out = Vec::with_capacity((n * n) as usize);
+    for j in 0..n {
+        for i in 0..n {
+            let (u, v) = (i as f32 + 0.5 - c, j as f32 + 0.5 - c);
+            let (x, y) = (u * cs + v * sn, -u * sn + v * cs);
+            let ang = (y.atan2(x) - a0).rem_euclid(std::f32::consts::TAU);
+            let ring = if ang <= sweep { (x.hypot(y) - r).abs() } else { (x - end.0).hypot(y - end.1).min((x - start.0).hypot(y - start.1)) };
+            let d = wings.iter().fold(ring, |d, &w| d.min(seg(end, w, x, y)));
+            out.push(((half - d + 0.5).clamp(0.0, 1.0) * 255.0).round() as u8);
+        }
+    }
+    out
+}
+
+unsafe fn draw_refresh(dc: HDC, rc: RECT, rgb: u32, dpi: i32, turn: f32) {
+    let n = 16 * dpi / 96;
+    if n <= 0 {
+        return;
+    }
+    let cov = refresh_coverage(n, turn);
+    let bmi = BITMAPINFO {
+        bmiHeader: BITMAPINFOHEADER {
+            biSize: size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: n,
+            biHeight: -n,
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: BI_RGB.0,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut bits = std::ptr::null_mut();
+    let Ok(bmp) = CreateDIBSection(Some(dc), &bmi, DIB_RGB_COLORS, &mut bits, None, 0) else { return };
+    let px = std::slice::from_raw_parts_mut(bits as *mut u8, (n * n * 4) as usize);
+    for (i, &a) in cov.iter().enumerate() {
+        let pre = |ch: u32| ((ch & 0xFF) * a as u32 / 255) as u8;
+        px[i * 4..i * 4 + 4].copy_from_slice(&[pre(rgb), pre(rgb >> 8), pre(rgb >> 16), a]);
+    }
+    let mem = CreateCompatibleDC(Some(dc));
+    let old = SelectObject(mem, bmp.into());
+    let (x, y) = ((rc.left + rc.right - n) / 2, (rc.top + rc.bottom - n) / 2);
+    let blend = BLENDFUNCTION { BlendOp: AC_SRC_OVER as u8, BlendFlags: 0, SourceConstantAlpha: 255, AlphaFormat: AC_SRC_ALPHA as u8 };
+    _ = AlphaBlend(dc, x, y, n, n, mem, 0, 0, n, n, blend);
+    SelectObject(mem, old);
+    _ = DeleteDC(mem);
+    _ = DeleteObject(bmp.into());
+}
+
 #[cfg(test)]
 mod star_aa_tests {
     use super::*;
@@ -515,6 +649,38 @@ mod star_aa_tests {
             ring.iter().any(|&a| a > 0 && a < 255 && !sixteen_level(a)),
             "expected box-filtered coverage between the 16 sample steps"
         );
+    }
+
+    #[test]
+    fn refresh_ring_turns_about_its_centre_and_keeps_its_ink() {
+        for n in [16, 24, 32] {
+            let rest = refresh_coverage(n, 0.0);
+            let quarter = refresh_coverage(n, 0.25);
+            for j in 0..n {
+                for i in 0..n {
+                    let (a, b) = (quarter[(j * n + i) as usize] as i32, rest[((n - 1 - i) * n + j) as usize] as i32);
+                    assert!((a - b).abs() <= 1, "{n} ({i},{j}) {a} vs {b}");
+                }
+            }
+            let ink = |t: f32| refresh_coverage(n, t).iter().map(|&a| a as f32).sum::<f32>();
+            for t in [0.07, 0.13, 0.31, 0.5, 0.77] {
+                assert!((ink(t) / ink(0.0) - 1.0).abs() < 0.04, "{n} {t}");
+            }
+            assert!(rest.iter().any(|&a| a >= 200) && rest[(n / 2 * n + n / 2) as usize] == 0, "{n}: a ring, hollow middle");
+        }
+    }
+
+    #[test]
+    fn one_f5_is_one_turn_and_another_finishes_on_a_whole_turn() {
+        let t0 = Instant::now();
+        let first = spin_window(t0, None);
+        assert_eq!(first, (t0, t0 + std::time::Duration::from_millis(1000)));
+        let second = spin_window(t0 + std::time::Duration::from_millis(900), Some(first));
+        let third = spin_window(t0 + std::time::Duration::from_millis(1500), Some(second));
+        assert_eq!(third, (t0, t0 + std::time::Duration::from_millis(2000)));
+        let again = spin_window(t0 + std::time::Duration::from_millis(2000), Some(third));
+        assert_eq!(again.0, t0 + std::time::Duration::from_millis(2000));
+        assert_eq!(again.1 - again.0, std::time::Duration::from_millis(1000));
     }
 }
 
