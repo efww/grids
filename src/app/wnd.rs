@@ -575,6 +575,40 @@ fn main_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     }
 }
 
+// Ground, the sidebar plate, and the status line. Pane plates are child windows (`paint_pane`).
+pub(crate) unsafe fn paint_main(h: HWND) {
+    // Caption colours follow the theme on the same paint that fills the client.
+    style_dialog_caption(h);
+    let (g, status, font, dpi, hot, accent) = app(|a| {
+        let g = geo(a);
+        let hot = a.gap_hot.filter(|_| a.drag.is_none()).and_then(|d| gap_line(&g, d, 2 * a.dpi / 96));
+        (g, a.status.clone(), a.font, a.dpi, hot.map(|r| (r, a.s.accent_now())), a.s.accent_now())
+    });
+    buffered(h, |dc, rc| {
+        paint_window(dc, rc);
+        if g.side > 0 {
+            let side = side_rect(&g);
+            fill(dc, side, side_ground());
+            if let Some(gap) = side_gap_rect(&g) {
+                let (gap_c, line_c) = side_divider_now(accent);
+                fill(dc, gap, gap_c);
+                // The tree/favourites divider always shows its accent line, not only under the pointer.
+                let t = (2 * dpi / 96).max(1);
+                let y = gap.top + (gap.bottom - gap.top) / 2;
+                fill(dc, RECT { left: gap.left, top: y - t / 2, right: gap.right, bottom: y - t / 2 + t }, line_c);
+            }
+            frame(dc, side, 1, pal().line);
+        }
+        if let Some((r, c)) = hot {
+            fill(dc, r, c);
+        }
+        if g.bot < g.h {
+            let st = status_rect(&g);
+            paint_meta(dc, RECT { left: g.pad + 4 * dpi / 96, ..st }, &status, font);
+        }
+    });
+}
+
 pub(crate) extern "system" fn pane_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     crate::crash::catch_wnd(std::panic::AssertUnwindSafe(|| pane_proc_inner(h, msg, wp, lp)))
 }
@@ -819,14 +853,8 @@ fn pane_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                 draw_button(&*(lp.0 as *const DRAWITEMSTRUCT));
                 return LRESULT(1);
             }
-            // borderless edits sit on the field colour
-            WM_CTLCOLOREDIT => {
-                let dc = HDC(wp.0 as _);
-                SetBkColor(dc, cref(pal().pill));
-                SetTextColor(dc, cref(pal().text));
-                SetDCBrushColor(dc, cref(pal().pill));
-                return LRESULT(GetStockObject(DC_BRUSH).0 as isize);
-            }
+            // Address and filter edits cover the pill. That fill is pal().pill, not the shared field token.
+            WM_CTLCOLOREDIT => return color_edit_on(HDC(wp.0 as _), pal().pill, pal().text),
             WM_COMMAND => match ((wp.0 & 0xffff) as i32, ((wp.0 >> 16) & 0xffff) as u32) {
                 // pill gets an accent outline while its edit has focus
                 (ID_EDIT, EN_SETFOCUS | EN_KILLFOCUS) => sync_addr(h),

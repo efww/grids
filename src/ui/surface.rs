@@ -125,6 +125,15 @@ pub(crate) unsafe fn color_field_ink(dc: HDC, ink: u32) -> LRESULT {
     LRESULT(field_brush().0 as isize)
 }
 
+/// `WM_CTLCOLOREDIT` for a borderless edit that sits on `fill`, not the shared field token.
+/// The stock `DC_BRUSH` is coloured for this message and returned, same as a pill-backed edit.
+pub(crate) unsafe fn color_edit_on(dc: HDC, fill: u32, ink: u32) -> LRESULT {
+    SetTextColor(dc, crate::cref(ink));
+    SetBkColor(dc, crate::cref(fill));
+    SetDCBrushColor(dc, crate::cref(fill));
+    LRESULT(GetStockObject(DC_BRUSH).0 as isize)
+}
+
 /// Folder chip and key cap. Card fill, hairline, shared radius. Corners blend into `ground`.
 pub(crate) unsafe fn paint_chip(dc: HDC, r: RECT, dpi: i32, ground: u32) {
     if r.right <= r.left || r.bottom <= r.top {

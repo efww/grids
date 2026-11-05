@@ -669,40 +669,6 @@ pub(crate) unsafe fn name(pidl: *const ITEMIDLIST, kind: SIGDN) -> String {
     SHGetNameFromIDList(pidl, kind).map(|p| pwstr(p)).unwrap_or_default()
 }
 
-// ---------- painting ----------
-
-// Ground, the sidebar plate and the status line. Pane plates are child windows (paint_pane).
-pub(crate) unsafe fn paint_main(h: HWND) {
-    let (g, status, font, dpi, hot, accent) = app(|a| {
-        let g = geo(a);
-        let hot = a.gap_hot.filter(|_| a.drag.is_none()).and_then(|d| gap_line(&g, d, 2 * a.dpi / 96));
-        (g, a.status.clone(), a.font, a.dpi, hot.map(|r| (r, a.s.accent_now())), a.s.accent_now())
-    });
-    buffered(h, |dc, rc| {
-        fill(dc, rc, pal().bg);
-        if g.side > 0 {
-            let side = side_rect(&g);
-            fill(dc, side, side_ground());
-            if let Some(gap) = side_gap_rect(&g) {
-                let (gap_c, line_c) = side_divider_now(accent);
-                fill(dc, gap, gap_c);
-                // The tree/favourites divider always shows its accent line, not only under the pointer.
-                let t = (2 * dpi / 96).max(1);
-                let y = gap.top + (gap.bottom - gap.top) / 2;
-                fill(dc, RECT { left: gap.left, top: y - t / 2, right: gap.right, bottom: y - t / 2 + t }, line_c);
-            }
-            frame(dc, side, 1, pal().line);
-        }
-        if let Some((r, c)) = hot {
-            fill(dc, r, c);
-        }
-        if g.bot < g.h {
-            let st = status_rect(&g);
-            text(dc, RECT { left: g.pad + 4 * dpi / 96, ..st }, &status, font, pal().sub, DT_LEFT);
-        }
-    });
-}
-
 #[derive(Clone, PartialEq)]
 pub(crate) enum Crumb {
     Here,
