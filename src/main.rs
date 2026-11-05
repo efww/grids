@@ -66,6 +66,7 @@ fn main() -> Result<()> {
         // one_window still hands off: the running window comes forward and opens paths as tabs.
         // maguro.json is the store. A missing file starts from the defaults.
         // A file that is there but unreadable must not be overwritten with defaults.
+        let fresh_config = !store::settings_path().exists();
         let mut s = loop {
             match store::load() {
                 Ok(s) => break s,
@@ -266,6 +267,12 @@ fn main() -> Result<()> {
         });
         install_languages();
         apply(s.lang);
+        // Favourites are named in the UI language, so this waits until that language is applied.
+        // Only a missing maguro.json is seeded. A file the user already has, including one
+        // whose favourites were deleted, is left as it was. grids.ini is not opened.
+        if fresh_config {
+            seed_first_run_favorites(&mut s);
+        }
         // After COM is up and before the hosted Explorer view is created, so a listed DLL
         // is not loaded into this process. The registry is not written.
         crash::show_previous();

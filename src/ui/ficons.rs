@@ -87,6 +87,18 @@ fn decide(mem: &IconMem, path: &str, file: bool) -> Decision {
         }
         return Decision { index, dim: true, jobs };
     }
+    // This PC, Recycle Bin and other shell places have no disk path. They are never dimmed,
+    // and they get their own shell icon (the generic folder until it is known).
+    if !file && shell_place(path) {
+        if let Some(index) = mem.path.get(&key).copied() {
+            return Decision { index: Some(index), dim: false, jobs };
+        }
+        consider(mem, &mut jobs, IconJob::Path(path.to_string()));
+        if mem.folder.is_none() {
+            consider(mem, &mut jobs, IconJob::Folder);
+        }
+        return Decision { index: mem.folder, dim: false, jobs };
+    }
     if !file {
         if mem.folder.is_none() {
             consider(mem, &mut jobs, IconJob::Folder);
@@ -402,9 +414,17 @@ fn share_skip(path: &str) -> bool {
     crate::unc_path(path) || unsafe { crate::share_path(path) }
 }
 
+/// A shell namespace place (`::{CLSID}` or `shell:`), not a file system path.
+fn shell_place(path: &str) -> bool {
+    let p = path.trim();
+    p.starts_with("::") || p.get(..6).is_some_and(|h| h.eq_ignore_ascii_case("shell:"))
+}
 fn path_missing(path: &str) -> bool {
     if path.is_empty() {
         return true;
+    }
+    if shell_place(path) {
+        return false;
     }
     if share_skip(path) {
         return false;
@@ -515,6 +535,23 @@ mod tests {
         assert!(mem.missing.len() <= MISSING_CAP);
     }
 
+    #[test]
+    fn shell_places_are_never_dimmed_and_ask_for_their_own_icon() {
+        let pc = "::{20D04FE0-3AEA-1069-A2D8-08002B30309D}";
+        let bin = "::{645FF040-5081-101B-9F08-00AA002F954E}";
+        assert!(shell_place(pc) && shell_place(bin) && shell_place("shell:Downloads"));
+        assert!(!shell_place(r"C:\docs") && !shell_place(r"\\srv\share"));
+        assert!(!path_missing(pc) && !path_missing(bin));
+        let mut mem = IconMem::default();
+        mem.folder = Some(3);
+        let d = decide(&mem, pc, false);
+        assert!(!d.dim);
+        assert_eq!(d.index, Some(3));
+        assert_eq!(keys(&d), vec![format!("p:{}", norm_path(pc))]);
+        mem.path.insert(norm_path(pc), 9);
+        let d = decide(&mem, pc, false);
+        assert_eq!((d.index, d.dim, d.jobs.len()), (Some(9), false, 0));
+    }
     #[test]
     fn decide_queues_only_what_is_missing() {
         let mem = IconMem::default();

@@ -824,11 +824,12 @@ pub(crate) enum Key {
     FavManage,
     FavMoveUp,
     FavMoveDown,
+    RecycleBinFolder,
 }
 
-pub(crate) const KEY_COUNT: usize = 821;
+pub(crate) const KEY_COUNT: usize = 822;
 
-const _: () = assert!((Key::FavMoveDown as usize) + 1 == KEY_COUNT);
+const _: () = assert!((Key::RecycleBinFolder as usize) + 1 == KEY_COUNT);
 
 pub(crate) const EN: [&str; KEY_COUNT] = [
     "About",
@@ -1651,6 +1652,7 @@ pub(crate) const EN: [&str; KEY_COUNT] = [
     "Manage favourites\u{2026}",
     "Move up",
     "Move down",
+    "Recycle Bin",
 
 ];
 
@@ -2476,6 +2478,6 @@ pub(crate) const KEY_ID: [&str; KEY_COUNT] = [
     "fav_manage",
     "fav_move_up",
     "fav_move_down",
+    "recycle_bin_folder",
 
 ];
-
