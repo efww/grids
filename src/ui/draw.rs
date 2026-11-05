@@ -369,6 +369,11 @@ pub(crate) unsafe fn draw_button(d: &DRAWITEMSTRUCT) {
         draw_session_icon(dc, rc, kind, if dirty { GREEN } else { fg }, dpi);
         return;
     }
+    // Gear and tab list: one MDL2 glyph on the face painted above. Same ink, hover, and press.
+    if glyph_tool_button(id) {
+        text(dc, rc, glyph(id), icon_font, fg, DT_CENTER);
+        return;
+    }
     text(dc, rc, glyph(id), icon_font, fg, DT_CENTER);
 }
 

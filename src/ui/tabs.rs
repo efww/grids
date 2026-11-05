@@ -8,9 +8,8 @@ use crate::i18n::*;
 
 /// Widest a tab grows, at 96 DPI. A longer title is drawn with `DT_END_ELLIPSIS`.
 const TAB_MAX_W: i32 = 135;
-/// Tracking tooltip for the paths under one tab. The lock glyph uses id 7. The list button uses id 12.
+/// Tracking tooltip for the paths under one tab. The lock glyph uses id 7.
 const TAB_TIP_ID: usize = 8;
-const LIST_TIP_ID: usize = 12;
 const ICON_LIST: &str = "\u{E8FD}";
 
 // Segoe Fluent Icons / MDL2 Assets code points
@@ -46,6 +45,7 @@ pub(crate) fn glyph(id: i32) -> &'static str {
         ID_TB_SAVE => "\u{E74E}",
         ID_TB_LOAD => "\u{E838}",
         ID_TB_SET => "\u{E713}",
+        ID_TB_LIST => ICON_LIST,
         _ => "\u{E890}",
     }
 }
@@ -63,8 +63,6 @@ pub(crate) enum TabHit {
     Plus,
     /// The ▾ that lists every tab when they no longer fit.
     Overflow,
-    /// The list button at the right of the tab area, left of the drives and icons.
-    List,
     Empty,
 }
 
@@ -75,8 +73,6 @@ pub(crate) struct TabLay {
     pub(crate) plus: RECT,
     /// Set when the tabs do not fit at `min_w`. Sits at the right of the tab area, left of the icon group.
     pub(crate) overflow: Option<RECT>,
-    /// Tab-list button. Empty from `tab_lay`; `current_tab_lay` copies it from `icon_slots`.
-    pub(crate) list: RECT,
     /// First tab that has a rect. Clamped so the window never runs past the last tab.
     pub(crate) first: usize,
     pub(crate) count: usize,
@@ -135,6 +131,7 @@ pub(crate) struct IconLay {
     pub(crate) drives: [RECT; 26],
     pub(crate) drive_n: usize,
     /// Tab-list button, immediately left of the drive letters or the icon group.
+    /// Same size and vertical span as the glyph toolbar buttons (gear, star, save, load).
     pub(crate) list: RECT,
 }
 
@@ -157,9 +154,26 @@ pub(crate) fn drive_slots(show: bool, n: usize) -> usize {
     if show { n } else { 0 }
 }
 
+/// Glyph button on the main-window tool row, width in DIP.
+/// Save, load, the star, the gear, drive letters, and the tab list share it.
+/// The layout button is wider because it also shows the grid. Height is [`BTN_H_TOOL`].
+pub(crate) const TOOL_ICON_W: i32 = 32;
+
+pub(crate) fn tool_icon_px(dpi: i32) -> (i32, i32) {
+    let s = |v: i32| v * dpi / 96;
+    (s(TOOL_ICON_W), s(BTN_H_TOOL))
+}
+
+/// Chrome ids [`draw_button`] paints as one MDL2 glyph on the shared icon face.
+/// The tab-list button is this kind, same as the gear: same hover, press, ink, and glyph font.
+pub(crate) fn glyph_tool_button(id: i32) -> bool {
+    matches!(id, ID_TB_SET | ID_TB_LIST)
+}
+
 fn icon_widths(dpi: i32) -> [i32; 5] {
     let s = |v: i32| v * dpi / 96;
-    [s(70), s(32), s(32), s(32), s(32)]
+    let icon = tool_icon_px(dpi).0;
+    [s(70), icon, icon, icon, icon]
 }
 
 /// The gear stays when the toolbar is hidden. It is the mouse path to settings.
@@ -175,18 +189,19 @@ pub(crate) fn icon_group_min(dpi: i32, bar: bool) -> i32 {
     let on = icon_on(bar);
     let n_on = on.iter().filter(|v| **v).count() as i32;
     let icons_w = icon_widths(dpi).iter().zip(&on).filter(|(_, v)| **v).map(|(w, _)| *w).sum::<i32>() + gap * (n_on - 1).max(0);
-    let list_w = s(28);
+    let list_w = tool_icon_px(dpi).0;
     tab_reserve(dpi) + gap + list_w + gap + icons_w + pad
 }
 
 /// Layout, save, load, the favourites star, the gear, and `drives` letter buttons, right-aligned on the tab row.
 /// Letters sit to the left of Layout. The last ones drop when the row cannot also keep `tab_reserve`.
 /// `drives == 0` (see `drive_slots`) hides every letter and gives that width to the tabs.
-/// `bar == false` keeps only the gear. The other icons and the letters are not placed, and the tabs use that width.
+/// `bar == false` keeps the gear and the tab-list button. The other icons and the letters are not placed, and the tabs use that width.
 /// The star is the icon immediately left of the gear.
 pub(crate) fn icon_slots(row_w: i32, top: i32, dpi: i32, drives: usize, bar: bool) -> IconLay {
     let s = |v: i32| v * dpi / 96;
-    let (pad, gap, bh) = (s(8), s(4), s(24));
+    let (icon_w, bh) = tool_icon_px(dpi);
+    let (pad, gap) = (s(8), s(4));
     let specs = [ID_TB_LAYOUT, ID_TB_SAVE, ID_TB_LOAD, ID_TB_FAV, ID_TB_SET];
     let widths = icon_widths(dpi);
     // The gear is the mouse path to settings, so a hidden toolbar still reserves its slot.
@@ -194,10 +209,11 @@ pub(crate) fn icon_slots(row_w: i32, top: i32, dpi: i32, drives: usize, bar: boo
     let n_on = on.iter().filter(|v| **v).count() as i32;
     let icons_w = widths.iter().zip(&on).filter(|(_, v)| **v).map(|(w, _)| *w).sum::<i32>() + gap * (n_on - 1).max(0);
     let icons_left = (row_w - pad - icons_w).max(0);
-    let dw = s(32);
+    let dw = icon_w;
     let stride = (dw + gap).max(1);
-    let list_w = s(28);
-    let list_h = s(26);
+    // Same width and height as the gear, on the same top the caller used for that row.
+    let list_w = icon_w;
+    let list_h = bh;
     // The first drive must start far enough right that one minimum tab and the list button still fit.
     let min_left = tab_reserve(dpi) + gap + list_w + gap;
     let room = icons_left - min_left;
@@ -292,7 +308,6 @@ pub(crate) fn tab_lay(width: i32, n: usize, locked: &[bool], dpi: i32, scroll: u
             lock,
             plus: RECT { left: x, top: y, right: x + plus_w, bottom: y + h },
             overflow: None,
-            list: RECT::default(),
             first: 0,
             count: n,
         };
@@ -317,7 +332,7 @@ pub(crate) fn tab_lay(width: i32, n: usize, locked: &[bool], dpi: i32, scroll: u
         body[i] = r;
         x += min_w + gap;
     }
-    TabLay { body, close, lock, plus, overflow: Some(over), list: RECT::default(), first, count }
+    TabLay { body, close, lock, plus, overflow: Some(over), first, count }
 }
 
 pub(crate) fn in_rect(r: RECT, x: i32, y: i32) -> bool {
@@ -325,9 +340,6 @@ pub(crate) fn in_rect(r: RECT, x: i32, y: i32) -> bool {
 }
 
 pub(crate) fn tab_hit(lay: &TabLay, x: i32, y: i32) -> TabHit {
-    if lay.list.right > lay.list.left && in_rect(lay.list, x, y) {
-        return TabHit::List;
-    }
     if in_rect(lay.plus, x, y) {
         return TabHit::Plus;
     }
@@ -1094,12 +1106,11 @@ pub(crate) fn current_tab_lay() -> TabLay {
         let mut rc = RECT::default();
         unsafe { _ = GetClientRect(a.tabs_hwnd, &mut rc) };
         let locked: Vec<bool> = a.s.tabs.iter().map(|t| t.locked).collect();
-        let s = |v: i32| v * a.dpi / 96;
-        let btn_top = (s(32) - s(24)) / 2;
+        let strip_h = 32 * a.dpi / 96;
+        let btn_top = (strip_h - tool_icon_px(a.dpi).1) / 2;
         let icons = icon_slots(rc.right.max(1), btn_top, a.dpi, drive_slots(a.s.drive_buttons, a.drives.len()), a.s.bar);
-        let mut lay = tab_lay(icons.tab_w, locked.len().max(1), &locked, a.dpi, a.tab_scroll);
+        let lay = tab_lay(icons.tab_w, locked.len().max(1), &locked, a.dpi, a.tab_scroll);
         a.tab_scroll = lay.first;
-        lay.list = icons.list;
         lay
     })
 }
@@ -1130,7 +1141,7 @@ fn tab_text(a: &App, i: usize) -> (String, String) {
 }
 
 pub(crate) unsafe fn paint_tabs(h: HWND) {
-    let (active, names, colors, mut hot, mut hot_close, hot_plus, hot_over, hot_list, dpi, font, icon, accent) = app(|a| {
+    let (active, names, colors, mut hot, mut hot_close, hot_plus, hot_over, dpi, font, icon, accent) = app(|a| {
         (
             a.s.tab,
             (0..a.s.tabs.len()).map(|i| tab_text(a, i).0).collect::<Vec<_>>(),
@@ -1139,7 +1150,6 @@ pub(crate) unsafe fn paint_tabs(h: HWND) {
             a.tab_hot_close,
             a.tab_hot_plus,
             a.tab_hot_over,
-            a.tab_hot_list,
             a.dpi,
             a.font,
             a.icon_font,
@@ -1209,11 +1219,25 @@ pub(crate) unsafe fn paint_tabs(h: HWND) {
             fill(dc, r, if hot_over { hot_bg } else { pal().bg });
             text(dc, r, ICON_CHEVRON_DOWN, icon, ink, DT_CENTER);
         }
-        if lay.list.right > lay.list.left {
-            fill(dc, lay.list, if hot_list { hot_bg } else { pal().bg });
-            text(dc, lay.list, ICON_LIST, icon, ink, DT_CENTER);
-        }
     });
+}
+
+/// "Tab list" plus its chord. The button is a tool-row control, so this is its tooltip text.
+pub(crate) fn tab_list_tip() -> String {
+    let chord = crate::keys::index("tab.list").map(crate::keys::chord_text).unwrap_or_default();
+    let name = tr(crate::Key::TabList);
+    if chord.is_empty() { name.to_string() } else { format!("{name} ({chord})") }
+}
+
+/// Put the current tab-list name and chord on that button. No-op before the button exists.
+pub(crate) unsafe fn refresh_tab_list_tip() {
+    let main = app(|a| a.main);
+    if main.0.is_null() {
+        return;
+    }
+    let Ok(b) = GetDlgItem(Some(main), ID_TB_LIST) else { return };
+    _ = SetWindowTextW(b, &HSTRING::from(tr(crate::Key::TabList)));
+    tip_text(b, &tab_list_tip(), TTM_UPDATETIPTEXTW);
 }
 
 pub(crate) unsafe fn tab_mouse(x: i32, y: i32) -> TabHit {
@@ -1263,31 +1287,6 @@ unsafe fn lock_tooltip(show: bool, tab: Option<usize>) {
     let key = 0x7000_0000_0000_0000u64 | (i as u64);
     let (now, _) = crate::ui::tip_enter(tabs, LOCK_ID, key, label, item, crate::ui::TipSide::Below, added);
     app(|a| a.tab_lock_tip = now);
-}
-
-/// "Tab list" under the list button, with its chord. Same tracking tip as the lock glyph.
-unsafe fn list_tooltip(show: bool) {
-    let (tip, tabs, added) = app(|a| (a.tip, a.tabs_hwnd, a.tab_list_tip));
-    if tip.0.is_null() || tabs.0.is_null() {
-        return;
-    }
-    if !show {
-        let (now, _) = crate::ui::tip_leave(tabs, LIST_TIP_ID, added);
-        app(|a| a.tab_list_tip = now);
-        return;
-    }
-    let lay = current_tab_lay();
-    if lay.list.right <= lay.list.left {
-        let (now, _) = crate::ui::tip_leave(tabs, LIST_TIP_ID, added);
-        app(|a| a.tab_list_tip = now);
-        return;
-    }
-    let item = crate::ui::tip_screen_rect(tabs, lay.list);
-    let chord = crate::keys::index("tab.list").map(crate::keys::chord_text).unwrap_or_default();
-    let name = tr(crate::Key::TabList);
-    let label = if chord.is_empty() { name.to_string() } else { format!("{name} ({chord})") };
-    let (now, _) = crate::ui::tip_enter(tabs, LIST_TIP_ID, 0xC000_0000_0000_0000, &label, item, crate::ui::TipSide::Below, added);
-    app(|a| a.tab_list_tip = now);
 }
 
 /// Full paths of the panes in `tab`, one per line. `None` hides it.
@@ -1361,16 +1360,14 @@ fn tabs_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
             WM_MOUSEMOVE => {
                 let (x, y) = xy(lp);
                 let hit = tab_mouse(x, y);
-                let (hot, close, plus, over, list) = match hit {
-                    TabHit::Tab(i) | TabHit::Lock(i) => (Some(i), false, false, false, false),
-                    TabHit::Close(i) => (Some(i), true, false, false, false),
-                    TabHit::Plus => (None, false, true, false, false),
-                    TabHit::Overflow => (None, false, false, true, false),
-                    TabHit::List => (None, false, false, false, true),
-                    TabHit::Empty => (None, false, false, false, false),
+                let (hot, close, plus, over) = match hit {
+                    TabHit::Tab(i) | TabHit::Lock(i) => (Some(i), false, false, false),
+                    TabHit::Close(i) => (Some(i), true, false, false),
+                    TabHit::Plus => (None, false, true, false),
+                    TabHit::Overflow => (None, false, false, true),
+                    TabHit::Empty => (None, false, false, false),
                 };
                 lock_tooltip(matches!(hit, TabHit::Lock(_)), match hit { TabHit::Lock(i) => Some(i), _ => None });
-                list_tooltip(list);
                 let path_tab = match hit {
                     TabHit::Tab(i) | TabHit::Close(i) => Some(i),
                     _ => None,
@@ -1382,13 +1379,12 @@ fn tabs_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                         }
                     }
                     let from = a.tab_drag;
-                    let same = a.tab_hot == hot && a.tab_hot_close == close && a.tab_hot_plus == plus && a.tab_hot_over == over && a.tab_hot_list == list;
+                    let same = a.tab_hot == hot && a.tab_hot_close == close && a.tab_hot_plus == plus && a.tab_hot_over == over;
                     if !same {
                         a.tab_hot = hot;
                         a.tab_hot_close = close;
                         a.tab_hot_plus = plus;
                         a.tab_hot_over = over;
-                        a.tab_hot_list = list;
                     }
                     (from, !same)
                 });
@@ -1417,14 +1413,12 @@ fn tabs_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
             }
             WM_MOUSELEAVE => {
                 lock_tooltip(false, None);
-                list_tooltip(false);
                 path_tooltip(None);
                 app(|a| {
                     a.tab_hot = None;
                     a.tab_hot_close = false;
                     a.tab_hot_plus = false;
                     a.tab_hot_over = false;
-                    a.tab_hot_list = false;
                 });
                 tabs_invalidate();
             }
@@ -1443,7 +1437,6 @@ fn tabs_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                     }
                     TabHit::Plus => new_tab(),
                     TabHit::Overflow => open_tab_list(),
-                    TabHit::List => crate::tablist::open_toggle(),
                     TabHit::Empty => {}
                 }
             }
@@ -1528,8 +1521,8 @@ mod tests {
     fn icon_slots_stay_right_aligned_without_drives() {
         let lay = icon_slots(1000, 6, 96, 0, true);
         assert_eq!(lay.drive_n, 0);
-        assert_eq!(lay.tab_w, 742);
-        assert_eq!(lay.list, RECT { left: 746, top: 6, right: 774, bottom: 32 });
+        assert_eq!(lay.tab_w, 738);
+        assert_eq!(lay.list, RECT { left: 742, top: 6, right: 774, bottom: 30 });
         assert_eq!(lay.list.right + 4, lay.icons[0].1.left);
         assert_eq!(lay.icons.map(|s| s.0), [ID_TB_LAYOUT, ID_TB_SAVE, ID_TB_LOAD, ID_TB_FAV, ID_TB_SET]);
         assert_eq!(lay.icons[0].1, RECT { left: 778, top: 6, right: 848, bottom: 30 });
@@ -1543,7 +1536,7 @@ mod tests {
         assert!(lay.icons.windows(2).all(|w| w[0].1.right + 4 == w[1].1.left));
         assert_eq!(tab_area_width(1000, 96, true, 0), lay.tab_w);
         // Hidden toolbar keeps the gear (right 992, 32px) and the gap in front of it.
-        assert_eq!(tab_area_width(1000, 96, false, 8), 924);
+        assert_eq!(tab_area_width(1000, 96, false, 8), 920);
     }
 
     #[test]
@@ -1603,7 +1596,7 @@ mod tests {
         assert_eq!(hi.drives[0].right - hi.drives[0].left, 64);
         assert_eq!(hi.drives[n - 1].right + 8, hi.icons[0].1.left);
         assert_eq!(tab_area_width(2000, 192, true, n), hi.tab_w);
-        assert_eq!(tab_area_width(2000, 192, false, n), 1848);
+        assert_eq!(tab_area_width(2000, 192, false, n), 1840);
     }
 
     #[test]
@@ -1677,6 +1670,43 @@ mod tests {
         assert_eq!(ho.right - ho.left, 56);
         assert_eq!(ho.bottom - ho.top, hi.plus.bottom - hi.plus.top);
         assert!(hi.plus.right <= ho.left);
+    }
+
+    #[test]
+    fn tab_list_button_matches_the_toolbar_icon_buttons() {
+        // Same glyph kind as the gear. draw_button paints both on the shared icon face.
+        assert!(glyph_tool_button(ID_TB_LIST));
+        assert!(glyph_tool_button(ID_TB_SET));
+        assert!(!glyph_tool_button(ID_TB_LAYOUT));
+        assert!(!glyph_tool_button(ID_TB_FAV));
+        assert!(!glyph_tool_button(ID_TB_SAVE));
+        assert_eq!(glyph(ID_TB_LIST), ICON_LIST);
+        assert_ne!(glyph(ID_TB_LIST), glyph(ID_TB_SET));
+        for (dpi, top, bar) in [(96, 4, true), (96, 4, false), (144, 6, true), (192, 8, false)] {
+            let lay = icon_slots(2400, top, dpi, 4, bar);
+            let gear = lay.icons[4].1;
+            let list = lay.list;
+            let (w, h) = tool_icon_px(dpi);
+            assert!(list.right > list.left, "dpi {dpi} bar {bar}");
+            assert_eq!(list.right - list.left, gear.right - gear.left, "dpi {dpi}");
+            assert_eq!(list.bottom - list.top, gear.bottom - gear.top, "dpi {dpi}");
+            assert_eq!((list.top, list.bottom), (gear.top, gear.bottom), "dpi {dpi}");
+            assert_eq!((list.right - list.left, list.bottom - list.top), (w, h), "dpi {dpi}");
+            assert_eq!(h, BTN_H_TOOL * dpi / 96);
+            assert_eq!(w, TOOL_ICON_W * dpi / 96);
+            if bar {
+                // Same row as the layout button. That one is wider because it shows the grid.
+                assert_eq!((lay.icons[0].1.top, lay.icons[0].1.bottom), (list.top, list.bottom));
+                assert!(lay.icons[0].1.right - lay.icons[0].1.left > w);
+                let star = lay.icons[3].1;
+                assert_eq!((star.right - star.left, star.top, star.bottom), (w, list.top, list.bottom));
+                assert_eq!((lay.drives[0].right - lay.drives[0].left, lay.drives[0].top, lay.drives[0].bottom), (w, list.top, list.bottom));
+            }
+            // Not the tab-row + (28×26 DIP).
+            let plus = tab_lay(900, 2, &[false; 2], dpi, 0).plus;
+            assert_ne!(list.bottom - list.top, plus.bottom - plus.top);
+            assert_ne!(list.right - list.left, plus.right - plus.left);
+        }
     }
 }
 

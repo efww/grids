@@ -309,11 +309,13 @@ pub(crate) unsafe fn relayout() {
         let show_bar = a.s.bar;
         let strip_h = s(32);
         let strip_top = 0;
-        let btn_top = strip_top + (strip_h - s(24)) / 2;
+        let btn_top = strip_top + (strip_h - tool_icon_px(a.dpi).1) / 2;
         // Drive letters, then Layout, save, load, the favourites star and the gear, at the right of the tab row.
+        // The tab-list button sits just left of that group, on the same row as those buttons.
         // The last letters hide first so a minimum tab stays clear of the group.
-        // The gear stays when the toolbar is off; the other icons and the letters do not.
+        // The gear and the tab list stay when the toolbar is off; the other icons and the letters do not.
         let icons = icon_slots(g.w, btn_top, a.dpi, drive_slots(a.s.drive_buttons, a.drives.len()), show_bar);
+        moves.push((tb(ID_TB_LIST), icons.list));
         for (id, r) in icons.icons {
             moves.push((tb(id), r));
         }
@@ -349,10 +351,11 @@ pub(crate) unsafe fn relayout() {
         return;
     };
     move_all(&moves, None);
-    for id in [ID_TB_LAYOUT, ID_TB_SAVE, ID_TB_LOAD, ID_TB_FAV, ID_TB_SET] {
+    for id in [ID_TB_LIST, ID_TB_LAYOUT, ID_TB_SAVE, ID_TB_LOAD, ID_TB_FAV, ID_TB_SET] {
         if let Ok(b) = GetDlgItem(Some(main), id) {
             // The gear stays: with the toolbar hidden it is the only mouse path to settings.
-            let on = show_bar || id == ID_TB_SET;
+            // The tab list stays with it, on the same button row.
+            let on = show_bar || id == ID_TB_SET || id == ID_TB_LIST;
             _ = ShowWindow(b, if on { SW_SHOW } else { SW_HIDE });
         }
     }
@@ -377,9 +380,9 @@ pub(crate) unsafe fn relayout() {
         _ = InvalidateRect(Some(strip), None, true);
     }
     // The strip is full width underneath the icons. Raise the visible ones so they take the click.
-    for id in [ID_TB_LAYOUT, ID_TB_SAVE, ID_TB_LOAD, ID_TB_FAV, ID_TB_SET] {
+    for id in [ID_TB_LIST, ID_TB_LAYOUT, ID_TB_SAVE, ID_TB_LOAD, ID_TB_FAV, ID_TB_SET] {
         if let Ok(b) = GetDlgItem(Some(main), id) {
-            if show_bar || id == ID_TB_SET {
+            if show_bar || id == ID_TB_SET || id == ID_TB_LIST {
                 _ = SetWindowPos(b, Some(HWND_TOP), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
             }
         }

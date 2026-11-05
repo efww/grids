@@ -248,6 +248,7 @@ fn main_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
             WM_COMMAND => match wp.0 & 0xffff {
                 id if id == ID_TB_LAYOUT as usize => open_grid(),
                 id if id == ID_TB_SAVE as usize => save_current(),
+                id if id == ID_TB_LIST as usize => crate::tablist::open_toggle(),
                 id if id == ID_TB_LOAD as usize => open_session_list(),
                 ID_SESS_SAVE => save_current(),
                 ID_SESS_OPEN => open_session_list(),
@@ -1138,6 +1139,7 @@ pub(crate) unsafe fn set_language(lang: Lang) {
                 tip_text(b, hint, TTM_UPDATETIPTEXTW);
             }
         }
+        refresh_tab_list_tip();
         refresh_drive_tips();
         refresh_save_button();
         rename_fields();

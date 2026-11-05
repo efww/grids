@@ -726,6 +726,7 @@ unsafe fn finish_capture(vk: u16, ctrl: bool, shift: bool, alt: bool, win: bool)
             apply_hotkey(true);
             crate::dialogjump::sync();
             save_session();
+            across_windows(|| refresh_tab_list_tip());
             settings::refresh();
             true
         }

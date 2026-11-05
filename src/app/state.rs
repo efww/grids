@@ -253,8 +253,6 @@ pub(crate) struct Desk {
     pub(crate) fav_pop_tip: bool,   // tracking tooltip for the favourites window is installed
     pub(crate) tab_hot_plus: bool,
     pub(crate) tab_hot_over: bool, // pointer over the overflow chevron
-    pub(crate) tab_hot_list: bool, // pointer over the tab-list button
-    pub(crate) tab_list_tip: bool, // tracking tooltip for that button is installed
     pub(crate) tab_scroll: usize,  // first visible window tab while the strip overflows
     pub(crate) tab_drag: Option<usize>,
     pub(crate) tab_press: Option<(usize, i32, i32, bool)>, // tab, x, y, press landed on its close box
@@ -454,8 +452,6 @@ pub(crate) fn blank_desk() -> Desk {
         fav_pop_tip: false,
         tab_hot_plus: false,
         tab_hot_over: false,
-        tab_hot_list: false,
-        tab_list_tip: false,
         tab_scroll: 0,
         tab_drag: None,
         tab_press: None,

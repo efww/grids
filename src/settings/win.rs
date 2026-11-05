@@ -1642,6 +1642,7 @@ unsafe fn reset_keys(h: HWND) {
     crate::keys::reset_all();
     crate::apply_hotkey(true);
     crate::save_session();
+    crate::across_windows(|| crate::refresh_tab_list_tip());
     refresh();
 }
 
@@ -1658,6 +1659,7 @@ unsafe fn reset_one(i: usize) {
     crate::keys::rebind(i, chord);
     crate::apply_hotkey(true);
     crate::save_session();
+    crate::across_windows(|| crate::refresh_tab_list_tip());
     refresh();
 }
 

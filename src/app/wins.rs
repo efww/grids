@@ -380,6 +380,9 @@ pub(crate) unsafe fn open_window(mut s: Session) -> Result<HWND> {
     for (id, label, hint) in toolbar_tips() {
         add_tip(child(main, w!("BUTTON"), PCWSTR(HSTRING::from(label).as_ptr()), BS_OWNERDRAW as u32, WINDOW_EX_STYLE(0), id, HFONT::default()), hint);
     }
+    // Same owner-draw button as the gear and the other tool-row icons. draw_button paints it.
+    let list = child(main, w!("BUTTON"), PCWSTR(HSTRING::from(crate::tr(crate::Key::TabList)).as_ptr()), BS_OWNERDRAW as u32, WINDOW_EX_STYLE(0), ID_TB_LIST, HFONT::default());
+    add_tip(list, &tab_list_tip());
     if let Ok((t, th)) = create_tree(main) {
         app(|a| (a.tree, a.tree_hwnd) = (Some(t), th));
         // The tree view can register its target after Initialize returns.
