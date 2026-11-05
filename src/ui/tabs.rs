@@ -164,8 +164,8 @@ pub(crate) fn tool_icon_px(dpi: i32) -> (i32, i32) {
     (s(TOOL_ICON_W), s(BTN_H_TOOL))
 }
 
-/// Chrome ids [`draw_button`] paints as one MDL2 glyph on the shared icon face.
-/// The tab-list button is this kind, same as the gear: same hover, press, ink, and glyph font.
+/// Gear and the tab list share one icon-button slot: same size, hover, and press.
+/// [`draw_button`] paints both from the crisp masters in `sicon`.
 pub(crate) fn glyph_tool_button(id: i32) -> bool {
     matches!(id, ID_TB_SET | ID_TB_LIST)
 }

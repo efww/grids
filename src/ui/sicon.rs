@@ -4,6 +4,8 @@
 // chevron, so at 16px it is not a plus and not a flat bar. One empty pixel sits between the
 // mark and the frame. Other DPIs are the same picture, nearest-neighbour, so every pixel stays on or off.
 // The bitmap is one colour; a dirty save is that colour painted green.
+// Gear, the tab list, the layout grid, the favourites-toolbar marks, and the pane arrows are the
+// same kind of master. A straight stroke sits on whole pixels. A curve is a single-pixel step.
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum SessionIcon {
@@ -53,6 +55,253 @@ const WATCH16: [&str; 16] = [
     "................",
 ];
 
+/// Hard toolbar and header glyphs. Same 1px weight as the basket and the eye.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum LineIcon {
+    /// Cog: 1px ring, six teeth, empty centre.
+    Gear,
+    /// Four horizontal bars. The tab list.
+    List,
+    /// 2×2 panes, 1px outer edge and 1px cross.
+    Layout,
+    /// Plus. Favourites Add, and a new pane tab.
+    Add,
+    /// Folder with a plus. New group.
+    Group,
+    /// Up arrow. Favourites move-up, and the pane parent button.
+    Up,
+    Down,
+    /// I-beam. Rename.
+    Rename,
+    /// Bin. Delete.
+    Del,
+    Back,
+    Fwd,
+    /// Two offset frames. Open in another pane.
+    OpenIn,
+}
+
+// Midpoint circle, radius 5, centred on pixel 7, with a radius-2 hole and a tooth on each
+// of six directions. The flat top of the circle is one row, so the ring stays one pixel thick.
+const GEAR16: [&str; 16] = [
+    "................",
+    ".......#........",
+    ".....#####......",
+    "....#.....#.....",
+    "..##.......##...",
+    "..#...###...#...",
+    "..#..#...#..#...",
+    "..#..#...#..#...",
+    "..#..#...#..#...",
+    "..#...###...#...",
+    "..##.......##...",
+    "....#.....#.....",
+    ".....#####......",
+    ".......#........",
+    "................",
+    "................",
+];
+const LIST16: [&str; 16] = [
+    "................",
+    "................",
+    "................",
+    "..############..",
+    "................",
+    "................",
+    "..############..",
+    "................",
+    "................",
+    "..############..",
+    "................",
+    "................",
+    "..############..",
+    "................",
+    "................",
+    "................",
+];
+const LAYOUT16: [&str; 16] = [
+    "................",
+    ".#############..",
+    ".#.....#.....#..",
+    ".#.....#.....#..",
+    ".#.....#.....#..",
+    ".#.....#.....#..",
+    ".#.....#.....#..",
+    ".#############..",
+    ".#.....#.....#..",
+    ".#.....#.....#..",
+    ".#.....#.....#..",
+    ".#.....#.....#..",
+    ".#.....#.....#..",
+    ".#############..",
+    "................",
+    "................",
+];
+const ADD16: [&str; 16] = [
+    "................",
+    "................",
+    "................",
+    ".......#........",
+    ".......#........",
+    ".......#........",
+    ".......#........",
+    "...#########....",
+    ".......#........",
+    ".......#........",
+    ".......#........",
+    ".......#........",
+    "................",
+    "................",
+    "................",
+    "................",
+];
+const GROUP16: [&str; 16] = [
+    "................",
+    "................",
+    "................",
+    "..#####.........",
+    ".##############.",
+    ".#............#.",
+    ".#.....#......#.",
+    ".#.....#......#.",
+    ".#...#####....#.",
+    ".#.....#......#.",
+    ".#.....#......#.",
+    ".#............#.",
+    ".##############.",
+    "................",
+    "................",
+    "................",
+];
+// Open chevron over a stem. The head is not a filled triangle, so it does not read as a plus.
+const UP16: [&str; 16] = [
+    "................",
+    "................",
+    "................",
+    ".......#........",
+    "......#.#.......",
+    ".....#...#......",
+    "....#.....#.....",
+    ".......#........",
+    ".......#........",
+    ".......#........",
+    ".......#........",
+    ".......#........",
+    ".......#........",
+    "................",
+    "................",
+    "................",
+];
+const DOWN16: [&str; 16] = [
+    "................",
+    "................",
+    "................",
+    ".......#........",
+    ".......#........",
+    ".......#........",
+    ".......#........",
+    ".......#........",
+    ".......#........",
+    "....#.....#.....",
+    ".....#...#......",
+    "......#.#.......",
+    ".......#........",
+    "................",
+    "................",
+    "................",
+];
+const RENAME16: [&str; 16] = [
+    "................",
+    "................",
+    "................",
+    "...#########....",
+    ".......#........",
+    ".......#........",
+    ".......#........",
+    ".......#........",
+    ".......#........",
+    ".......#........",
+    ".......#........",
+    ".......#........",
+    "...#########....",
+    "................",
+    "................",
+    "................",
+];
+const DEL16: [&str; 16] = [
+    "................",
+    "................",
+    "................",
+    "......####......",
+    "................",
+    "..############..",
+    "...#........#...",
+    "...#..#..#..#...",
+    "...#..#..#..#...",
+    "...#..#..#..#...",
+    "...#........#...",
+    "...#........#...",
+    "....########....",
+    "................",
+    "................",
+    "................",
+];
+const BACK16: [&str; 16] = [
+    "................",
+    "................",
+    "................",
+    "................",
+    "......#.........",
+    ".....#..........",
+    "....#...........",
+    "...##########...",
+    "....#...........",
+    ".....#..........",
+    "......#.........",
+    "................",
+    "................",
+    "................",
+    "................",
+    "................",
+];
+const FWD16: [&str; 16] = [
+    "................",
+    "................",
+    "................",
+    "................",
+    ".........#......",
+    "..........#.....",
+    "...........#....",
+    "...##########...",
+    "...........#....",
+    "..........#.....",
+    ".........#......",
+    "................",
+    "................",
+    "................",
+    "................",
+    "................",
+];
+// Back frame at the upper left, front frame stepped down-right, so one pane sits over another.
+const OPEN16: [&str; 16] = [
+    "................",
+    "................",
+    "................",
+    "...#######......",
+    "...#.....#......",
+    "...#.....#......",
+    "...#..#######...",
+    "...#..#.....#...",
+    "...#..#.....#...",
+    "...####.....#...",
+    "......#.....#...",
+    "......#.....#...",
+    "......#######...",
+    "................",
+    "................",
+    "................",
+];
+
 fn art(rows: &[&str; 16], x: i32, y: i32) -> bool {
     rows[y as usize].as_bytes()[x as usize] == b'#'
 }
@@ -65,6 +314,36 @@ pub(crate) fn session_icon_px(dpi: i32) -> i32 {
 
 /// Coverage, 0 or 255, row-major `n`×`n`. `n` is [`session_icon_px`]. No partial pixels.
 pub(crate) fn session_icon_coverage(n: i32, kind: SessionIcon) -> Vec<u8> {
+    scale16(n, |x, y| ink16(x, y, kind))
+}
+
+/// Premultiplied top-down BGRA of [`session_icon_coverage`], ink `rgb` as 0xRRGGBB.
+pub(crate) fn session_icon_bgra(n: i32, kind: SessionIcon, rgb: u32) -> Vec<u8> {
+    coverage_bgra(&session_icon_coverage(n, kind), rgb)
+}
+
+/// Coverage, 0 or 255, for a [`LineIcon`]. Same nearest-neighbour scale as the session marks.
+pub(crate) fn line_icon_coverage(n: i32, kind: LineIcon) -> Vec<u8> {
+    scale16(n, |x, y| line16(x, y, kind))
+}
+
+/// Premultiplied top-down BGRA of [`line_icon_coverage`].
+pub(crate) fn line_icon_bgra(n: i32, kind: LineIcon, rgb: u32) -> Vec<u8> {
+    coverage_bgra(&line_icon_coverage(n, kind), rgb)
+}
+
+/// Premultiplied top-down BGRA. `rgb` is 0xRRGGBB. A zero coverage pixel stays zero.
+pub(crate) fn coverage_bgra(cov: &[u8], rgb: u32) -> Vec<u8> {
+    let mut px = vec![0u8; cov.len() * 4];
+    for (i, &a) in cov.iter().enumerate() {
+        let pre = |ch: u32| ((ch & 0xFF) * a as u32 / 255) as u8;
+        px[i * 4..i * 4 + 4].copy_from_slice(&[pre(rgb), pre(rgb >> 8), pre(rgb >> 16), a]);
+    }
+    px
+}
+
+/// Nearest neighbour from the 16×16 master. A source pixel is copied whole, so coverage stays 0 or 255.
+fn scale16(n: i32, on: impl Fn(i32, i32) -> bool) -> Vec<u8> {
     let n = n.max(1);
     let mut out = vec![0u8; (n * n) as usize];
     for y in 0..n {
@@ -74,7 +353,7 @@ pub(crate) fn session_icon_coverage(n: i32, kind: SessionIcon) -> Vec<u8> {
             } else {
                 ((x * 16 / n).min(15), (y * 16 / n).min(15))
             };
-            if ink16(sx, sy, kind) {
+            if on(sx, sy) {
                 out[(y * n + x) as usize] = 255;
             }
         }
@@ -82,15 +361,25 @@ pub(crate) fn session_icon_coverage(n: i32, kind: SessionIcon) -> Vec<u8> {
     out
 }
 
-/// Premultiplied top-down BGRA of [`session_icon_coverage`], ink `rgb` as 0xRRGGBB.
-pub(crate) fn session_icon_bgra(n: i32, kind: SessionIcon, rgb: u32) -> Vec<u8> {
-    let cov = session_icon_coverage(n, kind);
-    let mut px = vec![0u8; cov.len() * 4];
-    for (i, &a) in cov.iter().enumerate() {
-        let pre = |ch: u32| ((ch & 0xFF) * a as u32 / 255) as u8;
-        px[i * 4..i * 4 + 4].copy_from_slice(&[pre(rgb), pre(rgb >> 8), pre(rgb >> 16), a]);
+fn line_rows(kind: LineIcon) -> &'static [&'static str; 16] {
+    match kind {
+        LineIcon::Gear => &GEAR16,
+        LineIcon::List => &LIST16,
+        LineIcon::Layout => &LAYOUT16,
+        LineIcon::Add => &ADD16,
+        LineIcon::Group => &GROUP16,
+        LineIcon::Up => &UP16,
+        LineIcon::Down => &DOWN16,
+        LineIcon::Rename => &RENAME16,
+        LineIcon::Del => &DEL16,
+        LineIcon::Back => &BACK16,
+        LineIcon::Fwd => &FWD16,
+        LineIcon::OpenIn => &OPEN16,
     }
-    px
+}
+
+fn line16(x: i32, y: i32, kind: LineIcon) -> bool {
+    (0..16).contains(&x) && (0..16).contains(&y) && art(line_rows(kind), x, y)
 }
 
 // 16×16 master, one pixel per cell. Front frame ends at column/row 9. Column 10 and row 10
@@ -231,5 +520,73 @@ mod tests {
                 assert_eq!(p, &[0x33, 0x22, 0x11, 255]);
             }
         }
+    }
+
+    const LINE: [LineIcon; 12] = [
+        LineIcon::Gear,
+        LineIcon::List,
+        LineIcon::Layout,
+        LineIcon::Add,
+        LineIcon::Group,
+        LineIcon::Up,
+        LineIcon::Down,
+        LineIcon::Rename,
+        LineIcon::Del,
+        LineIcon::Back,
+        LineIcon::Fwd,
+        LineIcon::OpenIn,
+    ];
+
+    #[test]
+    fn line_icons_stay_hard_edged_and_distinct() {
+        for n in [16, 20, 24, 32] {
+            let covs: Vec<Vec<u8>> = LINE.iter().map(|&k| line_icon_coverage(n, k)).collect();
+            for c in &covs {
+                assert!(c.iter().all(|&a| a == 0 || a == 255), "{n}");
+                assert!(c.iter().any(|&a| a == 255), "{n}");
+            }
+            for i in 0..covs.len() {
+                for j in (i + 1)..covs.len() {
+                    assert_ne!(covs[i], covs[j], "{n} {i} vs {j}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn list_is_four_bars_and_the_gear_has_a_hole() {
+        let list = line_icon_coverage(16, LineIcon::List);
+        let bars: Vec<i32> = (0..16).filter(|&y| (0..16).any(|x| at(&list, 16, x, y) == 255)).collect();
+        assert_eq!(bars, vec![3, 6, 9, 12]);
+        for y in bars {
+            assert!((2..14).all(|x| at(&list, 16, x, y) == 255), "{y}");
+            assert_eq!((at(&list, 16, 0, y), at(&list, 16, 15, y)), (0, 0));
+        }
+        let gear = line_icon_coverage(16, LineIcon::Gear);
+        assert_eq!((at(&gear, 16, 7, 7), at(&gear, 16, 8, 8)), (0, 0));
+        assert_eq!(at(&gear, 16, 7, 1), 255);
+        let grid = line_icon_coverage(16, LineIcon::Layout);
+        assert_eq!(at(&grid, 16, 1, 1), 255);
+        assert_eq!(at(&grid, 16, 7, 7), 255);
+        assert_eq!(at(&grid, 16, 3, 3), 0);
+    }
+
+    #[test]
+    fn arrows_mirror_and_the_plus_is_one_pixel() {
+        let up = line_icon_coverage(16, LineIcon::Up);
+        let down = line_icon_coverage(16, LineIcon::Down);
+        let back = line_icon_coverage(16, LineIcon::Back);
+        let fwd = line_icon_coverage(16, LineIcon::Fwd);
+        for y in 0..16 {
+            for x in 0..16 {
+                assert_eq!(at(&up, 16, x, y), at(&down, 16, x, 15 - y), "ud {x},{y}");
+                assert_eq!(at(&back, 16, x, y), at(&fwd, 16, 15 - x, y), "bf {x},{y}");
+            }
+        }
+        let add = line_icon_coverage(16, LineIcon::Add);
+        assert!((3..12).all(|i| at(&add, 16, 7, i) == 255));
+        assert!((3..12).all(|x| at(&add, 16, x, 7) == 255));
+        // The cross is one pixel thick: the cell beside the stem is empty.
+        assert_eq!(at(&add, 16, 8, 6), 0);
     }
 }

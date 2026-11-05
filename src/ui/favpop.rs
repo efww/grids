@@ -12,6 +12,7 @@ use crate::settings;
 use super::{
     blend, buffered, button_colors, clear_icon_refresh, drop_pop_fav_tip, drop_side, fav_chevron_rect, fav_popup_can_drop, fav_row_editable, files_section_label, fill, hide_pop_fav_tip, note_side,
     paint_button, paint_card, paint_fav_head, paint_fav_row, paint_field, paint_window, pal, pins_section_label, place_edit, popup_rows, show_pop_fav_tip, text, tip_drop, tip_enter, tip_leave,
+    draw_line_icon, LineIcon,
     tip_screen_rect, ui_tokens, ACCENT, BTN_GAP, BTN_H_FOOTER, BTN_H_TOOL, BTN_MIN_W, ButtonKind, ButtonVisual, FIELD_H, FIELD_PAD_X, FONT_META_PX, FONT_PX, FocusRing, PAD_BODY_X, PAD_BODY_Y, RADIUS,
     TrackEffect, Tracker, TipSide,
 };
@@ -417,16 +418,16 @@ fn act_on(id: Act) -> bool {
     }
 }
 
-fn act_glyph(id: Act) -> &'static str {
-    match id {
-        Act::Add => "\u{E710}",
-        Act::Group => "\u{E8F4}",
-        Act::Up => "\u{E74A}",
-        Act::Down => "\u{E74B}",
-        Act::Rename => "\u{E8AC}",
-        Act::Del => "\u{E74D}",
-        Act::Expand | Act::Close => "",
-    }
+fn act_icon(id: Act) -> Option<LineIcon> {
+    Some(match id {
+        Act::Add => LineIcon::Add,
+        Act::Group => LineIcon::Group,
+        Act::Up => LineIcon::Up,
+        Act::Down => LineIcon::Down,
+        Act::Rename => LineIcon::Rename,
+        Act::Del => LineIcon::Del,
+        Act::Expand | Act::Close => return None,
+    })
 }
 
 fn act_tip(id: Act) -> &'static str {
@@ -473,7 +474,9 @@ fn act_rect(lay: &PopLay, id: Act) -> RECT {
 unsafe fn paint_icon(dc: HDC, r: RECT, id: Act, visual: ButtonVisual, font: HFONT, dpi: i32, ground: u32) {
     paint_button(dc, r, ButtonKind::Icon, visual, "", font, dpi, ground, FocusRing::Outside);
     let ink = button_colors(ButtonKind::Icon, visual.state, ui_tokens().dark, ground).ink;
-    text(dc, r, act_glyph(id), font, ink, DT_CENTER);
+    if let Some(kind) = act_icon(id) {
+        draw_line_icon(dc, r, kind, ink, dpi);
+    }
 }
 
 unsafe fn button_tip(h: HWND, id: Option<Act>, rect: RECT) {
@@ -1500,7 +1503,18 @@ mod tests {
         let i = TOOL.iter().position(|a| *a == Act::Rename).expect("rename button");
         assert_eq!(TOOL[i - 1], Act::Down);
         assert_eq!(TOOL[i + 1], Act::Del);
-        assert_eq!(act_glyph(Act::Rename), "\u{E8AC}");
+        assert_eq!(act_icon(Act::Rename), Some(LineIcon::Rename));
+        assert_eq!(
+            TOOL.map(act_icon),
+            [
+                Some(LineIcon::Add),
+                Some(LineIcon::Group),
+                Some(LineIcon::Up),
+                Some(LineIcon::Down),
+                Some(LineIcon::Rename),
+                Some(LineIcon::Del),
+            ]
+        );
         let lay = pop_lay(900, 640, 96, px(96, 96));
         assert_eq!(act_rect(&lay, Act::Rename), lay.icons[i]);
         assert_eq!(act_rect(&lay, Act::Del), lay.icons[i + 1]);

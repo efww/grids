@@ -4,7 +4,7 @@
 
 use crate::imports::*;
 
-/// Supersample factor. 3× is enough for a knob, a corner, or a star tip.
+/// Supersample factor. 3× is enough for a knob or a corner.
 pub(crate) const AA_SCALE: i32 = 3;
 /// Parent-coloured pixels around the shape so a curve that crosses a sample block can blend.
 pub(crate) const AA_PAD: i32 = 2;
@@ -48,6 +48,8 @@ pub(crate) fn box_down(src: &[u8], sw: usize, dst: &mut [u8], dw: usize, dh: usi
 }
 
 /// Average each `scale`×`scale` block of a one-byte coverage mask.
+/// The star no longer uses this. The test keeps the filter honest.
+#[cfg(test)]
 pub(crate) fn box_down_cov(src: &[u8], sw: usize, dst: &mut [u8], dw: usize, dh: usize, scale: usize) {
     let area = (scale * scale) as u32;
     if area == 0 {
