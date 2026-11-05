@@ -2,6 +2,7 @@ use std::cell::{Cell, RefCell};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::Once;
 use windows::core::{w, BOOL, HSTRING, PCWSTR};
+use windows::Win32::Graphics::Gdi::{CreateRectRgn, DeleteObject, ExtSelectClipRgn, GetWindowRgn, SetWindowRgn, GDI_REGION_TYPE, RGN_AND};
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_CAPTION_COLOR, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DWMWINDOWATTRIBUTE};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::{SetWindowTheme, DRAWITEMSTRUCT, WM_MOUSELEAVE};
@@ -483,12 +484,12 @@ unsafe fn place(h: HWND, g: &Geo, sn: &Snap) {
         match item {
             Item::Card(c) => {
                 if let Some(id) = ctl_id(c.spec.ctl) {
-                    move_to(ctl(h, id), c.ctl, intersects(c.ctl, content));
+                    move_clip(ctl(h, id), c.ctl, content);
                 }
                 if c.spec.ctl == Ctl::Adv {
                     let ids = [S_ADV_OPEN, S_ADV_EX, S_ADV_IM];
                     for (i, id) in ids.iter().enumerate() {
-                        move_to(ctl(h, *id), c.adv[i], intersects(c.adv[i], content));
+                        move_clip(ctl(h, *id), c.adv[i], content);
                     }
                 }
                 if matches!(c.spec.ctl, Ctl::AdvReset | Ctl::FolderDefault | Ctl::FolderReset | Ctl::FolderClear) {
@@ -498,26 +499,30 @@ unsafe fn place(h: HWND, g: &Geo, sn: &Snap) {
                         Ctl::FolderClear => S_FV_CLEAR,
                         _ => S_ADV_RESET,
                     };
-                    move_to(ctl(h, id), c.adv[0], intersects(c.adv[0], content));
+                    move_clip(ctl(h, id), c.adv[0], content);
                 }
                 if c.spec.ctl == Ctl::EvAct {
                     let b = ctl(h, S_EV);
                     let _ = SetWindowTextW(b, &HSTRING::from(ev_button_label()));
                     let _ = EnableWindow(b, !crate::everything::busy());
-                    move_to(b, c.ctl, crate::everything::action().is_some() && intersects(c.ctl, content));
+                    if crate::everything::action().is_some() {
+                        move_clip(b, c.ctl, content);
+                    } else {
+                        move_to(b, c.ctl, false);
+                    }
                 }
                 if c.spec.ctl == Ctl::WmPath {
-                    move_to(ctl(h, S_WM_BROWSE), c.adv[0], intersects(c.adv[0], content));
+                    move_clip(ctl(h, S_WM_BROWSE), c.adv[0], content);
                     crate::place_edit(ctl(h, S_WM), inset(c.ctl, sc(sn.dpi, FIELD_INSET_DIP)), intersects(c.ctl, content));
                 }
             }
             Item::CtxBar { reset, refresh } => {
-                move_to(ctl(h, S_CTX_REFRESH), *refresh, intersects(*refresh, content));
-                move_to(ctl(h, S_CTX_RESET), *reset, intersects(*reset, content));
+                move_clip(ctl(h, S_CTX_REFRESH), *refresh, content);
+                move_clip(ctl(h, S_CTX_RESET), *reset, content);
             }
             Item::KeyBar { edit, reset } => {
                 crate::place_edit(ctl(h, S_KEYQ), inset(*edit, sc(sn.dpi, FIELD_INSET_DIP)), intersects(*edit, content));
-                move_to(ctl(h, S_RESET), *reset, intersects(*reset, content));
+                move_clip(ctl(h, S_RESET), *reset, content);
             }
             Item::FavRow { i, rename, btn, .. } if *i != usize::MAX && *i < FAV_MAX as usize && btn.right > btn.left => {
                 let id = S_FAV0 + *i as i32;
@@ -527,14 +532,14 @@ unsafe fn place(h: HWND, g: &Geo, sn: &Snap) {
                     b = child_at(h, w!("BUTTON"), tx(crate::Key::Delete), 0xB | 0x00010000, id, sn.font);
                 }
                 let _ = SetWindowTextW(b, &HSTRING::from(tx(crate::Key::Delete)));
-                move_to(b, *btn, intersects(*btn, content));
+                move_clip(b, *btn, content);
                 let rid = S_REN0 + *i as i32;
                 let mut r = ctl(h, rid);
                 if r.0.is_null() {
                     r = child_at(h, w!("BUTTON"), tx(crate::Key::Rename2), 0xB | 0x00010000, rid, sn.font);
                 }
                 let _ = SetWindowTextW(r, &HSTRING::from(tx(crate::Key::Rename2)));
-                move_to(r, *rename, intersects(*rename, content));
+                move_clip(r, *rename, content);
             }
             _ => {}
         }
@@ -547,6 +552,33 @@ fn intersects(a: RECT, b: RECT) -> bool {
 
 fn inset(r: RECT, d: i32) -> RECT {
     RECT { left: r.left + d, top: r.top + d, right: (r.right - d).max(r.left + d), bottom: (r.bottom - d).max(r.top + d) }
+}
+
+/// Place a scrolled-content control and clip it to the content viewport, so a row
+/// that is only partly scrolled into view never paints over the footer or header.
+unsafe fn move_clip(h: HWND, r: RECT, content: RECT) {
+    if h.0.is_null() {
+        return;
+    }
+    let show = intersects(r, content);
+    move_to(h, r, show);
+    if !show {
+        return;
+    }
+    let vis = RECT { left: r.left.max(content.left), top: r.top.max(content.top), right: r.right.min(content.right), bottom: r.bottom.min(content.bottom) };
+    if vis == r {
+        let _ = SetWindowRgn(h, None, true);
+    } else {
+        let rgn = CreateRectRgn(vis.left - r.left, vis.top - r.top, vis.right - r.left, vis.bottom - r.top);
+        // The system owns the region after a successful call.
+        if SetWindowRgn(h, Some(rgn), true) == 0 {
+            let _ = DeleteObject(rgn.into());
+        }
+    }
+    // Repaint the parent under the cut-off strip, or stale button pixels stay there.
+    if let Ok(parent) = GetParent(h) {
+        let _ = InvalidateRect(Some(parent), Some(&r), false);
+    }
 }
 
 unsafe fn move_to(h: HWND, r: RECT, show: bool) {
@@ -1904,7 +1936,17 @@ fn settings_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
             }
             WM_REVEAL => reveal(h),
             WM_DRAWITEM => {
-                draw_btn(&*(lp.0 as *const DRAWITEMSTRUCT));
+                let d = &*(lp.0 as *const DRAWITEMSTRUCT);
+                // BUTTON has CS_PARENTDC: its DC ignores the window region `move_clip`
+                // sets, so clip the paint to that region here.
+                let saved = SaveDC(d.hDC);
+                let rgn = CreateRectRgn(0, 0, 0, 0);
+                if GetWindowRgn(d.hwndItem, rgn) != GDI_REGION_TYPE(0) {
+                    let _ = ExtSelectClipRgn(d.hDC, Some(rgn), RGN_AND);
+                }
+                let _ = DeleteObject(rgn.into());
+                draw_btn(d);
+                let _ = RestoreDC(d.hDC, saved);
                 return LRESULT(1);
             }
             WM_CTLCOLOREDIT | WM_CTLCOLORLISTBOX | WM_CTLCOLORSTATIC => {
