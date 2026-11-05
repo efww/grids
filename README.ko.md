@@ -172,7 +172,7 @@ Maguro가 켜져 있으면 **Win+Alt+V**로 다른 창이 앞에 있어도 클�
 
 이름 있는 레이아웃을 최대 아홉 개. **Ctrl+Alt+1…9**로 슬롯을 불러오고, **Ctrl+Alt+Shift+1…9**로 현재 탭·패널·폴더를 그 슬롯에 저장합니다. 톱니바퀴 메뉴 → **작업 공간**에서 저장·불러오기·이름 바꾸기·지우기가 됩니다. 슬롯은 `maguro.json`에 있습니다.
 
-<p align="center"><img width="420" alt="작업 공간 이름 짓기" src="docs/images-v4/workspaces.ko.png"></p>
+<p align="center"><img width="480" alt="톱니 메뉴 → 작업 공간" src="docs/images-v5/workspaces.ko.png"></p>
 
 ### 18. 대화 상자 점프
 

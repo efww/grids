@@ -172,7 +172,7 @@ Maguro が起動していれば **Win+Alt+V** で、ほかのアプリが前面�
 
 名前付きレイアウトを最大九つ。**Ctrl+Alt+1…9** でスロットを開き、**Ctrl+Alt+Shift+1…9** で今のタブ・ペイン・フォルダーをそのスロットに保存します。歯車メニュー → **ワークスペース** で保存・読み込み・名前の変更・消去ができます。スロットは `maguro.json` にあります。
 
-<p align="center"><img width="420" alt="ワークスペースに名前を付ける" src="docs/images-v4/workspaces.ja.png"></p>
+<p align="center"><img width="480" alt="歯車メニュー → ワークスペース" src="docs/images-v5/workspaces.ja.png"></p>
 
 ### 18. ダイアログジャンプ
 

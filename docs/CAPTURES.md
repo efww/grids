@@ -133,9 +133,9 @@ servers.png / servers.ko.png / servers.ja.png 는 **실제 호스트·자격 증
 | tabs.ja.png | 창 탭·패널 탭 | MaguroMain | light/ja | tabs.json | 61956 B (1226×823) | tabs cfg | DWM |  |
 | tabs.ko.png | 창 탭·패널 탭 | MaguroMain | light/ko | tabs.json | 60849 B (1226×823) | tabs cfg | DWM |  |
 | tabs.png | 창 탭·패널 탭 | MaguroMain | light/en | tabs.json | 58828 B (1226×823) | tabs cfg | DWM |  |
-| workspaces.ja.png | 워크스페이스 이름 | MaguroAsk 슬롯 이름 | light/ja | workspaces 시드 Desk | 2679 B (406×140) | Ctrl+Alt+Shift+1 → WM_COMMAND 1920 | DWM | MaguroAsk 제목=Rename/이름 바꾸기, 값=Desk |
-| workspaces.ko.png | 워크스페이스 이름 | MaguroAsk 슬롯 이름 | light/ko | workspaces 시드 Desk | 2279 B (406×140) | Ctrl+Alt+Shift+1 → WM_COMMAND 1920 | DWM | MaguroAsk 제목=Rename/이름 바꾸기, 값=Desk |
-| workspaces.png | 워크스페이스 이름 | MaguroAsk 슬롯 이름 | light/en | workspaces 시드 Desk | 2319 B (406×140) | Ctrl+Alt+Shift+1 → WM_COMMAND 1920 | DWM | MaguroAsk 제목=Rename/이름 바꾸기, 값=Desk |
+| images-v5/workspaces.ja.png | 워크스페이스 메뉴 | 톱니 메뉴 → 작업 공간 하위 메뉴 | light/ja | workspaces 시드 Photos/Docs/Work | 20925 B (618×491) | WM_COMMAND 207 → 메뉴 HWND에 VK_DOWN×3, VK_RIGHT PostMessage | 화면 복사(흰 배경) | 슬롯 1–3 이름, 4–9 빈 슬롯 |
+| images-v5/workspaces.ko.png | 워크스페이스 메뉴 | 톱니 메뉴 → 작업 공간 하위 메뉴 | light/ko | workspaces 시드 Photos/Docs/Work | 18119 B (525×491) | WM_COMMAND 207 → 메뉴 HWND에 VK_DOWN×3, VK_RIGHT PostMessage | 화면 복사(흰 배경) | 슬롯 1–3 이름, 4–9 빈 슬롯 |
+| images-v5/workspaces.png | 워크스페이스 메뉴 | 톱니 메뉴 → 작업 공간 하위 메뉴 | light/en | workspaces 시드 Photos/Docs/Work | 21624 B (622×491) | WM_COMMAND 207 → 메뉴 HWND에 VK_DOWN×3, VK_RIGHT PostMessage | 화면 복사(흰 배경) | 슬롯 1–3 이름, 4–9 빈 슬롯 |
 
 ## 톱니바퀴 메뉴 (gear popup) — 재촬영
 

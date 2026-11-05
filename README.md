@@ -172,7 +172,7 @@ With Maguro running, **Win+Alt+V** opens the clipboard path even when another ap
 
 Up to nine named layouts. **Ctrl+Alt+1…9** loads a slot; **Ctrl+Alt+Shift+1…9** saves the current tabs, panes, and folders into that slot. Gear menu → **Workspaces** can save, load, rename, or clear. Slots live in `maguro.json`.
 
-<p align="center"><img width="420" alt="Naming a workspace" src="docs/images-v4/workspaces.png"></p>
+<p align="center"><img width="480" alt="Gear menu → Workspaces" src="docs/images-v5/workspaces.png"></p>
 
 ### 18. Dialog Jump
 
