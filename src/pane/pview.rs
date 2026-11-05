@@ -126,7 +126,7 @@ pub(crate) fn line_no_at(lines: &[Line], scroll_y: i32, area_top: i32, y: i32) -
 }
 
 pub(crate) fn row_h(fh: i32, dpi: i32) -> i32 {
-    fh + 8 * dpi / 96
+    fh + SPACE_8 * dpi / 96
 }
 
 pub(crate) unsafe fn fonts(cache: &mut FaceCache, dpi: i32, base: HFONT) -> [HFONT; 4] {
@@ -140,11 +140,7 @@ pub(crate) unsafe fn fonts(cache: &mut FaceCache, dpi: i32, base: HFONT) -> [HFO
     }
     let mut lf = LOGFONTW::default();
     GetObjectW(base.into(), size_of::<LOGFONTW>() as i32, Some(&mut lf as *mut _ as _));
-    let mono = CreateFontIndirectW(&LOGFONTW { lfFaceName: logfont("Consolas", 0).lfFaceName, ..lf });
-    let bold = CreateFontIndirectW(&LOGFONTW { lfWeight: 600, ..lf });
-    let h1 = CreateFontIndirectW(&LOGFONTW { lfWeight: 600, lfHeight: lf.lfHeight * 16 / 10, ..lf });
-    let h2 = CreateFontIndirectW(&LOGFONTW { lfWeight: 600, lfHeight: lf.lfHeight * 13 / 10, ..lf });
-    let f = [mono, bold, h1, h2];
+    let f = preview_fonts(&lf);
     *cache = Some((dpi, f));
     f
 }
@@ -203,7 +199,7 @@ unsafe fn layout(scroll: &mut BodyScroll, dc: HDC, gen: usize, width: i32, text:
                     widths[col] = widths[col].max((text_w(dc, cell, font) + scale(14)).min(scale(260)));
                 }
             }
-            let rh = app(|a| a.fh) + scale(8);
+            let rh = app(|a| a.fh) + scale(SPACE_8);
             let h = rh * rows.len() as i32;
             lines.push(Line { text: String::new(), style: st, y, h, no: no + 1, table: Some((rows, widths)) });
             y += h;
@@ -228,7 +224,7 @@ unsafe fn layout(scroll: &mut BodyScroll, dc: HDC, gen: usize, width: i32, text:
             _ => 0,
         };
         lines.push(Line { text: t, style: st, y, h, no: no + 1, table: None });
-        y += h + if matches!(st, Style::H1 | Style::H2) { dpi / 24 } else { 0 };
+        y += h + if matches!(st, Style::H1 | Style::H2) { SPACE_4 * dpi / 96 } else { 0 };
     }
     scroll.layout = Some((gen, width, lines, y));
     y
@@ -241,26 +237,6 @@ pub(crate) fn clamp_scroll(scroll: &mut BodyScroll, total: i32, page: i32) {
     scroll.y = scroll.y.clamp(0, scroll.max_y.max(0));
     // Text, tables and lists keep their own sideways scroll and do not grow this bar.
     (scroll.max_x, scroll.page_w) = (0, 0);
-}
-
-// DrawTextW without text()'s single-line, end-ellipsis defaults.
-pub(crate) unsafe fn text_flags(dc: HDC, mut r: RECT, s: &str, font: HFONT, rgb: u32, flags: DRAW_TEXT_FORMAT) {
-    let vcenter = flags.0 & DT_VCENTER.0 != 0;
-    let wrap = flags.0 & DT_WORDBREAK.0 != 0;
-    let calc = flags.0 & DT_CALCRECT.0 != 0;
-    if vcenter && !wrap && !calc {
-        draw_ink_line(dc, r, s, font, rgb, flags);
-        return;
-    }
-    let mut w: Vec<u16> = s.encode_utf16().collect();
-    if w.is_empty() {
-        return;
-    }
-    let old = SelectObject(dc, font.into());
-    SetBkMode(dc, TRANSPARENT);
-    SetTextColor(dc, cref(rgb));
-    DrawTextW(dc, &mut w, &mut r, flags | DT_NOPREFIX);
-    SelectObject(dc, old);
 }
 
 pub(crate) unsafe fn text_w(dc: HDC, s: &str, font: HFONT) -> i32 {
@@ -299,7 +275,7 @@ pub(crate) unsafe fn paint_text(
     let s = |v: i32| v * dpi / 96;
     let f = fonts(faces, dpi, font);
     let gutter = if kind == TextKind::Code { s(44) } else { 0 };
-    let width = area.right - area.left - gutter - s(8);
+    let width = area.right - area.left - gutter - s(SPACE_8);
     let pic_size = pic.map(|p| {
         let k = ((area.right - area.left) as f32 / p.w as f32).min((area.bottom - area.top) as f32 / p.h as f32);
         ((p.w as f32 * k) as i32, (p.h as f32 * k) as i32)
@@ -330,7 +306,7 @@ pub(crate) unsafe fn paint_text(
         for l in lines[first..].iter().take_while(|l| l.y - sy < area.bottom - area.top) {
             let top = area.top + l.y - sy;
             if let Some((rows, widths)) = &l.table {
-                let rh = fh + s(8);
+                let rh = fh + s(SPACE_8);
                 let first = ((area.top - top).max(0) / rh) as usize;
                 let shown = ((area.bottom - area.top) / rh + 2) as usize;
                 for (row_no, row) in rows.iter().enumerate().skip(first).take(shown) {
@@ -340,7 +316,7 @@ pub(crate) unsafe fn paint_text(
                         if x + w > area.left && x < area.right {
                             let cell = row.get(col).map(String::as_str).unwrap_or("");
                             let rect = RECT { left: x + s(7), top: row_top, right: x + w - s(7), bottom: row_top + rh };
-                            crate::text(dc, rect, cell, font, pal().text, DT_LEFT);
+                            paint_label(dc, rect, cell, font);
                             fill(dc, RECT { left: x + w - 1, top: row_top, right: x + w, bottom: row_top + rh }, pal().line);
                             fill(dc, RECT { left: x, top: row_top + rh - 1, right: x + w, bottom: row_top + rh }, pal().line);
                         }
@@ -357,7 +333,7 @@ pub(crate) unsafe fn paint_text(
             }
             if gutter > 0 {
                 let g = RECT { left: area.left, top, right: area.left + gutter - s(10), bottom: top + l.h };
-                text_flags(dc, g, &l.no.to_string(), f[0], pal().sub, DT_RIGHT | DT_SINGLELINE);
+                paint_text_flags(dc, g, &l.no.to_string(), f[0], pal().sub, DT_RIGHT | DT_SINGLELINE);
             }
             let mono = l.style == Style::Mono;
             let (ink, fnt) = match l.style {
@@ -365,14 +341,14 @@ pub(crate) unsafe fn paint_text(
                 st => (pal().text, style_font(st, font, &f)),
             };
             let left = area.left + gutter - if mono { sx } else { 0 };
-            let r = RECT { left, top, right: if mono { left + 100_000 } else { area.right - s(8) }, bottom: top + l.h };
+            let r = RECT { left, top, right: if mono { left + 100_000 } else { area.right - s(SPACE_8) }, bottom: top + l.h };
             let flags = if mono { DT_SINGLELINE | DT_EXPANDTABS } else { DT_WORDBREAK | DT_EXPANDTABS | DT_EDITCONTROL };
-            text_flags(dc, r, &l.text, fnt, ink, flags);
+            paint_text_flags(dc, r, &l.text, fnt, ink, flags);
         }
         if cut {
             let y = area.top + total - offset - s(24) - sy;
             let r = RECT { left: area.left, top: y, right: area.right, bottom: y + s(24) };
-            text_flags(dc, r, tr(crate::Key::OnlyFirst512KbIsShown), font, pal().sub, DT_SINGLELINE);
+            paint_text_flags(dc, r, tr(crate::Key::OnlyFirst512KbIsShown), font, pal().sub, DT_SINGLELINE);
         }
     });
 }
@@ -383,7 +359,7 @@ pub(crate) unsafe fn paint_table(scroll: &mut BodyScroll, dc: HDC, area: RECT, r
     let f = fonts(faces, dpi, font);
     let cols = rows.iter().map(|r| r.len()).max().unwrap_or(0);
     if cols == 0 {
-        text(dc, area, tr(crate::Key::Empty), font, pal().sub, DT_CENTER);
+        paint_center_meta(dc, area, tr(crate::Key::Empty), font);
         return;
     }
     let mut widths = vec![s(36); cols];
@@ -394,7 +370,7 @@ pub(crate) unsafe fn paint_table(scroll: &mut BodyScroll, dc: HDC, area: RECT, r
         }
     }
     let num = text_w(dc, &rows.len().to_string(), font) + s(14);
-    let rh = app(|a| a.fh) + s(8);
+    let rh = app(|a| a.fh) + s(SPACE_8);
     let total = rh * rows.len() as i32 + if cut { rh } else { 0 };
     clamp_scroll(scroll, total, area.bottom - area.top);
     let full: i32 = num + widths.iter().sum::<i32>();
@@ -410,14 +386,19 @@ pub(crate) unsafe fn paint_table(scroll: &mut BodyScroll, dc: HDC, area: RECT, r
                 fill(dc, row, pal().pill);
             }
             fill(dc, RECT { top: row.bottom - 1, ..row }, pal().line);
-            text(dc, RECT { left: area.left, right: area.left + num - s(6), ..row }, &(k + 1).to_string(), font, pal().sub, DT_RIGHT);
+            paint_meta_right(dc, RECT { left: area.left, right: area.left + num - s(6), ..row }, &(k + 1).to_string(), font);
             let mut x = area.left + num - sx;
             for (c, w) in widths.iter().enumerate() {
                 if x + w > area.left + num && x < area.right {
                     let cell = r.get(c).map(String::as_str).unwrap_or("");
                     let cr = RECT { left: (x + s(7)).max(area.left + num), top, right: x + w - s(7), bottom: top + rh };
+                    let face = if k == 0 { f[1] } else { font };
                     let right = k > 0 && !cell.is_empty() && cell.replace(',', "").parse::<f64>().is_ok();
-                    text(dc, cr, cell, if k == 0 { f[1] } else { font }, pal().text, if right { DT_RIGHT } else { DT_LEFT });
+                    if right {
+                        text(dc, cr, cell, face, pal().text, DT_RIGHT);
+                    } else {
+                        paint_label(dc, cr, cell, face);
+                    }
                     fill(dc, RECT { left: x + w - 1, top, right: x + w, bottom: top + rh }, pal().line);
                 }
                 x += w;
@@ -426,17 +407,17 @@ pub(crate) unsafe fn paint_table(scroll: &mut BodyScroll, dc: HDC, area: RECT, r
         if cut {
             let top = area.top + rows.len() as i32 * rh - sy;
             let r = RECT { left: area.left + s(6), top, right: area.right, bottom: top + rh };
-            text(dc, r, tr(crate::Key::MoreRowsNotShown), font, pal().sub, DT_LEFT);
+            paint_meta(dc, r, tr(crate::Key::MoreRowsNotShown), font);
         }
     });
 }
 
 pub(crate) unsafe fn paint_list(scroll: &mut BodyScroll, dc: HDC, area: RECT, rows: &[(String, String)], font: HFONT, dpi: i32) {
     let s = |v: i32| v * dpi / 96;
-    let rh = app(|a| a.fh) + s(8);
+    let rh = app(|a| a.fh) + s(SPACE_8);
     let top0 = area.top;
     if rows.is_empty() {
-        text(dc, area, tr(crate::Key::Empty), font, pal().sub, DT_CENTER);
+        paint_center_meta(dc, area, tr(crate::Key::Empty), font);
         return;
     }
     let page = area.bottom - top0;
@@ -448,10 +429,10 @@ pub(crate) unsafe fn paint_list(scroll: &mut BodyScroll, dc: HDC, area: RECT, ro
             let top = top0 + k as i32 * rh - sy;
             let r = RECT { left: area.left, top, right: area.right, bottom: top + rh };
             if k % 2 == 1 {
-                fill(dc, RECT { left: r.left - s(8), right: r.right + s(8), ..r }, blend(pal().card, pal().bg, 0.45));
+                fill(dc, RECT { left: r.left - s(SPACE_8), right: r.right + s(SPACE_8), ..r }, blend(pal().card, pal().bg, 0.45));
             }
-            text(dc, RECT { right: r.right - sw - s(8), ..r }, name, font, pal().text, DT_LEFT);
-            text(dc, RECT { left: r.right - sw, ..r }, size, font, pal().sub, DT_RIGHT);
+            paint_label(dc, RECT { right: r.right - sw - s(SPACE_8), ..r }, name, font);
+            paint_meta_right(dc, RECT { left: r.right - sw, ..r }, size, font);
         }
     });
 }

@@ -182,6 +182,27 @@ pub(crate) unsafe fn draw_ink_line(dc: HDC, mut r: RECT, s: &str, font: HFONT, r
     draw_line(dc, &mut r, s, font, rgb, extra);
 }
 
+/// DrawText with the caller's flags. A single line with `DT_VCENTER` uses the same glyph box as [`text`].
+/// Wrapped and top-aligned runs keep the flags, including tab stops. No end ellipsis unless `flags` asks.
+pub(crate) unsafe fn paint_text_flags(dc: HDC, mut r: RECT, s: &str, font: HFONT, rgb: u32, flags: DRAW_TEXT_FORMAT) {
+    let vcenter = flags.0 & DT_VCENTER.0 != 0;
+    let wrap = flags.0 & DT_WORDBREAK.0 != 0;
+    let calc = flags.0 & DT_CALCRECT.0 != 0;
+    if vcenter && !wrap && !calc {
+        draw_ink_line(dc, r, s, font, rgb, flags);
+        return;
+    }
+    let mut w: Vec<u16> = s.encode_utf16().collect();
+    if w.is_empty() {
+        return;
+    }
+    let old = SelectObject(dc, font.into());
+    SetBkMode(dc, TRANSPARENT);
+    SetTextColor(dc, cref(rgb));
+    DrawTextW(dc, &mut w, &mut r, flags | DT_NOPREFIX);
+    SelectObject(dc, old);
+}
+
 /// Shared checkbox. 16 DIP is the caller's box. The corner radius lives here.
 /// `hot` uses the same accent wash as a hovered settings button. Light and dark come from `pal()`.
 pub(crate) unsafe fn draw_tick(dc: HDC, r: RECT, tick: crate::shell::ctxmenu::Tick, accent: u32, dpi: i32, icon: HFONT, ground: u32, hot: bool) {

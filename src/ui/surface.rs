@@ -189,6 +189,11 @@ pub(crate) unsafe fn paint_meta(dc: HDC, r: RECT, s: &str, font: HFONT) {
     crate::text(dc, r, s, font, ui_tokens().sub, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
 }
 
+/// Secondary label, token sub ink, right aligned. Same box as [`paint_meta`].
+pub(crate) unsafe fn paint_meta_right(dc: HDC, r: RECT, s: &str, font: HFONT) {
+    crate::text(dc, r, s, font, ui_tokens().sub, DT_RIGHT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
+}
+
 /// Secondary line centred in `r`. Status and the page footer use this.
 pub(crate) unsafe fn paint_center_meta(dc: HDC, r: RECT, s: &str, font: HFONT) {
     crate::text(dc, r, s, font, ui_tokens().sub, DT_CENTER | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);

@@ -573,9 +573,42 @@ pub(crate) unsafe fn bold_ui_font() -> HFONT {
     stored
 }
 
+/// Preview faces from the body font: Consolas, semibold, then semibold at 1.6× and 1.3×.
+/// Order is mono, bold, heading, subheading. Heights use the body's `lfHeight`.
+fn preview_logfonts(base: LOGFONTW) -> [LOGFONTW; 4] {
+    let mono = LOGFONTW { lfFaceName: logfont("Consolas", 0).lfFaceName, ..base };
+    let bold = LOGFONTW { lfWeight: 600, ..base };
+    let h1 = LOGFONTW { lfWeight: 600, lfHeight: base.lfHeight * 16 / 10, ..base };
+    let h2 = LOGFONTW { lfWeight: 600, lfHeight: base.lfHeight * 13 / 10, ..base };
+    [mono, bold, h1, h2]
+}
+
+/// GDI fonts for one preview body. The caller owns them and deletes them with [`delete_font`].
+pub(crate) unsafe fn preview_fonts(base: &LOGFONTW) -> [HFONT; 4] {
+    let faces = preview_logfonts(*base);
+    [CreateFontIndirectW(&faces[0]), CreateFontIndirectW(&faces[1]), CreateFontIndirectW(&faces[2]), CreateFontIndirectW(&faces[3])]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preview_faces_keep_the_body_metrics() {
+        let mut base = logfont("Segoe UI", 16);
+        base.lfWeight = 400;
+        let [mono, bold, h1, h2] = preview_logfonts(base);
+        assert_eq!(mono.lfHeight, base.lfHeight);
+        assert_eq!(mono.lfWeight, 400);
+        assert_eq!(utf16_face(&mono.lfFaceName), "Consolas");
+        assert_eq!(bold.lfHeight, base.lfHeight);
+        assert_eq!(bold.lfWeight, 600);
+        assert_eq!(utf16_face(&bold.lfFaceName), "Segoe UI");
+        assert_eq!(h1.lfHeight, base.lfHeight * 16 / 10);
+        assert_eq!(h1.lfWeight, 600);
+        assert_eq!(h2.lfHeight, base.lfHeight * 13 / 10);
+        assert_eq!(h2.lfWeight, 600);
+    }
 
     #[test]
     fn missing_face_falls_back_to_the_language_default() {

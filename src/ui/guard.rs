@@ -20,7 +20,6 @@ const BANNED: &[&str] = &[
 /// Follow-up windows. Each one still contains a banned call. A new file that
 /// paints on its own fails the test, and so does leaving a finished file here.
 const ALLOW: &[&str] = &[
-    "src/pane/pview.rs",
     "src/pane/select.rs",
     "src/pane/view.rs",
 ];
@@ -232,6 +231,18 @@ const MIGRATED: &[(&str, &[&str])] = &[
             "bold_ui_font(",
             "icon_font(",
             "visual_from_pointer(",
+        ],
+    ),
+    (
+        "src/pane/pview.rs",
+        &[
+            "preview_fonts(",
+            "paint_text_flags(",
+            "paint_label(",
+            "paint_meta(",
+            "paint_meta_right(",
+            "paint_center_meta(",
+            "fill(",
         ],
     ),
 ];
