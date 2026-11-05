@@ -4,7 +4,7 @@ Where the file lives is described under [Install](../README.md#install).
 
 ## Settings file
 
-Maguro reads and writes `maguro.json` in the settings folder (`%APPDATA%\Maguro`, or beside the exe when `portable.txt` is present). A missing file starts from the built-in defaults. Named sessions are `.maguro` files in `maguro-sessions`.
+Maguro reads and writes `maguro.json` in the settings folder (`%APPDATA%\Maguro`, or beside the exe when `portable.txt` is present). A missing file starts from the built-in defaults. Named sessions are `.maguro` files in `maguro-sessions` next to `maguro.json`.
 
 ## Writing, language, and view
 
@@ -12,7 +12,7 @@ The file is replaced atomically. A failed write is tried again in 5 seconds. A f
 
 The default follows the Windows display language when a language file matches it; otherwise English. Auto, English, and every language file can be chosen. Bundled files are Korean, Japanese, French, and German (`"ko"`, `"ja"`, `"fr"`, `"de"`). Saved `"en"`, `"ko"`, and `"ja"` still work, and any other ISO code such as `"es"` is kept when that file exists. How the files are written is in the [help](https://samek86.github.io/maguro/help/en/#languages). Explorer parts inside each pane, such as column names and right-click menus, follow the Windows display language. The font defaults to that language's face (Segoe UI, or Malgun Gothic / Yu Gothic UI for Korean and Japanese, or the face named in the file). A chosen face applies to the whole window at once (`font_face`). There is no font size setting, and an older `font` value is ignored.
 
-The gear menu’s View → Show file extensions is Windows' own setting, the same one Explorer uses, and it is on the Settings page too. Appearance → Follow Windows light / dark is the check for a new install. Appearance → Dark theme or Light theme picks light or dark by hand and turns following off. Lists are recoloured in place, so history, the filter, the selection, the scroll position, and an address being typed stay.
+The gear menu’s View → Show file extensions is Windows' own setting, the same one Explorer uses, and it is on the Settings page too. Appearance → Follow Windows light / dark is the check for a new install. Appearance → Dark theme or Light theme picks light or dark by hand and turns following off. Chrome updates immediately. If any open pane’s folder list is a DirectUI view, the usual Explorer list, Maguro restarts itself: paths, filters, and layout return from the session, and that list’s back and forward history starts over. A classic list view recolours in place and keeps the path, selection, and scroll position.
 
 ## Keys
 
