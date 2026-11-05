@@ -759,7 +759,8 @@ unsafe fn dispatch(id: &str, vk: u16, a: usize, list: bool, shell: impl Fn() -> 
         "pane.swap.right" => swap_dir(1, 0),
         "pane.swap.up" => swap_dir(0, -1),
         "pane.swap.down" => swap_dir(0, 1),
-        "nav.back" => browse(a, SBSP_NAVIGATEBACK),
+        // Backspace is nav.back2. An empty history stays: BrowseToIDList fails and this does not go up.
+        "nav.back" | "nav.back2" => browse(a, SBSP_NAVIGATEBACK),
         "nav.fwd" => browse(a, SBSP_NAVIGATEFORWARD),
         "nav.up" => browse(a, SBSP_PARENT),
         "nav.recent" => recent_menu(a),

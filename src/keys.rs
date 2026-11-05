@@ -83,6 +83,8 @@ const CMDS: &[Cmd] = &[
     cmd("pane.swap.up", MOVE, crate::Key::SwapWithPaneAbove, 0x26, true, true, true, false, false),
     cmd("pane.swap.down", MOVE, crate::Key::SwapWithPaneBelow, 0x28, true, true, true, false, false),
     cmd("nav.back", MOVE, crate::Key::Back, 0x25, false, false, true, false, false),
+    // Plain Backspace, same action as Alt+Left. Address, filter, and rename keep the key for editing.
+    cmd("nav.back2", MOVE, crate::Key::Back, 0x08, false, false, false, false, false),
     cmd("nav.fwd", MOVE, crate::Key::Forward, 0x27, false, false, true, false, false),
     cmd("nav.up", MOVE, crate::Key::ParentFolder, 0x26, false, false, true, false, false),
     cmd("nav.recent", MOVE, crate::Key::RecentFolders, 0x28, false, false, true, false, false),
@@ -627,6 +629,7 @@ mod tests {
             ("pane.swap.down", "Ctrl+Alt+Shift+↓"),
             ("pane.right", "Alt+Shift+→"),
             ("nav.back", "Alt+←"),
+            ("nav.back2", "Back"),
             ("nav.up", "Alt+↑"),
             ("nav.addr", "Ctrl+L"),
             ("nav.addr2", "Alt+D"),
@@ -674,6 +677,11 @@ mod tests {
         assert_eq!(lookup(b'5' as u16, true, true, false, false), None);
         assert_eq!(lookup(0x25, false, true, true, false), index("pane.left"));
         assert_eq!(lookup(0x25, false, false, true, false), index("nav.back"));
+        assert_eq!(lookup(0x08, false, false, false, false), index("nav.back2"));
+        assert_eq!(parse_chord("Back").unwrap().vk, 0x08);
+        assert_eq!(parse_chord("Backspace").unwrap().vk, 0x08);
+        assert_eq!(format_chord(&parse_chord("Back").unwrap()), "Back");
+        assert_eq!(format_chord(&parse_chord("Backspace").unwrap()), "Back");
         assert_eq!(lookup(b'N' as u16, true, false, false, false), index("win.new"));
         assert_eq!(lookup(b'N' as u16, true, false, true, false), index("file.new"));
         assert_eq!(lookup(b'N' as u16, true, true, false, false), index("file.dir"));
