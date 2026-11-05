@@ -189,6 +189,11 @@ pub(crate) unsafe fn paint_meta(dc: HDC, r: RECT, s: &str, font: HFONT) {
     crate::text(dc, r, s, font, ui_tokens().sub, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
 }
 
+/// Secondary line centred in `r`. Status and the page footer use this.
+pub(crate) unsafe fn paint_center_meta(dc: HDC, r: RECT, s: &str, font: HFONT) {
+    crate::text(dc, r, s, font, ui_tokens().sub, DT_CENTER | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
+}
+
 /// Caption of a small dialog: token ground, no cerulean fill, no gradient.
 pub(crate) unsafe fn style_dialog_caption(h: HWND) {
     let dark = ui_tokens().dark;
@@ -199,6 +204,13 @@ pub(crate) unsafe fn style_dialog_caption(h: HWND) {
     let def = COLORREF(0xFFFF_FFFF);
     let _ = DwmSetWindowAttribute(h, DWMWINDOWATTRIBUTE(36), &def as *const _ as _, 4);
     let _ = DwmSetWindowAttribute(h, DWMWINDOWATTRIBUTE(34), &def as *const _ as _, 4);
+}
+
+/// Preview-handler colours. The handler paints its own window on the token card with token text.
+pub(crate) unsafe fn style_preview_visuals(vis: &IPreviewHandlerVisuals) {
+    let t = ui_tokens();
+    _ = vis.SetBackgroundColor(crate::cref(t.card));
+    _ = vis.SetTextColor(crate::cref(t.text));
 }
 
 /// Borderless popup (the server dialog): round corners and a token-coloured frame.

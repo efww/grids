@@ -364,7 +364,7 @@ pub(crate) fn peek_geo(rc: RECT, dpi: i32) -> PeekGeo {
     PeekGeo { icon, title, max, close, stage, inner, prev: arrow(rc.left + (side - b) / 2), next: arrow(rc.right - side + (side - b) / 2) }
 }
 
-#[derive(Clone, Copy, PartialEq, Default, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub(crate) enum Hot {
     #[default]
     None,
@@ -611,6 +611,7 @@ pub(crate) struct PeekView {
     pub(crate) host_win: Option<HWND>, // the picture area's child window the handler draws in
     pub(crate) hover: bool,            // the mouse is over the popup: ‹ › show
     pub(crate) hot: Hot,
+    btn_down: Hot, // left button went down on this chrome control; release still follows `hot`
     pub(crate) bar_hot: bool,         // pointer over the vertical scrollbar thumb
     pub(crate) bar_drag: Option<i32>, // mouse y minus thumb top, while that thumb is dragged
     pub(crate) hbar_hot: bool,        // pointer over the horizontal scrollbar thumb
@@ -694,6 +695,7 @@ fn reset_frame() {
         v.grip = None;
         v.drag_pt = None;
         v.suppress_up = false;
+        v.btn_down = Hot::None;
         v.tip_on = false;
         v.zoom = 1.0;
         v.pan_pt = None;
@@ -897,6 +899,9 @@ unsafe fn create_peek(i: usize) -> bool {
     let Ok(hw) = CreateWindowExW(WS_EX_TOOLWINDOW, w!("MaguroPeek"), w!(""), style, rect.left, rect.top, w, h, Some(main), None, None, None) else {
         return false;
     };
+    // Shared caption colours. This popup still paints its own accent edge, so the
+    // system frame stays off and the corners stay square.
+    style_dialog_caption(hw);
     let square = DWMWCP_DONOTROUND;
     _ = DwmSetWindowAttribute(hw, DWMWA_WINDOW_CORNER_PREFERENCE, &square as *const _ as _, 4);
     let policy = DWMNCRP_DISABLED;
@@ -1585,8 +1590,7 @@ pub(crate) unsafe fn host_handler(h: HWND, clsid: &GUID, path: &str, area: RECT)
         ph.cast::<IInitializeWithFile>()?.Initialize(&name, STGM_READ.0)?;
     }
     if let Ok(vis) = ph.cast::<IPreviewHandlerVisuals>() {
-        _ = vis.SetBackgroundColor(cref(pal().card));
-        _ = vis.SetTextColor(cref(pal().text));
+        style_preview_visuals(&vis);
     }
     ph.SetWindow(h, &area)?;
     ph.DoPreview()?;
@@ -1675,10 +1679,11 @@ fn peek_host_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
         match msg {
             WM_ERASEBKGND => return LRESULT(1),
             WM_PAINT => {
-                let font = app(|a| a.font);
+                let dpi = app(|a| a.dpi);
+                let font = body_font();
                 buffered(h, |dc, rc| {
-                    fill(dc, rc, pal().card);
-                    text(dc, rc, tr(crate::Key::OpeningEscCancel), font, pal().sub, DT_CENTER);
+                    crate::ui::paint_card(dc, rc, dpi);
+                    paint_center_meta(dc, rc, tr(crate::Key::OpeningEscCancel), font);
                 });
             }
             _ => return DefWindowProcW(h, msg, wp, lp),
@@ -1706,10 +1711,6 @@ unsafe fn handler_ready(h: HWND, gen: usize, ok: bool) {
 
 // Text, tables and lists live in pview so the preview pane paints the same bodies.
 pub(crate) use super::pview::{md_lines, Style};
-
-unsafe fn fonts(dpi: i32, base: HFONT) -> [HFONT; 4] {
-    view(|v| super::pview::fonts(&mut v.fonts, dpi, base))
-}
 
 // ---------- scrollbar ----------
 // Pure geometry: thumb size, thumb position, and clamping. No window, so the tests can pin it.
@@ -2428,36 +2429,6 @@ unsafe fn blit_scaled(dc: HDC, to: RECT, w: i32, h: i32, px: &[u8]) {
     _ = DeleteObject(bmp.into());
 }
 
-// DrawTextW without text()'s single-line, end-ellipsis defaults.
-pub(crate) unsafe fn text_flags(dc: HDC, mut r: RECT, s: &str, font: HFONT, rgb: u32, flags: DRAW_TEXT_FORMAT) {
-    // A single line asked to sit in the middle of the rect uses the same glyph box as text().
-    let vcenter = flags.0 & DT_VCENTER.0 != 0;
-    let wrap = flags.0 & DT_WORDBREAK.0 != 0;
-    let calc = flags.0 & DT_CALCRECT.0 != 0;
-    if vcenter && !wrap && !calc {
-        draw_ink_line(dc, r, s, font, rgb, flags);
-        return;
-    }
-    let mut w: Vec<u16> = s.encode_utf16().collect();
-    if w.is_empty() {
-        return; // see text()
-    }
-    let old = SelectObject(dc, font.into());
-    SetBkMode(dc, TRANSPARENT);
-    SetTextColor(dc, cref(rgb));
-    DrawTextW(dc, &mut w, &mut r, flags | DT_NOPREFIX);
-    SelectObject(dc, old);
-}
-
-unsafe fn text_w(dc: HDC, s: &str, font: HFONT) -> i32 {
-    let w: Vec<u16> = s.chars().take(200).collect::<String>().encode_utf16().collect();
-    let old = SelectObject(dc, font.into());
-    let mut sz = SIZE::default();
-    _ = GetTextExtentPoint32W(dc, &w, &mut sz);
-    SelectObject(dc, old);
-    sz.cx
-}
-
 unsafe fn clip(dc: HDC, r: RECT, draw: impl FnOnce()) {
     let rgn = CreateRectRgn(r.left, r.top, r.right, r.bottom);
     SelectClipRgn(dc, Some(rgn));
@@ -2486,16 +2457,13 @@ pub(crate) unsafe fn paint_card(dc: HDC, area: RECT, icon: Option<&Pix>, rows: &
     let left = x0 + side + s(32);
     let rh = app(|a| a.fh) + s(8);
     let mut y = area.top + ((area.bottom - area.top) - rh * rows.len() as i32).max(0) / 2;
+    let ink = ui_tokens().text;
     for (label, value) in rows {
-        text(dc, RECT { left, top: y, right: left + lw, bottom: y + rh }, label, font, pal().sub, DT_LEFT);
+        paint_meta(dc, RECT { left, top: y, right: left + lw, bottom: y + rh }, label, font);
         let v = RECT { left: left + lw, top: y + s(4), right: area.right, bottom: y + rh * 3 };
-        let mut w: Vec<u16> = value.encode_utf16().collect();
-        let mut calc = v;
-        let old = SelectObject(dc, font.into());
-        DrawTextW(dc, &mut w, &mut calc, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX | DT_EDITCONTROL);
-        SelectObject(dc, old);
-        super::pview::text_flags(dc, v, value, font, pal().text, DT_WORDBREAK | DT_EDITCONTROL | DT_END_ELLIPSIS);
-        y += (calc.bottom - calc.top).clamp(rh - s(8), rh * 3 - s(8)) + s(8);
+        let (_, th) = wrap_text(dc, v, value, font, ink, true);
+        wrap_text_ellipsis(dc, v, value, font, ink, false);
+        y += th.clamp(rh - s(8), rh * 3 - s(8)) + s(8);
     }
 }
 
@@ -2525,22 +2493,31 @@ unsafe fn paint_pages(dc: HDC, area: RECT, pages: &[Pix], total: u32, font: HFON
             let top = area.top + oy + ch - scaled(footer, zoom);
             let r = RECT { left: area.left, top, right: area.right, bottom: top + s(32) };
             let t = format!("{} {} / {}", tr(crate::Key::RenderingPages), pages.len(), total);
-            text(dc, r, &t, font, pal().sub, DT_CENTER);
+            paint_center_meta(dc, r, &t, font);
         }
     });
 }
 
+fn chrome_visual(which: Hot, hot: Hot, down: Hot) -> ButtonVisual {
+    let hot_id = (hot != Hot::None).then_some(hot);
+    let down_id = (down != Hot::None).then_some(down);
+    visual_from_pointer(which, hot_id, down_id)
+}
+
 pub(crate) unsafe fn paint_peek(h: HWND) {
-    let (dpi, font, icon_font, name, ilist, accent) = app(|a| (a.dpi, a.font, a.icon_font, a.peek_name.clone(), a.ilist.clone(), a.s.accent_now()));
-    let (hosted, hover, hot, maximized, zoom) = view(|v| (v.hosted, v.hover, v.hot, v.maximized, zoom_or_fit(v.zoom)));
+    let (dpi, name, ilist, accent) = app(|a| (a.dpi, a.peek_name.clone(), a.ilist.clone(), a.s.accent_now()));
+    let (hosted, hover, hot, down, maximized, zoom) = view(|v| (v.hosted, v.hover, v.hot, v.btn_down, v.maximized, zoom_or_fit(v.zoom)));
+    let font = body_font();
+    let bold = bold_ui_font();
+    let glyphs = icon_font();
+    let ground = ui_tokens().bg;
     buffered(h, |dc, rc| {
         let s = |v: i32| v * dpi / 96;
         let g = peek_geo(rc, dpi);
-        let f = fonts(dpi, font);
-        fill(dc, rc, pal().bg);
+        paint_window(dc, rc);
         let j = peek_job();
         let gen = j.gen;
-        // header: icon, name in bold, the facts after it in the secondary colour
+        // header: icon, name in the shared bold face, facts in the secondary colour
         if let (Some(p), Some(il)) = (&j.done, &ilist) {
             if let Some(icon) = (p.icon >= 0).then(|| il.GetIcon(p.icon, ILD_NORMAL.0).ok()).flatten() {
                 let r = g.icon;
@@ -2550,7 +2527,7 @@ pub(crate) unsafe fn paint_peek(h: HWND) {
         }
         let mid = g.title.top + (g.title.bottom - g.title.top) / 2;
         let name_r = RECT { bottom: mid, ..g.title };
-        text(dc, name_r, &name, f[1], pal().text, DT_LEFT | DT_VCENTER);
+        paint_label(dc, name_r, &name, bold);
         if let Some(p) = &j.done {
             let budget = header_char_budget(g.title.right - g.title.left, s(16));
             let mut rows = wrap_fields(&p.file.fields(), budget.max(24));
@@ -2563,19 +2540,14 @@ pub(crate) unsafe fn paint_peek(h: HWND) {
                 _ => joined,
             };
             let facts = RECT { top: mid, ..g.title };
-            text(dc, facts, &shown, font, pal().sub, DT_LEFT | DT_VCENTER);
+            paint_meta(dc, facts, &shown, font);
         }
         let glyph = if maximized { ICON_RESTORE } else { ICON_MAX };
-        for (r, on, mark) in [(g.max, hot == Hot::Max, glyph), (g.close, hot == Hot::Close, ICON_CLOSE)] {
-            if on {
-                fill(dc, r, blend(pal().bg, pal().text, 0.08));
-            }
-            text(dc, r, mark, icon_font, if on { pal().text } else { pal().sub }, DT_CENTER);
-        }
-        // content: pictures and pages on the stage; everything else on a plate, as panes are
+        paint_button(dc, g.max, ButtonKind::Icon, chrome_visual(Hot::Max, hot, down), glyph, glyphs, dpi, ground, FocusRing::Outside);
+        paint_button(dc, g.close, ButtonKind::Icon, chrome_visual(Hot::Close, hot, down), ICON_CLOSE, glyphs, dpi, ground, FocusRing::Outside);
+        // content: pictures and pages on the stage; everything else on a shared card
         let plate = || {
-            fill(dc, g.stage, pal().card);
-            frame(dc, g.stage, 1, pal().line);
+            crate::ui::paint_card(dc, g.stage, dpi);
         };
         match j.done.as_ref().map(|p| &p.body) {
             Some(Body::Pic(p)) => {
@@ -2624,21 +2596,17 @@ pub(crate) unsafe fn paint_peek(h: HWND) {
             Some(Body::Handler(_)) => {
                 plate();
                 if hosted != Some(gen) {
-                    text(dc, g.stage, tr(crate::Key::OpeningEscCancel), font, pal().sub, DT_CENTER);
+                    paint_center_meta(dc, g.stage, tr(crate::Key::OpeningEscCancel), font);
                 }
             }
-            None => text(dc, g.stage, tr(crate::Key::Loading), font, pal().sub, DT_CENTER),
+            None => paint_center_meta(dc, g.stage, tr(crate::Key::Loading), font),
         }
         drop(j);
         paint_bars(dc, h, accent);
-        // ‹ › while the mouse is over the popup, square like the app's buttons
+        // ‹ › while the mouse is over the popup
         if hover {
-            for (r, glyph, which) in [(g.prev, ICON_PREV, Hot::Prev), (g.next, ICON_NEXT, Hot::Next)] {
-                let on = hot == which;
-                fill(dc, r, if on { pal().card } else { pal().bg });
-                frame(dc, r, 1, if on { pal().sub } else { pal().line });
-                text(dc, r, glyph, icon_font, if on { pal().text } else { pal().sub }, DT_CENTER);
-            }
+            paint_button(dc, g.prev, ButtonKind::Secondary, chrome_visual(Hot::Prev, hot, down), ICON_PREV, glyphs, dpi, ground, FocusRing::Outside);
+            paint_button(dc, g.next, ButtonKind::Secondary, chrome_visual(Hot::Next, hot, down), ICON_NEXT, glyphs, dpi, ground, FocusRing::Outside);
         }
         // Last, so nothing drawn above covers it. Content rects stay inside this thickness.
         frame(dc, rc, peek_edge(dpi), accent);
@@ -2726,35 +2694,20 @@ unsafe fn bar_under(h: HWND, x: i32, y: i32) -> bool {
     false
 }
 
-// Rounded like the settings window's bar. No pen: the fill is the whole mark.
-unsafe fn round_fill(dc: HDC, r: RECT, rad: i32, fill: u32) {
-    if r.right <= r.left || r.bottom <= r.top {
-        return;
-    }
-    let brush = CreateSolidBrush(cref(fill));
-    let pen = HPEN(GetStockObject(NULL_PEN).0);
-    let op = SelectObject(dc, pen.into());
-    let ob = SelectObject(dc, brush.into());
-    _ = RoundRect(dc, r.left, r.top, r.right, r.bottom, rad.max(1), rad.max(1));
-    SelectObject(dc, op);
-    SelectObject(dc, ob);
-    _ = DeleteObject(brush.into());
-}
-
 unsafe fn paint_bars(dc: HDC, h: HWND, accent: u32) {
     let dpi = app(|a| a.dpi);
     let (vert, horiz) = bars_now(h);
-    let s = |v: i32| v * dpi / 96;
     let (bg, text) = (pal().bg, pal().text);
+    let ground = ui_tokens().bg;
     if let Some(b) = vert {
         let (track, thumb) = bar_rgb(bg, text, accent, b.hot);
-        round_fill(dc, b.rects.paint, s(4), track);
-        round_fill(dc, thumb_of(b.rects, &b.lay), s(4), thumb);
+        paint_wash(dc, b.rects.paint, dpi, track, ground);
+        paint_wash(dc, thumb_of(b.rects, &b.lay), dpi, thumb, track);
     }
     if let Some(b) = horiz {
         let (track, thumb) = bar_rgb(bg, text, accent, b.hot);
-        round_fill(dc, b.rects.paint, s(4), track);
-        round_fill(dc, hthumb_of(b.rects, &b.lay), s(4), thumb);
+        paint_wash(dc, b.rects.paint, dpi, track, ground);
+        paint_wash(dc, hthumb_of(b.rects, &b.lay), dpi, thumb, track);
     }
 }
 
@@ -3159,19 +3112,31 @@ fn peek_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                 }
             }
             WM_MOUSELEAVE => {
-                view(|v| (v.hover, v.hot, v.bar_hot, v.hbar_hot) = (false, Hot::None, false, false));
+                view(|v| {
+                    (v.hover, v.hot, v.bar_hot, v.hbar_hot) = (false, Hot::None, false, false);
+                    v.btn_down = Hot::None;
+                });
                 peek_tip(h, Hot::None);
                 _ = InvalidateRect(Some(h), None, false);
             }
             WM_LBUTTONDOWN => {
                 let (x, y) = lp_xy(lp);
                 if press_bar(h, x, y) {
-                    view(|v| v.bar_down = true);
+                    view(|v| {
+                        v.bar_down = true;
+                        v.btn_down = Hot::None;
+                    });
                     _ = SetCapture(h);
                 } else {
                     let g = geo_of(h);
                     let mut rc = RECT::default();
                     _ = GetClientRect(h, &mut rc);
+                    let hit = peek_hit(&g, x, y);
+                    let chrome = matches!(hit, Hot::Prev | Hot::Next | Hot::Max | Hot::Close);
+                    view(|v| v.btn_down = if chrome { hit } else { Hot::None });
+                    if chrome {
+                        _ = InvalidateRect(Some(h), None, false);
+                    }
                     if in_header(rc, &g, x, y, peek_grip(app(|a| a.dpi))) {
                         view(|v| v.drag_pt = Some((x, y)));
                         _ = SetCapture(h);
@@ -3207,7 +3172,7 @@ fn peek_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
             // ×, the maximise mark, and ‹ › act on a click; the content itself never closes the preview.
             // a press that started on the bar is a scroll, even if the pointer has slid onto ›
             WM_LBUTTONUP => {
-                let (suppress, on_bar, dragged, panned) = view(|v| {
+                let (suppress, on_bar, dragged, panned, pressed) = view(|v| {
                     let suppress = std::mem::replace(&mut v.suppress_up, false);
                     let on = v.bar_down;
                     v.bar_down = false;
@@ -3216,7 +3181,8 @@ fn peek_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                     let dragged = v.drag_pt.take().is_some();
                     let panned = v.pan_pt.take().is_some();
                     v.pan_drag = false;
-                    (suppress, on, dragged, panned)
+                    let pressed = std::mem::replace(&mut v.btn_down, Hot::None) != Hot::None;
+                    (suppress, on, dragged, panned, pressed)
                 });
                 if on_bar || dragged || panned {
                     _ = ReleaseCapture();
@@ -3232,13 +3198,20 @@ fn peek_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                         Hot::None => {}
                     }
                 }
+                if pressed {
+                    _ = InvalidateRect(Some(h), None, false);
+                }
             }
             WM_CAPTURECHANGED => {
-                view(|v| {
+                let pressed = view(|v| {
                     (v.bar_drag, v.hbar_drag, v.bar_down, v.drag_pt) = (None, None, false, None);
                     v.pan_pt = None;
                     v.pan_drag = false;
+                    std::mem::replace(&mut v.btn_down, Hot::None) != Hot::None
                 });
+                if pressed {
+                    _ = InvalidateRect(Some(h), None, false);
+                }
             }
             // Ctrl zooms a picture or PDF about the cursor. Shift still scrolls sideways. Plain wheel is unchanged.
             WM_MOUSEWHEEL if (wp.0 & 0xffff) as u32 & MK_CONTROL.0 != 0 => {

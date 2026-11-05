@@ -216,7 +216,16 @@ pub(crate) unsafe fn paint_check(dc: HDC, r: RECT, on: bool, hot: bool, dpi: i32
 }
 
 /// Multi-line text wrapped at `r`'s width. `calc` only measures, with the same font and flags.
-pub(crate) unsafe fn wrap_text(dc: HDC, mut r: RECT, s: &str, font: HFONT, rgb: u32, calc: bool) -> (i32, i32) {
+pub(crate) unsafe fn wrap_text(dc: HDC, r: RECT, s: &str, font: HFONT, rgb: u32, calc: bool) -> (i32, i32) {
+    wrap_text_flags(dc, r, s, font, rgb, calc, DRAW_TEXT_FORMAT(0))
+}
+
+/// [`wrap_text`] with an end ellipsis when the block is taller than `r`.
+pub(crate) unsafe fn wrap_text_ellipsis(dc: HDC, r: RECT, s: &str, font: HFONT, rgb: u32, calc: bool) -> (i32, i32) {
+    wrap_text_flags(dc, r, s, font, rgb, calc, DT_END_ELLIPSIS)
+}
+
+unsafe fn wrap_text_flags(dc: HDC, mut r: RECT, s: &str, font: HFONT, rgb: u32, calc: bool, extra: DRAW_TEXT_FORMAT) -> (i32, i32) {
     let mut w: Vec<u16> = s.encode_utf16().collect();
     if w.is_empty() {
         return (0, 0);
@@ -224,7 +233,8 @@ pub(crate) unsafe fn wrap_text(dc: HDC, mut r: RECT, s: &str, font: HFONT, rgb: 
     let old = SelectObject(dc, font.into());
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, cref(rgb));
-    DrawTextW(dc, &mut w, &mut r, DT_WORDBREAK | DT_EDITCONTROL | DT_NOPREFIX | if calc { DT_CALCRECT } else { DRAW_TEXT_FORMAT(0) });
+    let flags = DT_WORDBREAK | DT_EDITCONTROL | DT_NOPREFIX | extra | if calc { DT_CALCRECT } else { DRAW_TEXT_FORMAT(0) };
+    DrawTextW(dc, &mut w, &mut r, flags);
     SelectObject(dc, old);
     (r.right - r.left, r.bottom - r.top)
 }
