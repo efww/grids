@@ -22,11 +22,17 @@ pub(crate) unsafe fn paint_window(dc: HDC, r: RECT) {
 
 /// Card plate: token fill, hairline, radius 2. Corners blend into the window ground.
 pub(crate) unsafe fn paint_card(dc: HDC, r: RECT, dpi: i32) {
+    paint_card_fill(dc, r, dpi, ui_tokens().card);
+}
+
+/// Same plate as [`paint_card`] with a caller fill. Hover passes the selection mist.
+/// Hairline and radius stay on the shared tokens. Corners blend into the window ground.
+pub(crate) unsafe fn paint_card_fill(dc: HDC, r: RECT, dpi: i32, fill: u32) {
     if r.right <= r.left || r.bottom <= r.top {
         return;
     }
     let t = ui_tokens();
-    crate::aa_rfill(dc, r, px(dpi, RADIUS).max(1), t.card, Some(t.line), t.bg);
+    crate::aa_rfill(dc, r, px(dpi, RADIUS).max(1), fill, Some(t.line), t.bg);
 }
 
 /// The one border colour of a field. Focused is cerulean. Rest is the token line.

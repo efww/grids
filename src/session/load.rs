@@ -91,18 +91,19 @@ pub(crate) fn ago(t: std::time::SystemTime) -> String {
 }
 
 // The layout drawn to scale, each pane labelled with its folder name.
-pub(crate) unsafe fn draw_thumb(dc: HDC, r: RECT, s: &Session, font: HFONT) {
-    fill(dc, r, pal().bg);
+// The well stays square so the current-session outline (drawn by the caller) lines up with it.
+pub(crate) unsafe fn draw_thumb(dc: HDC, r: RECT, s: &Session, font: HFONT, dpi: i32) {
+    let t = ui_tokens();
+    fill(dc, r, t.bg);
     let xs = cells(r.left + 2, r.right - r.left - 4, &s.colr, 2);
     let mut i = 0;
     for (c, &(x0, x1)) in xs.iter().enumerate() {
         for (y0, y1) in cells(r.top + 2, r.bottom - r.top - 4, &s.rowr[c], 2) {
             let pane = RECT { left: x0, top: y0, right: x1, bottom: y1 };
-            fill(dc, pane, pal().card);
-            frame(dc, pane, 1, pal().line);
+            paint_chip(dc, pane, dpi, t.bg);
             if x1 - x0 > 24 && y1 - y0 > 12 {
                 let inner = RECT { left: x0 + 3, right: x1 - 3, ..pane };
-                text(dc, inner, &short_name(&s.paths[i]), font, pal().sub, DT_CENTER);
+                text(dc, inner, &short_name(&s.paths[i]), font, t.sub, DT_CENTER);
             }
             i += 1;
         }
@@ -131,6 +132,8 @@ pub(crate) unsafe fn open_load() {
     let Ok(h) = CreateWindowExW(WS_EX_TOOLWINDOW, w!("MaguroLoad"), w!(""), style, rc.left, y, g.w, g.h, Some(main), None, None, None) else {
         return;
     };
+    style_dialog_caption(h);
+    // Square on purpose: the popup is a tool window, and the client draws its own hairline.
     let square = DWMWCP_DONOTROUND;
     _ = DwmSetWindowAttribute(h, DWMWA_WINDOW_CORNER_PREFERENCE, &square as *const _ as _, 4);
     app(|a| a.load = h);
@@ -162,9 +165,7 @@ pub(crate) unsafe fn fit_load() {
     _ = SetWindowPos(h, None, 0, 0, g.w, g.h, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
     if let Some((card, thumb, _)) = editing.and_then(|k| g.cards.get(k)) {
         let r = load_name(card, thumb, dpi);
-        let inset = 4 * dpi / 96;
-        let outer = RECT { left: r.left + inset, top: r.top, right: (r.right - inset).max(r.left + inset), bottom: r.bottom };
-        place_edit(edit, outer, true);
+        place_edit(edit, field_edit_rect(r, dpi), true);
     }
     _ = InvalidateRect(Some(h), None, false);
 }
@@ -280,12 +281,12 @@ unsafe fn delete_card(h: HWND, k: usize) {
 
 /// Right-click → Rename: an edit over the card's name, all of it selected.
 unsafe fn start_rename(h: HWND, k: usize) {
-    let (mut edit, font, name) = app(|a| {
-        (a.load_edit, a.font, a.cards.get(k).map(|c| c.0.file_stem().unwrap_or_default().to_string_lossy().into_owned()))
+    let (mut edit, name) = app(|a| {
+        (a.load_edit, a.cards.get(k).map(|c| c.0.file_stem().unwrap_or_default().to_string_lossy().into_owned()))
     });
     let Some(name) = name else { return };
     if edit.0.is_null() {
-        edit = child(h, w!("EDIT"), w!(""), ES_AUTOHSCROLL as u32, WINDOW_EX_STYLE(0), 1, font);
+        edit = child(h, w!("EDIT"), w!(""), ES_AUTOHSCROLL as u32, WINDOW_EX_STYLE(0), 1, body_font());
         _ = ShowWindow(edit, SW_HIDE);
     }
     _ = SetWindowTextW(edit, &HSTRING::from(&name));
@@ -347,8 +348,18 @@ fn load_button(k: usize) -> Option<usize> {
     if k == LOAD_SAVE_AS || k == LOAD_FOLDER || k >= LOAD_DEL { Some(k) } else { None }
 }
 
+/// Layout line under a card. The app meta face, or the body face before it exists.
+unsafe fn meta_font() -> HFONT {
+    if let Some(font) = crate::app_try(|a| a.small_font) {
+        if !font.0.is_null() && !font.is_invalid() {
+            return font;
+        }
+    }
+    body_font()
+}
+
 pub(crate) unsafe fn paint_load(h: HWND) {
-    let (cards, hot, cur, dpi, font, small, icon_font, accent, editing, save_vis, folder_vis, del_vis) = app(|a| {
+    let (cards, hot, cur, dpi, accent, editing, save_vis, folder_vis, del_vis) = app(|a| {
         let cards: Vec<_> = a.cards.iter().map(|(p, s, t)| (p.clone(), s.clone(), t.clone())).collect();
         let del_vis: Vec<_> = (0..cards.len()).map(|k| a.load_btn.visual(LOAD_DEL + k, false)).collect();
         (
@@ -356,9 +367,6 @@ pub(crate) unsafe fn paint_load(h: HWND) {
             a.load_hot,
             a.s.file.clone(),
             a.dpi,
-            a.font,
-            a.small_font,
-            a.icon_font,
             a.s.accent_now(),
             a.load_editing,
             a.load_btn.visual(LOAD_SAVE_AS, false),
@@ -366,43 +374,49 @@ pub(crate) unsafe fn paint_load(h: HWND) {
             del_vis,
         )
     });
+    // A theme change redraws this popup. The caption colour has to follow that paint.
+    style_dialog_caption(h);
     let g = load_geo(cards.len(), dpi);
     let s = |v: i32| v * dpi / 96;
-    let ground = ui_tokens().bg;
+    let font = body_font();
+    let small = meta_font();
+    let icons = icon_font();
+    let t = ui_tokens();
+    let ground = t.bg;
     buffered(h, |dc, rc| {
         paint_window(dc, rc);
-        frame(dc, rc, 1, ui_tokens().line);
+        frame(dc, rc, 1, t.line);
         if cards.is_empty() {
             let r = RECT { bottom: g.save_as.top, ..rc };
-            text(dc, r, tr(crate::Key::NoSavedSessions), font, pal().sub, DT_CENTER);
+            text(dc, r, tr(crate::Key::NoSavedSessions), font, t.sub, DT_CENTER);
         }
         for (k, ((path, sess, when), (card, thumb, del))) in cards.iter().zip(&g.cards).enumerate() {
             let on = hot == Some(k) || hot == Some(LOAD_DEL + k);
             if on {
-                let t = ui_tokens();
-                aa_rfill(dc, *card, px(dpi, RADIUS).max(1), t.sel_mist(), Some(t.line), t.bg);
+                paint_card_fill(dc, *card, dpi, t.sel_mist());
             } else {
                 crate::ui::paint_card(dc, *card, dpi);
             }
-            draw_thumb(dc, *thumb, sess, small);
+            draw_thumb(dc, *thumb, sess, small, dpi);
             if path.to_string_lossy() == cur.as_str() {
                 frame(dc, *thumb, s(2), accent); // the session you're in
             }
             if on {
                 let vis = del_vis.get(k).copied().unwrap_or(ButtonVisual { state: ButtonState::Normal, focus: false });
-                paint_button(dc, *del, ButtonKind::Icon, vis, "\u{E711}", icon_font, dpi, pal().bg, FocusRing::Outside);
+                paint_button(dc, *del, ButtonKind::Icon, vis, "\u{E711}", icons, dpi, t.bg, FocusRing::Outside);
             }
             let name_r = load_name(card, thumb, dpi);
             if editing == Some(k) {
                 paint_field(dc, name_r, dpi, true);
             } else {
-                text(dc, name_r, &path.file_stem().unwrap_or_default().to_string_lossy(), font, pal().text, DT_LEFT);
+                let name = path.file_stem().unwrap_or_default().to_string_lossy();
+                paint_label(dc, name_r, &name, font);
             }
             let line = |top: i32, hgt: i32| RECT { left: card.left + s(6), right: card.right - s(6), top, bottom: top + hgt };
             let meta = format!("{}  ·  {}", layout_label(&sess.heights), when);
-            text(dc, line(thumb.bottom + s(22), s(16)), &meta, small, pal().sub, DT_LEFT);
+            paint_meta(dc, line(thumb.bottom + s(22), s(16)), &meta, small);
         }
-        fill(dc, RECT { left: s(12), top: g.save_as.top - 1, right: rc.right - s(12), bottom: g.save_as.top }, ui_tokens().line);
+        fill(dc, RECT { left: s(12), top: g.save_as.top - 1, right: rc.right - s(12), bottom: g.save_as.top }, t.line);
         let save = tr(crate::Key::SaveThisTab2);
         let folder = tr(crate::Key::OpenSessionsFolder);
         paint_button(dc, link_face(dc, g.save_as, save, font, false), ButtonKind::Link, save_vis, save, font, dpi, ground, FocusRing::Outside);
@@ -560,13 +574,7 @@ fn load_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                     _ => {}
                 }
             }
-            WM_CTLCOLOREDIT => {
-                let dc = HDC(wp.0 as _);
-                SetBkColor(dc, cref(ui_tokens().field_bg));
-                SetTextColor(dc, cref(pal().text));
-                SetDCBrushColor(dc, cref(ui_tokens().field_bg));
-                return LRESULT(GetStockObject(DC_BRUSH).0 as isize);
-            }
+            WM_CTLCOLOREDIT => return color_field_edit(HDC(wp.0 as _)),
             WM_COMMAND if ((wp.0 >> 16) & 0xffff) as u32 == EN_KILLFOCUS => _ = end_load_rename(),
             WM_KEYDOWN if wp.0 == VK_ESCAPE.0 as usize => _ = DestroyWindow(h),
             WM_ACTIVATE if (wp.0 & 0xffff) as u32 == WA_INACTIVE => _ = PostMessageW(Some(h), WM_CLOSE, WPARAM(0), LPARAM(0)),
