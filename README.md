@@ -142,7 +142,7 @@ Right-click the favourites panel (or a group) → **Add server connection…**. 
 
 Right-click an `.xlsx` / `.xlsm` → **Open read-only** to open Excel without locking the file for others. **Tidy to A1 · 100%** resets selection to A1, zoom to 100%, optionally selects the first sheet, and can keep a `.bak.xlsx` backup.
 
-<p align="center"><img width="420" alt="Tidy Excel workbooks to A1 and 100% zoom" src="docs/images-v3/feature_excel_readonly_tidy.png"></p>
+<p align="center"><img width="420" alt="Tidy Excel workbooks to A1 and 100% zoom" src="docs/images-v4/feature_excel_readonly_tidy.png"></p>
 
 ### 13. File basket
 

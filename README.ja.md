@@ -142,7 +142,7 @@ Space または F3 で画像、PDF、Office、HTML、Markdown、コード、CSV�
 
 `.xlsx` / `.xlsm` を右クリック → **読み取り専用で開く** でロックせずに Excel を開きます。**A1・100% に整理** は選択を A1、ズームを 100% に合わせ、必要なら先頭シートを選び、`.bak.xlsx` バックアップも残せます。
 
-<p align="center"><img width="420" alt="Excel を A1・100% に整理" src="docs/images-v3/feature_excel_readonly_tidy.ja.png"></p>
+<p align="center"><img width="420" alt="Excel を A1・100% に整理" src="docs/images-v4/feature_excel_readonly_tidy.ja.png"></p>
 
 ### 13. ファイル・バスケット
 
