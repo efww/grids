@@ -149,9 +149,6 @@ pub(crate) struct Desk {
     pub(crate) fav_tip_hold: Option<(i32, i32)>,
     /// Identity of the favourites rows last painted. Unchanged pin refreshes keep the tip.
     pub(crate) side_rows_mark: Option<u64>,
-    pub(crate) side_edit: HWND,
-    pub(crate) side_edit_at: Vec<usize>,
-    pub(crate) side_edit_key: Option<crate::NodeKey>,
     pub(crate) tree_input: bool, // a click/key reached the tree since its last selection change
     pub(crate) focus_keep: HWND, // focus when this window last went to the back
     pub(crate) click_nc: bool,   // the activating click was outside the client (title bar)
@@ -353,9 +350,6 @@ pub(crate) fn blank_desk() -> Desk {
         fav_tip_leave_armed: false,
         fav_tip_hold: None,
         side_rows_mark: None,
-        side_edit: HWND::default(),
-        side_edit_at: Vec::new(),
-        side_edit_key: None,
         tree_input: false,
         focus_keep: HWND::default(),
         click_nc: false,

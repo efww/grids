@@ -275,8 +275,8 @@ pub(crate) unsafe fn apply_font() {
         }
         (old, old_icon, old_bold, panes, a.tab_edit, a.load_edit)
     });
-    let (side_edit, match_edit) = app(|a| (a.side_edit, a.matcher.as_ref().map(|m| m.edit).unwrap_or_default()));
-    for e in [edit, load_edit, side_edit, match_edit] {
+    let match_edit = app(|a| a.matcher.as_ref().map(|m| m.edit).unwrap_or_default());
+    for e in [edit, load_edit, match_edit] {
         if !e.0.is_null() {
             SendMessageW(e, WM_SETFONT, Some(WPARAM(font.0 as usize)), Some(LPARAM(1)));
         }
@@ -382,7 +382,6 @@ unsafe fn refit_text_edits() {
     for h in panes {
         layout_pane(h);
     }
-    super::place_side_edit();
     super::place_tab_edit();
     refit_match();
     crate::fit_load();

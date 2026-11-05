@@ -422,34 +422,6 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
         }
         return true;
     }
-    // Favourites rename. The message loop translates a key that is already aimed at the
-    // edit. Eating it here, or calling into the IME before that translate, drops WM_CHAR
-    // and WM_IME_* on a TSF Japanese IME: the edit keeps focus and the text never changes.
-    // Esc and Enter are handled by the edit subclass after that translate. A key that
-    // landed on the panel is translated once, for the edit, and not again by this loop.
-    if let Some((edit, host)) = side_rename_windows() {
-        let on_edit = m.hwnd == edit;
-        let scan = side_msg_scan(m.lParam.0);
-        let mapped = side_scan_vk(scan);
-        let aim = side_key_vk(vk, scan, mapped);
-        let on_host = m.hwnd == host && m.hwnd != edit && side_key_belongs_to_edit(aim, ctrl, alt);
-        if on_edit || on_host {
-            if side_pretranslate_eats(on_edit, vk, scan, mapped, side_composing()) {
-                match side_rename_key(aim, false, false) {
-                    SideRenameKey::Commit => end_side_rename(true),
-                    SideRenameKey::Cancel => end_side_rename(false),
-                    SideRenameKey::Pass => return false,
-                }
-                return true;
-            }
-            if on_edit {
-                return false;
-            }
-            focus_side_edit(edit);
-            deliver_side_key(edit, m.message, m.wParam, m.lParam);
-            return true;
-        }
-    }
     // The tab list keeps arrows, Enter, Esc, and F2 (rename the selected row). Typing stays in its filter. Ctrl+Shift+L toggles it.
     if crate::tablist::captures(m.hwnd) {
         if let Some(i) = crate::keys::lookup(vk, ctrl, shift, alt, win) {

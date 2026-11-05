@@ -22,7 +22,7 @@ const DRAG_SLOP: i32 = 4;
 /// Compact card row, DIP. The settings table keeps the taller button row.
 const MGR_ROW: i32 = 22;
 const MGR_HEAD: i32 = 22;
-const ICON_N: usize = 5;
+const ICON_N: usize = 6;
 /// Tracking tip for the toolbar glyphs. Not the row tip (11) or the find tip (13).
 const MGR_TIP: usize = 16;
 
@@ -32,12 +32,13 @@ enum Act {
     Group,
     Up,
     Down,
+    Rename,
     Del,
     Expand,
     Close,
 }
 
-const TOOL: [Act; ICON_N] = [Act::Add, Act::Group, Act::Up, Act::Down, Act::Del];
+const TOOL: [Act; ICON_N] = [Act::Add, Act::Group, Act::Up, Act::Down, Act::Rename, Act::Del];
 
 /// Which row the keyboard and the highlight are on. Kind is part of the identity:
 /// a pin and a Maguro favourite can share the same index.
@@ -409,7 +410,7 @@ unsafe fn retitle(h: HWND) {
 fn act_on(id: Act) -> bool {
     match id {
         Act::Add | Act::Group | Act::Expand | Act::Close => true,
-        Act::Up | Act::Down | Act::Del => {
+        Act::Up | Act::Down | Act::Rename | Act::Del => {
             let rows = shown();
             sel_index(&rows).and_then(|i| rows.get(i)).is_some_and(fav_row_editable)
         }
@@ -422,6 +423,7 @@ fn act_glyph(id: Act) -> &'static str {
         Act::Group => "\u{E8F4}",
         Act::Up => "\u{E74A}",
         Act::Down => "\u{E74B}",
+        Act::Rename => "\u{E8AC}",
         Act::Del => "\u{E74D}",
         Act::Expand | Act::Close => "",
     }
@@ -433,6 +435,7 @@ fn act_tip(id: Act) -> &'static str {
         Act::Group => tr(crate::Key::NewGroup),
         Act::Up => tr(crate::Key::FavMoveUp),
         Act::Down => tr(crate::Key::FavMoveDown),
+        Act::Rename => tr(crate::Key::Rename2),
         Act::Del => tr(crate::Key::Delete),
         Act::Expand => tr(crate::Key::FavExpandAll),
         Act::Close => tr(crate::Key::Close),
@@ -460,7 +463,8 @@ fn act_rect(lay: &PopLay, id: Act) -> RECT {
         Act::Group => lay.icons[1],
         Act::Up => lay.icons[2],
         Act::Down => lay.icons[3],
-        Act::Del => lay.icons[4],
+        Act::Rename => lay.icons[4],
+        Act::Del => lay.icons[5],
         Act::Expand => lay.expand,
         Act::Close => lay.close,
     }
@@ -850,6 +854,7 @@ unsafe fn run_act(h: HWND, id: Act) {
         Act::Group => on_add_group(h),
         Act::Up => nudge_sel(false),
         Act::Down => nudge_sel(true),
+        Act::Rename => fav_manager_rename_sel(),
         Act::Del => fav_manager_delete_sel(),
         Act::Expand => expand_everything(),
         Act::Close => close_fav_manager(),
@@ -1489,6 +1494,17 @@ fn fav_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn toolbar_has_rename_between_down_and_delete() {
+        let i = TOOL.iter().position(|a| *a == Act::Rename).expect("rename button");
+        assert_eq!(TOOL[i - 1], Act::Down);
+        assert_eq!(TOOL[i + 1], Act::Del);
+        assert_eq!(act_glyph(Act::Rename), "\u{E8AC}");
+        let lay = pop_lay(900, 640, 96, px(96, 96));
+        assert_eq!(act_rect(&lay, Act::Rename), lay.icons[i]);
+        assert_eq!(act_rect(&lay, Act::Del), lay.icons[i + 1]);
+    }
 
     #[test]
     fn toolbar_uses_token_metrics() {
