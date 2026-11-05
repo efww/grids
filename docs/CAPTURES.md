@@ -1,6 +1,10 @@
-# 스크린샷 캡처 기록 (docs/images-v3)
+# 스크린샷 캡처 기록 (docs/images-v5)
 
-Maguro 0.2.3 README / 도움말용 스크린샷. 모든 제품 이미지는 **포터블 빌드만** 사용하고, AppData·레지스트리·grids.ini·설치본 경로를 쓰지 않는다.
+**현재 스크린샷 자산 폴더는 `docs/images-v5/`이다.** 캐시 회피용이다. 새로 찍는 샷은 이 폴더에만 넣는다. 같은 경로를 덮어쓰면 GitHub·브라우저 캐시에 옛 그림이 남으므로, 새 샷의 대상으로 `docs/images-v0.2.6`을 쓰지 않는다.
+
+`docs/images-v0.2.6`은 main에 있다. README(en/ja/ko)와 도움말(en/ja/ko)의 UI 이미지 경로는 지금 그 폴더를 가리킨다. 다음 재촬영에서는 그 폴더를 **거부·대체**한다. PNG를 `docs/images-v5/`에 넣고 경로를 맞추는 일은 재촬영 PR에서 한다. 이 문서의 표와 아래 변경 이력은 이전 촬영 기록이다.
+
+Maguro README / 도움말용 스크린샷. 모든 제품 이미지는 **포터블 빌드만** 사용하고, AppData·레지스트리·grids.ini·설치본 경로를 쓰지 않는다.
 
 ## 공통 규칙
 
@@ -12,6 +16,67 @@ Maguro 0.2.3 README / 도움말용 스크린샷. 모든 제품 이미지는 **�
 - **페인트:** ShowWindow는 셸 확장 열거 중 데드락 위험이 있어 쓰지 않는다. 대신 RedrawWindow(RDW_INVALIDATE|RDW_UPDATENOW|RDW_ALLCHILDREN) 후 캡처 (docs/capture/cap-lib.ps1).
 - **닫기:** 대상 프로세스 PID의 창에만 WM_CLOSE (다른 Maguro 인스턴스에 닿지 않음).
 - **재사용 스크립트:** docs/capture/ — 경로는 환경변수 MAGURO_PORTABLE, MAGURO_CFG_DIR, MAGURO_SHOT_DIR 로만 지정. 개인 경로·실서버·실비밀번호를 스크립트에 넣지 말 것.
+
+## Jun 지시 모음 (채팅·기억 — 반드시 지킬 것)
+
+아래는 Jun님이 채팅과 작업 중에 반복해서 지시한 캡처 규칙이다. 위 「공통 규칙」과 함께 지킨다. 어기면 재촬영.
+
+### 폴더·캐시
+- **재촬영할 때마다 새 폴더 이름**을 쓴다 (`docs/images-v2`, `v3`, `v4`, …). 같은 경로를 덮어쓰면 GitHub/브라우저 캐시 때문에 옛 그림이 보인다.
+- **2026-11-06 재촬영 대상 폴더: `docs/images-v5/`** (캐시 회피. `docs/images-v0.2.6`은 쓰지 않는다 — 이미 캐시에 오염됨).
+- README(en/ja/ko)와 도움말(en/ja/ko)의 **모든** UI 이미지 경로를 그 새 폴더로 바꾼다. 로고·브랜드 자산(`assets/maguro-icon.svg`, `docs/help/maguro.png` 등)은 건드리지 않는다.
+- 쓰지 않게 된 옛 이미지 폴더는 Jun이 병합 전 확인할 때 정리한다(勝手に 대량 삭제하지 말 것).
+
+### 언제 다시 찍나
+- UI를 고쳤으면(특히 아이콘 버튼·공용 창 크롬) **대조·선별 없이** README·도움말 UI 캡처를 **전부** 새로 찍는다. 「이 장만 옛것」 고르지 말 것.
+- README/도움말 글을 고친 뒤에도 화면이 바뀌었으면 캡처를 새로 찍는다. 옛 PNG를 재사용·합성·생성형으로 만들지 말 것.
+- 찍기 전에 포터블 테스트 exe를 **최신 Maguro-latest(또는 해당 릴리스)** 로 맞추고, About/파일 버전을 확인한다.
+
+### 왼쪽 사이드바 (즐겨찾기·트리뷰)
+- MaguroMain 계열 샷(히어로·레이아웃·즐겨찾기·탭·미리보기·검색·패널색·팬드래그 등)은 **`fav_panel=true` + `tree_panel=true`**.
+- 높이 비율은 **반반** (`side_split=0.5`). 즐겨찾기만 크거나 트리만 크면 안 된다.
+- 기본 순서는 즐겨찾기 위·트리 아래(`side_order` 생략 또는 즐겨찾기 위).
+- 즐겨찾기 패널은 **보이게** 두고 데모 즐겨찾기를 채운다. 개인 폴더 이름은 트리에서 **접어서** 가린다(모자이크·실경로 노출 금지).
+- 사이드바를 끈 샷은 예외로 문서에 명시한 경우만(예: feature_win_shift_v* 과거 노트). 새 전면 재촬영에서는 Jun 지시대로 켠 상태를 기본으로 한다.
+
+### 데모 데이터·사진
+- **가상 드라이브(예: `G:` → `C:\WORK\pgtest\MaguroDemo`)** 에 그럴듯한 가짜 폴더·파일을 두고 찍는다. 개인 Documents/Desktop을 옮기거나 모자이크하지 말 것.
+- 사진 폴더는 **실제 사진처럼 보이는 JPEG**(썸네일에 그림이 보여야 함). 수십 바이트짜리 가짜 jpg·빈 Beach/City 스텁만 넣지 말 것.
+- 참고(images-v4 hero): `G:\Photos 2026` 썸네일 보기 + `G:\Mixed` 목록. Kyoto 이름 JPG·`photo-sunset.jpg`(가을 잎 실사) 수준.
+- 서버 연결 샷은 **가짜 값만** (Demo Server / sftp.example.com / demo / 비밀번호 비움). 실호스트·실비밀번호·Lab SFTP 그대로 찍기 금지.
+- About 창 캡처는 README에 넣지 않는다.
+
+### 테두리·좌표·배경
+- **검은색·어두운 굵은 바깥 테두리 금지.** 캡처 좌표/크롭이 틀리면 즉시 재촬영.
+- 우리 쪽 **흰 백드롭 창**을 대상 창 뒤에 깐 뒤 CopyFromScreen (`docs/capture/white-backdrop.ps1`). Jun 바탕화면은 바꾸지 말 것.
+- 크롭은 `DwmGetWindowAttribute(..., DWMWA_EXTENDED_FRAME_BOUNDS)` 로 그림자·다크 가장자리 없이 프레임만 (`cap-lib.ps1`).
+- 가장자리 픽셀 검사: 왼쪽 어두운 픽셀 ≥3 또는 높이의 5% 초과 → 거부. 다른 변은 5% 스트립 초과만 거부. **네 변을 픽셀 단위로 확인**한 뒤에만 커밋.
+- 커밋·릴리스·채팅 첨부 전에 **PNG를 직접 열어** 눈으로 확인한다. 다른 앱 창·에러 대화상자가 들어오면 안 된다. 대상 Maguro 창만.
+
+### 촬영 환경·스크립트
+- **Jun PC(Windows)에서만** 찍는다. CloudAgent Wine/VM 화면 금지.
+- 포터블만: exe 옆 `maguro.json`. AppData·레지스트리·grids.ini·설치 경로 금지.
+- `accent` / `accent_dark` 는 hex **문자열** (`"0A9BD6"`). 숫자면 MaguroMain 대신 대화상자만 뜸.
+- 재사용 스크립트: `docs/capture/*.ps1`, 한 줄 진입 `tools/capture-all.ps1`. 환경변수 `MAGURO_PORTABLE`, `MAGURO_CFG_DIR`, `MAGURO_SHOT_DIR`, 필요 시 `MAGURO_FORCE=1`.
+- ShowWindow 금지(셸 확장 데드락). RedrawWindow 후 캡처. 키 입력은 Maguro 전경·소유 HWND만 (KEYBOARD-SAFETY.md). 전역 SendInput/채팅창 누수 금지.
+- 이 파일(`docs/CAPTURES.md`)에 **샷마다** 방법·주의·크기를 남기고, UI가 바뀔 때마다 이 문서 기준으로 다시 찍는다.
+
+### 채팅에서 확인된 구체 지시 (2026-11-06)
+- t755u: 캡처가 지난 버전이면 다시 찍을 것.
+- t756u: 아이콘 버튼 등 고친 줄 알면 대조 없이 거의 전부 다시 찍을 것.
+- t757u–t758u: 새 폴더에 모두 새로 넣고 경로 전부 맞출 것(선별 없음).
+- t759u: 즐겨찾기·트리뷰 둘 다 켠 상태, 높이 반반. 한 장만 맞고 나머지가 없으면 전부 재촬영.
+- t760u–t761u: 예전 캡처처럼 사진 폴더·**실제 사진** 수준으로.
+- t762u: 도움말/README 캡처 바깥 검은 굵은 테두리 = 좌표 오류 → 고쳐서 재촬영.
+- t763u–t764u: 위 내용은 원래 이 주의사항 파일에 있어야 함. 지킨 뒤 찍을 것.
+- t765u: 채팅 지시를 모아 이 파일에 추가할 것.
+- t766u: 캐시 문제 → **폴더 이름을 다른 것**으로 (`docs/images-v5`).
+
+### 시드·픽스처 경로 (PC)
+- 데모 루트: `C:\WORK\pgtest\MaguroDemo` + `subst G: C:\WORK\pgtest\MaguroDemo` (폴더가 없으면 다시 만들 것).
+- 시드 JSON 예: `C:\WORK\pgtest\readme2-cfgs-v4` (없어졌으면 `readme2-cfgs-v5` 등으로 재작성). MaguroMain 시드에 `fav_panel`/`tree_panel`/`side_split` 포함.
+- 포터블: `C:\WORK\pgtest\maguro-app` (Maguro-latest exe 동기화).
+- 작업 폴더를 PC에 함부로 늘리지 말 것. 브랜치·PR로 나눈다.
 
 ## 서버 연결 창 — 가짜 데모 값만 (필수)
 
@@ -184,6 +249,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File docs\capture\capture-main.ps
 
 ## 변경 이력 (관련)
 
+- **2026-11-06:** 다음 재촬영의 현재 자산 폴더를 `docs/images-v5/`로 정함(캐시 회피). main의 `docs/images-v0.2.6`은 존재하지만 거부·대체. Jun 지시 모음을 공통 규칙 아래에 추가. README·도움말 경로와 PNG는 이 기록만으로 바꾸지 않는다.
 - **2026-11-04:** 톱니바퀴 메뉴를 세션 / 도구 / 보기 / 모양 / 동작 / 설정으로 나눔. 열린 메뉴 샷은 images-v3에 없음 (위 절). 닫힌 톱니 단추만 있는 메인 창 샷은 다시 찍지 않음.
 - **2026-11-05:** docs/retake-15-12 — feature_win_shift_v* 재촬영(Photos 2026 새 탭, 사이드바·Folder Watch·실경로 제거). feature_excel_readonly_tidy* images-v4로 재촬영(PR #312 shared MaguroExcelTidy) + README §12 src를 v4로.
 - **2026-11-04:** UI 통일 1차. 폴더 감시, 파일 바구니, 탭 목록, 일괄 이름 바꾸기, 세션 목록의 버튼을 공유 페인터로 옮김. 위 캡처를 다시 찍을 것. 설정 토글은 유지.
