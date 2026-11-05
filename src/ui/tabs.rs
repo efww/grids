@@ -619,25 +619,8 @@ pub(crate) unsafe fn new_tab_at(path: Option<&str>) {
         lru_note(a, tab);
         // Settings pane count, with even splits. Not the tab on screen.
         // Paths stay empty unless the caller named a folder for the first pane.
-        let (heights, colr, rowr) = layout_for_new_tab(a.s.layout_new);
-        let mut paths = vec![String::new(); MAXP];
-        if !first.is_empty() {
-            paths[0] = first;
-        }
-        let fresh = Session {
-            heights,
-            colr,
-            rowr,
-            active: 0,
-            paths,
-            views: vec![(0, 0); MAXP],
-            cols: vec![String::new(); MAXP],
-            pane_folders: vec![Vec::new(); MAXP],
-            pane_cur: vec![0; MAXP],
-            pane_locks: vec![Vec::new(); MAXP],
-            pane_names: vec![Vec::new(); MAXP],
-            ..a.s.clone()
-        };
+        // Pane colours start with no label.
+        let fresh = session_for_new_tab(&a.s, &first);
         let old = a.s.tab;
         stash_tab_order(a, old);
         let name = next_tab_name(&a.s.tabs);
@@ -672,7 +655,9 @@ pub(crate) unsafe fn duplicate_tab(i: usize) {
             return None;
         }
         fit_park(a);
-        let t = fork_tab(&a.s.tabs[i], duplicate_name(&a.s.tabs, &a.s.tabs[i].name));
+        let Some(t) = duplicated_tab(&a.s, i) else {
+            return None;
+        };
         let j = (i + 1).min(a.s.tabs.len());
         a.s.tabs.insert(j, t.clone());
         a.park.insert(j, no_panes());

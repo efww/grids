@@ -2066,9 +2066,7 @@ pub(crate) unsafe fn tint_menu(h: HWND, i: usize, at: POINT) {
     }
     if pick > 0 && pick <= 7 && i < MAXP {
         app(|a| {
-            if i < a.s.tints.len() {
-                a.s.tints[i] = pick as u8 - 1;
-            }
+            set_pane_tint(&mut a.s, i, pick as u8 - 1);
         });
         repaint_header(h);
         check_dirty();
