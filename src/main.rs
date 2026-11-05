@@ -903,15 +903,16 @@ mod tests {
         assert!(layout_differs(&cur, &base));
         assert!(!s.snapshot().contains("win=") && !s.snapshot().contains("session="));
         // the drawn star: solid middle and empty corners when filled; hollow middle as an outline
-        let (full, ring) = (star_coverage(15, Star::Filled), star_coverage(15, Star::Outline));
-        assert_eq!((full[7 * 15 + 7], full[0], full[14 * 15 + 14]), (255, 0, 0));
-        assert!(ring[8 * 15 + 7] == 0 && ring.iter().any(|&a| a == 255));
-        for n in [15, 22] {
-            // the + (what Plus adds to the outline) sits exactly on the box centre in both directions
-            let (plus, ring) = (star_coverage(n, Star::Plus), star_coverage(n, Star::Outline));
-            let added: Vec<(i32, i32)> = (0..n * n).filter(|&k| plus[k as usize] != ring[k as usize]).map(|k| (k % n, k / n)).collect();
-            let span = |f: fn(&(i32, i32)) -> i32| added.iter().map(f).min().unwrap() + added.iter().map(f).max().unwrap();
-            assert_eq!((span(|p| p.0), span(|p| p.1)), (n - 1, n - 1), "{n}");
+        for dpi in [96, 144] {
+            let n = line_icon_px(dpi);
+            let (full, ring) = (line_icon_coverage(n, dpi, LineIcon::StarFilled), line_icon_coverage(n, dpi, LineIcon::Star));
+            let mid = (n / 2 * n + n / 2) as usize;
+            assert_eq!((full[mid], full[0], full[(n * n - 1) as usize]), (255, 0, 0), "{dpi}");
+            assert!(ring[mid] == 0 && ring.iter().any(|&a| a == 255), "{dpi}");
+            // the + (what StarAdd adds to the outline) is centred left to right
+            let plus = line_icon_coverage(n, dpi, LineIcon::StarAdd);
+            let added: Vec<i32> = (0..n * n).filter(|&k| plus[k as usize] != ring[k as usize]).map(|k| k % n).collect();
+            assert_eq!(added.iter().min().unwrap() + added.iter().max().unwrap(), n - 1, "{dpi}");
         }
         // favourites: case-insensitive, never in a named session
         let mut f = Session { favs: vec![r"C:\Work".into(), r"D:\".into()], ..Default::default() };

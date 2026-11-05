@@ -164,10 +164,19 @@ pub(crate) fn tool_icon_px(dpi: i32) -> (i32, i32) {
     (s(TOOL_ICON_W), s(BTN_H_TOOL))
 }
 
-/// Gear and the tab list share one icon-button slot: same size, hover, and press.
-/// [`draw_button`] paints both from the crisp masters in `sicon`.
-pub(crate) fn glyph_tool_button(id: i32) -> bool {
-    matches!(id, ID_TB_SET | ID_TB_LIST)
+/// Tab-row icon buttons and the line master [`draw_button`] paints on each: same size, ink,
+/// hover, and press. The layout button is not one of them; it also shows the grid as text.
+pub(crate) fn tool_line_icon(id: i32) -> Option<LineIcon> {
+    Some(match id {
+        ID_TB_LIST => LineIcon::List,
+        ID_TB_SAVE => LineIcon::Save,
+        ID_TB_LOAD => LineIcon::Load,
+        ID_TB_FAV => LineIcon::Star,
+        ID_TB_BASKET => LineIcon::Basket,
+        ID_TB_WATCH => LineIcon::Watch,
+        ID_TB_SET => LineIcon::Gear,
+        _ => return None,
+    })
 }
 
 /// Layout, save, load, star, basket, watch, gear.
@@ -1693,12 +1702,12 @@ mod tests {
 
     #[test]
     fn tab_list_button_matches_the_toolbar_icon_buttons() {
-        // Same glyph kind as the gear. draw_button paints both on the shared icon face.
-        assert!(glyph_tool_button(ID_TB_LIST));
-        assert!(glyph_tool_button(ID_TB_SET));
-        assert!(!glyph_tool_button(ID_TB_LAYOUT));
-        assert!(!glyph_tool_button(ID_TB_FAV));
-        assert!(!glyph_tool_button(ID_TB_SAVE));
+        // Drawn like the gear: draw_button paints both from the line masters on the shared icon face.
+        assert_eq!((tool_line_icon(ID_TB_LIST), tool_line_icon(ID_TB_SET)), (Some(LineIcon::List), Some(LineIcon::Gear)));
+        assert_eq!(tool_line_icon(ID_TB_LAYOUT), None);
+        for id in [ID_TB_SAVE, ID_TB_LOAD, ID_TB_FAV, ID_TB_BASKET, ID_TB_WATCH] {
+            assert!(tool_line_icon(id).is_some(), "{id}");
+        }
         assert_eq!(glyph(ID_TB_LIST), ICON_LIST);
         assert_ne!(glyph(ID_TB_LIST), glyph(ID_TB_SET));
         for (dpi, top, bar) in [(96, 4, true), (96, 4, false), (144, 6, true), (192, 8, false)] {

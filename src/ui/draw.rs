@@ -327,10 +327,10 @@ pub(crate) unsafe fn draw_button(d: &DRAWITEMSTRUCT) {
         // ★ filled (gray, or the header ink when tinted) in a favourite folder, otherwise ☆ with a small +
         let fav = app(|a| a.panes.iter().position(|p| p.as_ref().is_some_and(|p| p.hwnd == parent)).is_some_and(|i| a.s.is_fav(&a.s.paths[i])));
         if fav {
-            return draw_star(dc, rc, if tinted { ink } else { pal().sub }, Star::Filled, dpi);
+            return draw_line_icon(dc, rc, LineIcon::StarFilled, if tinted { ink } else { pal().sub }, dpi);
         }
-        // ☆ exactly where ★ goes, with a + at its exact centre
-        return draw_star(dc, rc, fg, Star::Plus, dpi);
+        // ☆ exactly where ★ goes, with a + at its centre
+        return draw_line_icon(dc, rc, LineIcon::StarAdd, fg, dpi);
     }
     if !on_main {
         // F5: the up arrow is a refresh ring for one turn, in the same ink as the glyph.
@@ -357,32 +357,15 @@ pub(crate) unsafe fn draw_button(d: &DRAWITEMSTRUCT) {
         return text(dc, rc, &text_of(d.hwndItem), font, if marked { pal().text } else { fg }, DT_CENTER);
     }
     if id == ID_TB_LAYOUT {
-        // the one label in the chrome: the current grid. The glyph beside it is the crisp 2×2.
+        // the one label in the chrome: the current grid, after the 2×2 icon
         let icon = RECT { left: rc.left + s(4), right: rc.left + s(22), ..rc };
         draw_line_icon(dc, icon, LineIcon::Layout, fg, dpi);
         return text(dc, RECT { left: icon.right + s(4), ..rc }, &text_of(d.hwndItem), font, pal().text, DT_LEFT);
     }
-    // icon only, names live in the tooltips
-    if id == ID_TB_FAV {
-        return draw_star(dc, rc, fg, Star::Outline, dpi);
-    }
-    // Stacked windows, drawn (not a Segoe glyph). A dirty layout turns the whole save icon green.
-    if id == ID_TB_SAVE || id == ID_TB_LOAD {
+    // icon only, names live in the tooltips. A dirty layout turns the whole save icon green.
+    if let Some(kind) = tool_line_icon(id) {
         let dirty = id == ID_TB_SAVE && app(|a| a.dirty);
-        let kind = if id == ID_TB_SAVE { SessionIcon::Save } else { SessionIcon::Load };
-        draw_session_icon(dc, rc, kind, if dirty { GREEN } else { fg }, dpi);
-        return;
-    }
-    // Basket and watch: drawn 1px line icons, same ink, hover and press as the star and the gear.
-    if id == ID_TB_BASKET || id == ID_TB_WATCH {
-        let kind = if id == ID_TB_BASKET { SessionIcon::Basket } else { SessionIcon::Watch };
-        draw_session_icon(dc, rc, kind, fg, dpi);
-        return;
-    }
-    // Gear and tab list: crisp masters, same ink, hover, and press as the star.
-    if glyph_tool_button(id) {
-        let kind = if id == ID_TB_SET { LineIcon::Gear } else { LineIcon::List };
-        draw_line_icon(dc, rc, kind, fg, dpi);
+        draw_line_icon(dc, rc, kind, if dirty { GREEN } else { fg }, dpi);
         return;
     }
     text(dc, rc, glyph(id), icon_font, fg, DT_CENTER);
@@ -452,232 +435,22 @@ unsafe fn invalidate_up(h: HWND) {
     }
 }
 
-unsafe fn draw_session_icon(dc: HDC, rc: RECT, kind: SessionIcon, rgb: u32, dpi: i32) {
-    let n = session_icon_px(dpi);
-    draw_mask(dc, rc, n, &session_icon_bgra(n, kind, rgb));
-}
-
+/// One of the line masters in `sicon`, centred in `rc`.
 pub(crate) unsafe fn draw_line_icon(dc: HDC, rc: RECT, kind: LineIcon, rgb: u32, dpi: i32) {
-    let n = session_icon_px(dpi);
-    draw_mask(dc, rc, n, &line_icon_bgra(n, kind, rgb));
-}
-
-unsafe fn draw_mask(dc: HDC, rc: RECT, n: i32, px: &[u8]) {
-    if n <= 0 {
-        return;
-    }
+    let n = line_icon_px(dpi);
     let x = (rc.left + rc.right - n) / 2;
     let y = (rc.top + rc.bottom - n) / 2;
-    blit_bgra(dc, RECT { left: x, top: y, right: x + n, bottom: y + n }, n, n, px);
-}
-
-// A five-point star snapped to whole pixels. Straight edges are Bresenham (one device pixel).
-// The right half is mirrored, so the outline stays symmetric without a second soft pass.
-// Coverage is 0 or 255. The + is drawn afterwards, in the hole, and shortened until it
-// does not touch the stroke, so it stays centred at every size.
-#[derive(Clone, Copy, PartialEq)]
-pub(crate) enum Star {
-    Outline, // tab-row favourites button; Plus is this shape with a +
-    Filled,
-    Plus, // outline with a + in its exact centre (add to favourites)
-}
-
-/// `n`×`n` coverage. Hard pixels only: no box filter, no partial coverage.
-pub(crate) fn star_coverage(n: i32, kind: Star) -> Vec<u8> {
-    let n = n.max(0);
-    if n == 0 {
-        return Vec::new();
-    }
-    let mut out = vec![0u8; (n * n) as usize];
-    let pts = star_pts(n);
-    if kind == Star::Filled {
-        fill_star(&mut out, n, &pts);
-    }
-    stroke_star(&mut out, n, &pts);
-    mirror_left(&mut out, n);
-    if kind == Star::Plus {
-        paint_star_plus(&mut out, n);
-    }
-    out
-}
-
-// cos/sin of the right-hand vertices, in thousandths. Integer arithmetic, so the
-// picture does not depend on libm. Angles: -90, -54, -18, 18, 54, 90.
-const STAR_ANG: [(i64, i64); 6] = [
-    (0, -1000),
-    (588, -809),
-    (951, -309),
-    (951, 309),
-    (588, 809),
-    (0, 1000),
-];
-
-fn star_pts(n: i32) -> [(i32, i32); 10] {
-    let n64 = n as i64;
-    let c = (n64 - 1) * 500;
-    let mut r_out = c - 150;
-    if r_out < 1000 {
-        r_out = 1000;
-    }
-    let r_in = r_out * 380 / 1000;
-    let mut raw = [(0i32, 0i32); 6];
-    for k in 0..6 {
-        let r = if k % 2 == 0 { r_out } else { r_in };
-        let (cs, sn) = STAR_ANG[k];
-        let x = div_round(c + py_div(r * cs, 1000), 1000).clamp(0, n - 1);
-        let y = div_round(c + py_div(r * sn, 1000), 1000).clamp(0, n - 1);
-        raw[k] = (x, y);
-    }
-    let axis = div_round(c, 1000).clamp(0, n - 1);
-    raw[0].0 = axis;
-    raw[5].0 = axis;
-    if raw[2].1 <= raw[1].1 {
-        raw[2].1 = (raw[1].1 + 1).min(n - 1);
-    }
-    if raw[4].1 <= raw[3].1 {
-        raw[4].1 = (raw[3].1 + 1).min(n - 1);
-    }
-    if raw[4].1 <= raw[5].1 {
-        raw[4].1 = (raw[5].1 + 1).min(n - 1);
-    }
-    let mir = |p: (i32, i32)| (n - 1 - p.0, p.1);
-    [raw[0], raw[1], raw[2], raw[3], raw[4], raw[5], mir(raw[4]), mir(raw[3]), mir(raw[2]), mir(raw[1])]
-}
-
-/// Python-style floor division. Rust `/` truncates, which shifts a negative vertex.
-fn py_div(a: i64, b: i64) -> i64 {
-    let q = a / b;
-    let r = a % b;
-    if r != 0 && a < 0 { q - 1 } else { q }
-}
-
-/// Half away from zero. Matches the pixel the vertex was tuned against.
-fn div_round(a: i64, b: i64) -> i32 {
-    let v = if a >= 0 { (a + b / 2) / b } else { -((-a + b / 2) / b) };
-    v as i32
-}
-
-fn fill_star(out: &mut [u8], n: i32, pts: &[(i32, i32); 10]) {
-    for y in 0..n {
-        for x in 0..n {
-            if star_inside(x, y, pts) {
-                out[(y * n + x) as usize] = 255;
-            }
-        }
-    }
-}
-
-fn star_inside(x: i32, y: i32, pts: &[(i32, i32)]) -> bool {
-    let (x, y) = (x as f32 + 0.5, y as f32 + 0.5);
-    let mut inside = false;
-    let m = pts.len();
-    for i in 0..m {
-        let (x1, y1) = (pts[i].0 as f32 + 0.5, pts[i].1 as f32 + 0.5);
-        let (x2, y2) = (pts[(i + 1) % m].0 as f32 + 0.5, pts[(i + 1) % m].1 as f32 + 0.5);
-        if (y1 > y) != (y2 > y) && x < x1 + (y - y1) * (x2 - x1) / (y2 - y1) {
-            inside = !inside;
-        }
-    }
-    inside
-}
-
-/// Right-hand edges only. [`mirror_left`] copies them across the vertical axis.
-fn stroke_star(out: &mut [u8], n: i32, pts: &[(i32, i32); 10]) {
-    for i in 0..5 {
-        let (mut x0, mut y0) = pts[i];
-        let (x1, y1) = pts[i + 1];
-        let dx = (x1 - x0).abs();
-        let dy = -(y1 - y0).abs();
-        let sx = if x0 < x1 { 1 } else { -1 };
-        let sy = if y0 < y1 { 1 } else { -1 };
-        let mut err = dx + dy;
-        loop {
-            if (0..n).contains(&x0) && (0..n).contains(&y0) {
-                out[(y0 * n + x0) as usize] = 255;
-            }
-            if x0 == x1 && y0 == y1 {
-                break;
-            }
-            let e2 = 2 * err;
-            if e2 >= dy {
-                err += dy;
-                x0 += sx;
-            }
-            if e2 <= dx {
-                err += dx;
-                y0 += sy;
-            }
-        }
-    }
-}
-
-fn mirror_left(out: &mut [u8], n: i32) {
-    for y in 0..n {
-        for x in 0..n / 2 {
-            out[(y * n + x) as usize] = out[(y * n + (n - 1 - x)) as usize];
-        }
-    }
-}
-
-fn paint_star_plus(out: &mut [u8], n: i32) {
-    let mut t = (n / 12).max(1);
-    if (n - t) % 2 != 0 {
-        t += 1;
-    }
-    let mut len = (n / 3).max(t + 2);
-    if (n - len) % 2 != 0 {
-        len += 1;
-    }
-    while len >= t {
-        if plus_fits(out, n, t, len) {
-            stamp_plus(out, n, t, len);
-            return;
-        }
-        len -= 2;
-    }
-    stamp_plus(out, n, t, t);
-}
-
-fn plus_fits(out: &[u8], n: i32, t: i32, len: i32) -> bool {
-    plus_cells(n, t, len).all(|(x, y)| out[(y * n + x) as usize] == 0)
-}
-
-fn stamp_plus(out: &mut [u8], n: i32, t: i32, len: i32) {
-    for (x, y) in plus_cells(n, t, len) {
-        out[(y * n + x) as usize] = 255;
-    }
-}
-
-fn plus_cells(n: i32, t: i32, len: i32) -> impl Iterator<Item = (i32, i32)> {
-    let x0 = (n - len) / 2;
-    let y0 = (n - t) / 2;
-    let x1 = (n - t) / 2;
-    let y1 = (n - len) / 2;
-    let horiz = (y0..y0 + t).flat_map(move |y| (x0..x0 + len).map(move |x| (x, y)));
-    let vert = (y1..y1 + len).flat_map(move |y| (x1..x1 + t).map(move |x| (x, y)));
-    horiz.chain(vert).filter(move |&(x, y)| (0..n).contains(&x) && (0..n).contains(&y))
-}
-
-pub(crate) unsafe fn draw_star(dc: HDC, rc: RECT, rgb: u32, kind: Star, dpi: i32) {
-    // 15 at 96 DPI: an odd box, so the 1px cross of Plus sits on the centre pixel.
-    let n = 15 * dpi / 96;
-    if n <= 0 {
-        return;
-    }
-    let px = coverage_bgra(&star_coverage(n, kind), rgb);
-    let x = (rc.left + rc.right - n) / 2;
-    let y = (rc.top + rc.bottom - n) / 2;
-    blit_bgra(dc, RECT { left: x, top: y, right: x + n, bottom: y + n }, n, n, &px);
+    blit_bgra(dc, RECT { left: x, top: y, right: x + n, bottom: y + n }, n, n, &line_icon_bgra(n, dpi, kind, rgb));
 }
 
 // ↻ from geometry, not a font glyph. A glyph turned by GDI snaps to whole pixels and is
 // re-hinted at every angle, and its ink box is not the ring's centre, so it shook. This one
 // turns about the ring's centre. Each pixel's coverage is its distance to the stroke, the
-// same premultiplied blit the star uses.
-pub(crate) fn refresh_coverage(n: i32, turn: f32) -> Vec<u8> {
+// same premultiplied blit the line icons use, and `stroke` is theirs, so it matches the up arrow.
+pub(crate) fn refresh_coverage(n: i32, turn: f32, stroke: f32) -> Vec<u8> {
     let n = n.max(0);
     let c = n as f32 / 2.0;
-    let (r, half) = (n as f32 * 0.35, (n as f32 / 16.0).max(1.0) / 2.0);
+    let (r, half) = (n as f32 * 0.35, stroke.max(1.0) / 2.0);
     let (a0, sweep) = ((-50f32).to_radians(), 290f32.to_radians());
     let a1 = a0 + sweep;
     let end = (r * a1.cos(), r * a1.sin());
@@ -710,83 +483,29 @@ pub(crate) fn refresh_coverage(n: i32, turn: f32) -> Vec<u8> {
 }
 
 unsafe fn draw_refresh(dc: HDC, rc: RECT, rgb: u32, dpi: i32, turn: f32) {
-    let n = 16 * dpi / 96;
-    if n <= 0 {
-        return;
-    }
-    let cov = refresh_coverage(n, turn);
-    let bmi = BITMAPINFO {
-        bmiHeader: BITMAPINFOHEADER {
-            biSize: size_of::<BITMAPINFOHEADER>() as u32,
-            biWidth: n,
-            biHeight: -n,
-            biPlanes: 1,
-            biBitCount: 32,
-            biCompression: BI_RGB.0,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    let mut bits = std::ptr::null_mut();
-    let Ok(bmp) = CreateDIBSection(Some(dc), &bmi, DIB_RGB_COLORS, &mut bits, None, 0) else { return };
-    let px = std::slice::from_raw_parts_mut(bits as *mut u8, (n * n * 4) as usize);
-    for (i, &a) in cov.iter().enumerate() {
-        let pre = |ch: u32| ((ch & 0xFF) * a as u32 / 255) as u8;
-        px[i * 4..i * 4 + 4].copy_from_slice(&[pre(rgb), pre(rgb >> 8), pre(rgb >> 16), a]);
-    }
-    let mem = CreateCompatibleDC(Some(dc));
-    let old = SelectObject(mem, bmp.into());
+    let n = line_icon_px(dpi);
+    let px = coverage_bgra(&refresh_coverage(n, turn, line_icon_stroke(dpi)), rgb);
     let (x, y) = ((rc.left + rc.right - n) / 2, (rc.top + rc.bottom - n) / 2);
-    let blend = BLENDFUNCTION { BlendOp: AC_SRC_OVER as u8, BlendFlags: 0, SourceConstantAlpha: 255, AlphaFormat: AC_SRC_ALPHA as u8 };
-    _ = AlphaBlend(dc, x, y, n, n, mem, 0, 0, n, n, blend);
-    SelectObject(mem, old);
-    _ = DeleteDC(mem);
-    _ = DeleteObject(bmp.into());
+    blit_bgra(dc, RECT { left: x, top: y, right: x + n, bottom: y + n }, n, n, &px);
 }
 
 #[cfg(test)]
-mod star_aa_tests {
+mod spin_tests {
     use super::*;
 
     #[test]
-    fn star_is_pixel_snapped_and_the_outline_is_hollow() {
-        for n in [15, 16, 20, 22, 24, 32] {
-            let outline = star_coverage(n, Star::Outline);
-            let filled = star_coverage(n, Star::Filled);
-            let plus = star_coverage(n, Star::Plus);
-            let hard = outline.iter().chain(&filled).chain(&plus).all(|&a| a == 0 || a == 255);
-            assert!(hard, "{n}");
-            let ink = |c: &[u8]| c.iter().filter(|&&a| a == 255).count();
-            assert!(ink(&outline) > 0 && ink(&filled) > ink(&outline), "{n}");
-            let mid = (n / 2 * n + n / 2) as usize;
-            assert_eq!(outline[mid], 0, "{n} hollow");
-            assert_eq!(filled[mid], 255, "{n} filled");
-            assert_eq!(filled[0], 0, "{n}");
-            assert_eq!(filled[(n * n - 1) as usize], 0, "{n}");
-            let added: Vec<(i32, i32)> = (0..n * n)
-                .filter(|&k| plus[k as usize] != outline[k as usize])
-                .map(|k| (k % n, k / n))
-                .collect();
-            assert!(!added.is_empty(), "{n}");
-            let span = |f: fn(&(i32, i32)) -> i32| added.iter().map(f).min().unwrap() + added.iter().map(f).max().unwrap();
-            assert_eq!((span(|p| p.0), span(|p| p.1)), (n - 1, n - 1), "{n}");
-        }
-        let outline = star_coverage(15, Star::Outline);
-        assert_eq!(outline[8 * 15 + 7], 0);
-    }
-
-    #[test]
     fn refresh_ring_turns_about_its_centre_and_keeps_its_ink() {
-        for n in [16, 24, 32] {
-            let rest = refresh_coverage(n, 0.0);
-            let quarter = refresh_coverage(n, 0.25);
+        for dpi in [96, 144, 192] {
+            let (n, w) = (line_icon_px(dpi), line_icon_stroke(dpi));
+            let rest = refresh_coverage(n, 0.0, w);
+            let quarter = refresh_coverage(n, 0.25, w);
             for j in 0..n {
                 for i in 0..n {
                     let (a, b) = (quarter[(j * n + i) as usize] as i32, rest[((n - 1 - i) * n + j) as usize] as i32);
                     assert!((a - b).abs() <= 1, "{n} ({i},{j}) {a} vs {b}");
                 }
             }
-            let ink = |t: f32| refresh_coverage(n, t).iter().map(|&a| a as f32).sum::<f32>();
+            let ink = |t: f32| refresh_coverage(n, t, w).iter().map(|&a| a as f32).sum::<f32>();
             for t in [0.07, 0.13, 0.31, 0.5, 0.77] {
                 assert!((ink(t) / ink(0.0) - 1.0).abs() < 0.04, "{n} {t}");
             }
