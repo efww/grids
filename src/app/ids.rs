@@ -124,7 +124,7 @@ pub(crate) const MOVE: SET_WINDOW_POS_FLAGS = SET_WINDOW_POS_FLAGS(SWP_NOZORDER.
 
 // RT_GROUP_ICON ids written by build.rs. All three groups embed assets/Maguro.ico,
 // the cerulean three-panel mark. Explorer shows the lowest id, so group 1 is the exe file icon.
-// The window class, title bar, taskbar, and About fallback use group 3 (light) and group 2 (dark).
+// The window class, title bar, taskbar, and About logo use group 3 (light) and group 2 (dark).
 /// Explorer file icon (`assets/Maguro.ico`). Windows reads this group from the exe.
 #[allow(dead_code)]
 pub(crate) const ICON_GROUP_EXE: usize = 1;
@@ -134,7 +134,7 @@ pub(crate) const ICON_GROUP_LIGHT: usize = 3;
 // Explorer picks the lowest RT_GROUP_ICON, so the file icon stays below both in-app groups.
 const _: () = assert!(ICON_GROUP_EXE < ICON_GROUP_DARK && ICON_GROUP_EXE < ICON_GROUP_LIGHT);
 
-/// Title bar and About fallback. Light is group 3 and dark is group 2.
+/// Title bar and About logo. Light is group 3 and dark is group 2.
 /// Both groups embed `assets/Maguro.ico`.
 pub(crate) fn window_icon_group(dark: bool) -> usize {
     if dark { ICON_GROUP_DARK } else { ICON_GROUP_LIGHT }

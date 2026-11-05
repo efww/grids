@@ -1,4 +1,4 @@
-use windows::Win32::UI::Controls::{IImageList, ILD_NORMAL};
+use windows::Win32::UI::Controls::{IImageList, ILD_NORMAL, LoadIconWithScaleDown};
 
 use crate::imports::*;
 use super::*;
@@ -722,6 +722,24 @@ pub(crate) unsafe fn blit_bgra(dc: HDC, to: RECT, w: i32, h: i32, px: &[u8]) {
     SelectObject(mem, old);
     _ = DeleteDC(mem);
     _ = DeleteObject(bmp.into());
+}
+
+/// Square app mark from an exe icon group, centered in `r`.
+/// `LoadIconWithScaleDown` loads that side from the exe so the frame stays sharp. The icon is destroyed here.
+pub(crate) unsafe fn draw_app_icon(dc: HDC, r: RECT, group: usize) {
+    let w = r.right - r.left;
+    let h = r.bottom - r.top;
+    if w < 1 || h < 1 {
+        return;
+    }
+    let side = w.min(h);
+    let Ok(module) = GetModuleHandleW(None) else { return };
+    let hinst: HINSTANCE = module.into();
+    let Ok(icon) = LoadIconWithScaleDown(Some(hinst), PCWSTR(group as _), side, side) else { return };
+    let x = (r.left + r.right - side) / 2;
+    let y = (r.top + r.bottom - side) / 2;
+    _ = DrawIconEx(dc, x, y, icon, side, side, 0, None, DI_NORMAL);
+    _ = DestroyIcon(icon);
 }
 
 // Repaints the save icon and puts the session name / unsaved state into its tooltip.

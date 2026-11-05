@@ -26,7 +26,6 @@ pub(crate) use nav::*;
 pub(crate) use reconnect::*;
 pub(crate) use peek::*;
 pub(crate) use prevpane::{arm_preview, note_preview, poll_preview, preview_clear, preview_host_proc, preview_proc, retint_preview, run_preview};
-pub(crate) use preview::decode_pic;
 pub(crate) use ptabs::*;
 pub(crate) use select::*;
 pub(crate) use status::*;

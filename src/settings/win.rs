@@ -2103,8 +2103,8 @@ pub(crate) fn about_body(c: &AboutCopy) -> String {
     format!("{}\n{}\n{}\n{}\n{}", c.title, c.version, c.desc, c.license, c.repo)
 }
 
-/// About fallback icon. Light is group 3 and dark is group 2. Both embed `assets/Maguro.ico`.
-/// The painted logo is the theme PNG; this group is the DrawIconEx fallback and matches the title bar.
+/// Painted About logo. Light is group 3 and dark is group 2. Both embed `assets/Maguro.ico`,
+/// the same mark as `assets/maguro-icon.svg`, and match the title bar.
 pub(crate) fn about_icon_group(dark: bool) -> usize {
     crate::window_icon_group(dark)
 }
@@ -2234,24 +2234,8 @@ unsafe fn paint_about(h: HWND) {
         let small = if small.is_invalid() { font } else { small };
         let bold = crate::bold_ui_font();
         let bold = if bold.is_invalid() { font } else { bold };
-        {
-            let dark = crate::DARK_ON.load(Ordering::Relaxed);
-            let png: &[u8] = if dark {
-                include_bytes!("../../assets/maguro-lockup-dark.png")
-            } else {
-                include_bytes!("../../assets/maguro-lockup-light.png")
-            };
-            let side = (lay.icon.right - lay.icon.left).max(1);
-            if let Some(pix) = crate::decode_pic(png, side, side) {
-                crate::blit_bgra(dc, lay.icon, pix.w, pix.h, &pix.bgra);
-            } else if let Ok(module) = GetModuleHandleW(None) {
-                let hinst: HINSTANCE = module.into();
-                let id = about_icon_group(dark);
-                if let Ok(icon) = LoadIconW(Some(hinst), PCWSTR(id as _)) {
-                    let _ = DrawIconEx(dc, lay.icon.left, lay.icon.top, icon, side, side, 0, None, DI_NORMAL);
-                }
-            }
-        }
+        let dark = crate::DARK_ON.load(Ordering::Relaxed);
+        crate::draw_app_icon(dc, lay.icon, about_icon_group(dark));
         crate::text(dc, lay.title, &copy.title, bold, crate::pal().text, DT_LEFT);
         crate::text(dc, lay.version, &copy.version, small, crate::pal().sub, DT_LEFT);
         crate::wrap_text(dc, lay.desc, &copy.desc, font, crate::pal().text, false);
@@ -2792,6 +2776,18 @@ mod tests {
         assert_eq!(about_icon_group(true), crate::ICON_GROUP_DARK);
         assert_eq!(crate::window_icon_group(false), about_icon_group(false));
         assert_eq!(crate::window_icon_group(true), about_icon_group(true));
+    }
+
+    #[test]
+    fn about_paint_draws_the_icon_group() {
+        let src = include_str!("win.rs");
+        let start = src.find("fn paint_about(").expect("paint_about");
+        let tail = &src[start..];
+        let end = tail.find("\nunsafe fn layout_about").expect("layout_about follows paint_about");
+        let paint = &tail[..end];
+        assert!(!paint.contains(&["lock", "up"].concat()));
+        assert!(paint.contains("draw_app_icon"));
+        assert!(paint.contains("about_icon_group"));
     }
 
     #[test]
