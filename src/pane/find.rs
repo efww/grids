@@ -1730,7 +1730,7 @@ unsafe fn find_context(pane: HWND, y: Option<i32>, screen: POINT) {
 }
 
 unsafe fn paint_find(h: HWND, pane: HWND) {
-    let (dpi, font, icon_font, small, accent, sort, cols) = app(|a| (a.dpi, a.font, a.icon_font, a.small_font, a.s.accent_now(), a.s.ev_sort, a.s.ev_cols));
+    let (dpi, font, small, accent, sort, cols) = app(|a| (a.dpi, a.font, a.small_font, a.s.accent_now(), a.s.ev_sort, a.s.ev_cols));
     let snap = {
         let map = find_map();
         map.get(&(pane.0 as isize)).map(|u| (u.query.clone(), u.root.clone(), u.recursive, u.everywhere, u.engine, u.hits.clone(), u.more, u.running, u.sel, u.scroll, u.hot_col))
@@ -1788,11 +1788,8 @@ unsafe fn paint_find(h: HWND, pane: HWND) {
         fill(dc, head, pal().bg);
         let g = header_now(h, Some(dc), dpi, rh, rc.right, recursive, all);
         let mark = RECT { left: s(8), top: (rh - s(14)) / 2, right: s(8) + s(14), bottom: (rh - s(14)) / 2 + s(14) };
-        fill(dc, mark, if recursive { accent } else { pal().card });
-        frame(dc, mark, 1, if recursive { accent } else { pal().line });
-        if recursive {
-            text(dc, mark, "\u{E73E}", icon_font, on_color(accent), DT_CENTER);
-        }
+        // Shared painter (Settings, folder watch): rounded box and the shared icon font's tick.
+        crate::paint_check(dc, mark, recursive, false, dpi, pal().bg);
         let sub_label = tr(crate::Key::Subfolders);
         text(dc, RECT { left: s(26), right: g.sub.right, ..head }, sub_label, font, pal().text, DT_LEFT);
         if let Some(pill) = g.scope {
