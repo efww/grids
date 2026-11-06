@@ -87,10 +87,41 @@ pub(crate) const SPACE_12: i32 = 12;
 /// UI face. CJK falls through Segoe UI to Malgun Gothic / Yu Gothic UI on Windows.
 pub(crate) const FONT_UI: &str = "Segoe UI";
 pub(crate) const FONT_FALLBACKS: &[&str] = &["Malgun Gothic", "Yu Gothic UI", "Noto Sans CJK KR"];
-/// Body size, px. Section titles use the same size at weight 600.
-pub(crate) const FONT_PX: i32 = 12;
-/// Meta, hints, and list paths, px.
-pub(crate) const FONT_META_PX: i32 = 11;
+/// Extra DIP added to every UI font tier. This is the only +1.
+pub(crate) const FONT_BUMP: i32 = 1;
+/// Body em size at 96 DPI, before [`FONT_BUMP`]. Section titles use the same size at a heavier weight.
+pub(crate) const FONT_BODY_BASE: i32 = 12;
+/// Dialog meta, hints, and list paths at 96 DPI, before [`FONT_BUMP`].
+pub(crate) const FONT_META_BASE: i32 = 11;
+/// Segoe MDL2 Assets em size at 96 DPI, before [`FONT_BUMP`].
+pub(crate) const FONT_ICON_BASE: i32 = 14;
+/// The app meta face is this percent of the unbumped message font, then [`FONT_BUMP`].
+pub(crate) const FONT_SMALL_PERCENT: i32 = 85;
+/// Body size, px, after [`FONT_BUMP`].
+pub(crate) const FONT_PX: i32 = FONT_BODY_BASE + FONT_BUMP;
+/// Meta, hints, and list paths, px, after [`FONT_BUMP`].
+pub(crate) const FONT_META_PX: i32 = FONT_META_BASE + FONT_BUMP;
+/// Icon glyph size, px, after [`FONT_BUMP`].
+pub(crate) const FONT_ICON_PX: i32 = FONT_ICON_BASE + FONT_BUMP;
+
+/// `lfHeight` after adding [`FONT_BUMP`] DIP. A negative height (em size) grows more negative.
+pub(crate) fn bump_lf_height(height: i32, dpi: i32) -> i32 {
+    let d = px(dpi, FONT_BUMP);
+    if height < 0 {
+        height.saturating_sub(d)
+    } else if height > 0 {
+        height.saturating_add(d)
+    } else {
+        height
+    }
+}
+
+/// `(body, small)` `lfHeight`. `raw` is the unbumped message font.
+/// Small is [`FONT_SMALL_PERCENT`] of that height, then both tiers gain [`FONT_BUMP`].
+pub(crate) fn tier_heights(raw: i32, dpi: i32) -> (i32, i32) {
+    let small = if raw == 0 { 0 } else { raw.saturating_mul(FONT_SMALL_PERCENT) / 100 };
+    (bump_lf_height(raw, dpi), bump_lf_height(small, dpi))
+}
 
 /// Secondary hover is 6% text mixed into the card. Pressed is 12%.
 pub(crate) const SECONDARY_HOVER: f32 = 0.06;
@@ -223,8 +254,14 @@ mod tests {
         assert_eq!(SPACE_4, 4);
         assert_eq!(SPACE_8, 8);
         assert_eq!(SPACE_12, 12);
-        assert_eq!(FONT_PX, 12);
-        assert_eq!(FONT_META_PX, 11);
+        assert_eq!(FONT_BUMP, 1);
+        assert_eq!(FONT_BODY_BASE, 12);
+        assert_eq!(FONT_META_BASE, 11);
+        assert_eq!(FONT_ICON_BASE, 14);
+        assert_eq!(FONT_SMALL_PERCENT, 85);
+        assert_eq!(FONT_PX, 13);
+        assert_eq!(FONT_META_PX, 12);
+        assert_eq!(FONT_ICON_PX, 15);
         assert_eq!(FONT_UI, "Segoe UI");
         assert!(FONT_FALLBACKS.contains(&"Malgun Gothic"));
     }
@@ -243,5 +280,17 @@ mod tests {
         assert_eq!(DARK_TOKENS.sel_mist(), crate::blend(CARD_DARK, ACCENT, 0.22));
         assert_eq!(px(96, BTN_H_TOOL), 24);
         assert_eq!(px(144, RADIUS), 3);
+    }
+
+    #[test]
+    fn every_font_tier_grows_by_one_dip() {
+        // Windows message font at 96 DPI is 12px. 85% is 10, and both gain the bump.
+        assert_eq!(tier_heights(-12, 96), (-13, -11));
+        // 85% of (body + 1) would stay 17. The small tier still grows.
+        assert_eq!(tier_heights(-20, 96), (-21, -18));
+        // 200% DPI: one DIP is two pixels.
+        assert_eq!(tier_heights(-12, 192), (-14, -12));
+        assert_eq!(bump_lf_height(12, 96), 13);
+        assert_eq!(bump_lf_height(0, 96), 0);
     }
 }

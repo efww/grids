@@ -1246,7 +1246,9 @@ fn raise(hwnd: HWND) {
 
 fn make_tip(owner: HWND) -> HWND {
     let style = WS_POPUP | WINDOW_STYLE(0x01 | 0x02);
-    unsafe { CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, None, style, 0, 0, 0, 0, Some(owner), None, None, None).unwrap_or_default() }
+    let tip = unsafe { CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, None, style, 0, 0, 0, 0, Some(owner), None, None, None).unwrap_or_default() };
+    unsafe { crate::set_tip_font(tip) };
+    tip
 }
 
 fn pump_messages() {

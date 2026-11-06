@@ -61,6 +61,10 @@ pub(crate) unsafe fn sync_fav_metrics() {
     let tv = sys_tree();
     if !tv.0.is_null() && !font.is_invalid() {
         SendMessageW(tv, WM_SETFONT, Some(WPARAM(font.0 as usize)), Some(LPARAM(1)));
+        let tip = HWND(SendMessageW(tv, TVM_GETTOOLTIPS, None, None).0 as _);
+        if !tip.0.is_null() {
+            SendMessageW(tip, WM_SETFONT, Some(WPARAM(font.0 as usize)), Some(LPARAM(0)));
+        }
     }
     _ = (fh, dpi);
     clamp_side_scroll();

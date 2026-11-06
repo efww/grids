@@ -247,11 +247,15 @@ pub(crate) unsafe fn apply_font() {
     let face = if custom { resolve_face(slot, ui(), &list) } else { ui_face() };
     let mut ncm = NONCLIENTMETRICSW { cbSize: size_of::<NONCLIENTMETRICSW>() as u32, ..Default::default() };
     let sys = SystemParametersInfoForDpi(SPI_GETNONCLIENTMETRICS.0, ncm.cbSize, Some(&mut ncm as *mut _ as _), 0, dpi as u32);
-    let mut lf = if sys.is_ok() { ncm.lfMessageFont } else { logfont(ui_face(), 12 * dpi / 96) };
+    let mut lf = if sys.is_ok() { ncm.lfMessageFont } else { logfont(ui_face(), super::FONT_BODY_BASE * dpi / 96) };
     lf.lfFaceName = logfont(face, 0).lfFaceName;
+    // Small is 85% of the unbumped message font. Both tiers then grow by FONT_BUMP,
+    // so a ratio that truncates still cannot leave the smaller face unchanged.
+    let (body_h, small_h) = super::tier_heights(lf.lfHeight, dpi);
+    lf.lfHeight = body_h;
     let font = CreateFontIndirectW(&lf);
-    let small = CreateFontIndirectW(&LOGFONTW { lfHeight: lf.lfHeight * 85 / 100, ..lf });
-    let icon_font = CreateFontIndirectW(&logfont("Segoe MDL2 Assets", 14 * dpi / 96));
+    let small = CreateFontIndirectW(&LOGFONTW { lfHeight: small_h, ..lf });
+    let icon_font = CreateFontIndirectW(&logfont("Segoe MDL2 Assets", super::FONT_ICON_PX * dpi / 96));
     let dc = GetDC(None);
     let old = SelectObject(dc, font.into());
     let mut tm = TEXTMETRICW::default();
@@ -297,6 +301,7 @@ pub(crate) unsafe fn apply_font() {
     // Preview headings were cloned from the previous face; the next paint builds them again.
     drop_peek_fonts();
     super::sync_fav_metrics();
+    set_tip_font(app(|a| a.tip));
     relayout();
     // A font or language change does not resize the panes, so WM_SIZE never recentres the edits.
     refit_text_edits();
@@ -475,7 +480,7 @@ pub(crate) unsafe fn dialog_snap() -> DialogSnap {
         body: face_of(body_font(), crate::ui_face(), super::FONT_PX, 400),
         bold: face_of(bold_ui_font(), crate::ui_face(), super::FONT_PX, 700),
         meta: face_of(meta_font(), crate::ui_face(), super::FONT_META_PX, 400),
-        icon: face_of(icon_font(), "Segoe MDL2 Assets", 14, 400),
+        icon: face_of(icon_font(), "Segoe MDL2 Assets", super::FONT_ICON_PX, 400),
     }
 }
 
@@ -509,6 +514,18 @@ pub(crate) unsafe fn body_font() -> HFONT {
     fallback_font(&FALLBACK_BODY, crate::ui_face(), super::FONT_PX, 400)
 }
 
+/// Point a tooltip window at the UI body face. Stock tooltip text otherwise stays at the system size.
+pub(crate) unsafe fn set_tip_font(tip: HWND) {
+    if tip.0.is_null() {
+        return;
+    }
+    let font = body_font();
+    if font.0.is_null() || font.is_invalid() {
+        return;
+    }
+    SendMessageW(tip, WM_SETFONT, Some(WPARAM(font.0 as usize)), Some(LPARAM(0)));
+}
+
 /// Segoe MDL2 Assets, for checks and the other chrome glyphs.
 pub(crate) unsafe fn icon_font() -> HFONT {
     if let Some(font) = dialog_font(|s| s.icon) {
@@ -519,7 +536,7 @@ pub(crate) unsafe fn icon_font() -> HFONT {
             return font;
         }
     }
-    fallback_font(&FALLBACK_ICON, "Segoe MDL2 Assets", 14, 400)
+    fallback_font(&FALLBACK_ICON, "Segoe MDL2 Assets", super::FONT_ICON_PX, 400)
 }
 
 /// Hints and paths. The app meta face, or the body face when that has not been built.
@@ -608,6 +625,18 @@ mod tests {
         assert_eq!(h1.lfWeight, 600);
         assert_eq!(h2.lfHeight, base.lfHeight * 13 / 10);
         assert_eq!(h2.lfWeight, 600);
+    }
+
+    #[test]
+    fn preview_tiers_grow_with_the_bumped_body() {
+        let before = logfont("Segoe UI", 12);
+        let after = logfont("Segoe UI", 13);
+        let [mono_b, bold_b, h1_b, h2_b] = preview_logfonts(before);
+        let [mono_a, bold_a, h1_a, h2_a] = preview_logfonts(after);
+        assert_eq!((mono_b.lfHeight, mono_a.lfHeight), (-12, -13));
+        assert_eq!((bold_b.lfHeight, bold_a.lfHeight), (-12, -13));
+        assert_eq!((h1_b.lfHeight, h1_a.lfHeight), (-19, -20));
+        assert_eq!((h2_b.lfHeight, h2_a.lfHeight), (-15, -16));
     }
 
     #[test]
