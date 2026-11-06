@@ -1,8 +1,8 @@
-# 스크린샷 캡처 기록 (docs/images-v5)
+# 스크린샷 캡처 기록 (docs/images-v6)
 
-**현재 스크린샷 자산 폴더는 `docs/images-v5/`이다.** 캐시 회피용이다. 새로 찍는 샷은 이 폴더에만 넣는다. 같은 경로를 덮어쓰면 GitHub·브라우저 캐시에 옛 그림이 남으므로, 새 샷의 대상으로 `docs/images-v0.2.6`을 쓰지 않는다.
+**현재 스크린샷 자산 폴더는 `docs/images-v6/`이다.** 캐시 회피용이다. 새로 찍는 샷은 이 폴더에만 넣는다. 같은 경로를 덮어쓰면 GitHub·브라우저 캐시에 옛 그림이 남으므로, `docs/images-v5`·`docs/images-v0.2.6`은 새 샷의 대상으로 쓰지 않는다.
 
-`docs/images-v0.2.6`은 main에 있다. README(en/ja/ko)와 도움말(en/ja/ko)의 UI 이미지 경로는 지금 그 폴더를 가리킨다. 다음 재촬영에서는 그 폴더를 **거부·대체**한다. PNG를 `docs/images-v5/`에 넣고 경로를 맞추는 일은 재촬영 PR에서 한다. 이 문서의 표와 아래 변경 이력은 이전 촬영 기록이다.
+README(en/ja/ko)와 도움말(en/ja/ko)의 UI 이미지 경로는 `docs/images-v6/`을 가리킨다(v0.2.7, 글꼴 +1 반영 재촬영). `docs/images-v5/`는 **대체됨(superseded)**: 다음 재촬영은 새 폴더(`docs/images-v7/` 등)에 넣는다. 아래 표의 크기 값 일부는 이전 촬영 기록이다.
 
 Maguro README / 도움말용 스크린샷. 모든 제품 이미지는 **포터블 빌드만** 사용하고, AppData·레지스트리·grids.ini·설치본 경로를 쓰지 않는다.
 
@@ -249,6 +249,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File docs\capture\capture-main.ps
 
 ## 변경 이력 (관련)
 
+- **2026-11-06 (v0.2.7):** 글꼴 +1 릴리스 후 전체 재촬영 → `docs/images-v6/` (84장, common/en/ja/ko). README·도움말 경로 images-v5 → images-v6. 시드 `readme2-cfgs-v6`(fav_panel+tree_panel, side_split=0.5). copy_progress는 help-demo\src 2GB 파일로. 루트 `workspaces*.png`(톱니 하위 메뉴, 참조 없음)는 공식 스크립트가 없어 v6에 넣지 않음.
 - **2026-11-06:** 다음 재촬영의 현재 자산 폴더를 `docs/images-v5/`로 정함(캐시 회피). main의 `docs/images-v0.2.6`은 존재하지만 거부·대체. Jun 지시 모음을 공통 규칙 아래에 추가. README·도움말 경로와 PNG는 이 기록만으로 바꾸지 않는다.
 - **2026-11-04:** 톱니바퀴 메뉴를 세션 / 도구 / 보기 / 모양 / 동작 / 설정으로 나눔. 열린 메뉴 샷은 images-v3에 없음 (위 절). 닫힌 톱니 단추만 있는 메인 창 샷은 다시 찍지 않음.
 - **2026-11-05:** docs/retake-15-12 — feature_win_shift_v* 재촬영(Photos 2026 새 탭, 사이드바·Folder Watch·실경로 제거). feature_excel_readonly_tidy* images-v4로 재촬영(PR #312 shared MaguroExcelTidy) + README §12 src를 v4로.

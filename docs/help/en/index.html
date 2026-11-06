@@ -274,7 +274,7 @@ body.lb-open { overflow: hidden; }
     <p>Maguro is a fork of <a href="https://github.com/efww/grids">efww/grids</a> by efww. It has its own exe name (<code>maguro.exe</code>), window class, settings folder and hotkey (Win+Shift+E).</p>
     <p>Start Maguro from the Start menu or the command line. <code>maguro.exe C:\Work D:\Archive</code> opens those two folders, and passing a <code>.maguro</code> file opens a saved session. <code>.grids</code>, <code>.qdr</code> and <code>grids.ini</code> files are not sessions, and Maguro doesn’t import them.</p>
     <p>Press F1 to open this Help in your browser, Ctrl+/ for the compact in-app shortcut list, or Ctrl+, for Settings.</p>
-    <div class="shot-grid"><figure class="shot"><img src="../../images-v5/en/hero_light.png" alt="Main window, light theme" loading="lazy"><figcaption>Main window, light</figcaption></figure><figure class="shot"><img src="../../images-v5/en/hero_dark.png" alt="Main window, dark theme" loading="lazy"><figcaption>Main window, dark</figcaption></figure></div>
+    <div class="shot-grid"><figure class="shot"><img src="../../images-v6/en/hero_light.png" alt="Main window, light theme" loading="lazy"><figcaption>Main window, light</figcaption></figure><figure class="shot"><img src="../../images-v6/en/hero_dark.png" alt="Main window, dark theme" loading="lazy"><figcaption>Main window, dark</figcaption></figure></div>
   </section>
 
   <section class="section-block" id="address-toolbar" data-search="address toolbar status swap drive buttons gear menu view appearance behavior">
@@ -285,7 +285,7 @@ body.lb-open { overflow: hidden; }
     <p>The gear is labelled Settings and view. It opens that menu, and it stays even when the toolbar is hidden. Separators split the menu into groups. First come Save this tab, Open session and Workspaces. Next are File Basket, Recent files, Open folders from Explorer windows and Folder Watch, plus the WinMerge commands when they apply. Then come View (Show hidden files, Show file extensions, Left panel, Show favourites panel, Show folder tree panel, Preview pane), Appearance (Light theme or Dark theme, Follow Windows light / dark, Selection colour, Language) and Behavior (Double-click empty space: parent folder, Bring Maguro to front from anywhere). Settings, Keyboard shortcuts, Help and About Maguro come last. Show in folder isn’t on this menu – use it from the right-click menu in Recent files, or press Ctrl+Enter.</p>
     <p>The status bar shows how many items are selected and how much free space the drive has.</p>
     <p>The ⇄ button opens the selected folder (or, if nothing is selected, the current one) in another pane, carrying over this pane’s columns, sort order and view. If files are selected, it copies or moves them to the other pane – up to 10,000 at a time. With only one pane open, it splits the window left and right. If nothing is selected, or only files are selected and no folder, it duplicates the current folder and leaves the selected files where they are.</p>
-    <div class="shot-grid"><figure class="shot"><img src="../../images-v5/en/address_toolbar.png" alt="Address bar and toolbar" loading="lazy"><figcaption>Address bar and toolbar</figcaption></figure></div>
+    <div class="shot-grid"><figure class="shot"><img src="../../images-v6/en/address_toolbar.png" alt="Address bar and toolbar" loading="lazy"><figcaption>Address bar and toolbar</figcaption></figure></div>
   </section>
 
   <section class="section-block" id="layouts" data-search="layout grid splitter maximise pane 4x4 sixteen">
@@ -295,7 +295,7 @@ body.lb-open { overflow: hidden; }
     <p>Drag a splitter to resize panes, or double-click it to share the space evenly. You can have up to 4 columns, up to 4 rows in a column, and 16 panes in total. If the drop preview turns red, that layout would go over the limit.</p>
     <p>Press Ctrl+Shift+M, or double-click a pane header, to maximise that pane. Do the same again to restore it.</p>
     <p>Settings → General → Default layout sets the layout for new tabs, new windows and the first start. A fresh install uses one pane. An older <code>maguro.json</code> that has never stored a layout still opens with two panes side by side, and a path passed on from another launch still opens in a one-pane tab. A saved <code>.maguro</code> file always opens with the layout stored in it.</p>
-    <div class="shot-grid"><figure class="shot"><img src="../../images-v5/common/layout_1.png" alt="One pane" loading="lazy"><figcaption>One pane</figcaption></figure><figure class="shot"><img src="../../images-v5/common/layout_2v.png" alt="Two panes, one above the other" loading="lazy"><figcaption>Two panes, stacked</figcaption></figure><figure class="shot"><img src="../../images-v5/common/layout_4.png" alt="Four panes" loading="lazy"><figcaption>Four panes</figcaption></figure><figure class="shot"><img src="../../images-v5/common/layout_preset_31.png" alt="Three panes plus one" loading="lazy"><figcaption>3+1</figcaption></figure></div>
+    <div class="shot-grid"><figure class="shot"><img src="../../images-v6/common/layout_1.png" alt="One pane" loading="lazy"><figcaption>One pane</figcaption></figure><figure class="shot"><img src="../../images-v6/common/layout_2v.png" alt="Two panes, one above the other" loading="lazy"><figcaption>Two panes, stacked</figcaption></figure><figure class="shot"><img src="../../images-v6/common/layout_4.png" alt="Four panes" loading="lazy"><figcaption>Four panes</figcaption></figure><figure class="shot"><img src="../../images-v6/common/layout_preset_31.png" alt="Three panes plus one" loading="lazy"><figcaption>3+1</figcaption></figure></div>
   </section>
 
   <section class="section-block" id="panedrag" data-search="drag drop swap duplicate pane number badge ctrl">
@@ -303,7 +303,7 @@ body.lb-open { overflow: hidden; }
     <p>To move a pane, drag it by its number badge or its header.</p>
     <p>Drop it on the edge of another pane to split that pane, or in the centre to swap the two. Hold Ctrl while dragging to copy the current pane tab instead: dropping on an edge splits the target and leaves this pane in place, and dropping in the centre adds a pane tab to that cell. Let go of Ctrl mid-drag to move rather than copy.</p>
     <p>You can do the same from the keyboard. Alt+Shift+arrow moves focus to the neighbouring pane, and Ctrl+Alt+Shift+arrow swaps places with it.</p>
-    <div class="shot-grid"><figure class="shot"><img src="../../images-v5/common/panedrag_before.png" alt="Before a pane drag" loading="lazy"><figcaption>Before the drag</figcaption></figure><figure class="shot"><img src="../../images-v5/common/panedrag_after.png" alt="After a pane swap" loading="lazy"><figcaption>After the drop</figcaption></figure><figure class="shot"><img src="../../images-v5/common/panedrag_dup.png" alt="Ctrl-drag duplicates a pane" loading="lazy"><figcaption>Ctrl-drag duplicates</figcaption></figure></div>
+    <div class="shot-grid"><figure class="shot"><img src="../../images-v6/common/panedrag_before.png" alt="Before a pane drag" loading="lazy"><figcaption>Before the drag</figcaption></figure><figure class="shot"><img src="../../images-v6/common/panedrag_after.png" alt="After a pane swap" loading="lazy"><figcaption>After the drop</figcaption></figure><figure class="shot"><img src="../../images-v6/common/panedrag_dup.png" alt="Ctrl-drag duplicates a pane" loading="lazy"><figcaption>Ctrl-drag duplicates</figcaption></figure></div>
   </section>
 
   <section class="section-block" id="tabs" data-search="tab session save .maguro green dot grids qdr grids.ini no import">
@@ -316,7 +316,7 @@ body.lb-open { overflow: hidden; }
     <p>Named sessions are always <code>.maguro</code> files, kept in the <code>maguro-sessions</code> folder next to the settings file (<code>%APPDATA%\Maguro\maguro-sessions</code>, or beside the exe in portable mode). A session file stores the layout, pane paths, views, columns, tints, pane tabs and window tabs. Favourites, the File Basket and your right-click menu choices aren’t part of a session; they stay in <code>maguro.json</code>.</p>
     <p>Maguro doesn’t import <code>.grids</code>, <code>.qdr</code> or <code>grids.ini</code> files, and passing <code>old.qdr</code> on the command line won’t open a session. Under Settings → Advanced you can import a Maguro <code>maguro.json</code>, or ini text from an older version of Maguro. That ini format is Maguro’s own, not a grids file.</p>
     <p>When Single-window mode is off, Ctrl+N opens another window. A new install has it switched on, so launching Maguro again, pressing Ctrl+N, dragging a tab off the tab row, or choosing Move to new window all open a tab in the current window instead. Single instance is also on by default, so any later launch is handled by the process that’s already running.</p>
-    <div class="shot-grid"><figure class="shot"><img src="../../images-v5/en/tabs.png" alt="Window tabs and pane tabs" loading="lazy"><figcaption>Window tabs and pane tabs</figcaption></figure></div>
+    <div class="shot-grid"><figure class="shot"><img src="../../images-v6/en/tabs.png" alt="Window tabs and pane tabs" loading="lazy"><figcaption>Window tabs and pane tabs</figcaption></figure></div>
   </section>
 
   <section class="section-block" id="tab-list" data-search="tab list ctrl+shift+l f2 rename tooltip filter path search">
@@ -327,7 +327,7 @@ body.lb-open { overflow: hidden; }
     <p>Press F2 to rename the selected tab in place. Enter keeps the new name and Esc cancels. If you leave the text unchanged, the automatic folder name isn’t pinned. Clearing the name, or entering only digits, removes the custom name so the tab follows its folder again. Custom names can be up to 80 characters long.</p>
     <p>Press Enter, click Go or double-click a row to switch to that tab and close the list. When the filter box has focus and contains text, Del clears the filter. Otherwise, Del closes the selected tab, as long as that tab is allowed to close.</p>
     <p>The footer shows the number of tabs and the keys: Enter to go, Right to expand, Left to collapse, F2 to rename, Del to close the tab, Esc to close the window.</p>
-    <div class="shot-grid"><figure class="shot"><img src="../../images-v5/en/tab_list.png" alt="Tab list with a filter, layout, pane count, and folder chips" loading="lazy"><figcaption>Tab list, with the filter, layout, pane count, and folder chips.</figcaption></figure></div>
+    <div class="shot-grid"><figure class="shot"><img src="../../images-v6/en/tab_list.png" alt="Tab list with a filter, layout, pane count, and folder chips" loading="lazy"><figcaption>Tab list, with the filter, layout, pane count, and folder chips.</figcaption></figure></div>
   </section>
 
   <section class="section-block" id="pane-tabs" data-search="pane tab strip ctrl+alt+t">
@@ -335,14 +335,14 @@ body.lb-open { overflow: hidden; }
     <p class="ref-shortcuts">All keys are listed in <a href="#shortcuts">Shortcuts</a>.</p>
     <p>Pane tabs let you open extra folders inside a single pane. They’re separate from window tabs. While a pane has only one folder, its tab strip stays hidden. To add a pane tab, click the button next to ⇄.</p>
     <p>To close a pane tab, middle-click it or click its small close mark. Ctrl+Alt+T creates a pane tab, Ctrl+Alt+W closes it, and Ctrl+Alt+Page Down and Ctrl+Alt+Page Up move between pane tabs. These four keys only work while focus is in a pane, so they never take over the window-tab shortcuts.</p>
-    <div class="shot-grid"><figure class="shot"><img src="../../images-v5/en/pane_tabs.png" alt="Pane tabs inside one pane" loading="lazy"><figcaption>Pane tabs</figcaption></figure></div>
+    <div class="shot-grid"><figure class="shot"><img src="../../images-v6/en/pane_tabs.png" alt="Pane tabs inside one pane" loading="lazy"><figcaption>Pane tabs</figcaption></figure></div>
   </section>
 
   <section class="section-block" id="pane-colors" data-search="colour color label header tint accent sky gray lavender sage peach rose">
     <h2>Pane colours</h2>
     <p>Right-click a pane header to give the pane a colour label. Labels are saved with the session and are independent of window-tab colours.</p>
     <p>There are six colours – Sky, Gray, Lavender, Sage, Peach and Rose – each with its own shade for the light and dark themes. These are pane labels, not the window accent. The accent colour is set under Settings → Appearance and defaults to cerulean <code>#0A9BD6</code>.</p>
-    <div class="shot-grid"><figure class="shot"><img src="../../images-v5/en/pane_colors.png" alt="A pane header carrying a colour" loading="lazy"><figcaption>The right pane carries a colour label</figcaption></figure></div>
+    <div class="shot-grid"><figure class="shot"><img src="../../images-v6/en/pane_colors.png" alt="A pane header carrying a colour" loading="lazy"><figcaption>The right pane carries a colour label</figcaption></figure></div>
   </section>
 
   <section class="section-block" id="favorites" data-search="favourites favorites pins tree left panel groups ctrl+b missing">
@@ -354,7 +354,7 @@ body.lb-open { overflow: hidden; }
     <p>Ctrl+B opens the quick favourites list, where you can search, rename, delete, or open a favourite in the active pane. The star on each pane adds that pane’s folder to favourites or removes it.</p>
     <p>The right-click menu has a separate <strong>Add to Maguro favorites</strong> or <strong>Remove from Maguro favorites</strong> item. It belongs to Maguro, not Explorer’s own favourites command, and you can’t hide it from the Right-click menu items settings page.</p>
     <p>In the folder tree, press Enter or double-click to open a folder in the pane. Ctrl-click or middle-click opens it in a new pane tab.</p>
-    <div class="shot-grid"><figure class="shot"><img src="../../images-v5/en/favorites.png" alt="Favourites above the folder tree" loading="lazy"><figcaption>Favourites and the folder tree</figcaption></figure></div>
+    <div class="shot-grid"><figure class="shot"><img src="../../images-v6/en/favorites.png" alt="Favourites above the folder tree" loading="lazy"><figcaption>Favourites and the folder tree</figcaption></figure></div>
   </section>
 
   <section class="section-block" id="search" data-search="search everything ctrl+f subfolders 300">
@@ -362,7 +362,7 @@ body.lb-open { overflow: hidden; }
     <p>Press Ctrl+F and start typing to filter the current folder as you type.</p>
     <p>Tick Subfolders to search inside subfolders too. If <strong>Use Everything for search</strong> is on (the default) and <a href="https://www.voidtools.com/">voidtools Everything</a> is running, Maguro uses Everything for the search; otherwise it scans the disk itself. Up to 300 results are shown, and your sort order is remembered in <code>maguro.json</code>.</p>
     <p>Settings → General shows whether Everything is installed and running, and lets you start it or install it with winget. The first time you search subfolders without Everything installed, Maguro asks once whether you’d like to install it.</p>
-    <div class="shot-grid"><figure class="shot"><img src="../../images-v5/en/search.png" alt="Folder filter with Subfolders ticked" loading="lazy"><figcaption>Search, with Subfolders</figcaption></figure></div>
+    <div class="shot-grid"><figure class="shot"><img src="../../images-v6/en/search.png" alt="Folder filter with Subfolders ticked" loading="lazy"><figcaption>Search, with Subfolders</figcaption></figure></div>
   </section>
 
   <section class="section-block" id="preview" data-search="preview quick look space f3 zoom pdf office hwp zip csv">
@@ -372,7 +372,7 @@ body.lb-open { overflow: hidden; }
     <p>Quick look can show pictures (including common camera RAW formats), video thumbnails, an information card for audio files, PDF pages, Markdown, plain text, code, CSV and TSV tables, ZIP contents, and HWP, HWPX and HWPT documents. For Office files, HTML, Outlook mail, fonts and PDFs of 10 MB or less, it can also use the Windows preview handler – the same mechanism Explorer uses. Larger files of these types show an information card straight away rather than making you wait. Anything Maguro can’t render gets a short card with the file’s basic details, never just an icon.</p>
     <p>In Quick look, Enter opens the file in its default app and closes the preview. Shift+Enter or a right-click lets you choose an app with Open with. Esc, Space or F3 closes the preview window. F2 renames the file you’re looking at, and Del deletes it. Ctrl+mouse wheel zooms from 10% to 800%, and you can drag to pan. On long pages the wheel scrolls. Left and Right always go to the previous or next file. Up and Down scroll; at the end of the page, pressing again moves to another file. The wheel only moves to the next file when Settings → Panes &amp; view → Wheel moves to next/previous file is on, and that option is off by default.</p>
     <p>Alt+P shows or hides the preview pane on the right. It shows the file that has focus in the active pane, using a Windows preview handler if one is available, or else a thumbnail or a short note. Opening a named <code>.maguro</code> file doesn’t change whether the preview pane is shown. Double-click its splitter to reset it to the default width.</p>
-    <div class="shot-grid"><figure class="shot"><img src="../../images-v5/en/preview.png" alt="Preview pane" loading="lazy"><figcaption>Preview pane</figcaption></figure><figure class="shot"><img src="../../images-v5/en/preview_peek.png" alt="Quick look" loading="lazy"><figcaption>Quick look</figcaption></figure></div>
+    <div class="shot-grid"><figure class="shot"><img src="../../images-v6/en/preview.png" alt="Preview pane" loading="lazy"><figcaption>Preview pane</figcaption></figure><figure class="shot"><img src="../../images-v6/en/preview_peek.png" alt="Quick look" loading="lazy"><figcaption>Quick look</figcaption></figure></div>
   </section>
 
   <section class="section-block" id="files" data-search="copy cut paste delete drag ifileoperation robocopy fast paste winmerge new folder">
@@ -387,7 +387,7 @@ body.lb-open { overflow: hidden; }
     <p>Ctrl+Shift+N creates a new folder in the active pane and starts a rename. F7 runs Explorer’s own New folder command in that pane. Ctrl+Alt+N creates a new text file. You can set the new file name in Settings.</p>
     <p>Ctrl+Shift+O opens the folders from your Explorer windows in Maguro panes. Panes already showing one of those folders stay as they are; the rest are filled starting from the active pane.</p>
     <p>Ctrl+Alt+C compares the folder in the active pane with the folder in the next pane using WinMerge. From the gear menu or the file list you can also compare two selected files, or compare one file with the file of the same name in another pane. Set the WinMerge path under Settings → General; leave it empty to detect WinMerge automatically. The WinMerge items on the right-click menu stay hidden until you turn them on under Settings → Right-click menu items.</p>
-    <div class="shot-grid"><figure class="shot"><img src="../../images-v5/en/copy_progress.png" alt="Maguro fast-copy progress" loading="lazy"><figcaption>Fast copy progress. Ordinary copies use the Windows dialog.</figcaption></figure></div>
+    <div class="shot-grid"><figure class="shot"><img src="../../images-v6/en/copy_progress.png" alt="Maguro fast-copy progress" loading="lazy"><figcaption>Fast copy progress. Ordinary copies use the Windows dialog.</figcaption></figure></div>
   </section>
 
   <section class="section-block" id="batch-rename" data-search="batch rename rules preview regex undo preset ctrl+shift+r">
@@ -399,7 +399,7 @@ body.lb-open { overflow: hidden; }
     <p>The preview shows the current name, the new name and the part that changes. Items excluded by the filters stay in the list, marked as skipped. If a row can’t be renamed, it shows the first problem found, checked in this order: empty name, invalid characters, reserved name, trailing space or dot, name too long, duplicate name within the batch, name already exists, invalid pattern.</p>
     <p>Rename only applies rows whose names change and that have no problems. The renaming itself goes through IFileOperation, so it can be undone. If a later stage fails, the stages already completed in that batch are rolled back. Maguro also keeps its own undo history of up to 20 batches in <code>rename-undo.json</code>. The Undo button or Ctrl+Z reverses the last batch, skipping any files that have since disappeared. After a successful rename, the rule list may reset to a single empty Replace rule.</p>
     <p>The dropdowns in this window and in Settings are styled combo boxes. See <a href="#theme">Theme &amp; styled controls</a> for details.</p>
-    <div class="shot-grid"><figure class="shot"><img src="../../images-v5/en/rename.png" alt="Batch rename, rules on the left and a live preview on the right" loading="lazy"><figcaption>Batch rename</figcaption></figure></div>
+    <div class="shot-grid"><figure class="shot"><img src="../../images-v6/en/rename.png" alt="Batch rename, rules on the left and a live preview on the right" loading="lazy"><figcaption>Batch rename</figcaption></figure></div>
   </section>
 
   <section class="section-block" id="basket" data-search="basket always on top ctrl+shift+b copy move select drag">
@@ -407,14 +407,14 @@ body.lb-open { overflow: hidden; }
     <p>Ctrl+Shift+B shows or hides the File Basket, a small window that stays on top of other windows. Drop files or folders onto it, or press Ctrl+Alt+B to add the items selected in the active pane. The basket stores paths, not copies of the files, and those paths are kept in <code>maguro.json</code>, not in a <code>.maguro</code> session. Removing an item from the list leaves the original file untouched.</p>
     <p><strong>Copy to active pane</strong> and <strong>Move to active pane</strong> use IFileOperation, the same engine as pasting into a pane. <strong>Select all</strong> selects every row. Click to select one row, Ctrl-click to add or remove a row, and Shift-click to select a range from the anchor row. Drag the selection onto a pane or into Explorer to copy the files there; hold Ctrl to copy or Shift to move. Alt and Ctrl+Shift don’t create shortcuts. Dropping onto a pane runs in the background and shows the Windows progress window, and Explorer accepts the same drag. Remove and Clear only change the list.</p>
     <p>If an original file goes missing, its row stays in the list, marked as missing, until you remove it. Copy and move skip missing items.</p>
-    <div class="shot-grid"><figure class="shot"><img src="../../images-v5/en/feature_basket.png" alt="File Basket with a missing file still listed" loading="lazy"><figcaption>File Basket. Missing files stay listed.</figcaption></figure></div>
+    <div class="shot-grid"><figure class="shot"><img src="../../images-v6/en/feature_basket.png" alt="File Basket with a missing file still listed" loading="lazy"><figcaption>File Basket. Missing files stay listed.</figcaption></figure></div>
   </section>
 
   <section class="section-block" id="watch" data-search="watch folder file ctrl+shift+w tray 32">
     <h2>Folder Watch</h2>
     <p>Ctrl+Shift+W opens Folder Watch. Add a folder, a file or the active pane to start watching it. Folder rows can include subfolders, and each row has the same tick box as in Settings.</p>
     <p>Maguro lets you know when something changes, but only while Maguro is running – there’s no tray icon and no background service. The list is stored in <code>maguro.json</code>, and you can watch up to 32 folders and files in total. If a watched file disappears, its row stays in the list, marked as missing, until you delete it. A folder or file that’s already being watched can’t be added a second time.</p>
-    <div class="shot-grid"><figure class="shot"><img src="../../images-v5/en/feature_folder_watch.png" alt="Folder Watch with a folder row and a file row" loading="lazy"><figcaption>A folder and a file</figcaption></figure></div>
+    <div class="shot-grid"><figure class="shot"><img src="../../images-v6/en/feature_folder_watch.png" alt="Folder Watch with a folder row and a file row" loading="lazy"><figcaption>A folder and a file</figcaption></figure></div>
   </section>
 
   <section class="section-block" id="clipboard" data-search="clipboard path win+alt+v hdrop">
@@ -422,14 +422,14 @@ body.lb-open { overflow: hidden; }
     <p>While Maguro is running, press <strong>Win+Alt+V</strong> to open the path on the clipboard, even when another window is in front. A folder opens in a new tab and a file opens in its default app.</p>
     <p>Copied files (CF_HDROP) take priority over plain text. With text, Maguro trims surrounding spaces, removes quotes, accepts <code>file:</code> URLs, expands environment variables and uses only the first line. If the clipboard contains no folder or file, or the path doesn’t exist, Maguro tells you.</p>
     <p>The hotkey is on by default. Turning it off under Settings → General also unregisters it, and you can change the key combination under Settings → Shortcuts. If another app’s file dialog is in front, the keypress is passed to that dialog instead of opening a tab.</p>
-    <div class="shot-grid"><figure class="shot"><img src="../../images-v5/en/feature_win_shift_v.png" alt="A folder opened from the clipboard as a tab" loading="lazy"><figcaption>A clipboard path opened as a tab</figcaption></figure></div>
+    <div class="shot-grid"><figure class="shot"><img src="../../images-v6/en/feature_win_shift_v.png" alt="A folder opened from the clipboard as a tab" loading="lazy"><figcaption>A clipboard path opened as a tab</figcaption></figure></div>
   </section>
 
   <section class="section-block" id="workspaces" data-search="workspace slots ctrl+alt+1 nine">
     <h2>Workspaces</h2>
     <p>Workspaces let you save up to nine named layouts. Each slot stores a name and a <code>.maguro</code> snapshot of your tabs, panes and folders. Slots are kept in <code>maguro.json</code> rather than as separate files. Workspace shortcuts aren’t global hotkeys.</p>
     <p>Ctrl+Alt+1 to 9 loads a slot, and Ctrl+Alt+Shift+1 to 9 saves the current layout to that slot. From the gear menu → Workspaces you can save, load, rename and clear slots. Loading an empty slot shows a short message. Loading a workspace replaces your current tabs; Maguro only asks first if Ask before loading is on.</p>
-    <div class="shot-grid"><figure class="shot"><img src="../../images-v5/en/workspaces.png" alt="Gear menu → Workspaces" loading="lazy"><figcaption>Gear menu → Workspaces</figcaption></figure></div>
+    <div class="shot-grid"><figure class="shot"><img src="../../images-v6/en/workspaces.png" alt="Gear menu → Workspaces" loading="lazy"><figcaption>Gear menu → Workspaces</figcaption></figure></div>
   </section>
 
   <section class="section-block" id="servers" data-search="smb webdav sftp ftp rclone winfsp credential manager">
@@ -438,7 +438,7 @@ body.lb-open { overflow: hidden; }
     <p>Choose the server type, then enter a display name, address, port, remote path, user name and password. Passwords are stored in Windows Credential Manager and are never written to <code>maguro.json</code>.</p>
     <p>SMB uses a Windows share. WebDAV may require HTTPS. FTP connects to the host and port you enter. SFTP and FTP are mounted with rclone and WinFsp, after which you can browse them like any other folder – preview, the right-click menu and fast copy included. When you add one of these connections, Maguro may offer to install rclone and WinFsp.</p>
     <p>Disconnect when you’re finished. Folder sizes aren’t calculated on a disconnected share unless network folder sizes are turned on. If a network folder won’t open, press F5.</p>
-    <div class="shot-grid"><figure class="shot"><img src="../../images-v5/en/servers.png" alt="Add server connection, SFTP selected" loading="lazy"><figcaption>Add server connection</figcaption></figure></div>
+    <div class="shot-grid"><figure class="shot"><img src="../../images-v6/en/servers.png" alt="Add server connection, SFTP selected" loading="lazy"><figcaption>Add server connection</figcaption></figure></div>
   </section>
 
   <section class="section-block" id="office" data-search="excel office readonly tidy a1 100 xlsx xlsm csv bak">
@@ -446,7 +446,7 @@ body.lb-open { overflow: hidden; }
     <p><strong>Open read-only</strong> appears when every selected item is an <code>.xls</code>, <code>.xlsx</code>, <code>.xlsm</code> or <code>.csv</code> file. It doesn’t appear for <code>.xlsb</code> files, for folders, or when the selection mixes other types. It runs <code>excel.exe /r</code> with the file’s path, so Excel opens the workbook read-only and other people can still save it.</p>
     <p><strong>Tidy to A1 · 100%</strong> appears when every selected item is an <code>.xlsx</code> or <code>.xlsm</code> file. The dialog has four options, which are remembered for the rest of the session: move the selection to A1, set the zoom to 100%, select the first sheet, and make a backup (<code>.bak.xlsx</code>). Files that another program has open are skipped and reported in the same way as a locked file during a copy, and a summary at the end shows how many files were done and how many were skipped.</p>
     <p>Previewing Office files is a separate feature – see <a href="#preview">Preview &amp; Quick look</a>.</p>
-    <div class="shot-grid"><figure class="shot"><img src="../../images-v5/en/feature_excel_readonly_tidy.png" alt="Tidy to A1 and 100 percent" loading="lazy"><figcaption>Tidy to A1 · 100%</figcaption></figure></div>
+    <div class="shot-grid"><figure class="shot"><img src="../../images-v6/en/feature_excel_readonly_tidy.png" alt="Tidy to A1 and 100 percent" loading="lazy"><figcaption>Tidy to A1 · 100%</figcaption></figure></div>
   </section>
 
   <section class="section-block" id="ctxmenu" data-search="context menu right-click favourites fast paste winmerge packaged">
@@ -463,7 +463,7 @@ body.lb-open { overflow: hidden; }
     <p>When you change the theme, the rest of the window updates straight away. If any open pane’s folder list is a DirectUI view, the usual Explorer list, Maguro restarts itself so that list is created under the new theme. Paths, filters, and the layout come back from the session, and that list’s back and forward history starts over. A classic list view recolours in place and keeps its path, selection, and scroll position.</p>
     <p>Every dropdown in Settings and Batch Rename is a styled combo box. Underneath it’s still a standard Windows combo box, so F4, Alt+Down, type-to-select and the mouse wheel all work as usual. When closed, it’s drawn to match the text fields next to it, with a card background, a hairline border, slightly rounded corners and a solid triangle. On the light theme, the enabled arrow is <code>#444444</code> so that it stands out against the white background; on the dark theme it uses the theme’s text colour. The border turns cerulean on focus, on hover and while the list is open. The selected row in the list is shown in white text on cerulean. Disabled combo boxes, and rename rules that are switched off, use a dimmed text colour.</p>
     <p>This Help site always uses the light theme, whatever theme the app is set to.</p>
-    <div class="shot-grid"><figure class="shot"><img src="../../images-v5/en/settings.png" alt="Settings, General page" loading="lazy"><figcaption>Settings</figcaption></figure></div>
+    <div class="shot-grid"><figure class="shot"><img src="../../images-v6/en/settings.png" alt="Settings, General page" loading="lazy"><figcaption>Settings</figcaption></figure></div>
   </section>
 
   <section class="section-block" id="settings" data-search="settings general appearance panes file favourites shortcuts sessions advanced about portable maguro.json">
@@ -479,7 +479,7 @@ body.lb-open { overflow: hidden; }
     <p><strong>Advanced.</strong> Check GitHub for a newer release on startup. The updater downloads only <code>maguro.exe</code> and <code>maguro.exe.sha256</code>, and doesn’t extract releases that are only available as a zip. The settings file location, and export and import in Maguro JSON or Maguro ini format. Reset all settings restores your preferences to their defaults but keeps your layout, folders and favourites. The names of shell-extension DLLs to block.</p>
     <p><strong>Right-click menu items.</strong> Third-party handlers, menu style, packaged commands and WinMerge. See <a href="#ctxmenu">Right-click menu</a>.</p>
     <p><strong>About.</strong> The version number and credits: Maguro is a fork of efww/grids by efww.</p>
-    <div class="shot-grid"><figure class="shot"><img src="../../images-v5/en/settings_panes.png" alt="Settings, Panes and view" loading="lazy"><figcaption>Panes &amp; view</figcaption></figure></div>
+    <div class="shot-grid"><figure class="shot"><img src="../../images-v6/en/settings_panes.png" alt="Settings, Panes and view" loading="lazy"><figcaption>Panes &amp; view</figcaption></figure></div>
   </section>
 
   <section class="section-block" id="window-actions" data-search="win+shift+e bring front dialog jump ctrl+alt+g focus hidden select pattern hotkey">

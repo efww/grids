@@ -30,8 +30,8 @@
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images-v5/ja/hero_dark.png">
-    <img alt="Maguro、ライトテーマ、ペイン二つ" src="docs/images-v5/ja/hero_light.png">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images-v6/ja/hero_dark.png">
+    <img alt="Maguro、ライトテーマ、ペイン二つ" src="docs/images-v6/ja/hero_light.png">
   </picture>
 </p>
 
@@ -45,27 +45,27 @@
 
 ペインひとつから始めて、組み込みの格子（最大 4×4）を選べます。境界をドラッグしてサイズ変更。名前付きセッションにはレイアウト・フォルダ・列・色ラベルが入り、開くと今のタブの横にウィンドウタブが増えます。
 
-<p align="center"><img width="760" alt="マルチペイン・レイアウト" src="docs/images-v5/ja/layout.png"></p>
+<p align="center"><img width="760" alt="マルチペイン・レイアウト" src="docs/images-v6/ja/layout.png"></p>
 
 <table>
 <tr>
-<td><img alt="1 ペイン" src="docs/images-v5/common/layout_1.png"></td>
-<td><img alt="横 2" src="docs/images-v5/common/layout_2h.png"></td>
-<td><img alt="縦 2" src="docs/images-v5/common/layout_2v.png"></td>
+<td><img alt="1 ペイン" src="docs/images-v6/common/layout_1.png"></td>
+<td><img alt="横 2" src="docs/images-v6/common/layout_2h.png"></td>
+<td><img alt="縦 2" src="docs/images-v6/common/layout_2v.png"></td>
 </tr>
 <tr>
-<td><img alt="3 ペイン" src="docs/images-v5/common/layout_3.png"></td>
-<td><img alt="縦積み 3" src="docs/images-v5/common/layout_3_stack.png"></td>
-<td><img alt="3 列" src="docs/images-v5/common/layout_3col.png"></td>
+<td><img alt="3 ペイン" src="docs/images-v6/common/layout_3.png"></td>
+<td><img alt="縦積み 3" src="docs/images-v6/common/layout_3_stack.png"></td>
+<td><img alt="3 列" src="docs/images-v6/common/layout_3col.png"></td>
 </tr>
 <tr>
-<td><img alt="4 ペイン" src="docs/images-v5/common/layout_4.png"></td>
-<td><img alt="縦長 4" src="docs/images-v5/common/layout_4_tall.png"></td>
-<td><img alt="5 ペイン" src="docs/images-v5/common/layout_5.png"></td>
+<td><img alt="4 ペイン" src="docs/images-v6/common/layout_4.png"></td>
+<td><img alt="縦長 4" src="docs/images-v6/common/layout_4_tall.png"></td>
+<td><img alt="5 ペイン" src="docs/images-v6/common/layout_5.png"></td>
 </tr>
 <tr>
-<td><img alt="1+1+2" src="docs/images-v5/common/layout_preset_112.png"></td>
-<td><img alt="3+1" src="docs/images-v5/common/layout_preset_31.png"></td>
+<td><img alt="1+1+2" src="docs/images-v6/common/layout_preset_112.png"></td>
+<td><img alt="3+1" src="docs/images-v6/common/layout_preset_31.png"></td>
 <td></td>
 </tr>
 </table>
@@ -74,7 +74,7 @@
 
 ウィンドウ全体の Chrome 風タブに加え、各ペインの中にもタブがあります。タブ名はアクティブなフォルダから付き、ツールチップにフルパスが出ます。タブの複製、別ウィンドウへの移動、セッション保存もできます。
 
-<p align="center"><img width="760" alt="ウィンドウタブとペインタブ" src="docs/images-v5/ja/tabs.png"></p>
+<p align="center"><img width="760" alt="ウィンドウタブとペインタブ" src="docs/images-v6/ja/tabs.png"></p>
 
 ### 3. タブの固定名・ロック・色
 
@@ -85,16 +85,16 @@
 ペイン番号バッジかヘッダーをつまんでドラッグします。別ペインの中央に落とすと二つが入れ替わります。端に落とすとそのペインが分割されます。**Ctrl** を押しながらドラッグすると、今のペイン タブをコピーします。端では対象を分割してこのペインは残り、中央ではそのセルにペイン タブを追加します。
 
 <p align="center">
-  <img width="360" alt="ドラッグ前" src="docs/images-v5/common/panedrag_before.png">
-  <img width="360" alt="入れ替え後" src="docs/images-v5/common/panedrag_after.png">
+  <img width="360" alt="ドラッグ前" src="docs/images-v6/common/panedrag_before.png">
+  <img width="360" alt="入れ替え後" src="docs/images-v6/common/panedrag_after.png">
 </p>
-<p align="center"><img width="560" alt="Ctrl+ドラッグでペインを複製" src="docs/images-v5/common/panedrag_dup.png"></p>
+<p align="center"><img width="560" alt="Ctrl+ドラッグでペインを複製" src="docs/images-v6/common/panedrag_dup.png"></p>
 
 ### 5. ペインごとの色
 
 ペインごとにアクセント色を付けられます。ソースと行き先を間違えにくい、忙しいマルチペイン向きの仕込みです。
 
-<p align="center"><img width="760" alt="ペインごとの色" src="docs/images-v5/ja/pane_colors.png"></p>
+<p align="center"><img width="760" alt="ペインごとの色" src="docs/images-v6/ja/pane_colors.png"></p>
 
 ### 6. 速さのための設計
 
@@ -102,83 +102,83 @@
 
 **Everything 連携のペイン検索。** ペインで Ctrl+F すると入力のたびに絞り込み。サブフォルダをオンにすると [voidtools Everything](https://www.voidtools.com/) に聞いて一瞬で結果を出し、Everything が無ければディスクを歩きます。
 
-<p align="center"><img width="760" alt="Everything 連携のペイン検索" src="docs/images-v5/ja/search.png"></p>
+<p align="center"><img width="760" alt="Everything 連携のペイン検索" src="docs/images-v6/ja/search.png"></p>
 
 ### 7. お気に入り — フォルダもファイルも、グループで
 
 サイドバーは上下半分。上がお気に入り、下がフォルダツリー。お気に入りにはエクスプローラーのクイックアクセスに加え、自分で作ったグループ（フォルダもファイルも入れられ、ドラッグで並べ替え）が入ります。Ctrl+B でクイック一覧。パネルにファイルやフォルダを落とすとピン留めされます。
 
-<p align="center"><img width="760" alt="グループ分けしたお気に入り" src="docs/images-v5/ja/favorites.png"></p>
+<p align="center"><img width="760" alt="グループ分けしたお気に入り" src="docs/images-v6/ja/favorites.png"></p>
 
 ### 8. クイックプレビュー
 
 F3 でクイックルックを開きます。画像、PDF、Office、HTML、Markdown、コード、CSV、ZIP、HWP/HWPX（Hancom）などを表示します。「スペースでプレビュー」がオン（既定）なら Space でも開きます。Ctrl+ホイールで拡大（10–800%）、ドラッグでパン、ホイールでスクロール、←/→ で前後のファイルへ。クイックルックでは **F2** で名前変更、**Del** で表示中のファイルを削除できます。
 
 <p align="center">
-  <img width="480" alt="ペイン内プレビュー" src="docs/images-v5/ja/preview.png">
-  <img width="240" alt="クイックルック" src="docs/images-v5/ja/preview_peek.png">
+  <img width="480" alt="ペイン内プレビュー" src="docs/images-v6/ja/preview.png">
+  <img width="240" alt="クイックルック" src="docs/images-v6/ja/preview_peek.png">
 </p>
 
 ### 9. カスタムできる右クリックメニュー
 
 設定 → 右クリックメニュー項目で、Maguro 独自コマンドの表示／非表示を選べます。メニューをすっきりさせても、全部戻しても構いません。
 
-<p align="center"><img width="560" alt="右クリックメニューの設定" src="docs/images-v5/ja/settings_ctxmenu.png"></p>
+<p align="center"><img width="560" alt="右クリックメニューの設定" src="docs/images-v6/ja/settings_ctxmenu.png"></p>
 
 ### 10. 名前のプレビュー付き一括リネーム
 
 ファイルを選んで Ctrl+Shift+R。検索／置換、連番、拡張子、プリセットを変えるたびに、確定前の新しい名前が一覧で更新されます。
 
-<p align="center"><img width="560" alt="名前プレビュー付き一括リネーム" src="docs/images-v5/ja/rename.png"></p>
+<p align="center"><img width="560" alt="名前プレビュー付き一括リネーム" src="docs/images-v6/ja/rename.png"></p>
 
 ### 11. サーバー接続
 
 お気に入りパネル（またはグループ）を右クリック → **サーバー接続を追加…**。SMB と WebDAV は普通の Windows フォルダとして開きます。SFTP と FTP は rclone と WinFsp でマウントしたあと、プレビューも右クリックも高速コピーも他のフォルダと同じように使えます。パスワードは Windows 資格情報マネージャーだけに置き、`maguro.json` には書きません。
 
-<p align="center"><img width="420" alt="入力済みのサーバー接続ダイアログ" src="docs/images-v5/ja/servers.png"></p>
+<p align="center"><img width="420" alt="入力済みのサーバー接続ダイアログ" src="docs/images-v6/ja/servers.png"></p>
 
 
 ### 12. Excel の読み取り専用オープンと A1・100%に整える
 
 `.xls`、`.xlsx`、`.xlsm`、`.csv` を右クリック → **読み取り専用で開く** でロックせずに Excel を開きます。**A1・100%に整える** は `.xlsx` と `.xlsm` だけです。選択を A1 へ、ズームを 100% へ、先頭シートの選択、`.bak.xlsx` バックアップの四つを個別に選べ、その選択は今回の起動中は覚えます。
 
-<p align="center"><img width="420" alt="Excel を A1・100%に整える" src="docs/images-v5/ja/feature_excel_readonly_tidy.png"></p>
+<p align="center"><img width="420" alt="Excel を A1・100%に整える" src="docs/images-v6/ja/feature_excel_readonly_tidy.png"></p>
 
 ### 13. ファイルバスケット
 
 Ctrl+Shift+B で常に手前の小さなバスケットを開きます。ファイルをドロップするか Ctrl+Alt+B でアクティブペインの選択を入れ、あとから任意のペインへコピー／移動します。パスはセッションではなく `maguro.json` だけに残ります。元ファイルがなくても一覧に残り、削除するまで表示されます。
 
-<p align="center"><img width="420" alt="設定スタイルのコンパクト行のファイルバスケット" src="docs/images-v5/ja/feature_basket.png"></p>
+<p align="center"><img width="420" alt="設定スタイルのコンパクト行のファイルバスケット" src="docs/images-v6/ja/feature_basket.png"></p>
 
 ### 14. フォルダー監視
 
 Ctrl+Shift+W でフォルダー監視を開きます。フォルダー・アクティブペインに加え、**個別ファイル**も追加できます。行のチェックボックスは設定と同じティックです。Maguro の実行中だけ変更を通知します。監視中のファイルが消えると「ファイルが見つかりません」と表示されます。
 
-<p align="center"><img width="560" alt="フォルダーとファイル行があるフォルダー監視" src="docs/images-v5/ja/feature_folder_watch.png"></p>
+<p align="center"><img width="560" alt="フォルダーとファイル行があるフォルダー監視" src="docs/images-v6/ja/feature_folder_watch.png"></p>
 
 ### 15. クリップボードのパスを開く（Win+Alt+V）
 
 Maguro が起動していれば **Win+Alt+V** で、ほかのアプリが前面でもクリップボードのパスを開きます。フォルダーは新しいタブになり、ファイルは既定のアプリで開きます。
 
-<p align="center"><img width="760" alt="クリップボードのパスを新しいタブで開いたところ" src="docs/images-v5/ja/feature_win_shift_v.png"></p>
+<p align="center"><img width="760" alt="クリップボードのパスを新しいタブで開いたところ" src="docs/images-v6/ja/feature_win_shift_v.png"></p>
 
 ### 16. タブ一覧
 
 **Ctrl+Shift+L**、タブ行右端の一覧ボタン、またはタブ右クリックの **タブ一覧…** で、各タブの配置・ペイン・フォルダーを見ます。名前で絞り込み、Enter かダブルクリックで移動し、F2 で名前を変えます。各タブは代表フォルダーと残りの `+N` だけの一行から始まり、**Right** で展開、**Left** で折りたたみます。現在のタブは最初から開いています。フィルターは一致するタブだけを展開します。
 
-<p align="center"><img width="560" alt="各タブの配置・ペイン・フォルダーを示すタブ一覧" src="docs/images-v5/en/tab_list.png"></p>
+<p align="center"><img width="560" alt="各タブの配置・ペイン・フォルダーを示すタブ一覧" src="docs/images-v6/en/tab_list.png"></p>
 
 ### 17. ワークスペース
 
 名前付きレイアウトを最大九つ。**Ctrl+Alt+1…9** でスロットを開き、**Ctrl+Alt+Shift+1…9** で今のタブ・ペイン・フォルダーをそのスロットに保存します。歯車メニュー → **ワークスペース** で保存・読み込み・名前の変更・消去ができます。スロットは `maguro.json` にあります。
 
-<p align="center"><img width="480" alt="歯車メニュー → ワークスペース" src="docs/images-v5/ja/workspaces.png"></p>
+<p align="center"><img width="480" alt="歯車メニュー → ワークスペース" src="docs/images-v6/ja/workspaces.png"></p>
 
 ### 18. ダイアログジャンプ
 
 ほかのアプリの開く／保存ダイアログが前面のとき、**Ctrl+Alt+G** で Maguro に開いているフォルダーを選び、ダイアログをそこに移します。仮想フォルダーは除きます。このキーは、そのようなダイアログが前面のときだけ登録されます。
 
-<p align="center"><img width="420" alt="ダイアログジャンプで Maguro のフォルダーを選ぶ" src="docs/images-v5/ja/dialog_jump.png"></p>
+<p align="center"><img width="420" alt="ダイアログジャンプで Maguro のフォルダーを選ぶ" src="docs/images-v6/ja/dialog_jump.png"></p>
 
 ### テーマとアクセント
 
@@ -186,10 +186,10 @@ Windows に従うライト／ダーク、テーマごとにアクセント色の
 
 <table>
 <tr>
-<td><img alt="設定" src="docs/images-v5/ja/settings.png"></td>
+<td><img alt="設定" src="docs/images-v6/ja/settings.png"></td>
 </tr>
 <tr>
-<td><img alt="ダークテーマ" src="docs/images-v5/ja/hero_dark.png"></td>
+<td><img alt="ダークテーマ" src="docs/images-v6/ja/hero_dark.png"></td>
 </tr>
 </table>
 
