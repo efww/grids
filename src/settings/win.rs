@@ -2269,7 +2269,7 @@ unsafe fn draw_about_btn(d: &DRAWITEMSTRUCT) {
 unsafe fn paint_about(h: HWND) {
     let dpi = GetDpiForWindow(h).max(96) as i32;
     let copy = live_about();
-    crate::buffered(h, |dc, rc| {
+    crate::buffered_solid(h, |dc, rc| {
         let cw = rc.right - rc.left;
         let ch = rc.bottom - rc.top;
         crate::paint_window(dc, rc);
@@ -2310,7 +2310,13 @@ unsafe fn about_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT
             paint_about(h);
             return LRESULT(0);
         }
-        WM_ERASEBKGND => return LRESULT(1),
+        WM_ERASEBKGND => {
+            // Null class brush: fill here so the first frame is not blank/white (#292 parity).
+            let mut rc = RECT::default();
+            let _ = GetClientRect(h, &mut rc);
+            crate::paint_window(HDC(wp.0 as _), rc);
+            return LRESULT(1);
+        }
         WM_DRAWITEM => {
             draw_about_btn(&*(lp.0 as *const DRAWITEMSTRUCT));
             return LRESULT(1);
@@ -2444,7 +2450,13 @@ unsafe fn ask_proc_inner(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
             paint_ask(h);
             return LRESULT(0);
         }
-        WM_ERASEBKGND => return LRESULT(1),
+        WM_ERASEBKGND => {
+            // Null class brush: fill here so the first frame is not blank/white (#292 parity).
+            let mut rc = RECT::default();
+            let _ = GetClientRect(h, &mut rc);
+            crate::paint_window(HDC(wp.0 as _), rc);
+            return LRESULT(1);
+        }
         WM_CTLCOLOREDIT | WM_CTLCOLORSTATIC => {
             let dc = HDC(wp.0 as _);
             return crate::color_field_edit(dc);
@@ -2625,7 +2637,7 @@ unsafe fn paint_ask(h: HWND) {
     let font = ASK_FONT.with(|f| f.get());
     let font = if font.is_invalid() { ask_font() } else { font };
     let focused = GetFocus() == ASK_EDIT.with(|e| e.get());
-    crate::buffered(h, |dc, rc| {
+    crate::buffered_solid(h, |dc, rc| {
         crate::paint_window(dc, rc);
         let (ok_w, cancel_w) = ask_button_widths(font, dpi);
         let lay = ask_lay(rc.right - rc.left, dpi, ok_w, cancel_w);
@@ -2725,6 +2737,8 @@ unsafe fn ask_with(owner: HWND, title: &str, initial: &str, select_stem: bool) -
     let _ = child_at(h, w!("BUTTON"), tx(crate::Key::Cancel), 0xB | 0x00010000, ASK_CANCEL, font);
     layout_ask(h);
     let _ = ShowWindow(h, SW_SHOW);
+    // Opened right after TrackPopupMenu: paint frame + children now instead of waiting for hover.
+    let _ = windows::Win32::Graphics::Gdi::RedrawWindow(Some(h), None, None, windows::Win32::Graphics::Gdi::RDW_INVALIDATE | windows::Win32::Graphics::Gdi::RDW_ERASE | windows::Win32::Graphics::Gdi::RDW_ALLCHILDREN | windows::Win32::Graphics::Gdi::RDW_UPDATENOW);
     crate::keys::set_modal(true);
     let _ = windows::Win32::UI::Input::KeyboardAndMouse::EnableWindow(owner, false);
     let _ = windows::Win32::UI::Input::KeyboardAndMouse::SetFocus(Some(edit));
