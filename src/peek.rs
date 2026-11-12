@@ -144,7 +144,12 @@ unsafe fn peek_item(gen: usize, req: &PeekReq) {
         // the first page is up; the rest follow while this is still the item shown
         if let (Some(total), Ok(doc)) = (more, pdf_open(&req.path)) {
             for i in 1..total {
-                let Some(p) = (peek_job().gen == gen).then(|| pdf_page(&doc, i, req.w, req.h)).flatten() else { break };
+                // its own statement: the guard of a let-else lives until the end of it, and the window
+                // waits on this lock while a page renders (milliseconds for a PDF, much longer for an HWP)
+                if peek_job().gen != gen {
+                    break;
+                }
+                let Some(p) = pdf_page(&doc, i, req.w, req.h) else { break };
                 if !peek_job().add_page(gen, p) {
                     break;
                 }
