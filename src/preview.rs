@@ -154,8 +154,8 @@ pub(crate) unsafe fn content(req: &PeekReq) -> Body {
         "eml" => read_head(path, 4 << 20).map(|(b, cut)| Body::Text { text: eml_text(&b, KO.load(Ordering::Relaxed)), kind: TextKind::Plain, cut }),
         "url" | "website" => url_card(path),
         "lnk" => Some(lnk_card(path)),
-        "hwp" => hwp_preview(path, req),
-        "hwpx" | "hwpt" => hwpx_preview(path, req),
+        "hwp" => hwp_pages(path, req).or_else(|| hwp_preview(path, req)),
+        "hwpx" | "hwpt" => hwp_pages(path, req).or_else(|| hwpx_preview(path, req)),
         e if OFFICE_ZIP.contains(&e) => office_text(path, e),
         e if ZIPS.contains(&e) => zip_list(path),
         e if PROGRAMS.contains(&e) => Some(card(path, &version_rows(path))),
@@ -269,7 +269,13 @@ unsafe fn psd_thumb(path: &str, req: &PeekReq) -> Option<Pix> {
 pub(crate) const PDF_MAX: u32 = 50;
 
 pub(crate) fn pdf_open(path: &str) -> Result<PdfDocument> {
-    let file = StorageFile::GetFileFromPathAsync(&HSTRING::from(path))?.join()?;
+    // HWP/HWPX: its pages as rhwp lays them out, kept as a PDF
+    let pdf = if crate::hwpdoc::is_hwp(path) {
+        crate::hwpdoc::full_pdf(path).ok_or_else(|| Error::from(E_FAIL))?.to_string_lossy().into_owned()
+    } else {
+        path.to_string()
+    };
+    let file = StorageFile::GetFileFromPathAsync(&HSTRING::from(pdf))?.join()?;
     PdfDocument::LoadFromFileAsync(&file)?.join()
 }
 
@@ -294,6 +300,15 @@ pub(crate) unsafe fn pdf_page(doc: &PdfDocument, i: u32, w: i32, h: i32) -> Opti
 unsafe fn pdf_first(path: &str, req: &PeekReq) -> Option<Body> {
     let doc = pdf_open(path).ok()?;
     let total = doc.PageCount().ok()?.min(PDF_MAX);
+    let first = pdf_page(&doc, 0, req.w, req.h)?;
+    Some(Body::Pages { pages: vec![first], total })
+}
+
+// HWP/HWPX drawn page by page (hwpdoc.rs); the embedded preview picture and body text when that fails.
+unsafe fn hwp_pages(path: &str, req: &PeekReq) -> Option<Body> {
+    let (pdf, total) = crate::hwpdoc::first_pdf(path)?;
+    let file = StorageFile::GetFileFromPathAsync(&HSTRING::from(pdf.as_os_str())).ok()?.join().ok()?;
+    let doc = PdfDocument::LoadFromFileAsync(&file).ok()?.join().ok()?;
     let first = pdf_page(&doc, 0, req.w, req.h)?;
     Some(Body::Pages { pages: vec![first], total })
 }

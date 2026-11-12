@@ -59,6 +59,7 @@ mod load_popup;
 mod favourites;
 mod docparse;
 mod preview;
+mod hwpdoc;
 mod peek;
 mod keys_window;
 mod paste;

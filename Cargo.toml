@@ -62,9 +62,14 @@ version = "0.8"
 default-features = false
 features = ["with-alloc"]
 
+# HWP/HWPX pages in the preview (hwpdoc.rs): the rhwp document engine, without its PDF import and JS facade
+[dependencies.rhwp]
+version = "=0.9.0"
+default-features = false
+
 [profile.release]
 opt-level = "z"
 lto = true
 codegen-units = 1
-panic = "abort"
+panic = "unwind" # rhwp runs behind catch_unwind: a document it trips on must not close the window
 strip = true
