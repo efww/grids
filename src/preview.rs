@@ -292,7 +292,10 @@ pub(crate) unsafe fn pdf_page(doc: &Paged, i: u32, w: i32, h: i32) -> Option<Pix
         Paged::Pdf(d) => pdf_doc_page(d, i, w, h),
         Paged::Hwp(path) => {
             let one = crate::hwpdoc::page_pdf(path, i)?;
-            pdf_doc_page(&pdf_load(&one.to_string_lossy()).ok()?, 0, w, h)
+            let t = std::time::Instant::now();
+            let p = pdf_doc_page(&pdf_load(&one.to_string_lossy()).ok()?, 0, w, h);
+            crate::hwpdoc::log(format!("page {} to picture {}ms", i + 1, t.elapsed().as_millis()));
+            p
         }
     }
 }

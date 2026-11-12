@@ -40,6 +40,16 @@ fn sweep(d: &Path) {
     }
 }
 
+// Fork diagnostics: how long each step took, in %TEMP%\grids-hwp\log.txt.
+pub(crate) fn log(line: String) {
+    use std::io::Write;
+    let d = dir();
+    _ = std::fs::create_dir_all(&d);
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(d.join("log.txt")) {
+        _ = writeln!(f, "{line}");
+    }
+}
+
 fn has_font(file: &str) -> bool {
     let sys = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
     let user = std::env::var("LOCALAPPDATA").map(|l| Path::new(&l).join(r"Microsoft\Windows\Fonts").join(file));
@@ -92,7 +102,10 @@ fn with_core<T>(path: &str, k: u64, f: impl FnOnce(&rhwp::DocumentCore) -> Optio
         let mut l = l.borrow_mut();
         if l.as_ref().is_none_or(|(lk, _)| *lk != k) {
             *l = None; // let the old one go before laying out the next
-            *l = Some((k, layout(path)?));
+            let t = std::time::Instant::now();
+            let core = layout(path);
+            log(format!("layout {}ms ok={} {path}", t.elapsed().as_millis(), core.is_some()));
+            *l = Some((k, core?));
         }
         f(&l.as_ref()?.1)
     })
@@ -112,8 +125,11 @@ pub(crate) fn page_pdf(path: &str, i: u32) -> Option<PathBuf> {
         return Some(file);
     }
     guarded(|| {
+        let t = std::time::Instant::now();
         let pdf = with_core(path, k, |c| c.render_pages_pdf_native_with_options(&[i], &options()).ok())?;
+        let r = t.elapsed().as_millis();
         write(&file, &pdf)?;
+        log(format!("page {} render {r}ms write {}ms {}KB", i + 1, t.elapsed().as_millis() - r, pdf.len() / 1024));
         Some(file)
     })
 }

@@ -132,8 +132,13 @@ pub(crate) fn peek_worker() {
 }
 
 unsafe fn peek_item(gen: usize, req: &PeekReq) {
+    let t = Instant::now();
     let body = content(req);
+    let tc = t.elapsed().as_millis();
     let (icon, meta) = meta(&req.path, &body);
+    if crate::hwpdoc::is_hwp(&req.path) {
+        crate::hwpdoc::log(format!("F3 content {tc}ms meta {}ms", t.elapsed().as_millis() - tc));
+    }
     let more = match &body {
         Body::Pages { pages, total } if (pages.len() as u32) < *total => Some(*total),
         _ => None,
