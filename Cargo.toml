@@ -1,6 +1,6 @@
 [package]
 name = "grids"
-version = "0.7.5"
+version = "0.7.6"
 edition = "2021"
 description = "Fast multi-pane file manager for Windows"
 license = "MIT"
