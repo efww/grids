@@ -268,19 +268,37 @@ unsafe fn psd_thumb(path: &str, req: &PeekReq) -> Option<Pix> {
 
 pub(crate) const PDF_MAX: u32 = 50;
 
-pub(crate) fn pdf_open(path: &str) -> Result<PdfDocument> {
-    // HWP/HWPX: its pages as rhwp lays them out, kept as a PDF
-    let pdf = if crate::hwpdoc::is_hwp(path) {
-        crate::hwpdoc::full_pdf(path).ok_or_else(|| Error::from(E_FAIL))?.to_string_lossy().into_owned()
-    } else {
-        path.to_string()
-    };
-    let file = StorageFile::GetFileFromPathAsync(&HSTRING::from(pdf))?.join()?;
+// What the paged preview reads from: a PDF, or an HWP/HWPX that rhwp draws one page at a time when asked
+// (hwpdoc.rs), so moving on to another file never waits for a whole document.
+pub(crate) enum Paged {
+    Pdf(PdfDocument),
+    Hwp(String),
+}
+
+fn pdf_load(path: &str) -> Result<PdfDocument> {
+    let file = StorageFile::GetFileFromPathAsync(&HSTRING::from(path))?.join()?;
     PdfDocument::LoadFromFileAsync(&file)?.join()
 }
 
+pub(crate) fn pdf_open(path: &str) -> Result<Paged> {
+    if crate::hwpdoc::is_hwp(path) {
+        return Ok(Paged::Hwp(path.to_string()));
+    }
+    pdf_load(path).map(Paged::Pdf)
+}
+
+pub(crate) unsafe fn pdf_page(doc: &Paged, i: u32, w: i32, h: i32) -> Option<Pix> {
+    match doc {
+        Paged::Pdf(d) => pdf_doc_page(d, i, w, h),
+        Paged::Hwp(path) => {
+            let one = crate::hwpdoc::page_pdf(path, i)?;
+            pdf_doc_page(&pdf_load(&one.to_string_lossy()).ok()?, 0, w, h)
+        }
+    }
+}
+
 /// Page i fitted whole into w x h (px), white paper as the reader would show it.
-pub(crate) unsafe fn pdf_page(doc: &PdfDocument, i: u32, w: i32, h: i32) -> Option<Pix> {
+unsafe fn pdf_doc_page(doc: &PdfDocument, i: u32, w: i32, h: i32) -> Option<Pix> {
     let page = doc.GetPage(i).ok()?;
     let size = page.Size().ok()?;
     let fit = (w as f32).min(h as f32 * size.Width / size.Height.max(1.0));
@@ -298,18 +316,16 @@ pub(crate) unsafe fn pdf_page(doc: &PdfDocument, i: u32, w: i32, h: i32) -> Opti
 
 // The first page now; peek_worker renders the others after it is on screen (pdf_rest).
 unsafe fn pdf_first(path: &str, req: &PeekReq) -> Option<Body> {
-    let doc = pdf_open(path).ok()?;
+    let doc = pdf_load(path).ok()?;
     let total = doc.PageCount().ok()?.min(PDF_MAX);
-    let first = pdf_page(&doc, 0, req.w, req.h)?;
+    let first = pdf_doc_page(&doc, 0, req.w, req.h)?;
     Some(Body::Pages { pages: vec![first], total })
 }
 
 // HWP/HWPX drawn page by page (hwpdoc.rs); the embedded preview picture and body text when that fails.
 unsafe fn hwp_pages(path: &str, req: &PeekReq) -> Option<Body> {
-    let (pdf, total) = crate::hwpdoc::first_pdf(path)?;
-    let file = StorageFile::GetFileFromPathAsync(&HSTRING::from(pdf.as_os_str())).ok()?.join().ok()?;
-    let doc = PdfDocument::LoadFromFileAsync(&file).ok()?.join().ok()?;
-    let first = pdf_page(&doc, 0, req.w, req.h)?;
+    let total = crate::hwpdoc::page_count(path)?;
+    let first = pdf_page(&Paged::Hwp(path.to_string()), 0, req.w, req.h)?;
     Some(Body::Pages { pages: vec![first], total })
 }
 

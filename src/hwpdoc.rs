@@ -1,6 +1,7 @@
 // HWP/HWPX pages for the preview, drawn by rhwp (MIT, github.com/edwardkim/rhwp). The document is laid out
-// once and written as a PDF under %TEMP%\grids-hwp, which the PDF preview then shows like any other PDF:
-// first the opening page alone (quick), then the whole document while that page is already on screen.
+// once per worker visit; each page is written as its own small PDF under %TEMP%\grids-hwp when the preview
+// asks for it, and the PDF preview shows it like any other. One page at a time keeps the single preview worker
+// free: moving to another file waits for at most one page, never for the whole document.
 use std::cell::RefCell;
 use std::hash::{Hash, Hasher};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -85,38 +86,34 @@ fn guarded<T>(f: impl FnOnce() -> Option<T>) -> Option<T> {
     catch_unwind(AssertUnwindSafe(f)).ok().flatten()
 }
 
-/// The first page as a PDF, and how many pages the preview offers (at most PDF_MAX).
-pub(crate) fn first_pdf(path: &str) -> Option<(PathBuf, u32)> {
-    let k = key(path)?;
-    guarded(|| {
-        let core = layout(path)?;
-        let total = core.page_count().min(PDF_MAX);
-        if total == 0 {
-            return None;
+// The laid-out document, from the worker's last visit when it is the same file unchanged.
+fn with_core<T>(path: &str, k: u64, f: impl FnOnce(&rhwp::DocumentCore) -> Option<T>) -> Option<T> {
+    LAST.with(|l| {
+        let mut l = l.borrow_mut();
+        if l.as_ref().is_none_or(|(lk, _)| *lk != k) {
+            *l = None; // let the old one go before laying out the next
+            *l = Some((k, layout(path)?));
         }
-        let file = dir().join(format!("{k:016x}-1.pdf"));
-        if !file.exists() {
-            write(&file, &core.render_pages_pdf_native_with_options(&[0], &options()).ok()?)?;
-        }
-        LAST.with(|l| *l.borrow_mut() = Some((k, core)));
-        Some((file, total))
+        f(&l.as_ref()?.1)
     })
 }
 
-/// Every page the preview offers, as one PDF (made once per version of the file).
-pub(crate) fn full_pdf(path: &str) -> Option<PathBuf> {
+/// How many pages the preview offers (at most PDF_MAX); None when rhwp cannot read the file.
+pub(crate) fn page_count(path: &str) -> Option<u32> {
     let k = key(path)?;
-    let file = dir().join(format!("{k:016x}.pdf"));
+    guarded(|| with_core(path, k, |c| Some(c.page_count().min(PDF_MAX))).filter(|&n| n > 0))
+}
+
+/// Page i (0-based) as a one-page PDF, made once per version of the file.
+pub(crate) fn page_pdf(path: &str, i: u32) -> Option<PathBuf> {
+    let k = key(path)?;
+    let file = dir().join(format!("{k:016x}-{}.pdf", i + 1));
     if file.exists() {
         return Some(file);
     }
     guarded(|| {
-        let core = match LAST.with(|l| l.borrow_mut().take()) {
-            Some((lk, c)) if lk == k => c,
-            _ => layout(path)?,
-        };
-        let pages: Vec<u32> = (0..core.page_count().min(PDF_MAX)).collect();
-        write(&file, &core.render_pages_pdf_native_with_options(&pages, &options()).ok()?)?;
+        let pdf = with_core(path, k, |c| c.render_pages_pdf_native_with_options(&[i], &options()).ok())?;
+        write(&file, &pdf)?;
         Some(file)
     })
 }
@@ -181,12 +178,11 @@ mod tests {
             }
             let f = f.to_string_lossy().into_owned();
             let t = std::time::Instant::now();
-            let first = first_pdf(&f);
-            let t1 = t.elapsed().as_millis();
-            let full = full_pdf(&f);
-            let t2 = t.elapsed().as_millis();
+            let n = page_count(&f);
             let pages = pdf_open(&f).ok().and_then(|doc| unsafe { pdf_page(&doc, 0, 600, 850) });
-            say!("HWPTEST {name}: first={:?} first_ms={t1} full={} full_ms={t2}", first.as_ref().map(|x| x.1), full.is_some());
+            let t1 = t.elapsed().as_millis();
+            let last = n.and_then(|n| page_pdf(&f, n - 1)).is_some();
+            say!("HWPTEST {name}: pages={n:?} first_ms={t1} last_page={last} total_ms={}", t.elapsed().as_millis());
             if let Some(p) = pages {
                 let (pct, a) = art(&p);
                 say!("HWPTEST page 1 {}x{} dark={pct:.2}%\n{a}", p.w, p.h);
@@ -196,12 +192,12 @@ mod tests {
         // a broken file and a cut-off real one: no page, and no panic out of rhwp
         let junk = d.join("junk.hwp");
         std::fs::write(&junk, (0..70000u32).map(|i| (i.wrapping_mul(2654435761) >> 13) as u8).collect::<Vec<_>>()).unwrap();
-        say!("HWPTEST junk: {:?}", first_pdf(&junk.to_string_lossy()).map(|x| x.1));
+        say!("HWPTEST junk: {:?}", page_count(&junk.to_string_lossy()));
         let src = d.join("s0.hwp");
         if let Ok(b) = std::fs::read(&src) {
             let cut = d.join("cut.hwp");
             std::fs::write(&cut, &b[..b.len() / 2]).unwrap();
-            say!("HWPTEST cut: {:?}", first_pdf(&cut.to_string_lossy()).map(|x| x.1));
+            say!("HWPTEST cut: {:?}", page_count(&cut.to_string_lossy()));
         }
         assert_eq!(drawn, docs.len(), "every sample's first page has ink");
     }
