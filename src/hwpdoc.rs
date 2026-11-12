@@ -40,12 +40,16 @@ fn sweep(d: &Path) {
     }
 }
 
-// Fork diagnostics: how long each step took, in %TEMP%\grids-hwp\log.txt.
+// How long each step took, in %TEMP%\grids-hwp\log.txt.
 pub(crate) fn log(line: String) {
     use std::io::Write;
     let d = dir();
     _ = std::fs::create_dir_all(&d);
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(d.join("log.txt")) {
+    let file = d.join("log.txt");
+    if std::fs::metadata(&file).is_ok_and(|m| m.len() > 256 * 1024) {
+        _ = std::fs::remove_file(&file); // a few days of timings is plenty
+    }
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&file) {
         _ = writeln!(f, "{line}");
     }
 }
