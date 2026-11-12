@@ -67,6 +67,15 @@ features = ["with-alloc"]
 version = "=0.9.0"
 default-features = false
 
+# the same font list rhwp loads, to find fonts it would pick by name but cannot draw (hwpdoc.rs)
+[dependencies.fontdb]
+version = "0.23"
+default-features = false
+features = ["std", "fs", "memmap"]
+
+[dependencies.ttf-parser]
+version = "0.25"
+
 [profile.release]
 opt-level = "z"
 lto = true

@@ -69,6 +69,93 @@ fn options() -> rhwp::renderer::pdf::PdfExportOptions {
     o
 }
 
+// Some installed fonts (Hancom's 휴먼명조 among them) answer to their name but give no glyph outlines: rhwp
+// picks them first, the text comes out blank, and the page is slow. Such a family is taken out of the page's
+// font lists, so the next name in the list (Batang, Malgun Gothic, ...) draws the text instead.
+struct Sink;
+impl ttf_parser::OutlineBuilder for Sink {
+    fn move_to(&mut self, _: f32, _: f32) {}
+    fn line_to(&mut self, _: f32, _: f32) {}
+    fn quad_to(&mut self, _: f32, _: f32, _: f32, _: f32) {}
+    fn curve_to(&mut self, _: f32, _: f32, _: f32, _: f32, _: f32, _: f32) {}
+    fn close(&mut self) {}
+}
+
+// A face is usable when it parses and the sample characters it maps have outlines.
+fn usable(db: &fontdb::Database, id: fontdb::ID) -> bool {
+    db.with_face_data(id, |data, i| {
+        let Ok(f) = ttf_parser::Face::parse(data, i) else { return false };
+        let mapped: Vec<_> = ['가', 'A', '1'].iter().filter_map(|&c| f.glyph_index(c)).collect();
+        mapped.is_empty() || mapped.iter().any(|&g| f.outline_glyph(g, &mut Sink).is_some())
+    })
+    .unwrap_or(false)
+}
+
+// Installed under this name, but some face of it cannot be drawn.
+fn broken_family(db: &fontdb::Database, name: &str) -> bool {
+    db.faces()
+        .filter(|f| f.families.iter().any(|(n, _)| n == name || n.eq_ignore_ascii_case(name)))
+        .any(|f| !usable(db, f.id))
+}
+
+fn system_fonts() -> &'static fontdb::Database {
+    static DB: std::sync::OnceLock<fontdb::Database> = std::sync::OnceLock::new();
+    DB.get_or_init(|| {
+        let t = std::time::Instant::now();
+        let mut db = fontdb::Database::new();
+        db.load_system_fonts();
+        log(format!("fonts {} faces {}ms", db.len(), t.elapsed().as_millis()));
+        db
+    })
+}
+
+// Every font-family="a,b,c" of the page with the broken names left out; the names dropped, for the log.
+fn drop_broken_fonts(svg: &str, broken: &mut impl FnMut(&str) -> bool) -> (String, Vec<String>) {
+    const ATTR: &str = "font-family=\"";
+    let (mut out, mut rest, mut dropped) = (String::with_capacity(svg.len()), svg, Vec::new());
+    let mut seen = std::collections::HashMap::<String, String>::new();
+    while let Some(i) = rest.find(ATTR) {
+        out.push_str(&rest[..i + ATTR.len()]);
+        rest = &rest[i + ATTR.len()..];
+        let Some(end) = rest.find('"') else { break };
+        let list = &rest[..end];
+        let kept = seen.entry(list.to_string()).or_insert_with(|| {
+            let kept: Vec<&str> = list
+                .split(',')
+                .filter(|item| {
+                    let name = item.trim().trim_matches(|c| c == '\'' || c == '"');
+                    let name = name.trim_start_matches("&apos;").trim_end_matches("&apos;");
+                    let name = name.trim_start_matches("&quot;").trim_end_matches("&quot;");
+                    let bad = !name.is_empty() && broken(name);
+                    if bad && !dropped.iter().any(|d| d == name) {
+                        dropped.push(name.to_string());
+                    }
+                    !bad
+                })
+                .collect();
+            if kept.is_empty() { "serif".to_string() } else { kept.join(",") }
+        });
+        out.push_str(kept);
+        rest = &rest[end..];
+    }
+    out.push_str(rest);
+    (out, dropped)
+}
+
+fn page_pdf_bytes(c: &rhwp::DocumentCore, i: u32) -> Option<Vec<u8>> {
+    let svg = c.render_page_svg_layer_with_profile_native(i, rhwp::paint::RenderProfile::Print).ok()?;
+    let db = system_fonts();
+    static VERDICT: std::sync::Mutex<Option<std::collections::HashMap<String, bool>>> = std::sync::Mutex::new(None);
+    let (svg, dropped) = drop_broken_fonts(&svg, &mut |name| {
+        let mut v = VERDICT.lock().unwrap_or_else(|e| e.into_inner());
+        *v.get_or_insert_with(Default::default).entry(name.to_string()).or_insert_with(|| broken_family(db, name))
+    });
+    if !dropped.is_empty() {
+        log(format!("page {} fonts skipped (no outlines): {}", i + 1, dropped.join(", ")));
+    }
+    rhwp::renderer::pdf::svgs_to_pdf_with_options(&[svg], &options()).ok()
+}
+
 fn layout(path: &str) -> Option<rhwp::DocumentCore> {
     let bytes = std::fs::read(path).ok()?;
     let opened = rhwp::service::DocumentService::new()
@@ -126,7 +213,7 @@ pub(crate) fn page_pdf(path: &str, i: u32) -> Option<PathBuf> {
     }
     guarded(|| {
         let t = std::time::Instant::now();
-        let pdf = with_core(path, k, |c| c.render_pages_pdf_native_with_options(&[i], &options()).ok())?;
+        let pdf = with_core(path, k, |c| page_pdf_bytes(c, i))?;
         let r = t.elapsed().as_millis();
         write(&file, &pdf)?;
         log(format!("page {} render {r}ms write {}ms {}KB", i + 1, t.elapsed().as_millis() - r, pdf.len() / 1024));
@@ -175,6 +262,35 @@ mod tests {
             out.push('\n');
         }
         (dark_all as f64 * 100.0 / (p.w * p.h) as f64, out)
+    }
+
+    #[test]
+    fn broken_font_names_leave_the_lists() {
+        let svg = r#"<text font-family="&apos;휴먼명조&apos;,&apos;Batang&apos;,serif">가</text><text font-family="'휴먼명조'">나</text>"#;
+        let (out, dropped) = drop_broken_fonts(svg, &mut |n| n == "휴먼명조");
+        assert_eq!(out, r#"<text font-family="&apos;Batang&apos;,serif">가</text><text font-family="serif">나</text>"#);
+        assert_eq!(dropped, ["휴먼명조"]);
+        assert_eq!(drop_broken_fonts(svg, &mut |_| false).0, svg);
+    }
+
+    #[test]
+    fn font_without_outlines_is_broken() {
+        let sys = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
+        let Ok(good) = std::fs::read(Path::new(&sys).join(r"Fonts\malgun.ttf")) else { return };
+        // the same font with its glyph outlines wiped
+        let mut bad = good.clone();
+        let glyf = ttf_parser::RawFace::parse(&good, 0).unwrap().table(ttf_parser::Tag::from_bytes(b"glyf")).unwrap();
+        let at = glyf.as_ptr() as usize - good.as_ptr() as usize;
+        bad[at..at + glyf.len()].fill(0);
+        for (data, want) in [(good, true), (bad, false)] {
+            let mut db = fontdb::Database::new();
+            db.load_font_data(data);
+            let f = db.faces().next().unwrap();
+            let name = f.families[0].0.clone();
+            assert_eq!(usable(&db, f.id), want);
+            assert_eq!(broken_family(&db, &name), !want);
+        }
+        say!("HWPTEST broken font check ok");
     }
 
     #[test]
