@@ -39,6 +39,7 @@ Every pane is a real Windows Explorer view, so right-click menus, drag and drop,
 - **Jump from file dialogs**: in another app's Open/Save dialog press Ctrl+Alt+G to pick one of Grids' open folders; the dialog goes there and keeps the file name you typed (View menu, on by default; the key is only taken while such a dialog is in front).
 - **Everything search** (Ctrl+Shift+F or the orange magnifier, shown while [Everything](https://www.voidtools.com) runs): results as you type in a table of name, path, size and date modified (click a column title to sort, again to reverse; size and date start biggest / newest first, and the choice is kept; drag a column border to resize, double-click it for the default widths; pointing at a result shows its whole name, folder, size and date at once), Enter shows the item selected in the active pane, Ctrl+Enter opens a folder, Alt+O searches only under the current folder.
 - **Updates**: when a newer release is out, a blue Update button appears at the top right; one click downloads it from GitHub, checks its SHA-256 and restarts Grids into it with your folders and settings. View > Check for updates turns this (and all network use) off.
+- **Star on GitHub**: View > ★ Star Grids on GitHub stars the project right away if the GitHub CLI (`gh`) is signed in; otherwise it opens the GitHub page.
 
 | Layout picker | Sessions | Favourites |
 | --- | --- | --- |

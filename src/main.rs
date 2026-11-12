@@ -72,6 +72,7 @@ mod dialog_jump;
 mod shellx;
 mod everything;
 mod update;
+mod star;
 
 use ui_defs::*;
 // explicit, so it wins over the same name glob-imported from windows (a glob clash would turn match patterns into bindings)
@@ -103,6 +104,7 @@ use window_ui::*;
 use shellx::*;
 use everything::*;
 use update::*;
+use star::*;
 
 fn main() -> Result<()> {
     unsafe {
@@ -293,6 +295,9 @@ fn main() -> Result<()> {
         apply_theme();
         apply_font();
         refresh_drives(); // laid out by the relayout below
+        if app(|a| a.s.updates) {
+            check_star(); // ticks View > Star once gh says so; network, so only with updates on
+        }
         start_updates(main); // its button, hidden until a newer release turns up
         // keep the whole window on the work area, whatever screen it was saved on
         let mut mi = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };

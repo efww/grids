@@ -149,6 +149,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             }
             WM_THEME_SYNC => theme_sync(),
             WM_UPDATE => update_msg(h, wp.0),
+            WM_STAR => star_msg(wp.0 != 0),
             // mid-drag or mid-resize, end_drag / WM_EXITSIZEMOVE pick it up instead
             WM_DRIVES => {
                 if !app(|a| a.drag.is_some() || a.sizing) && refresh_drives() {
@@ -277,6 +278,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 ID_LANG => set_language(!KO.load(Ordering::Relaxed)),
                 ID_HELP => open_help(),
                 ID_ABOUT => about(h),
+                ID_STAR => star_clicked(h),
                 id @ ID_ACCENT..=1405 => set_accent(pal().accents[id - ID_ACCENT].1),
                 ID_ACCENT_PICK => pick_accent(),
                 ID_KEYS => open_keys(),
@@ -297,6 +299,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 check(ID_DLGJUMP, jump);
                 check(ID_UPDATES, app(|a| a.s.updates));
                 check(ID_LANG, KO.load(Ordering::Relaxed));
+                check(ID_STAR, starred());
                 for (k, (_, c)) in pal().accents.iter().enumerate() {
                     check(ID_ACCENT + k, *c == accent);
                 }
@@ -730,6 +733,7 @@ pub(crate) unsafe fn make_menus() -> Result<HMENU> {
     item(view, MF_STRING, ID_HELP, tr("Help (online)\tF1", "도움말 (온라인)\tF1"))?;
     item(view, MF_STRING, ID_UPDATES, tr("Check for updates", "업데이트 확인"))?;
     item(view, MF_STRING, ID_ABOUT, tr("About Grids", "Grids 정보"))?;
+    item(view, MF_STRING, ID_STAR, tr("★ Star Grids on GitHub", "★ GitHub에 별 주기"))?;
     Ok(view)
 }
 
