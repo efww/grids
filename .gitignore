@@ -5,3 +5,6 @@ sessions/
 
 # Video production materials (keep local only)
 docs/motion/
+
+# Internal notes (keep local only)
+000000_*.md*
