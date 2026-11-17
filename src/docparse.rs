@@ -388,7 +388,8 @@ mod hwp_tests {
 /// "AB12" -> column 27 (zero-based), row 11.
 pub(crate) fn cell_ref(r: &str) -> Option<(usize, usize)> {
     let letters = r.chars().take_while(|c| c.is_ascii_alphabetic()).count();
-    let col = r[..letters].chars().try_fold(0usize, |a, c| Some(a * 26 + (c.to_ascii_uppercase() as usize - 'A' as usize + 1)))?;
+    // a made-up reference with too many letters overflows: no cell, not a wrong one
+    let col = r[..letters].chars().try_fold(0usize, |a, c| a.checked_mul(26)?.checked_add(c.to_ascii_uppercase() as usize - 'A' as usize + 1))?;
     let row: usize = r[letters..].parse().ok()?;
     (col > 0 && row > 0).then(|| (col - 1, row - 1))
 }
