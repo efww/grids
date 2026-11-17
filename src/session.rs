@@ -128,6 +128,8 @@ impl Session {
     pub(crate) fn parse(text: &str) -> Session {
         let mut s = Session::default();
         let mut rowr: Vec<Vec<f64>> = Vec::new();
+        // Notepad's "UTF-8 with BOM" (or PowerShell 5's -Encoding UTF8) would otherwise hide the first key (win=)
+        let text = text.strip_prefix('\u{feff}').unwrap_or(text);
         for line in text.lines() {
             let Some((k, v)) = line.split_once('=') else { continue };
             let slot = |p: char| k.strip_prefix(p).and_then(|n| n.parse::<usize>().ok()).filter(|&i| i < MAXP);
@@ -150,7 +152,7 @@ impl Session {
                 "rowr" => rowr = v.split('|').map(nums).collect(),
                 "active" => s.active = v.parse().unwrap_or(0),
                 "accent" => s.accent = u32::from_str_radix(v.trim().trim_start_matches('#'), 16).unwrap_or(s.accent) & 0xFFFFFF,
-                "accent_dark" => s.accent_dark = u32::from_str_radix(v.trim(), 16).unwrap_or(s.accent_dark) & 0xFFFFFF,
+                "accent_dark" => s.accent_dark = u32::from_str_radix(v.trim().trim_start_matches('#'), 16).unwrap_or(s.accent_dark) & 0xFFFFFF,
                 "dark" => s.dark = v.trim() == "1",
                 "follow_theme" => s.follow = v.trim() == "1",
                 "dblup" => s.dblup = v.trim() != "0",
@@ -704,4 +706,262 @@ pub(crate) fn short_name(path: &str) -> String {
 // Title bar, taskbar and Alt+Tab follow the active pane's folder.
 pub(crate) fn window_title(disp: &str) -> String {
     if disp.is_empty() { "Grids".into() } else { format!("{} - Grids", short_name(disp)) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn slots<T: Clone>(empty: T, set: &[(usize, T)]) -> Vec<T> {
+        let mut v = vec![empty; MAXP];
+        for (i, x) in set {
+            v[*i] = x.clone();
+        }
+        v
+    }
+    fn strs(v: &[&str]) -> Vec<String> {
+        v.iter().map(|x| x.to_string()).collect()
+    }
+
+    const COLS0: &str = "{B725F130-47EF-101A-A5F1-02608C9EEBAC}/10=300,{B725F130-47EF-101A-A5F1-02608C9EEBAC}/14=120;{B725F130-47EF-101A-A5F1-02608C9EEBAC}/10=1";
+    const PRESET: &str = "사진 정리|0|replace,1,0,0,0,IMG_,P_,,";
+
+    // Every field away from its default. No `..Default::default()`: a new field won't compile until it is given
+    // a value here, and so a place in to_ini / parse (or a reason to stay out of them).
+    fn every() -> Session {
+        Session {
+            win: Some([100, 50, 1300, 850, 1]),
+            side: 280,
+            heights: vec![1, 3, 2],
+            colr: vec![0.25, 0.5, 0.25],
+            rowr: vec![vec![1.0], vec![0.5, 0.25, 0.25], vec![0.75, 0.25]],
+            active: 4,
+            paths: slots(String::new(), &[(0, r"C:\Users\홍길동\문서".into()), (1, r"D:\a=b".into()), (2, r"\\nas\share\사진".into()), (3, THIS_PC.into()), (4, r"E:\Work".into()), (5, r"C:\".into())]),
+            views: slots((0, 0), &[(0, (4, 48)), (2, (1, 96))]),
+            accent: 0x02AB34, // leading zeros pin the 6-digit {:06X} form in ini_format_pinned
+            accent_dark: 0x004C8D,
+            dark: true,
+            follow: true,
+            dblup: false,
+            tree: false,
+            hotkey: false,
+            dlgjump: false,
+            file: r"C:\Grids\sessions\일.grids".into(),
+            favs: strs(&[r"C:\Users\홍길동", r"\\nas\share"]),
+            recent: strs(&[r"D:\a=b", r"C:\Temp"]),
+            ko: true,
+            cols: slots(String::new(), &[(0, COLS0.into())]),
+            tints: slots(0, &[(1, 3), (5, 6)]),
+            order: (0..MAXP as u8).rev().collect(),
+            tabs_on: true,
+            tabs: slots(Vec::new(), &[(4, strs(&[r"C:\Temp", r"E:\Work", r"D:\a=b"]))]),
+            tab: slots(0, &[(4, 1)]),
+            rn_presets: strs(&[PRESET]),
+            ev_here: true,
+            ev_cols: Some([0.25, 0.5, 0.75]),
+            ev_sort: 13,
+            updates: false,
+        }
+    }
+
+    #[test]
+    fn all_fields_round_trip() {
+        let s = every();
+        assert_eq!(s.tabs[4][s.tab[4]], s.paths[4]);
+        assert_eq!(Session::parse(&s.to_ini()), s);
+        let d = Session::default();
+        assert_eq!(Session::parse(&d.to_ini()), d);
+        assert_eq!(Session::parse(""), d);
+    }
+
+    #[test]
+    fn ini_format_pinned() {
+        let lines = |v: &[&str]| v.iter().map(|l| format!("{l}\n")).collect::<String>();
+        let (preset, cols0, p3) = (format!("rename_preset={PRESET}"), format!("c0={COLS0}"), format!("p3={THIS_PC}"));
+        let want = [
+            "win=100,50,1300,850,1",
+            "side=280",
+            "cols=1,3,2",
+            "colr=0.25,0.5,0.25",
+            "rowr=1|0.5,0.25,0.25|0.75,0.25",
+            "active=4",
+            "accent=02AB34",
+            "accent_dark=004C8D",
+            "dark=1",
+            "follow_theme=1",
+            "dblup=0",
+            "tree=0",
+            "hotkey=0",
+            "dialog_jump=0",
+            "tabs=1",
+            "ev_here=1",
+            "ev_sort=13",
+            "update_check=0",
+            "ev_cols=0.2500,0.5000,0.7500",
+            "lang=ko",
+            r"session=C:\Grids\sessions\일.grids",
+            "order=15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0",
+            r"fav=C:\Users\홍길동",
+            r"fav=\\nas\share",
+            r"recent=D:\a=b",
+            r"recent=C:\Temp",
+            &preset,
+            r"p0=C:\Users\홍길동\문서",
+            "v0=4,48",
+            &cols0,
+            r"p1=D:\a=b",
+            "t1=3",
+            r"p2=\\nas\share\사진",
+            "v2=1,96",
+            &p3,
+            r"p4=E:\Work",
+            r"b4=1|C:\Temp|E:\Work|D:\a=b",
+            r"p5=C:\",
+            "t5=6",
+        ];
+        assert_eq!(every().to_ini(), lines(&want));
+        let want = [
+            "side=0",
+            "cols=2,2",
+            "colr=0.5,0.5",
+            "rowr=0.5,0.5|0.5,0.5",
+            "active=0",
+            "accent=C5C5C5",
+            "accent_dark=4B4B4B",
+            "dark=0",
+            "follow_theme=0",
+            "dblup=1",
+            "tree=1",
+            "hotkey=1",
+            "dialog_jump=1",
+            "tabs=0",
+            "ev_here=0",
+            "ev_sort=1",
+            "update_check=1",
+            "lang=en",
+        ];
+        assert_eq!(Session::default().to_ini(), lines(&want));
+    }
+
+    #[test]
+    fn oldest_file_loads() {
+        // before per-column rows, follow_theme, dblup, tree, hotkey, dialog_jump, tabs, Everything, update_check, lang, order
+        let old = "win=0,0,800,600,0\nside=240\ngrid=2,2\ncolr=0.5,0.5\nrowr=0.25,0.75\nactive=1\naccent=#8DB5E8\ndark=1\np0=C:\\\np1=D:\\Data\n";
+        let s = Session::parse(old);
+        let want = Session {
+            win: Some([0, 0, 800, 600, 0]),
+            side: 240,
+            heights: vec![2, 2],
+            rowr: vec![vec![0.25, 0.75]; 2],
+            active: 1,
+            accent: 0x8DB5E8,
+            dark: true,
+            paths: slots(String::new(), &[(0, r"C:\".into()), (1, r"D:\Data".into())]),
+            ..Default::default()
+        };
+        assert_eq!(s, want);
+        // the settings that came later read as they do today, not whatever Default may drift to
+        assert_eq!((s.follow, s.dblup, s.tree, s.hotkey, s.dlgjump, s.updates), (false, true, true, true, true, true));
+        assert_eq!((s.tabs_on, s.ev_here, s.ev_sort, s.ev_cols, s.ko), (false, false, 1, None, false));
+        assert_eq!((s.accent_dark, s.order.len(), s.tints.iter().all(|&t| t == 0)), (DARK.accents[1].1, 0, true));
+    }
+
+    #[test]
+    fn newer_file_loads() {
+        let text = "side=200\nfuture=1\ncols=2,1\nx3=abc\np0=C:\\A\np16=C:\\Nope\nt99=2\nnew_thing=a=b\np1=C:\\B\n";
+        let want = Session {
+            side: 200,
+            heights: vec![2, 1],
+            colr: even(2),
+            rowr: vec![even(2), even(1)],
+            paths: slots(String::new(), &[(0, r"C:\A".into()), (1, r"C:\B".into())]),
+            ..Default::default()
+        };
+        assert_eq!(Session::parse(text), want);
+        // order: only a full permutation of the 16 slots
+        let order = |v: &[u8]| Session::parse(&format!("order={}\n", join(v))).order;
+        let full: Vec<u8> = [1, 0].into_iter().chain(2..MAXP as u8).collect();
+        assert_eq!(order(&full), full);
+        assert!(order(&[1, 0]).is_empty());
+        assert!(order(&[0, 0].into_iter().chain(2..MAXP as u8).collect::<Vec<_>>()).is_empty());
+        assert!(order(&(0..=MAXP as u8).collect::<Vec<_>>()).is_empty());
+        // a bad one later leaves a good one in place
+        let both = format!("order={}\norder=1,0\n", join(&full));
+        assert_eq!(Session::parse(&both).order, full);
+    }
+
+    #[test]
+    fn hand_edited_file() {
+        let body = "win=10,20,810,620,1\r\nside=300\r\naccent_dark=#4C8DFF\r\np0=C:\\Work\r\n";
+        let bom = Session::parse(&format!("\u{feff}{body}"));
+        assert_eq!(bom.win, Some([10, 20, 810, 620, 1]));
+        assert_eq!((bom.side, bom.accent_dark, bom.paths[0].as_str()), (300, 0x4C8DFF, r"C:\Work"));
+        assert_eq!(Session::parse(body), bom);
+        assert_eq!(Session::parse("accent_dark=4C8DFF\n").accent_dark, 0x4C8DFF);
+        assert_eq!(Session::parse("accent_dark= #4c8dff \n").accent_dark, 0x4C8DFF);
+        // only one mark, only at the very start
+        assert_eq!(Session::parse("\u{feff}\u{feff}win=10,20,810,620,1\n").win, None);
+        let mid = Session::parse("side=300\n\u{feff}win=10,20,810,620,1\np1=C:\\a\u{feff}b\n");
+        assert_eq!((mid.side, mid.win, mid.paths[1].as_str()), (300, None, "C:\\a\u{feff}b"));
+    }
+
+    #[test]
+    fn take_layout_boundary() {
+        let b = every();
+        let a = Session {
+            win: Some([1, 2, 3, 4, 0]),
+            side: 150,
+            heights: vec![4],
+            colr: vec![1.0],
+            rowr: vec![vec![0.25; 4]],
+            active: 2,
+            paths: slots(String::new(), &[(0, r"F:\x0".into()), (1, r"F:\x1".into()), (2, r"F:\x2".into()), (3, r"F:\x3".into())]),
+            views: slots((0, 0), &[(1, (3, 32))]),
+            accent: 0x010203,
+            accent_dark: 0x040506,
+            dark: false,
+            follow: false,
+            dblup: true,
+            tree: true,
+            hotkey: true,
+            dlgjump: true,
+            file: r"F:\a.grids".into(),
+            favs: strs(&[r"F:\fav"]),
+            recent: strs(&[r"F:\r"]),
+            ko: false,
+            cols: slots(String::new(), &[(3, "x".into())]),
+            tints: slots(0, &[(0, 2)]),
+            order: (0..MAXP as u8).map(|k| k ^ 1).collect(),
+            tabs_on: false,
+            tabs: slots(Vec::new(), &[(0, strs(&[r"F:\x0", r"F:\y"]))]),
+            tab: slots(0, &[(0, 0)]),
+            rn_presets: strs(&["p|1"]),
+            ev_here: false,
+            ev_cols: Some([0.125, 0.25, 0.5]),
+            ev_sort: 5,
+            updates: true,
+        };
+        let snap = b.snapshot();
+        for key in ["win=", "session=", "fav=", "recent=", "order=", "rename_preset="] {
+            assert!(!snap.lines().any(|l| l.starts_with(key)), "{key} in a session file");
+        }
+        let mut got = a.clone();
+        got.take_layout(&Session::parse(&snap));
+        // a session brings its grid, folders and their looks; every app-wide setting stays as it was
+        let want = Session {
+            heights: b.heights.clone(),
+            colr: b.colr.clone(),
+            rowr: b.rowr.clone(),
+            active: b.active,
+            paths: b.paths.clone(),
+            views: b.views.clone(),
+            cols: b.cols.clone(),
+            tints: b.tints.clone(),
+            tabs: b.tabs.clone(),
+            tab: b.tab.clone(),
+            order: Vec::new(),
+            ..a
+        };
+        assert_eq!(got, want);
+    }
 }
