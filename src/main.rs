@@ -620,6 +620,24 @@ mod tests {
     }
 
     #[test]
+    fn sort_keys() {
+        let k = |pid| PROPERTYKEY { fmtid: GUID::from_u128(0xB725F130_47EF_101A_A5F1_02608C9EEBAC), pid };
+        // the same column on top flips; another column, or no sort, takes the key's first direction
+        assert_eq!([sort_next(Some((k(14), -1)), k(14), -1), sort_next(Some((k(14), 1)), k(14), -1)], [1, -1]);
+        assert_eq!([sort_next(Some((k(12), -1)), k(10), 1), sort_next(Some((k(12), 1)), k(14), -1)], [1, -1]);
+        assert_eq!(sort_next(None, k(12), -1), -1);
+        // only the sort half changes: columns and widths stay character for character
+        let text = cols_text(&[(k(10), 220), (k(12), 80)], &[(k(12), -1), (k(10), 1)]);
+        let new = with_sort(&text, k(14), -1);
+        assert_eq!(new.split_once(';').unwrap().0, text.split_once(';').unwrap().0);
+        assert_eq!(parse_cols(&new), (vec![(k(10), 220), (k(12), 80)], vec![(k(14), -1)]));
+        assert_eq!(parse_cols(&with_sort("", k(10), 1)), (vec![], vec![(k(10), 1)]));
+        assert!(with_sort("", k(10), 1).starts_with(';'));
+        // name, date modified, size: A→Z, newest, largest first
+        assert_eq!(nav::SORT_KEYS.map(|s| s.1), [1, -1, -1]);
+    }
+
+    #[test]
     fn columns() {
         let k = |pid| PROPERTYKEY { fmtid: GUID::from_u128(0xB725F130_47EF_101A_A5F1_02608C9EEBAC), pid };
         let text = cols_text(&[(k(10), 220), (k(12), 80)], &[(k(12), -1)]);
