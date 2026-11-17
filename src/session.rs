@@ -565,6 +565,20 @@ pub(crate) fn parse_cols(t: &str) -> (Vec<(PROPERTYKEY, u32)>, Vec<(PROPERTYKEY,
     (items(cols), items(sort))
 }
 
+// Sort key pressed again on the column already on top: the other way round; else that key's own first direction.
+pub(crate) fn sort_next(cur: Option<(PROPERTYKEY, i32)>, want: PROPERTYKEY, first_dir: i32) -> i32 {
+    match cur {
+        Some((k, d)) if k == want => if d < 0 { 1 } else { -1 },
+        _ => first_dir,
+    }
+}
+
+// `text` (cols_text) sorted by one column; the columns and widths half stays as it is, character for character.
+pub(crate) fn with_sort(text: &str, key: PROPERTYKEY, dir: i32) -> String {
+    let cols = text.split_once(';').map_or(text, |c| c.0);
+    format!("{cols}{}", cols_text(&[], &[(key, dir)]))
+}
+
 // Existing relative paths become absolute; shell names like ::{GUID} pass through.
 pub(crate) fn resolve(p: String) -> String {
     match Path::new(&p).exists() {

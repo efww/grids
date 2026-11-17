@@ -753,6 +753,50 @@ pub(crate) unsafe fn apply_cols(fv: &IFolderView2, text: &str, lv: HWND) {
     }
 }
 
+// Ctrl+F3 / F5 / F6 (Total Commander's keys): column, first direction (size and date: largest / newest
+// first, as in the Everything window), status note for the first direction, for the other one.
+pub(crate) const SORT_KEYS: [(PROPERTYKEY, i32, [&str; 2], [&str; 2]); 3] = {
+    use windows::Win32::Storage::EnhancedStorage::{PKEY_DateModified, PKEY_ItemNameDisplay, PKEY_Size};
+    [
+        (PKEY_ItemNameDisplay, 1, ["Sorted by name · A→Z", "이름순 · A→Z"], ["Sorted by name · Z→A", "이름순 · Z→A"]),
+        (PKEY_DateModified, -1, ["Sorted by date modified · newest first", "수정한 날짜순 · 최신부터"], ["Sorted by date modified · oldest first", "수정한 날짜순 · 오래된 것부터"]),
+        (PKEY_Size, -1, ["Sorted by size · largest first", "크기순 · 큰 것부터"], ["Sorted by size · smallest first", "크기순 · 작은 것부터"]),
+    ]
+};
+
+// Sorts pane i's list by SORT_KEYS[kind]; the pane keeps it in its columns (also while they settle, when
+// save_view doesn't read them). A place without that column (or no view) only beeps.
+pub(crate) unsafe fn sort_by(i: usize, kind: usize) {
+    let (key, first, note_first, note_other) = SORT_KEYS[kind];
+    // Ok(None) is a list with no sort column; Err is a failed query (not the same thing: beep, change nothing).
+    let top = |fv: &IFolderView2| -> windows::core::Result<Option<(PROPERTYKEY, i32)>> {
+        let mut s = vec![SORTCOLUMN::default(); fv.GetSortColumnCount()?.max(0) as usize];
+        if !s.is_empty() {
+            fv.GetSortColumns(&mut s)?;
+        }
+        Ok(s.first().map(|c| (c.propkey, c.direction.0)))
+    };
+    let Some((fv, cur)) = view_of::<IFolderView2>(i).and_then(|fv| top(&fv).ok().map(|c| (fv, c))) else {
+        _ = MessageBeep(MB_ICONWARNING);
+        return;
+    };
+    let dir = sort_next(cur, key, first);
+    if fv.SetSortColumns(&[SORTCOLUMN { propkey: key, direction: SORTDIRECTION(dir) }]).is_err() || top(&fv).ok() != Some(Some((key, dir))) {
+        _ = MessageBeep(MB_ICONWARNING);
+        return;
+    }
+    app(|a| {
+        if is_fs(&a.s.paths[i]) {
+            a.s.cols[i] = with_sort(&a.s.cols[i], key, dir);
+        }
+        if let Some(c) = a.panes[i].as_mut().and_then(|p| p.pending.as_mut()) {
+            *c = with_sort(c, key, dir);
+        }
+    });
+    let n = if dir == first { note_first } else { note_other };
+    set_note(tr(n[0], n[1]).into());
+}
+
 // A few passes after a folder change (50, 150, 400, 1000 ms) put narrow widths back as the view builds
 // its columns at its own floor; then the pane's columns are read from the view again.
 pub(crate) unsafe fn settle_cols(h: HWND) {

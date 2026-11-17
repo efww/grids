@@ -142,6 +142,16 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
             spin_refresh(a);
         }
         _ if addr || filt => return false,
+        // sort the list by name / date modified / size; again: the other way round (F4 stays the address bar's)
+        k @ (VK_F3 | VK_F5 | VK_F6) if ctrl && !shift && !alt && list() => {
+            if m.lParam.0 & (1 << 30) == 0 {
+                sort_by(a, match k {
+                    VK_F3 => 0,
+                    VK_F5 => 1,
+                    _ => 2,
+                });
+            }
+        }
         VK_C if ctrl && shift && !alt && list() => copy_paths(a),
         // held until released: one box / one inversion per press (Ctrl+Num+ stays Explorer's column fit)
         k @ (VK_ADD | VK_SUBTRACT | VK_MULTIPLY) if !ctrl && !alt && list() => {
