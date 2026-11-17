@@ -46,10 +46,12 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
     // Explorer's type-to-find takes a space inside a name: a Space soon after typing stays the list's
     let vk = VIRTUAL_KEY(m.wParam.0 as u16);
     let typed_ago = LAST_TYPED.get().map(|t| t.elapsed());
-    if !ctrl && !alt && types_char(vk) && list() {
+    if key_types(vk, ctrl, alt) && list() {
         LAST_TYPED.set(Some(Instant::now()));
     }
     match vk {
+        // AltGr comes as Ctrl+Alt: a character (ł, ś, ß, [ ...), never a shortcut. Typing in the boxes, the view's otherwise.
+        _ if ctrl && key_types(vk, ctrl, alt) => return !(addr || filt) && shell(),
         // Space: preview, as in Finder (F3 too); the preview's own Space closes it
         VK_SPACE if !ctrl && !shift && !alt && list() && space_peeks(typed_ago) => {
             if m.lParam.0 & (1 << 30) == 0 {
@@ -283,6 +285,11 @@ thread_local! {
 /// Keys that type into Explorer's find-as-you-type: letters, digits, punctuation, the IME's (Korean) keys.
 pub(crate) fn types_char(vk: VIRTUAL_KEY) -> bool {
     matches!(vk.0, 0x30..=0x39 | 0x41..=0x5A | 0x60..=0x6F | 0xBA..=0xC0 | 0xDB..=0xDF | 0xE5)
+}
+
+/// A character typed: a character key with neither Ctrl nor Alt, or with both (AltGr, which Windows reports as Ctrl+Alt).
+pub(crate) fn key_types(vk: VIRTUAL_KEY, ctrl: bool, alt: bool) -> bool {
+    ctrl == alt && types_char(vk)
 }
 
 /// Space opens the preview unless a name is being typed (a key within the last second).
