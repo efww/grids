@@ -378,7 +378,8 @@ mod hwp_tests {
 /// "AB12" -> column 27 (zero-based), row 11.
 pub(crate) fn cell_ref(r: &str) -> Option<(usize, usize)> {
     let letters = r.chars().take_while(|c| c.is_ascii_alphabetic()).count();
-    let col = r[..letters].chars().try_fold(0usize, |a, c| Some(a * 26 + (c.to_ascii_uppercase() as usize - 'A' as usize + 1)))?;
+    // a made-up reference with too many letters overflows: no cell, not a wrong one
+    let col = r[..letters].chars().try_fold(0usize, |a, c| a.checked_mul(26)?.checked_add(c.to_ascii_uppercase() as usize - 'A' as usize + 1))?;
     let row: usize = r[letters..].parse().ok()?;
     (col > 0 && row > 0).then(|| (col - 1, row - 1))
 }
@@ -600,8 +601,13 @@ fn param(v: &str, name: &str) -> Option<String> {
     })
 }
 
+// Real mail nests multiparts 2 to 4 deep. A file nested thousands deep would run the preview worker's stack
+// out (that ends the whole process, nothing unwinds), so parts below this many multiparts are not read.
+const MIME_DEPTH: usize = 16;
+
 /// The readable body of a MIME part: text/plain first, else HTML as text; attachments' names listed.
-fn mime_body(head: &[(String, String)], body: &str, files: &mut Vec<String>) -> Option<(bool, String)> {
+/// depth: multiparts above this part (the message itself is 0).
+fn mime_body(head: &[(String, String)], body: &str, files: &mut Vec<String>, depth: usize) -> Option<(bool, String)> {
     let get = |k: &str| head.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
     let ctype = get("content-type").unwrap_or("text/plain");
     let kind = ctype.split(';').next().unwrap_or("").trim().to_ascii_lowercase();
@@ -613,6 +619,9 @@ fn mime_body(head: &[(String, String)], body: &str, files: &mut Vec<String>) -> 
         }
     }
     if kind.starts_with("multipart/") {
+        if depth >= MIME_DEPTH {
+            return None;
+        }
         let b = param(ctype, "boundary")?;
         let mark = format!("--{b}");
         let mut best: Option<(bool, String)> = None;
@@ -621,7 +630,7 @@ fn mime_body(head: &[(String, String)], body: &str, files: &mut Vec<String>) -> 
                 break;
             }
             let (h, b) = split_head(part.trim_start_matches(['\r', '\n']));
-            if let Some((plain, t)) = mime_body(&headers(h), b, files) {
+            if let Some((plain, t)) = mime_body(&headers(h), b, files, depth + 1) {
                 // plain beats html; the first of each kind wins
                 if best.as_ref().is_none_or(|(p, _)| !p && plain) {
                     best = Some((plain, t));
@@ -659,7 +668,7 @@ pub(crate) fn eml_text(raw: &[u8], ko: bool) -> String {
         }
     }
     let mut files = Vec::new();
-    let text = mime_body(&head, body, &mut files).map(|(_, t)| t).unwrap_or_default();
+    let text = mime_body(&head, body, &mut files, 0).map(|(_, t)| t).unwrap_or_default();
     if !files.is_empty() {
         out += &format!("{}: {}\n", label("Attachments", "첨부"), files.join(", "));
     }

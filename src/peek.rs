@@ -65,6 +65,16 @@ impl PeekJob {
         true
     }
 
+    // Making the item's preview failed (a panic): the card, unless the item was left or something is already
+    // up (a PDF whose later page failed keeps its first ones).
+    pub(crate) fn fail(&mut self, gen: usize, r: Peeked) -> bool {
+        if self.gen != gen || self.done.is_some() {
+            return false;
+        }
+        self.done = Some(r);
+        true
+    }
+
     // One more PDF page for the item still on screen.
     pub(crate) fn add_page(&mut self, gen: usize, p: Pix) -> bool {
         match &mut self.done {
@@ -95,13 +105,47 @@ pub(crate) fn want_peek(req: Option<PeekReq>) {
 }
 
 // Lives until the process ends. COM is up only while one preview is made; the lock is never held then.
-// A new item goes first; a zoom's sharper pictures are made for the item already shown.
 pub(crate) fn peek_worker() {
+    static STAY: AtomicBool = AtomicBool::new(false);
+    struct ComUp(bool);
+    impl Drop for ComUp {
+        fn drop(&mut self) {
+            if self.0 {
+                unsafe { CoUninitialize() };
+            }
+        }
+    }
+    let serve = |gen: Option<usize>, zoom: Option<(u64, Sharp)>, req: &PeekReq| unsafe {
+        let _com = ComUp(CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok()); // down again even on a panic
+        match (gen, zoom) {
+            (Some(gen), _) => peek_item(gen, req),
+            (None, Some((seq, z))) => sharpen(seq, z, req),
+            _ => {}
+        }
+    };
+    let tell = |gen: usize, req: &PeekReq| unsafe { _ = PostMessageW(Some(HWND(req.hwnd as _)), WM_PEEK_DONE, WPARAM(gen), LPARAM(0)) };
+    peek_loop(&PEEK, &PEEK_WAKE, &STAY, serve, tell);
+}
+
+// A new item goes first; a zoom's sharper pictures are made for the item already shown. One request that
+// panics (a parser's bug on an odd file) ends only that request: its item gets the "can't preview" card and
+// the next item is made as usual. Returns once quit is set (under the lock) and the worker is woken.
+pub(crate) fn peek_loop(
+    job: &Mutex<PeekJob>,
+    wake: &Condvar,
+    quit: &AtomicBool,
+    serve: impl Fn(Option<usize>, Option<(u64, Sharp)>, &PeekReq),
+    tell: impl Fn(usize, &PeekReq),
+) {
+    let lock = || job.lock().unwrap_or_else(|e| e.into_inner());
     let mut seen = 0;
     loop {
         let (gen, req, zoom) = {
-            let mut j = peek_job();
+            let mut j = lock();
             loop {
+                if quit.load(Ordering::Relaxed) {
+                    return;
+                }
                 let z = j.zoom.take();
                 if let Some(r) = j.req.clone() {
                     if j.gen != seen {
@@ -111,21 +155,18 @@ pub(crate) fn peek_worker() {
                         break (None, r, z);
                     }
                 }
-                j = PEEK_WAKE.wait(j).unwrap_or_else(|e| e.into_inner());
+                j = wake.wait(j).unwrap_or_else(|e| e.into_inner());
             }
         };
-        unsafe {
-            let com = CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok();
-            match (gen, zoom) {
-                (Some(gen), _) => {
-                    seen = gen;
-                    peek_item(gen, &req);
-                }
-                (None, Some((seq, z))) => sharpen(seq, z, &req),
-                _ => {}
-            }
-            if com {
-                CoUninitialize();
+        if let Some(gen) = gen {
+            seen = gen; // before serving: an item that panicked is not picked up again
+        }
+        let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| serve(gen, zoom, &req))).is_err();
+        // a zoom that failed posts nothing: the fitted picture stays
+        if let (true, Some(gen)) = (failed, gen) {
+            let card = Body::Card { icon: None, rows: vec![(tr("Preview", "미리보기").into(), tr("Can't preview this file", "이 파일은 미리 볼 수 없습니다").into())] };
+            if lock().fail(gen, Peeked { body: card, icon: -1, meta: Vec::new() }) {
+                tell(gen, &req);
             }
         }
     }

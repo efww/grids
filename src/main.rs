@@ -2001,6 +2001,7 @@ mod tests {
         let x = r#"<a:p><a:r><a:t>One</a:t></a:r><a:br/><a:r><a:t xml:space="preserve"> two</a:t></a:r></a:p><a:p><a:t/><a:t>&#xD55C;&lt;</a:t></a:p>"#;
         assert_eq!(xml_text(x, &["a:t"], &["a:p"], &[], &["a:br"]), "One\n two\n한<\n");
         assert_eq!((cell_ref("A1"), cell_ref("AB12"), cell_ref("1A")), (Some((0, 0)), Some((27, 11)), None));
+        assert_eq!(cell_ref(&format!("{}1", "A".repeat(20))), None); // too many letters: no cell, no overflow
         let ss = xlsx_strings("<sst><si><t>이름</t></si><si><r><t>A</t></r><r><t>B</t></r></si></sst>");
         assert_eq!(ss, vec!["이름", "AB"]);
         let sheet = r#"<row r="1"><c r="A1" t="s"><v>0</v></c><c r="C1" t="s"><v>1</v></c></row><row r="2"><c r="A2"><v>0.30000000000000004</v></c><c r="B2" t="inlineStr"><is><t>x</t></is></c></row>"#;
@@ -2018,6 +2019,108 @@ mod tests {
         assert!(t.ends_with("안 plain text"), "{t}");
         let h = html_text("<html><head><title>x</title></head><body><script>var a;</script><h1>Title</h1><p>a &amp; b</p><ul><li>one</li></ul></body></html>");
         assert_eq!(h, "Title\n\na & b\n\n• one"); // blocks a blank line apart
+    }
+
+    // A mail whose body is text/plain under n multiparts, each with its own fixed-width boundary.
+    fn nested_eml(n: usize) -> Vec<u8> {
+        let mut m = String::from("Subject: deep\r\nContent-Type: multipart/mixed; boundary=\"b00000\"\r\n\r\n");
+        for i in 1..n {
+            m += &format!("--b{:05}\r\nContent-Type: multipart/mixed; boundary=\"b{i:05}\"\r\n\r\n", i - 1);
+        }
+        m += &format!("--b{:05}\r\nContent-Type: text/plain\r\n\r\ndeep body\r\n", n - 1);
+        for i in (0..n).rev() {
+            m += &format!("--b{i:05}--\r\n");
+        }
+        m.into_bytes()
+    }
+
+    #[test]
+    fn mail_nesting() {
+        // thousands deep used to run the preview worker's stack out and end Grids
+        let t = eml_text(&nested_eml(20_000), true);
+        assert!(t.starts_with("제목: deep\n") && !t.contains("deep body"), "{}", &t[..t.len().min(200)]);
+        assert!(eml_text(&nested_eml(16), false).ends_with("deep body"));
+        assert!(!eml_text(&nested_eml(17), false).contains("deep body"));
+        // an ordinary mail: mixed > related > alternative, a picture inside and a file attached
+        let eml = b"Subject: hi\r\nContent-Type: multipart/mixed; boundary=\"M\"\r\n\r\n--M\r\nContent-Type: multipart/related; boundary=\"R\"\r\n\r\n--R\r\nContent-Type: multipart/alternative; boundary=\"A\"\r\n\r\n--A\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nplain body\r\n--A\r\nContent-Type: text/html\r\n\r\n<p>html</p>\r\n--A--\r\n--R\r\nContent-Type: image/png; name=\"logo.png\"\r\n\r\niVBO\r\n--R--\r\n--M\r\nContent-Type: application/pdf\r\nContent-Disposition: attachment; filename=\"r.pdf\"\r\n\r\nJVBE\r\n--M--\r\n";
+        let t = eml_text(eml, false);
+        assert!(t.starts_with("Subject: hi\nAttachments: logo.png, r.pdf\n\n") && t.ends_with("plain body"), "{t}");
+    }
+
+    #[test]
+    fn peek_fail_card() {
+        let req = |p: &str| Some(PeekReq { path: p.into(), w: 10, h: 10, hwnd: 0, plain: false });
+        let card = || Peeked { body: Body::Card { icon: None, rows: Vec::new() }, icon: -1, meta: Vec::new() };
+        let pages = || Peeked { body: Body::Pages { pages: Vec::new(), total: 3 }, icon: -1, meta: Vec::new() };
+        let mut j = PeekJob { gen: 0, req: None, done: None, zoom: None, zseq: 0, sharp: Vec::new() };
+        j.want(req("a"));
+        let a = j.gen;
+        j.want(req("b"));
+        assert!(!j.fail(a, card()) && j.done.is_none()); // left already
+        assert!(j.publish(j.gen, pages()));
+        assert!(!j.fail(j.gen, card()) && matches!(j.done, Some(Peeked { body: Body::Pages { .. }, .. }))); // first page stays
+        j.want(req("c"));
+        assert!(j.fail(j.gen, card()) && matches!(j.done, Some(Peeked { body: Body::Card { .. }, .. })));
+    }
+
+    #[test]
+    fn peek_worker_survives_panic() {
+        use std::sync::mpsc;
+        static JOB: Mutex<PeekJob> = Mutex::new(PeekJob { gen: 0, req: None, done: None, zoom: None, zseq: 0, sharp: Vec::new() });
+        static WAKE: Condvar = Condvar::new();
+        static QUIT: AtomicBool = AtomicBool::new(false);
+        let lock = || JOB.lock().unwrap_or_else(|e| e.into_inner());
+        let (tx, rx) = mpsc::channel::<usize>();
+        let told = tx.clone();
+        // quit and join even when a wait or a check below fails, so no worker outlives the test
+        struct Stop(Option<std::thread::JoinHandle<()>>);
+        impl Drop for Stop {
+            fn drop(&mut self) {
+                {
+                    let _j = JOB.lock().unwrap_or_else(|e| e.into_inner()); // set under the lock, so the worker can't miss the wake between its check and its wait
+                    QUIT.store(true, Ordering::Relaxed);
+                }
+                WAKE.notify_all();
+                if let Some(w) = self.0.take() {
+                    let ended = w.join();
+                    if !std::thread::panicking() {
+                        ended.expect("the worker ends on quit");
+                    }
+                }
+            }
+        }
+        let worker = Stop(Some(std::thread::spawn(move || {
+            let serve = move |gen: Option<usize>, _: Option<(u64, Sharp)>, r: &PeekReq| {
+                let Some(gen) = gen else { return };
+                let mut j = JOB.lock().unwrap_or_else(|e| e.into_inner());
+                if r.path == "boom" {
+                    panic!("test: a preview fails with the lock held");
+                }
+                if j.publish(gen, Peeked { body: Body::Text { text: r.path.clone(), kind: TextKind::Plain, cut: false }, icon: -1, meta: Vec::new() }) {
+                    drop(j);
+                    _ = tx.send(gen);
+                }
+            };
+            peek_loop(&JOB, &WAKE, &QUIT, serve, move |gen, _| _ = told.send(gen));
+        })));
+        let want = |p: &str| {
+            lock().want(Some(PeekReq { path: p.into(), w: 10, h: 10, hwnd: 0, plain: false }));
+            WAKE.notify_one();
+        };
+        want("boom");
+        let g = rx.recv_timeout(Duration::from_secs(5)).expect("the failed item is told");
+        {
+            let j = lock();
+            assert!(JOB.is_poisoned() && j.gen == g);
+            assert!(matches!(&j.done, Some(Peeked { body: Body::Card { rows, .. }, .. }) if rows.len() == 1), "failure card");
+        }
+        want("ok"); // the same worker carries on
+        let g = rx.recv_timeout(Duration::from_secs(5)).expect("the next item is made");
+        {
+            let j = lock();
+            assert!(j.gen == g && matches!(&j.done, Some(Peeked { body: Body::Text { text, .. }, .. }) if text == "ok"));
+        }
+        drop(worker); // quits, joins and checks the worker ended cleanly
     }
 
     #[test]
