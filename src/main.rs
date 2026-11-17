@@ -2127,4 +2127,21 @@ mod tests {
         assert!(types_char(VK_A) && types_char(VK_7) && types_char(VIRTUAL_KEY(0xE5))); // 0xE5: Korean IME
         assert!(!types_char(VK_SPACE) && !types_char(VK_DOWN) && !types_char(VK_F3) && !types_char(VK_RETURN));
     }
+
+    #[test]
+    fn altgr_letters_are_typing() {
+        // AltGr = Ctrl+Alt: ł ś đ [ ħ ę @ { ... are characters, not Ctrl+L / Ctrl+S / Alt+D / Ctrl+F / Ctrl+H
+        for vk in [VK_L, VK_S, VK_D, VK_F, VK_G, VK_H, VK_E, VK_Q, VK_7, VK_OEM_4] {
+            assert!(key_types(vk, true, true), "{:#x}", vk.0);
+            assert!(key_types(vk, false, false), "{:#x}", vk.0);
+            assert!(!key_types(vk, true, false) && !key_types(vk, false, true), "{:#x}", vk.0);
+        }
+        // the shortcuts that stay: Ctrl+L, Alt+D, Ctrl+F, Ctrl+H, Ctrl+S
+        assert!(!key_types(VK_L, true, false) && !key_types(VK_D, false, true) && !key_types(VK_F, true, false));
+        assert!(!key_types(VK_H, true, false) && !key_types(VK_S, true, false));
+        // not characters even with Ctrl+Alt (Ctrl+Alt+Shift+arrows swaps panes)
+        for vk in [VK_LEFT, VK_RIGHT, VK_UP, VK_DOWN, VK_TAB, VK_F4, VK_RETURN, VK_SPACE] {
+            assert!(!key_types(vk, true, true), "{:#x}", vk.0);
+        }
+    }
 }
