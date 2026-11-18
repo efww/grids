@@ -99,6 +99,8 @@ pub(crate) unsafe fn create_tree(main: HWND) -> Result<(INameSpaceTreeControl, H
 // (Programmatic selection doesn't navigate: OnSelectionChanged only follows user input.)
 pub(crate) unsafe fn sync_tree(item: &IShellItem) {
     let Some((t, main, th)) = app(|a| a.tree.clone().map(|t| (t, a.main, a.tree_hwnd))) else { return };
+    // Grids picks this selection itself: a mark left by a tree click that changed nothing must not navigate
+    app(|a| a.tree_input = false);
     // the tree scrolls on its own when it selects; hide that and paint once, after the reveal
     let tv = FindWindowExW(Some(th), None, w!("SysTreeView32"), PCWSTR::null()).ok();
     if let Some(tv) = tv {
