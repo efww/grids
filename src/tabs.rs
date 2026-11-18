@@ -95,6 +95,7 @@ pub(crate) unsafe fn on_strip(h: HWND, _i: usize, lp: LPARAM) -> bool {
     inside(pane_geo(rc.right, rc.bottom, app(|a| a.dpi)).tabs, x, y)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum TabHit {
     Tab(usize),
     Close(usize),
@@ -102,36 +103,69 @@ pub(crate) enum TabHit {
     Strip,
 }
 
-// What is under (x, y) in a pane's strip; None outside it (or with tabs off).
-pub(crate) fn tab_hit(pg: &PaneGeo, n: usize, x: i32, y: i32, dpi: i32) -> Option<TabHit> {
-    if !inside(pg.tabs, x, y) {
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum TabClick {
+    Left,
+    Middle,
+    // the second press of a double click
+    Double,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum TabAct {
+    Pick(usize),
+    Close(usize),
+    New,
+    Nothing,
+}
+
+// Where tab k's × is, if it has one: only on the current tab, and only while there are several.
+// The painter and the hit test both ask this, so a click closes only where a × is drawn.
+pub(crate) fn tab_close_at(tab: RECT, k: usize, cur: usize, n: usize, dpi: i32) -> Option<RECT> {
+    tab_close_rect(tab, dpi).filter(|_| k == cur && n > 1)
+}
+
+// What is under (x, y) in a pane's strip; None outside it (or with tabs off: a strip of no height).
+pub(crate) fn tab_hit(strip: RECT, n: usize, cur: usize, x: i32, y: i32, dpi: i32) -> Option<TabHit> {
+    if !inside(strip, x, y) {
         return None;
     }
-    let (tabs, plus) = tab_rects(pg.tabs, n, dpi);
+    let (tabs, plus) = tab_rects(strip, n, dpi);
     if inside(plus, x, y) {
         return Some(TabHit::Plus);
     }
     let Some(k) = tabs.iter().position(|r| inside(*r, x, y)) else { return Some(TabHit::Strip) };
-    match tab_close_rect(tabs[k], dpi) {
-        Some(c) if n > 1 && inside(c, x, y) => Some(TabHit::Close(k)),
+    match tab_close_at(tabs[k], k, cur, n, dpi) {
+        Some(c) if inside(c, x, y) => Some(TabHit::Close(k)),
         _ => Some(TabHit::Tab(k)),
     }
 }
 
-// Mouse in a pane's header window: left click picks / closes / adds, middle click closes. False: not the strip.
-pub(crate) unsafe fn tab_mouse(h: HWND, i: usize, x: i32, y: i32, middle: bool) -> bool {
+// Left click picks / closes / adds, middle click closes. A double click's second press never closes:
+// the first press already did its part (picking a tab puts a × under the pointer).
+pub(crate) fn tab_action(hit: TabHit, c: TabClick) -> TabAct {
+    match (c, hit) {
+        (TabClick::Left, TabHit::Tab(k)) => TabAct::Pick(k),
+        (TabClick::Left | TabClick::Middle, TabHit::Close(k)) | (TabClick::Middle, TabHit::Tab(k)) => TabAct::Close(k),
+        (TabClick::Left | TabClick::Double, TabHit::Plus) | (TabClick::Double, TabHit::Strip) => TabAct::New,
+        (TabClick::Double, TabHit::Tab(k) | TabHit::Close(k)) => TabAct::Pick(k),
+        _ => TabAct::Nothing,
+    }
+}
+
+// Mouse in a pane's header window. False: not the strip.
+pub(crate) unsafe fn tab_mouse(h: HWND, i: usize, x: i32, y: i32, click: TabClick) -> bool {
     let mut rc = RECT::default();
     _ = GetClientRect(h, &mut rc);
     let dpi = app(|a| a.dpi);
-    let n = app(|a| a.s.tab_list(i).len());
-    let Some(hit) = tab_hit(&pane_geo(rc.right, rc.bottom, dpi), n, x, y, dpi) else { return false };
+    let (n, cur) = app(|a| (a.s.tab_list(i).len(), a.s.tab[i]));
+    let Some(hit) = tab_hit(pane_geo(rc.right, rc.bottom, dpi).tabs, n, cur, x, y, dpi) else { return false };
     set_active(i);
-    match (hit, middle) {
-        (TabHit::Tab(k) | TabHit::Close(k), true) => close_tab(i, k),
-        (TabHit::Close(k), false) => close_tab(i, k),
-        (TabHit::Tab(k), false) => pick_tab(i, k),
-        (TabHit::Plus, false) => new_tab(i),
-        _ => {}
+    match tab_action(hit, click) {
+        TabAct::Pick(k) => pick_tab(i, k),
+        TabAct::Close(k) => close_tab(i, k),
+        TabAct::New => new_tab(i),
+        TabAct::Nothing => {}
     }
     focus_view(i);
     true
@@ -152,7 +186,7 @@ pub(crate) unsafe fn paint_tabs(dc: HDC, pg: &PaneGeo, tabs: &[String], cur: usi
             n if n.is_empty() => "…".to_string(),
             n => n,
         };
-        let close = tab_close_rect(*r, dpi).filter(|_| on && tabs.len() > 1);
+        let close = tab_close_at(*r, k, cur, tabs.len(), dpi);
         if on {
             fill(dc, *r, pal().card);
             fill(dc, RECT { bottom: r.top + s(2), ..*r }, accent);

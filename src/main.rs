@@ -1993,6 +1993,98 @@ mod tests {
         assert!(tab_close_rect(tabs[0], 96).is_none() && tab_close_rect(RECT { left: 0, top: 0, right: 64, bottom: 20 }, 96).is_some());
     }
 
+    // The tab strip's mouse: a click closes only where a × is painted, and a double click never closes.
+    #[test]
+    fn tab_clicks() {
+        use TabClick as Click;
+        use TabHit::*;
+        for dpi in [96, 144] {
+            let s = |v: i32| v * dpi / 96;
+            // 400 px: 12 tabs are under 64 DIP each (no ×); 1200 px: they keep their ×
+            for width in [400, 1200] {
+                let strip = RECT { left: 2, top: 30, right: 2 + width, bottom: 30 + s(26) };
+                let ym = strip.top + s(3) + (strip.bottom - strip.top - s(3)) / 2;
+                for n in [1, 2, 3, 12] {
+                    let (tabs, plus) = tab_rects(strip, n, dpi);
+                    for cur in 0..n {
+                        let hit = |x: i32, y: i32| tab_hit(strip, n, cur, x, y, dpi);
+                        for (k, r) in tabs.iter().enumerate() {
+                            assert_eq!(hit((r.left + r.right) / 2, ym), Some(Tab(k)), "{dpi} {width} {n} {cur} {k}");
+                            // the pixels either side of a tab's edges
+                            assert_eq!(hit(r.left, ym), Some(Tab(k)));
+                            assert_eq!(hit(r.right - 1, ym), Some(Tab(k)));
+                            let next = if k + 1 < n { Tab(k + 1) } else { Plus };
+                            assert_eq!(hit(r.right, ym), Some(next));
+                            if let Some(c) = tab_close_rect(*r, dpi) {
+                                let at = ((c.left + c.right) / 2, ym);
+                                let want = if k == cur && n > 1 { Close(k) } else { Tab(k) }; // the bug: other tabs' ends closed
+                                assert_eq!(hit(at.0, at.1), Some(want), "{dpi} {width} {n} {cur} {k}");
+                            }
+                        }
+                        // every pixel: Close exactly where the painter puts the ×
+                        let mut closes = 0;
+                        for y in strip.top..strip.bottom {
+                            for x in strip.left..strip.right {
+                                let drawn = tabs.iter().enumerate().find(|(k, r)| tab_close_at(**r, *k, cur, n, dpi).is_some_and(|c| inside(c, x, y)));
+                                match hit(x, y) {
+                                    Some(Close(k)) => {
+                                        assert_eq!(drawn.map(|d| d.0), Some(k), "{dpi} {width} {n} {cur} ({x},{y})");
+                                        closes += 1;
+                                    }
+                                    _ => assert!(drawn.is_none(), "{dpi} {width} {n} {cur} ({x},{y})"),
+                                }
+                            }
+                        }
+                        let wide = tabs[0].right - tabs[0].left >= s(64);
+                        assert_eq!(closes > 0, n > 1 && wide, "{dpi} {width} {n}");
+                        // '+', the empty strip after it and the band above the tabs
+                        assert_eq!(hit((plus.left + plus.right) / 2, ym), Some(Plus));
+                        if plus.right < strip.right {
+                            assert_eq!(hit(plus.right, ym), Some(Strip));
+                        }
+                        let x0 = (tabs[0].left + tabs[0].right) / 2;
+                        assert_eq!(hit(x0, strip.top), Some(Strip));
+                        assert_eq!(hit(x0, strip.top + s(3) - 1), Some(Strip));
+                        // outside the strip, or tabs off (a strip of no height)
+                        assert_eq!(hit(x0, strip.top - 1), None);
+                        assert_eq!(hit(x0, strip.bottom), None);
+                        assert_eq!(hit(strip.left - 1, ym), None);
+                        assert_eq!(tab_hit(RECT { bottom: strip.top, ..strip }, n, cur, x0, strip.top, dpi), None);
+                        // double click on another tab's end: the first press picks it, the second
+                        // lands on its fresh × and must not close it
+                        for (k, r) in tabs.iter().enumerate().filter(|(k, _)| *k != cur) {
+                            let Some(c) = tab_close_rect(*r, dpi) else { continue };
+                            let at = ((c.left + c.right) / 2, ym);
+                            let first = tab_action(hit(at.0, at.1).unwrap(), Click::Left);
+                            assert_eq!(first, TabAct::Pick(k));
+                            let now = tab_hit(strip, n, k, at.0, at.1, dpi).unwrap();
+                            assert_eq!(now, Close(k));
+                            assert_eq!(tab_action(now, Click::Double), TabAct::Pick(k));
+                        }
+                    }
+                }
+            }
+        }
+        // every hit × every click
+        let table = [
+            (Tab(2), Click::Left, TabAct::Pick(2)),
+            (Tab(2), Click::Middle, TabAct::Close(2)),
+            (Tab(2), Click::Double, TabAct::Pick(2)),
+            (Close(1), Click::Left, TabAct::Close(1)),
+            (Close(1), Click::Middle, TabAct::Close(1)),
+            (Close(1), Click::Double, TabAct::Pick(1)),
+            (Plus, Click::Left, TabAct::New),
+            (Plus, Click::Middle, TabAct::Nothing),
+            (Plus, Click::Double, TabAct::New),
+            (Strip, Click::Left, TabAct::Nothing),
+            (Strip, Click::Middle, TabAct::Nothing),
+            (Strip, Click::Double, TabAct::New),
+        ];
+        for (hit, click, want) in table {
+            assert_eq!(tab_action(hit, click), want, "{hit:?} {click:?}");
+        }
+    }
+
     #[test]
     fn text_decoding() {
         assert_eq!(decode_text(b"\xEF\xBB\xBFhi"), "hi");

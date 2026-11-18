@@ -374,30 +374,22 @@ pub(crate) extern "system" fn pane_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             WM_TIMER if wp.0 == TIMER_SPIN => spin_tick(h),
             WM_SIZE => layout_pane(h),
             WM_LBUTTONDBLCLK if pane_of(h).is_some_and(|i| on_strip(h, i, lp)) => {
-                // empty strip: a new tab; on a tab it is just a second click
+                // empty strip: a new tab; on a tab it is just a second click (it picks, never closes)
                 let (x, y) = ((lp.0 & 0xffff) as i16 as i32, (lp.0 >> 16 & 0xffff) as i16 as i32);
                 if let Some(i) = pane_of(h) {
-                    let mut rc = RECT::default();
-                    _ = GetClientRect(h, &mut rc);
-                    let dpi = app(|a| a.dpi);
-                    let n = app(|a| a.s.tab_list(i).len());
-                    if matches!(tab_hit(&pane_geo(rc.right, rc.bottom, dpi), n, x, y, dpi), Some(TabHit::Strip)) {
-                        new_tab(i);
-                    } else {
-                        tab_mouse(h, i, x, y, false);
-                    }
+                    tab_mouse(h, i, x, y, TabClick::Double);
                 }
             }
             WM_MBUTTONUP if pane_of(h).is_some_and(|i| on_strip(h, i, lp)) => {
                 let (x, y) = ((lp.0 & 0xffff) as i16 as i32, (lp.0 >> 16 & 0xffff) as i16 as i32);
                 if let Some(i) = pane_of(h) {
-                    tab_mouse(h, i, x, y, true);
+                    tab_mouse(h, i, x, y, TabClick::Middle);
                 }
             }
             WM_LBUTTONDOWN if pane_of(h).is_some_and(|i| on_strip(h, i, lp)) => {
                 let (x, y) = ((lp.0 & 0xffff) as i16 as i32, (lp.0 >> 16 & 0xffff) as i16 as i32);
                 if let Some(i) = pane_of(h) {
-                    tab_mouse(h, i, x, y, false);
+                    tab_mouse(h, i, x, y, TabClick::Left);
                 }
             }
             WM_LBUTTONDBLCLK => {
@@ -506,7 +498,7 @@ pub(crate) extern "system" fn pane_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 _ = GetClientRect(h, &mut rc);
                 let dpi = app(|a| a.dpi);
                 let pg = pane_geo(rc.right, rc.bottom, dpi);
-                let tab = |i: usize| match tab_hit(&pg, app(|a| a.s.tab_list(i).len()), p.x, p.y, dpi) {
+                let tab = |i: usize| match tab_hit(pg.tabs, app(|a| a.s.tab_list(i).len()), app(|a| a.s.tab[i]), p.x, p.y, dpi) {
                     Some(TabHit::Tab(k) | TabHit::Close(k)) => Some(k),
                     _ => None,
                 };
