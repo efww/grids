@@ -90,6 +90,7 @@ The exe is not code-signed, so Windows SmartScreen may warn the first time: choo
 | Num+ / Ctrl+Shift+A | Select files by pattern (`*.jpg;*.png` or part of a name; Shift+Enter deselects) |
 | Num− | Deselect files by pattern |
 | Num* | Invert the selection |
+| Insert | Select or deselect the focused item and move to the next (hold to mark several in a row) |
 | Ctrl+Shift+R | Batch rename (in the window: Ctrl+Enter rename, Esc close; rule list: Space on/off, Ins add, Del remove, Alt+↑/↓ move) |
 | Shift+F7 | New text file |
 | Ctrl+Shift+F | Search with Everything (↑/↓, Enter: show in the active pane, Ctrl+Enter: open a folder, Alt+O: only under this folder) |

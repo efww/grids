@@ -1422,6 +1422,17 @@ mod tests {
     }
 
     #[test]
+    fn insert_marks_and_steps() {
+        let (sel, focus, show) = (SVSI_SELECT.0 as u32, SVSI_FOCUSED.0 as u32, SVSI_ENSUREVISIBLE.0 as u32);
+        // the focused item flips and keeps the focus; the next one takes it and keeps its own selection
+        assert_eq!(ins_flags(false, false), (sel | focus, focus | show));
+        assert_eq!(ins_flags(false, true), (sel | focus, sel | focus | show));
+        assert_eq!(ins_flags(true, false), (focus, focus | show));
+        assert_eq!(ins_flags(true, true), (focus, sel | focus | show));
+        assert_eq!(SVSI_DESELECT.0, 0); // why the next item's SVSI_SELECT matters
+    }
+
+    #[test]
     fn match_box_fits() {
         for dpi in [96, 144, 192] {
             let s = |v: i32| v * dpi / 96;
