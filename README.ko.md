@@ -90,6 +90,7 @@ Windows용 빠르고 가벼운 다중 패널 파일 관리자입니다. 한 창�
 | Num+ / Ctrl+Shift+A | 패턴으로 파일 선택 (`*.jpg;*.png` 또는 이름 일부, Shift+Enter는 선택 해제) |
 | Num− | 패턴으로 파일 선택 해제 |
 | Num* | 선택 반전 |
+| Insert | 포커스한 항목 선택·해제 후 다음 항목으로 (누르고 있으면 연달아 선택) |
 | Ctrl+Shift+R | 일괄 이름 바꾸기 (창에서 Ctrl+Enter 바꾸기, Esc 닫기, 규칙 목록에서 Space 켜기/끄기, Ins 추가, Del 빼기, Alt+↑/↓ 순서) |
 | Shift+F7 | 새 텍스트 파일 |
 | Ctrl+Shift+F | Everything으로 검색 (↑/↓, Enter: 지금 패널에서 보기, Ctrl+Enter: 폴더 열기, Alt+O: 이 폴더 아래에서만) |

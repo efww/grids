@@ -201,6 +201,7 @@ Ctrl+Shift+R\tBatch rename the selected items (none selected: every file in the 
 Num+ / Ctrl+Shift+A\tSelect files by pattern (*.jpg;*.png or part of a name; Shift+Enter deselects)\n\
 Num−\tDeselect files by pattern\n\
 Num*\tInvert the selection\n\
+Insert\tSelect or deselect the focused item and move to the next (hold to mark several in a row)\n\
 Ctrl+F\tFilter (*.pdf;*.txt or part of a name; folders always show)\n\
 Alt+↓ in the filter\tFile types: pictures, videos, documents ... (or click the filter's icon)\n\
 Ctrl+Shift+F\tSearch the whole PC with Everything, while it runs (or the orange magnifier): ↑/↓ choose, Enter shows the item in the active pane, Ctrl+Enter opens a folder, Alt+O only under this folder\n\
@@ -252,6 +253,7 @@ Ctrl+Shift+R\t선택한 항목(선택 없으면 폴더의 모든 파일) 일괄 
 Num+ / Ctrl+Shift+A\t패턴으로 파일 선택 (*.jpg;*.png 또는 이름 일부, Shift+Enter는 선택 해제)\n\
 Num−\t패턴으로 파일 선택 해제\n\
 Num*\t선택 반전\n\
+Insert\t포커스한 항목 선택·해제 후 다음 항목으로 (누르고 있으면 연달아 선택)\n\
 Ctrl+F\t필터 (*.pdf;*.txt 또는 이름 일부, 폴더는 항상 표시)\n\
 필터 칸에서 Alt+↓\t파일 종류: 사진·동영상·문서 … (필터 칸 아이콘 클릭도 가능)\n\
 Ctrl+Shift+F\tEverything으로 PC 전체 검색, Everything이 실행 중일 때 (주황 돋보기도 가능): ↑/↓ 고르기, Enter는 지금 패널에서 그 항목 보기, Ctrl+Enter는 폴더 열기, Alt+O는 이 폴더 아래에서만\n\

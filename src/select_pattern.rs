@@ -189,6 +189,50 @@ pub(crate) unsafe fn invert_selection(i: usize) {
     }
 }
 
+// Insert, as in Total Commander: (the focused item's flags, the next item's). The focused item flips and keeps
+// the focus (so the last item stays focused); the next one takes the focus without losing its own selection,
+// since SelectItem without SVSI_SELECT deselects (SVSI_DESELECT is 0).
+pub(crate) fn ins_flags(cur_sel: bool, next_sel: bool) -> (u32, u32) {
+    let flip = if cur_sel { SVSI_DESELECT.0 } else { SVSI_SELECT.0 };
+    let keep = if next_sel { SVSI_SELECT.0 } else { SVSI_DESELECT.0 };
+    ((flip | SVSI_FOCUSED.0) as u32, (keep | SVSI_FOCUSED.0 | SVSI_ENSUREVISIBLE.0) as u32)
+}
+
+unsafe fn is_selected(fv: &IFolderView2, k: i32) -> Option<bool> {
+    let pidl = fv.Item(k).ok()?;
+    let state = fv.GetSelectionState(pidl);
+    CoTaskMemFree(Some(pidl as _));
+    state.ok().map(|s| s & SVSI_SELECT.0 as u32 != 0)
+}
+
+// Insert: the focused item's selection flips and the focus moves down to the next visible item (in view order).
+// No focused item yet: the first one takes the focus, nothing is selected.
+pub(crate) unsafe fn mark_and_next(i: usize) {
+    let Some(fv) = view_of::<IFolderView2>(i) else { return };
+    let n = fv.ItemCount(SVGIO_ALLVIEW).unwrap_or(0);
+    let visible_after = |k: i32| {
+        let mut next = -1;
+        let hr = (Interface::vtable(&fv).GetVisibleItem)(Interface::as_raw(&fv), k, false.into(), &mut next);
+        (hr == S_OK && (0..n).contains(&next)).then_some(next)
+    };
+    let cur = fv.GetFocusedItem().unwrap_or(-1);
+    if !(0..n).contains(&cur) {
+        let Some(first) = visible_after(-1).or((n > 0).then_some(0)) else { return };
+        let Some(sel) = is_selected(&fv, first) else { return };
+        _ = fv.SelectItem(first, ins_flags(false, sel).1);
+        return;
+    }
+    let Some(cur_sel) = is_selected(&fv, cur) else { return };
+    let next = visible_after(cur).and_then(|k| is_selected(&fv, k).map(|s| (k, s)));
+    let (cur_flags, next_flags) = ins_flags(cur_sel, next.is_some_and(|(_, s)| s));
+    if fv.SelectItem(cur, cur_flags).is_err() {
+        return;
+    }
+    if let Some((k, _)) = next {
+        _ = fv.SelectItem(k, next_flags);
+    }
+}
+
 pub(crate) unsafe fn paint_match(h: HWND) {
     let desel = app(|a| a.matcher.as_ref().is_some_and(|m| m.desel));
     let g = match_geo_now(desel);

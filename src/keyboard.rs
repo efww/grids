@@ -142,6 +142,9 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
             spin_refresh(a);
         }
         _ if addr || filt => return false,
+        // Insert: flip the focused item's selection and step down, as in Total Commander; held, it auto-repeats
+        // (Ctrl+Insert / Shift+Insert stay Explorer's copy / paste)
+        VK_INSERT if !ctrl && !shift && !alt && list() => mark_and_next(a),
         // sort the list by name / date modified / size; again: the other way round (F4 stays the address bar's)
         k @ (VK_F3 | VK_F5 | VK_F6) if ctrl && !shift && !alt && list() => {
             if m.lParam.0 & (1 << 30) == 0 {
