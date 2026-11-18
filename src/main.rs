@@ -616,7 +616,14 @@ mod tests {
     fn tree_input_kept_only_for_tree_keys() {
         assert!(tree_input_after(false, true, false)); // arrow in the tree
         assert!(!tree_input_after(true, true, true)); // Ctrl+Tab / F6 in the tree
-        assert!(tree_input_after(true, false, false) && !tree_input_after(false, false, false)); // elsewhere: unchanged
+        assert!(!tree_input_after(true, false, false) && !tree_input_after(false, false, false)); // elsewhere: cleared
+    }
+
+    #[test]
+    fn tree_input_clicks() {
+        assert!(!tree_input_click(true, false, true) && !tree_input_click(true, false, false)); // another pane: cleared
+        assert!(tree_input_click(false, true, true)); // left click in the tree
+        assert!(tree_input_click(true, true, false) && !tree_input_click(false, true, false)); // right click in the tree: unchanged
     }
 
     #[test]

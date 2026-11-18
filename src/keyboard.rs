@@ -198,14 +198,22 @@ pub(crate) fn focus_ring(pos: usize, back: bool, tree: bool) -> usize {
 }
 
 // Keys Grids handles itself (Ctrl+Tab, F6, ...) only sync the tree; tree keys (arrows, typing) still navigate.
-pub(crate) fn tree_input_after(prev: bool, in_tree: bool, used: bool) -> bool {
-    !used && (prev || in_tree)
+// A key anywhere else drops a mark left over from a tree click that changed nothing (expanding, re-clicking).
+pub(crate) fn tree_input_after(_prev: bool, in_tree: bool, used: bool) -> bool {
+    !used && in_tree
+}
+
+// A left click in the tree marks the next selection change as the user's; a click anywhere else
+// (another pane, ...) clears it, so the tree sync that click triggers doesn't navigate that pane again.
+pub(crate) fn tree_input_click(prev: bool, in_tree: bool, left: bool) -> bool {
+    if in_tree { prev || left } else { false }
 }
 
 pub(crate) unsafe fn pre_translate(m: &MSG) -> bool {
     let in_tree = || app(|a| a.tree_hwnd == m.hwnd || IsChild(a.tree_hwnd, m.hwnd).as_bool());
-    if m.message == WM_LBUTTONDOWN && in_tree() {
-        app(|a| a.tree_input = true);
+    if matches!(m.message, WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN | WM_XBUTTONDOWN) {
+        let t = in_tree();
+        app(|a| a.tree_input = tree_input_click(a.tree_input, t, m.message == WM_LBUTTONDOWN));
     }
     match m.message {
         WM_MOUSEMOVE => {
