@@ -80,6 +80,7 @@ def assign(symbols: list[Symbol], io_proto: dict, concept: Concept, notes: dict 
     rows: list[Row] = []
     seen: dict[str, Row] = {}
     log: list[tuple] = []                      # (dwg, text, effect) for the Notes sheet
+    keep = str(concept.get("B10", "")).startswith("각각")
 
     for s in symbols:
         if s.role in ("interlock", "candidate", "ignored"):
@@ -149,7 +150,7 @@ def assign(symbols: list[Symbol], io_proto: dict, concept: Concept, notes: dict 
                       system=SYSTEM_NAMES.get(sysn, sysn), io="-", signal="-", status=status,
                       inform=inform, kind="function", basis=s.dwg,
                       vendor_pkg=pkg if concept.on("B06") else "", **base)
-            _add(row, rows, seen)
+            _add(row, rows, seen, keep)
             continue
 
         if s.override:                      # accepted review / AI decision wins over the rule
@@ -178,7 +179,7 @@ def assign(symbols: list[Symbol], io_proto: dict, concept: Concept, notes: dict 
                   signal=rule.get("signal", ""), status=status, inform=inform,
                   basis=f"{s.dwg}" + (f" / {typ}" if typ else ""),
                   vendor_pkg=pkg if concept.on("B06") else "", **base)
-        if not _add(row, rows, seen):
+        if not _add(row, rows, seen, keep):
             continue
         for main, fc, sfx, desc, sys_, io, ids in points:
             if main:
@@ -233,6 +234,35 @@ def assign(symbols: list[Symbol], io_proto: dict, concept: Concept, notes: dict 
                     if r.status == "확정":
                         r.status = "검토필요"
 
+    # ------------------------------------------------ system-level choices
+    if str(concept.get("A01", "")) == "DCS 통합":          # one integrated system
+        for r in rows:
+            if r.system == "ESD":
+                r.system = "DCS"
+                r.inform.append("ESD→DCS 통합 (A01)")
+    if not concept.on("A02"):                               # no separate F&G system
+        for r in rows:
+            if r.system == "F&G":
+                r.system = "DCS"
+                r.inform.append("F&G→DCS (A02 OFF)")
+    if str(concept.get("A04", "")).startswith("통신") or str(concept.get("A04", "")).startswith("IMCC"):
+        moved = 0
+        for r in rows:
+            if r.origin == "장비Typical" and r.system == "DCS" and r.io in HW_IO:
+                r.io = "-"
+                r.inform.append("MCC 통신으로 대체 (A04)")
+                moved += 1
+        if moved:
+            for k in range(2 if concept.on("C04") else 1):
+                rows.append(Row("", f"MCC-COMM-{'AB'[k]}", "", "COMM", "MCC 통신 포트", "", "", "MCC", "DCS",
+                                "Serial/Comm", str(concept.get("A04")), 0, "", 1.0, "검토필요", [], "MCC",
+                                origin="장비Typical", basis=f"A04 {concept.get('A04')} · 모터 신호 {moved}점 대체"))
+    if str(concept.get("G05", "")).startswith("RTD"):        # RTD wired straight to the DCS card
+        for r in rows:
+            if r.func == "TT" and r.io == "AI":
+                r.io = "TC/RTD"
+                r.inform.append("RTD 직결 (G05)")
+
     # ------------------------------------------------ spares
     counts = {}
     for r in rows:
@@ -248,7 +278,12 @@ def assign(symbols: list[Symbol], io_proto: dict, concept: Concept, notes: dict 
     return rows, log
 
 
-def _add(row, rows, seen):
+def _add(row, rows, seen, keep_dupes=False):
+    if row.tag in seen and keep_dupes:
+        row.inform.append(f"같은 태그가 {seen[row.tag].dwg}에도 있음 - 각각 집계 (B10)")
+        row.status = "검토필요"
+        rows.append(row)
+        return True
     if row.tag in seen:                  # same tag on another sheet (off-page / repeated)
         first = seen[row.tag]
         first.inform.append(f"same tag also on {row.dwg} p{row.page} - repeat or duplicate number?")

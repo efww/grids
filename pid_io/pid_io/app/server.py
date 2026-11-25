@@ -237,7 +237,8 @@ def concept_view(name: str):
     for iid, it in con.items.items():
         if not groups or groups[-1]["title"] != it["group"]:
             groups.append({"title": it["group"], "items": []})
-        groups[-1]["items"].append({"id": iid, **{k: it[k] for k in ("name", "type", "value", "default", "choices", "effect", "basis")}})
+        groups[-1]["items"].append({"id": iid, **{k: it[k] for k in ("name", "type", "value", "default", "choices",
+                                                                       "effect", "basis", "status", "status_note")}})
     pk = []
     ex = extracted(name)
     seen = set()
@@ -255,7 +256,7 @@ def concept_view(name: str):
             pk.append({"tag": p["tag"], "dwg": p.get("dwg"), "title": p.get("name"), "units": "",
                        "conn": p.get("conn"), "typical": p.get("typical"), "source": "Package_Concept",
                        "qty": p.get("qty")})
-    return {"groups": groups, "packages": pk, "changed": len(con.changed())}
+    return {"groups": groups, "packages": pk, "changed": len(con.changed()), "overlay_default": con.on("I03")}
 
 
 def summary_view(name: str):
@@ -354,7 +355,8 @@ def export(name: str, body: dict):
     stamp = time.strftime("%Y%m%d_%H%M")
     out = d / "output" / f"Instrument_Index_{safe_name(name)}_{stamp}.xlsx"
     rev = re.search(r"Rev\.?\s*([A-Z0-9]+)", files["pdf"], re.I)
-    write_template(rows, d / "input" / files["template"], out, files["pdf"], rev.group(1) if rev else "", con, log)
+    write_template(rows, d / "input" / files["template"], out, files["pdf"], rev.group(1) if rev else "", con, log,
+                   m.get("scenarios"))
     made = [out.name]
     if files.get("ref"):
         from ..extract import page_texts

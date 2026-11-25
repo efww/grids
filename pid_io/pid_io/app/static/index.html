@@ -84,6 +84,7 @@ select{padding-right:26px}
 .tabs a .cnt{font-size:11px;background:var(--yellow);color:#111;padding:0 5px;margin-left:4px}
 .item{display:grid;grid-template-columns:48px 1fr 230px;gap:14px;align-items:center;padding:13px 6px;border-bottom:1px solid var(--line-l)}
 .item.chg{background:var(--chg)}
+.item.plan{opacity:.55}
 .item .id{font-family:Consolas,monospace;color:var(--mute);font-size:12px}
 .item .nm{font-size:14.5px}
 .item .ef{font-size:12px;color:var(--sub);margin-top:2px}
@@ -289,7 +290,7 @@ function sidePanel() {
   const s = S.summary;
   if (!s || !s.ready) return `<div class="panel">계산 중…</div>`;
   const tot = Math.max(1, s.hw);
-  const sys = Object.entries(s.per_system).map(([k,v]) => `${k} ${fmt(v.AI+v.AO+v.DI+v.DO)}`).join(" · ");
+  const sys = Object.entries(s.per_system).map(([k,v]) => `${k} ${fmt(v.AI+v.AO+v.DI+v.DO+(v["TC/RTD"]||0))}`).join(" · ");
   const sc = s.scenarios || [];
   const mx = Math.max(1, ...sc.map(x=>x.hw), s.hw);
   const imp = S.impact;
@@ -325,9 +326,10 @@ async function renderConcept(m) {
   tabs.push(`<a class="${S.tab===-1?"on":""}" data-i="-1">패키지별 (${c.packages.length})</a>`);
   const g = c.groups[S.tab];
   const body = S.tab === -1 ? packagesTable(c) : g.items.map(it => `
-    <div class="item ${String(it.value)!==String(it.default)?"chg":""}">
+    <div class="item ${String(it.value)!==String(it.default)?"chg":""} ${it.status==="planned"?"plan":""}">
       <div class="id">${it.id}</div>
-      <div><div class="nm">${esc(it.name)}</div><div class="ef">${esc(it.effect)}${it.basis?` · <span style="color:var(--mute)">${esc(it.basis)}</span>`:""}</div></div>
+      <div><div class="nm">${esc(it.name)}${it.status==="planned"?` <span class="chip" title="${esc(it.status_note)}">미적용</span>`:it.status==="info"?` <span class="chip b" title="${esc(it.status_note)}">기록용</span>`:""}</div>
+        <div class="ef">${esc(it.effect)}${it.basis?` · <span style="color:var(--mute)">${esc(it.basis)}</span>`:""}${it.status_note?`<br><span style="color:#b07a00">${esc(it.status_note)}</span>`:""}</div></div>
       <div class="ctl">${String(it.value)!==String(it.default)?`<span class="def">기본 ${esc(typeof it.default==="number"&&it.default<1&&it.default>0?Math.round(it.default*100)+"%":it.default)}</span>`:""}${control(it)}</div>
     </div>`).join("");
   m.innerHTML = `
@@ -535,6 +537,7 @@ function focusItem(x) {
 /* ---------------------------------------------------------------- 5 output */
 async function renderOutput(m) {
   const outs = await api(P("outputs"));
+  if (!S.concept) S.concept = await api(P("concept"));
   if (!S.summary) S.summary = await api(P("summary"));
   const s = S.summary;
   m.innerHTML = `
@@ -549,7 +552,7 @@ async function renderOutput(m) {
   <div class="grid g2" style="margin-top:16px">
     <div class="panel"><h2>만들기</h2>
       <div class="kv"><span>Instrument Index (양식 + 산출구분/근거/원본 Tag, IO_Summary, Concept_Basis, Notes_Review)</span><b>항상</b></div>
-      <div class="kv"><label style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" id="ov"> 검토용 오버레이 PDF (몇 분 소요)</label><span></span></div>
+      <div class="kv"><label style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" id="ov" ${S.concept&&S.concept.overlay_default?"checked":""}> 검토용 오버레이 PDF (몇 분 소요, I03)</label><span></span></div>
       <div class="kv"><span>레퍼런스 채점 시트</span><span>${(S.state.meta.files||{}).ref?"레퍼런스 있음 → 포함":"레퍼런스 없음"}</span></div>
       <div style="margin-top:16px"><button class="btn" id="mk">엑셀 만들기</button></div>
     </div>
@@ -559,8 +562,8 @@ async function renderOutput(m) {
     </div>
   </div>
   <div class="panel" style="margin-top:16px"><h2>시스템별 IO</h2>
-    <table><tr><th>System</th><th>AI</th><th>AO</th><th>DI</th><th>DO</th><th>합계</th><th>카드</th></tr>
-    ${Object.entries(s.per_system).map(([k,v])=>`<tr><td><b>${esc(k)}</b></td><td>${v.AI}</td><td>${v.AO}</td><td>${v.DI}</td><td>${v.DO}</td><td><b>${v.AI+v.AO+v.DI+v.DO}</b></td><td>${s.cards[k]}</td></tr>`).join("")}</table></div>`;
+    <table><tr><th>System</th><th>AI</th><th>AO</th><th>DI</th><th>DO</th><th>TC/RTD</th><th>합계</th><th>카드</th></tr>
+    ${Object.entries(s.per_system).map(([k,v])=>`<tr><td><b>${esc(k)}</b></td><td>${v.AI}</td><td>${v.AO}</td><td>${v.DI}</td><td>${v.DO}</td><td>${v["TC/RTD"]||0}</td><td><b>${v.AI+v.AO+v.DI+v.DO+(v["TC/RTD"]||0)}</b></td><td>${s.cards[k]}</td></tr>`).join("")}</table></div>`;
   $("#mk").onclick = async () => {
     const b = $("#mk"); b.disabled = true; b.textContent = "만드는 중…";
     try { const r = await post(P("export"), {overlay: $("#ov").checked}); toast(r.files.join(", ") + " 생성"); renderOutput(m); }

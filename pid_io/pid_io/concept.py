@@ -16,6 +16,24 @@ import openpyxl
 
 PKG_TYPICAL = {"전부 하드와이어": "PKG-HARDWIRED", "벤더PLC+통신": "PKG-COMM", "혼합": "PKG-HYBRID"}
 
+# How far each checklist item is wired into the calculation. Items not listed
+# here change the IO. 'info' items are recorded only; 'planned' items need a
+# reading the tool cannot make yet and are shown as 미적용 so nobody expects
+# the numbers to move.
+ITEM_STATUS = {
+    "C02": ("info", "기록용 - IO 수량에 영향 없음"),
+    "C03": ("info", "기록용 - 케이블 물량 산출 시 사용 예정"),
+    "G01": ("info", "기록용 - Fieldbus 세그먼트 집계는 미구현"),
+    "B02": ("planned", "미적용 - 노트 없는 시트의 트레인 태그 규칙 정의 필요"),
+    "B04": ("planned", "미적용 - HOLD 표기와 계기 연결 인식 필요"),
+    "B05": ("planned", "미적용 - FUTURE/SPARE 표기 인식 필요"),
+    "D02": ("planned", "미적용 - 장비리스트(모터 kW) 연동 필요"),
+    "D05": ("planned", "미적용 - Standby 기동 Typical 정의 필요"),
+    "D07": ("planned", "미적용 - 팬 장비 인식 필요"),
+    "G04": ("planned", "미적용 - 유량계 통신 Typical 정의 필요"),
+    "H06": ("planned", "미적용 - 위험지역 구분도 연동과 인덱스 IS 열 필요"),
+}
+
 
 @dataclass
 class Point:
@@ -39,8 +57,10 @@ class Concept:
         for r in ws.iter_rows(min_row=5, values_only=True):
             if r[0] and re.fullmatch(r"[A-Z]\d{2}", str(r[0])):
                 choices = [c.strip() for c in str(r[5] or "").split(" / ") if c.strip()]
+                st = ITEM_STATUS.get(r[0], ("applied", ""))
                 self.items[r[0]] = dict(name=r[1], type=r[2], value=r[3], default=r[4],
-                                        choices=choices, effect=r[6] or "", basis=r[7] or "", group=group)
+                                        choices=choices, effect=r[6] or "", basis=r[7] or "", group=group,
+                                        status=st[0], status_note=st[1])
             elif r[0]:
                 group = str(r[0])
         self.points: list[Point] = []

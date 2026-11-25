@@ -20,9 +20,17 @@ HW = ["AI", "AO", "DI", "DO"]
 
 
 def write_template(all_rows: list[Row], template: Path, out: Path, source_file: str, rev: str = "",
-                   concept=None, log=None):
+                   concept=None, log=None, scenarios=None):
     rows = [r for r in all_rows if r.kind != "function"]
     funcs = [r for r in all_rows if r.kind == "function"]
+    if concept is not None and str(concept.get("I01", "")) == "접두 없음":
+        import copy as _c
+        rows = [_c.copy(r) for r in rows]
+        for r in rows:
+            if r.unit and r.tag.startswith(r.unit + "-"):
+                r.tag = r.tag[len(r.unit) + 1:]
+    if concept is not None and not concept.on("A05"):
+        funcs = None
     wb = openpyxl.load_workbook(template)
     ws = wb["Instrument_Index"]
     first = 3
@@ -69,6 +77,19 @@ def write_template(all_rows: list[Row], template: Path, out: Path, source_file: 
         _concept_basis(wb, concept)
     if log:
         _notes_sheet(wb, log)
+    if scenarios and concept is not None and concept.on("I02"):
+        wsc = wb.create_sheet("Scenarios", 2)
+        wsc.append(["시나리오", "하드와이어 IO", "통신 포트", "인덱스 행", "IO 카드", "저장", "기본값과 다른 가정"])
+        for c in wsc[1]:
+            c.font = Font(bold=True)
+        for sc in scenarios:
+            wsc.append([sc["name"], sc["hw"], sc["comm"], sc["rows"], sc.get("cards"), sc.get("saved"),
+                        "; ".join(f"{c[0]} {c[1]}={c[2]}" for c in sc.get("changed", []))])
+        for col, w in zip("ABCDEFG", (18, 12, 10, 10, 9, 12, 90)):
+            wsc.column_dimensions[col].width = w
+    if funcs is None:
+        wb.save(out)
+        return
     # DCS / panel soft tags (PI, FIC, PAHH ...) are kept for loop checking only
     wf = wb.create_sheet("DCS_Functions")
     wf.append(["Tag No", "Func", "System", "Symbol", "P&ID No", "Title", "Page", "Coordination", "Conf.", "산출구분"])
@@ -143,12 +164,14 @@ def _concept_basis(wb, concept):
     ws = wb.create_sheet("Concept_Basis")
     ws.append([f"적용한 개념설계 가정 ({concept.path.name})"])
     ws["A1"].font = Font(bold=True, size=14)
-    ws.append(["ID", "항목", "적용값", "기본값", "변경"])
+    ws.append(["ID", "항목", "적용값", "기본값", "변경", "계산 반영"])
     for c in ws[2]:
         c.font = Font(bold=True)
+    label = {"applied": "반영", "info": "기록용", "planned": "미적용"}
     for k, v in concept.items.items():
-        ws.append([k, v["name"], v["value"], v["default"], "변경" if v["value"] != v["default"] else ""])
-    for col, w in zip("ABCDE", (7, 50, 22, 22, 7)):
+        ws.append([k, v["name"], v["value"], v["default"], "변경" if v["value"] != v["default"] else "",
+                   v.get("status_note") or label.get(v.get("status", "applied"), "")])
+    for col, w in zip("ABCDEF", (7, 50, 22, 22, 7, 60)):
         ws.column_dimensions[col].width = w
 
 

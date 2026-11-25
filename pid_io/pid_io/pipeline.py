@@ -21,7 +21,7 @@ from .notes import PageNotes, read_notes
 
 PROTO = Path(__file__).resolve().parent.parent / "protocols"
 ORIGINS = ["도면인식", "Typical파생", "트레인복제", "장비Typical", "패키지", "스페어"]
-HW = ("AI", "AO", "DI", "DO")
+HW = ("AI", "AO", "DI", "DO", "TC/RTD")
 
 
 def run_extract(pdf: Path, out: Path, progress=None, symbols_yaml: Path = PROTO / "symbols.yaml"):
