@@ -2061,6 +2061,32 @@ mod tests {
         assert_eq!(h, "Title\n\na & b\n\n• one"); // blocks a blank line apart
     }
 
+    // Crafted files a preview must survive quickly: deep MIME nesting, "&&&&…", unclosed =? words, many script
+    // blocks, one huge shared string behind every cell.
+    #[test]
+    fn hostile_documents() {
+        let t0 = Instant::now();
+        let mut eml = String::from("Subject: x\r\nContent-Type: multipart/mixed; boundary=L00000\r\n\r\n");
+        for k in 0..20_000 {
+            eml += &format!("--L{k:05}\r\nContent-Type: multipart/mixed; boundary=L{:05}\r\n\r\n", k + 1);
+        }
+        let t = eml_text(eml.as_bytes(), false); // used to overflow the stack and take Grids down
+        assert!(t.starts_with("Subject: x"), "{t}");
+        let amp = "&".repeat(300_000) + "amp;";
+        assert_eq!(unescape(&amp), "&".repeat(300_000));
+        let open = "=?a?b?x ".repeat(50_000);
+        assert_eq!(mime_words(&open), open);
+        assert_eq!(mime_words("=?UTF-8?B?7JWI64WV?= =?x"), "안녕 =?x");
+        let html = "<script>a</SCRIPT>b".repeat(50_000);
+        assert_eq!(html_text(&html), "b".repeat(50_000));
+        assert_eq!((find_ci("ab</ScRiPt", "</script"), find_ci("ab", "</script"), find_ci("가</a", "</a")), (Some(2), None, Some(3)));
+        let ss = vec!["A".repeat(16 << 20)];
+        let sheet = (1..=2000).map(|r| format!(r#"<c r="A{r}" t="s"><v>0</v></c>"#)).collect::<String>();
+        let rows = xlsx_rows(&sheet, &ss, 2000, 60); // was 2000 copies of 16 MB
+        assert!(rows.len() == 2000 && rows.iter().all(|r| r[0].len() == CELL_MAX));
+        assert!(t0.elapsed() < Duration::from_secs(20), "{:?}", t0.elapsed());
+    }
+
     #[test]
     fn markdown_lines() {
         let l = md_lines("# T\n\nsome **bold** `x`\n- a\n  - b\n> q\n```\ncode **\n```\n---");

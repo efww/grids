@@ -125,6 +125,15 @@ fn le64(b: &[u8], at: usize) -> u64 {
     b.get(at..at + 8).map_or(0, |x| u64::from_le_bytes(x.try_into().unwrap()))
 }
 
+const MIME_DEPTH: u32 = 16;
+pub(crate) const CELL_MAX: usize = 256;
+
+/// `needle` (ASCII) in `hay`, ignoring ASCII case, without lowercasing a copy of all of `hay`.
+pub(crate) fn find_ci(hay: &str, needle: &str) -> Option<usize> {
+    let (h, n) = (hay.as_bytes(), needle.as_bytes());
+    (n.len() <= h.len()).then(|| (0..=h.len() - n.len()).find(|&i| h[i..i + n.len()].eq_ignore_ascii_case(n))).flatten()
+}
+
 /// Every entry of a ZIP, from its central directory (ZIP64 too). None: not a ZIP.
 pub(crate) fn zip_entries<R: Read + Seek>(f: &mut R) -> Option<Vec<ZipEntry>> {
     let len = f.seek(SeekFrom::End(0)).ok()?;
@@ -218,7 +227,8 @@ pub(crate) fn unescape(s: &str) -> String {
     while let Some(i) = rest.find('&') {
         out.push_str(&rest[..i]);
         rest = &rest[i..];
-        let Some(j) = rest.find(';').filter(|&j| j <= 10) else {
+        // only the next few bytes: an entity is short, and a whole-text search per '&' is quadratic on "&&&&…"
+        let Some(j) = rest.bytes().take(11).position(|b| b == b';') else {
             out.push('&');
             rest = &rest[1..];
             continue;
@@ -407,7 +417,8 @@ pub(crate) fn xlsx_rows(sheet: &str, strings: &[String], max_r: usize, max_c: us
         let body = c.split("</c>").next().unwrap_or("");
         let v = body.split("<v>").nth(1).and_then(|v| v.split("</v>").next()).map(unescape);
         let text = match attr(&tag, "t") {
-            Some("s") => v.and_then(|v| v.trim().parse::<usize>().ok()).and_then(|k| strings.get(k).cloned()).unwrap_or_default(),
+            // a cell shows a line at most: one huge shared string used by every cell must not be copied whole each time
+            Some("s") => v.and_then(|v| v.trim().parse::<usize>().ok()).and_then(|k| strings.get(k)).map(|t| t.chars().take(CELL_MAX).collect()).unwrap_or_default(),
             Some("inlineStr") => xml_text(body, &["t"], &[], &[], &[]),
             Some("b") => match v.as_deref() {
                 Some("1") => "TRUE".into(),
@@ -457,7 +468,7 @@ pub(crate) fn html_text(html: &str) -> String {
         let name = tag.trim_start_matches('/').split(|c: char| c.is_whitespace() || c == '/').next().unwrap_or("").to_string();
         if (name == "script" || name == "style" || name == "head") && !tag.starts_with('/') {
             let end = format!("</{name}");
-            match lower(rest).find(&end) {
+            match find_ci(rest, &end) {
                 Some(k) => rest = &rest[k..],
                 None => break,
             }
@@ -554,10 +565,11 @@ pub(crate) fn mime_words(s: &str) -> String {
         let w = &rest[i + 2..];
         let parts: Vec<&str> = w.splitn(3, '?').collect();
         let Some(end) = parts.get(2).and_then(|t| t.find("?=")) else {
+            // no "?=" anywhere after this one, so no later word can close either: the rest is plain text
+            // (searching again from each "=?" was quadratic on a header of unclosed ones)
             out.push_str("=?");
-            rest = w;
-            last_word = false;
-            continue;
+            out.push_str(w);
+            return out;
         };
         let (cs, enc, text) = (parts[0], parts[1], &parts[2][..end]);
         let raw = if enc.eq_ignore_ascii_case("b") { b64(text) } else { qp(&latin(text), true) };
@@ -601,7 +613,8 @@ fn param(v: &str, name: &str) -> Option<String> {
 }
 
 /// The readable body of a MIME part: text/plain first, else HTML as text; attachments' names listed.
-fn mime_body(head: &[(String, String)], body: &str, files: &mut Vec<String>) -> Option<(bool, String)> {
+/// `depth`: how many multiparts deep; past MIME_DEPTH the nesting is someone's stack-overflow bomb, not mail.
+fn mime_body(head: &[(String, String)], body: &str, files: &mut Vec<String>, depth: u32) -> Option<(bool, String)> {
     let get = |k: &str| head.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
     let ctype = get("content-type").unwrap_or("text/plain");
     let kind = ctype.split(';').next().unwrap_or("").trim().to_ascii_lowercase();
@@ -613,6 +626,9 @@ fn mime_body(head: &[(String, String)], body: &str, files: &mut Vec<String>) -> 
         }
     }
     if kind.starts_with("multipart/") {
+        if depth >= MIME_DEPTH {
+            return None;
+        }
         let b = param(ctype, "boundary")?;
         let mark = format!("--{b}");
         let mut best: Option<(bool, String)> = None;
@@ -621,7 +637,7 @@ fn mime_body(head: &[(String, String)], body: &str, files: &mut Vec<String>) -> 
                 break;
             }
             let (h, b) = split_head(part.trim_start_matches(['\r', '\n']));
-            if let Some((plain, t)) = mime_body(&headers(h), b, files) {
+            if let Some((plain, t)) = mime_body(&headers(h), b, files, depth + 1) {
                 // plain beats html; the first of each kind wins
                 if best.as_ref().is_none_or(|(p, _)| !p && plain) {
                     best = Some((plain, t));
@@ -659,7 +675,7 @@ pub(crate) fn eml_text(raw: &[u8], ko: bool) -> String {
         }
     }
     let mut files = Vec::new();
-    let text = mime_body(&head, body, &mut files).map(|(_, t)| t).unwrap_or_default();
+    let text = mime_body(&head, body, &mut files, 0).map(|(_, t)| t).unwrap_or_default();
     if !files.is_empty() {
         out += &format!("{}: {}\n", label("Attachments", "첨부"), files.join(", "));
     }
