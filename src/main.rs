@@ -16,7 +16,7 @@ use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::Storage::FileSystem::{GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives, MoveFileExW, FILE_FLAGS_AND_ATTRIBUTES, MOVE_FILE_FLAGS};
 use windows::Win32::System::Com::*;
 use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard, RegisterClipboardFormatW, SetClipboardData};
-use windows::Win32::System::Diagnostics::Debug::MessageBeep;
+use windows::Win32::System::Diagnostics::Debug::{GetErrorMode, MessageBeep, SetErrorMode, SEM_FAILCRITICALERRORS, THREAD_ERROR_MODE};
 use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress, LoadLibraryW};
 use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
 use windows::Win32::System::Ole::*;
@@ -107,7 +107,18 @@ use everything::*;
 use update::*;
 use star::*;
 
+/// Let a drive with no disk (empty card reader slot, DVD drive, pulled USB stick) just fail the file call,
+/// instead of Windows' "No Disk" system box freezing the calling thread until it is answered.
+/// Set once before any thread starts, so every thread follows it; bits already set are kept,
+/// and the GP-fault box is left alone (crash reporting stays as it was).
+fn quiet_critical_errors() {
+    unsafe {
+        SetErrorMode(THREAD_ERROR_MODE(GetErrorMode()) | SEM_FAILCRITICALERRORS);
+    }
+}
+
 fn main() -> Result<()> {
+    quiet_critical_errors();
     unsafe {
         let args: Vec<String> = std::env::args().skip(1).map(resolve).collect();
         // Single instance: hand the arguments to the running window and leave.
@@ -384,6 +395,31 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The error mode is process-wide, so the check runs in a child copy of this test binary
+    /// that runs only this test; the shared test process keeps its own mode untouched.
+    #[test]
+    fn critical_error_box_off() {
+        const CHILD: &str = "GRIDS_ERRMODE_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            let before = unsafe { GetErrorMode() };
+            quiet_critical_errors();
+            let after = unsafe { GetErrorMode() };
+            // the "No Disk" box is off; every other bit (the GP-fault box included) is as it was
+            assert_eq!(after, before | SEM_FAILCRITICALERRORS.0);
+            quiet_critical_errors();
+            assert_eq!(unsafe { GetErrorMode() }, after);
+            return;
+        }
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "tests::critical_error_box_off", "--test-threads=1", "--nocapture"])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(out.status.success(), "child failed:\n{text}\n{}", String::from_utf8_lossy(&out.stderr));
+        assert!(text.contains("1 passed"), "child did not run the test:\n{text}");
+    }
 
     #[test]
     fn fav_reorder() {
