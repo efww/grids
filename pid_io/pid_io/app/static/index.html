@@ -572,7 +572,7 @@ async function renderOutput(m) {
   </div>
   <div class="grid g2" style="margin-top:16px">
     <div class="panel"><h2>만들기</h2>
-      <div class="kv"><span>Instrument Index (양식 + 산출구분/근거/원본 Tag, IO_Summary, Concept_Basis, Notes_Review)</span><b>항상</b></div>
+      <div class="kv"><span>Instrument Index (양식 + 산출구분/근거/원본 Tag, IO_Summary, 적용_체크리스트, Notes_Review)</span><b>항상</b></div>
       <div class="kv"><label style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" id="ov" ${S.concept&&S.concept.overlay_default?"checked":""}> 검토용 오버레이 PDF (몇 분 소요, I03)</label><span></span></div>
       <div class="kv"><span>레퍼런스 채점 시트</span><span>${(S.state.meta.files||{}).ref?"레퍼런스 있음 → 포함":"레퍼런스 없음"}</span></div>
       <div style="margin-top:16px"><button class="btn" id="mk">엑셀 만들기</button></div>

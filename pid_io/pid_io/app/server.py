@@ -396,8 +396,9 @@ def export(name: str, body: dict):
     stamp = time.strftime("%Y%m%d_%H%M")
     out = d / "output" / f"Instrument_Index_{safe_name(name)}_{stamp}.xlsx"
     rev = re.search(r"Rev\.?\s*([A-Z0-9]+)", files["pdf"], re.I)
+    syms_ov, _ = apply_overrides(syms, load_protocol(PROTO / "io_rules.yaml"), overrides(name))
     write_template(rows, d / "input" / files["template"], out, files["pdf"], rev.group(1) if rev else "", con, log,
-                   m.get("scenarios"))
+                   m.get("scenarios"), impact(syms_ov, notes, con, top=None))
     made = [out.name]
     if files.get("ref"):
         from ..extract import page_texts

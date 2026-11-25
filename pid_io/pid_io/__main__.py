@@ -60,7 +60,9 @@ def main(argv=None):
         notes = {d: n for d, n in notes.items() if n.page in _pages(a.pages)}
     rows, log = assign(syms, io_proto, concept, notes)
     m = re.search(r"Rev\.?\s*([A-Z0-9]+)", a.pdf.name, re.I)
-    write_template(rows, a.template, a.out, a.pdf.name, m.group(1) if m else "", concept, log)
+    from .pipeline import impact
+    write_template(rows, a.template, a.out, a.pdf.name, m.group(1) if m else "", concept, log,
+                   impact=impact(syms, notes, concept, a.io_rules, top=None))
     print(f"symbols: {len(syms)}  index rows: {len(rows)}  -> {a.out}")
     if a.overlay:
         from .overlay import write_overlay

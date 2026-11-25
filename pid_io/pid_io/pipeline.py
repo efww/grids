@@ -151,4 +151,4 @@ def impact(syms, notes, concept: Concept, io_rules: Path = PROTO / "io_rules.yam
         if best and best[1] != 0:
             out.append({"id": iid, "name": it["name"], "current": orig, "alt": best[0], "delta": best[1]})
     out.sort(key=lambda x: -abs(x["delta"]))
-    return {"base": base, "items": out[:top]}
+    return {"base": base, "items": out[:top] if top else out}

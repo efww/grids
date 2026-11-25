@@ -20,7 +20,7 @@ HW = ["AI", "AO", "DI", "DO"]
 
 
 def write_template(all_rows: list[Row], template: Path, out: Path, source_file: str, rev: str = "",
-                   concept=None, log=None, scenarios=None):
+                   concept=None, log=None, scenarios=None, impact=None):
     rows = [r for r in all_rows if r.kind != "function"]
     funcs = [r for r in all_rows if r.kind == "function"]
     if concept is not None and str(concept.get("I01", "")) == "접두 없음":
@@ -74,7 +74,7 @@ def write_template(all_rows: list[Row], template: Path, out: Path, source_file: 
     _restore_rules(ws, max(n_last, 502))
     _io_summary(wb, max(n_last, 502), concept)
     if concept is not None:
-        _concept_basis(wb, concept)
+        _concept_basis(wb, concept, all_rows, impact)
     if log:
         _notes_sheet(wb, log)
     if scenarios and concept is not None and concept.on("I02"):
@@ -160,19 +160,84 @@ def _io_summary(wb, last, concept):
         ws.column_dimensions[col].width = w
 
 
-def _concept_basis(wb, concept):
-    ws = wb.create_sheet("Concept_Basis")
-    ws.append([f"적용한 개념설계 가정 ({concept.path.name})"])
-    ws["A1"].font = Font(bold=True, size=14)
-    ws.append(["ID", "항목", "적용값", "기본값", "변경", "계산 반영"])
-    for c in ws[2]:
-        c.font = Font(bold=True)
+def _concept_basis(wb, concept, rows=None, impact=None):
+    """'적용_체크리스트' sheet: every checklist item, what was applied, and what it did
+    to this index (rows / IO points it produced, IO change if switched)."""
+    from openpyxl.styles import Alignment, Border, Side
+    ws = wb.create_sheet("적용_체크리스트", 1)
+    thin = Side(style="thin", color="D0D0D0")
+    box = Border(bottom=thin)
+    green, chg = "15AD60", "FFF5D6"
+    rows = [r for r in (rows or []) if r.kind != "function"]
+    hw = {"AI", "AO", "DI", "DO", "TC/RTD"}
+    imp = {x["id"]: x for x in (impact or {}).get("items", [])}
+
+    def used(iid):
+        pat = re.compile(rf"\b{iid}\b")
+        rs = [r for r in rows if pat.search(r.basis or "") or any(pat.search(x) for x in r.inform)]
+        return len(rs), sum(1 for r in rs if r.io in hw)
+
+    changed = [k for k, v in concept.items.items() if v["value"] != v["default"]]
+    st = {"applied": 0, "info": 0, "planned": 0}
+    for v in concept.items.values():
+        st[v.get("status", "applied")] += 1
+    ws["A1"] = "적용 체크리스트 - 이 인덱스에 쓰인 개념설계 가정"
+    ws["A1"].font = Font(bold=True, size=15)
+    ws["A2"] = (f"체크리스트 파일: {concept.path.name}   ·   항목 {len(concept.items)}개 (계산 반영 {st['applied']} · "
+                f"기록용 {st['info']} · 미적용 {st['planned']})   ·   기본값에서 바꾼 항목 {len(changed)}개"
+                + (f": {', '.join(changed)}" if changed else ""))
+    ws["A2"].font = Font(size=10, color="555555")
+    if impact:
+        ws["A3"] = (f"하드와이어 IO {impact['base']}점 기준. '다른 선택 시 IO 변화'는 그 항목만 바꿨을 때의 증감입니다 "
+                    "(회의에서 먼저 정할 항목 판단용).")
+        ws["A3"].font = Font(size=10, color="555555")
+    hdr = ["ID", "항목", "적용값", "기본값", "변경", "계산 반영", "이 설정으로 생긴 행", "그중 IO 점수",
+           "다른 선택 시", "IO 변화", "IO 영향 (설명)", "근거 / 비고"]
+    ws.append([])
+    ws.append(hdr)
+    hr = ws.max_row
+    for c in ws[hr]:
+        c.font = Font(bold=True, color="FFFFFF")
+        c.fill = PatternFill("solid", fgColor=green)
+        c.alignment = Alignment(vertical="center", wrap_text=True)
     label = {"applied": "반영", "info": "기록용", "planned": "미적용"}
+    group = None
     for k, v in concept.items.items():
-        ws.append([k, v["name"], v["value"], v["default"], "변경" if v["value"] != v["default"] else "",
-                   v.get("status_note") or label.get(v.get("status", "applied"), "")])
-    for col, w in zip("ABCDEF", (7, 50, 22, 22, 7, 60)):
+        if v.get("group") != group:
+            group = v.get("group")
+            ws.append([group])
+            gr = ws.max_row
+            ws.cell(gr, 1).font = Font(bold=True, color="1C5438")
+            for col in range(1, len(hdr) + 1):
+                ws.cell(gr, col).fill = PatternFill("solid", fgColor="E7F6EE")
+        n_rows, n_io = used(k)
+        im = imp.get(k)
+        val = v["value"]
+        if isinstance(val, float) and val < 1 and v.get("type") == "숫자":
+            val = f"{val:.0%}"
+        dflt = v["default"]
+        if isinstance(dflt, float) and dflt < 1 and v.get("type") == "숫자":
+            dflt = f"{dflt:.0%}"
+        status = v.get("status", "applied")
+        ws.append([k, v["name"], val, dflt, "변경" if v["value"] != v["default"] else "",
+                   label[status] if status == "applied" else (v.get("status_note") or label[status]),
+                   n_rows or "", n_io or "", im["alt"] if im else "", (f"{im['delta']:+d}" if im else ""),
+                   v.get("effect", ""), v.get("basis", "")])
+        r = ws.max_row
+        for col in range(1, len(hdr) + 1):
+            c = ws.cell(r, col)
+            c.border = box
+            c.alignment = Alignment(vertical="center", wrap_text=col in (2, 6, 11, 12))
+            if v["value"] != v["default"]:
+                c.fill = PatternFill("solid", fgColor=chg)
+            elif status == "planned":
+                c.font = Font(color="999999")
+        if im:
+            ws.cell(r, 10).font = Font(bold=True, color="1C5438" if im["delta"] < 0 else "D1335D")
+    for col, w in zip("ABCDEFGHIJKL", (6, 40, 18, 18, 6, 26, 11, 10, 18, 9, 44, 30)):
         ws.column_dimensions[col].width = w
+    ws.freeze_panes = ws.cell(hr + 1, 3)
+    ws.auto_filter.ref = f"A{hr}:L{ws.max_row}"
 
 
 def _notes_sheet(wb, log):
