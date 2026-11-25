@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 
 from .concept import Concept
 from .extract import Symbol
+from .signals import judge
 
 SYSTEM_NAMES = {"FGS": "F&G", "PLC": "PKG PLC"}       # -> template "Lists" names
 IO_NAMES = {"DO-SOV": "DO", "DI(MCC)": "DI", "DO(MCC)": "DO", "COMM": "Serial/Comm"}
@@ -47,6 +48,8 @@ class Row:
     basis: str = ""
     src_tag: str = ""
     vendor_pkg: str = ""
+    sid: str = ""                 # source symbol id (drawn instruments)
+    line: str = ""                # signal-line check: agree / conflict / none
 
     @property
     def derived(self):
@@ -174,7 +177,13 @@ def assign(symbols: list[Symbol], io_proto: dict, concept: Concept, notes: dict 
             if ptyp == "PKG-COMM" and not concept.on("A03"):
                 vendor_out = True
                 inform.append(f"벤더 PLC 내부 계기 - IO 제외 ({pkg}, A03 OFF)")
-        row = Row(tag=s.tag, loop=loop, func=s.func, desc=rule.get("desc", ""),
+        verdict, why = judge(_io(main_io), s.line) if not vendor_out else ("none", "")
+        if verdict == "conflict" and not s.override:
+            inform.append("IO 판정 불일치 - " + why)
+            status = "검토필요"
+        elif verdict == "agree":
+            inform.append("신호선 근거 일치 - " + why)
+        row = Row(tag=s.tag, loop=loop, func=s.func, desc=rule.get("desc", ""), sid=s.sid, line=verdict,
                   system=SYSTEM_NAMES.get(system, system), io="-" if vendor_out else _io(main_io),
                   signal=rule.get("signal", ""), status=status, inform=inform,
                   basis=f"{s.dwg}" + (f" / {typ}" if typ else ""),

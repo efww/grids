@@ -40,6 +40,7 @@ class Symbol:
     links: set = field(default_factory=set)   # ids of interlocks this symbol is wired to
     notes: list = field(default_factory=list)
     override: dict = field(default_factory=dict)  # accepted review / AI decision (cls, io, system, ...)
+    line: list = field(default_factory=list)      # signal-line evidence (signals.py), supporting only
 
     @property
     def tag(self):
@@ -219,6 +220,8 @@ def extract_page(page: fitz.Page, proto: dict) -> list[Symbol]:
         syms.append(sym)
         seen.append(sym)
     trace_links(geom, syms)
+    from .signals import collect
+    collect(page, geom, syms)
     # candidates sitting on an accepted symbol are just its second word
     for c in cands:
         if not any((abs(c.cx - s.cx) < 12 and abs(c.cy - s.cy) < 12) or

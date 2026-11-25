@@ -114,7 +114,9 @@ def ai_view(name: str):
         rules = apply_overrides(ex[1], load_protocol(PROTO / "io_rules.yaml"), overrides(name))
         syms, rl = rules
         unknown = ait.unknown_funcs(syms, rl["rules"])
-        out["counts"] = {"symbols": len(ait.symbol_items(syms, set(unknown))), "funcs": len(unknown)}
+        c = computed(name)
+        out["counts"] = {"symbols": len(ait.symbol_items(syms, set(unknown))), "funcs": len(unknown),
+                         "ioconf": sum(1 for r in c[4] if r.line == "conflict" and r.sid) if c else 0}
     return out
 
 
@@ -130,6 +132,9 @@ def ai_run(name: str, kind: str):
                                                  d / "cache" / "ai_crops")
     elif kind == "funcs":
         prompt, asked = ait.build_funcs(unknown)
+        files = []
+    elif kind == "ioconf":
+        prompt, asked = ait.build_ioconf(computed(name)[4])
         files = []
     else:
         raise ValueError("kind")
@@ -158,7 +163,7 @@ def ai_run(name: str, kind: str):
 
 def ai_accept_answer(name: str, task: dict, answer: str, source="manual"):
     d = pdir(name)
-    if task["kind"] == "symbols":
+    if task["kind"] in ("symbols", "ioconf"):
         items = ait.parse_symbols(answer, set(task["asked"]))
         ex = extracted(name)
         by = {s.sid: s for s in ex[1]} if ex else {}
@@ -170,7 +175,7 @@ def ai_accept_answer(name: str, task: dict, answer: str, source="manual"):
         items = ait.parse_funcs(answer, set(task["asked"]))
     if not items:
         raise ValueError("답변에서 유효한 항목을 찾지 못했습니다 (형식 확인)")
-    ait.add_suggestions(d, task["kind"], items, source)
+    ait.add_suggestions(d, "symbols" if task["kind"] == "ioconf" else task["kind"], items, source)
     (d / "ai_pending.json").unlink(missing_ok=True)
     return len(items)
 
@@ -227,6 +232,8 @@ def project_state(name: str):
             "vendor_areas": sorted({s.vendor for s in syms if s.vendor}),
             "notes": sum(len(n.notes) for n in notes.values()),
             "train_sheets": [d for d, n in notes.items() if n.copies],
+            "line_evidence": sum(1 for s in syms if s.role == "device" and s.line),
+            "devices": sum(1 for s in syms if s.role == "device"),
         }
     return st
 
@@ -271,7 +278,7 @@ def summary_view(name: str):
     return s
 
 
-REASONS = [("ESD interlock", "ESD 연결"), ("interlock link via actuator", "ESD 연결 추정"),
+REASONS = [("IO 판정 불일치", "IO 판정 불일치"), ("ESD interlock", "ESD 연결"), ("interlock link via actuator", "ESD 연결 추정"),
            ("벤더 경계", "벤더 경계 안"), ("same tag", "중복 태그"), ("ONLY ONE IS SHOWN", "대수 확인 필요"),
            ("function code not in", "미분류 기능코드"), ("IO 제외", "벤더 PLC 내부"), ("물량 미상", "패키지 물량 미상")]
 

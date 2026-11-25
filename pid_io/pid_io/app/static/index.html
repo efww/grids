@@ -260,6 +260,7 @@ async function renderExtract(m) {
     <div class="panel"><h2>도면 해석</h2>
       <div class="kv"><span>PDF</span><span class="mono">${esc(ex.pdf)} · ${ex.pages}p</span></div>
       <div class="kv"><span>트레인 복제 노트가 있는 시트</span><b>${ex.train_sheets.join(", ")||"-"}</b></div>
+      <div class="kv"><span>신호선 근거가 있는 현장 계기 (보조 판정)</span><b>${ex.line_evidence??"-"} / ${ex.devices??"-"}</b></div>
       <div class="kv"><span>벤더 영역</span><span>${ex.vendor_areas.map(a=>`<span class="chip p">${esc(a)}</span>`).join(" ")||"-"}</span></div>
       <div style="margin-top:16px;text-align:right"><button class="btn" id="next">체크리스트로 →</button></div>
     </div>
@@ -400,7 +401,7 @@ async function renderReview(m) {
       <div id="aipanel"></div>
       <div style="margin-bottom:6px">${S.reason?`<span class="chip" data-r="" style="cursor:pointer;margin:0 6px 6px 0">전체 보기 ✕</span>`:""}${chips}</div>
       <div class="rlist" id="rlist">${r.items.map((x,i)=>`<div class="ritem ${S.sel===i?"on":""}" data-i="${i}">
-        <div class="a"><b class="mono">${esc(x.tag)}</b><span>${x.reasons.map(t=>`<span class="chip ${/ESD/.test(t)?"r":/벤더/.test(t)?"p":/중복|대수|미분류/.test(t)?"y":""}">${esc(t)}</span>`).join(" ")}</span></div>
+        <div class="a"><b class="mono">${esc(x.tag)}</b><span>${x.reasons.map(t=>`<span class="chip ${/불일치/.test(t)?"r":/ESD/.test(t)?"r":/벤더/.test(t)?"p":/중복|대수|미분류/.test(t)?"y":""}">${esc(t)}</span>`).join(" ")}</span></div>
         <div class="b">${esc(x.desc)} · ${esc(x.system)} ${esc(x.io)} · ${esc(x.dwg)} p${x.page||"-"} · <span style="color:${ORIGIN_COLOR[x.origin]||"#999"}">${esc(x.origin)}</span></div>
         ${x.inform?`<div class="b" style="color:#444">${esc(x.inform)}</div>`:""}</div>`).join("") || `<div class="empty">검토할 항목이 없습니다.</div>`}
       </div>
@@ -437,6 +438,7 @@ async function renderAIPanel() {
     <p class="lead" style="font-size:12.5px;margin:6px 0 10px">규칙이 확정하지 못한 것만 AI에게 묻습니다. 답은 제안으로 들어오고, 승인해야 반영됩니다.</p>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       <button class="btn sm" data-ai="symbols" ${!c.symbols||running||a.provider==="none"?"disabled":""}>심볼 재판정 (${c.symbols})</button>
+      <button class="btn sm line" data-ai="ioconf" ${!c.ioconf||running||a.provider==="none"?"disabled":""}>IO 판정 불일치 판단 (${c.ioconf||0})</button>
       <button class="btn sm line" data-ai="funcs" ${!c.funcs||running||a.provider==="none"?"disabled":""}>미분류 기능코드 IO 제안 (${c.funcs})</button>
     </div>
     ${running?`<p style="margin-top:10px;color:var(--green-d)">${esc(a.job.msg)}…</p>`:""}

@@ -138,6 +138,29 @@ def parse_symbols(answer: str, asked_ids):
     return out
 
 
+# ------------------------------------------------------------------ task: IO conflicts
+def build_ioconf(rows, limit=40):
+    """Rows where the concept rule and the drawn signal line disagree."""
+    items = [r for r in rows if r.line == "conflict" and r.sid][:limit]
+    lines = [json.dumps({"id": r.sid, "tag": r.tag, "instrument": r.desc, "rule_io": r.io, "rule_system": r.system,
+                         "drawing_evidence": next((x for x in r.inform if x.startswith("IO 판정 불일치")), ""),
+                         "sheet": f"{r.dwg} {r.title}"}, ensure_ascii=False) for r in items]
+    prompt = f"""You are an instrumentation engineer doing conceptual-design IO counting.
+For each instrument, the concept rule (function code: transmitter = AI, control valve = AO, on/off valve
+solenoid = DO, switch = DI) and the drawn signal line disagree. Conceptual P&IDs often have incomplete
+arrows and line types, so the rule is usually right unless the drawing clearly shows otherwise (for
+example a software/serial link means communication, not hard-wired IO).
+Decide the IO for each item.
+
+{chr(10).join(lines)}
+
+Answer with ONE JSON object only:
+{{"items": [{{"id": "<id as given>", "class": "FIELD", "tag": "<tag>", "io": "<AI|AO|DI|DO|->",
+  "system": "<DCS|ESD|F&G|PKG PLC|->", "confidence": <0..1>, "reason": "<short: rule or drawing, why>"}}]}}
+"""
+    return prompt, [r.sid for r in items]
+
+
 # ------------------------------------------------------------------ task: function codes
 def unknown_funcs(syms, rules):
     from ..io_assign import _rule_for
