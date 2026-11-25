@@ -699,6 +699,24 @@ mod tests {
         assert!(!is_rel(r"C:\") && !is_rel(r"\\srv\s") && !is_rel("shell:Downloads") && !is_rel("::{GUID}"));
     }
 
+    #[test]
+    fn addr_program_lookup() {
+        let exts = path_exts(".COM;.EXE;.BAT;.CMD");
+        assert_eq!(path_exts(""), exts);
+        assert_eq!(path_exts(" .exe ; ;x;.BAT"), [".exe", ".BAT"]);
+        // relative entries (. too) and repeats are left out; System32 and Windows come first
+        let dirs = prog_dirs(r"C:\Windows\", r#"C:\Tools;.;bin;"C:\Program Files\Git\cmd\";c:\windows\system32;;"#);
+        assert_eq!(dirs, [r"C:\Windows\System32", r"C:\Windows", r"C:\Tools", r"C:\Program Files\Git\cmd"]);
+        let files = [r"C:\Windows\System32\cmd.exe", r"C:\Tools\code.cmd", r"C:\Windows\notepad.exe"];
+        let is_file = |p: &Path| files.iter().any(|f| Path::new(f) == p);
+        assert_eq!(find_prog("cmd", &dirs, &exts, is_file).as_deref(), Some(files[0]));
+        assert_eq!(find_prog("cmd.exe", &dirs, &exts, is_file).as_deref(), Some(files[0]));
+        assert_eq!(find_prog("code", &dirs, &exts, is_file).as_deref(), Some(files[1]));
+        assert_eq!(find_prog("notepad", &dirs, &exts, is_file).as_deref(), Some(files[2]));
+        assert_eq!(find_prog("chrome", &dirs, &exts, is_file), None);
+        assert_eq!(find_prog(".exe", &dirs, &exts, |_| false), None);
+    }
+
     // Repro: a bare command typed in the address bar must never run a same-named file planted in the pane's folder.
     // A cmd.bat that leaves hit.txt sits in the folder; the address bar's launch of "cmd /c exit" there must not run it.
     #[test]
@@ -709,7 +727,7 @@ mod tests {
         std::fs::create_dir_all(&d).unwrap();
         std::fs::write(d.join("cmd.bat"), "@echo planted> \"%~dp0hit.txt\"\r\n").unwrap();
         let dir = HSTRING::from(d.as_os_str());
-        let (prog, args) = (HSTRING::from(addr_program("cmd", Some(&d.to_string_lossy()))), HSTRING::from("/c exit"));
+        let (prog, args) = (HSTRING::from(addr_program("cmd", Some(&d.to_string_lossy())).unwrap()), HSTRING::from("/c exit"));
         let mut sei = SHELLEXECUTEINFOW {
             cbSize: size_of::<SHELLEXECUTEINFOW>() as u32,
             fMask: SEE_MASK_FLAG_NO_UI | SEE_MASK_NOCLOSEPROCESS,

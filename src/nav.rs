@@ -204,9 +204,54 @@ pub(crate) fn addr_parts(raw: &str) -> Option<(Option<&str>, Option<(&str, &str)
     Some((path, cmd.filter(|(prog, _)| !prog.is_empty())))
 }
 
-/// What the address bar hands ShellExecuteEx for a typed command.
-pub(crate) fn addr_program(prog: &str, _cur: Option<&str>) -> String {
-    prog.to_string()
+// The file names a bare command may be, as cmd.exe tries them: as typed when it has an extension, then with each of
+// PATHEXT's.
+fn prog_names(prog: &str, exts: &[String]) -> Vec<String> {
+    let typed = prog.rsplit_once('.').is_some_and(|(s, e)| !s.is_empty() && !e.is_empty());
+    typed.then(|| prog.to_string()).into_iter().chain(exts.iter().map(|e| format!("{prog}{e}"))).collect()
+}
+
+/// The first of `dirs` holding one of the names `prog` may be: its full path.
+pub(crate) fn find_prog(prog: &str, dirs: &[String], exts: &[String], is_file: impl Fn(&Path) -> bool) -> Option<String> {
+    let names = prog_names(prog, exts);
+    dirs.iter().find_map(|d| names.iter().map(|n| Path::new(d).join(n)).find(|p| is_file(p))).map(|p| p.to_string_lossy().into_owned())
+}
+
+/// Where a bare command typed in the address bar is looked for: System32, Windows, then PATH's absolute folders.
+/// Not the pane's folder, which ShellExecuteEx would otherwise search first (a PATH folder stays: it was put there).
+pub(crate) fn prog_dirs(sys_root: &str, path_var: &str) -> Vec<String> {
+    let root = sys_root.trim_end_matches('\\');
+    let path = path_var.split(';').map(|p| p.trim().trim_matches('"').trim_end_matches('\\').to_string());
+    let mut out: Vec<String> = Vec::new();
+    for d in [format!(r"{root}\System32"), root.to_string()].into_iter().chain(path) {
+        if !d.is_empty() && !is_rel(&d) && !out.iter().any(|o| o.eq_ignore_ascii_case(&d)) {
+            out.push(d);
+        }
+    }
+    out
+}
+
+pub(crate) fn path_exts(pathext: &str) -> Vec<String> {
+    let v: Vec<String> = pathext.split(';').map(str::trim).filter(|e| e.len() > 1 && e.starts_with('.')).map(String::from).collect();
+    if v.is_empty() { [".COM", ".EXE", ".BAT", ".CMD"].map(String::from).to_vec() } else { v }
+}
+
+/// What the address bar hands ShellExecuteEx for a typed command (cmd, wt, powershell, notepad ...): the full path
+/// of the program found outside the pane's folder, so a same-named file planted there (cmd.bat, powershell.exe ...)
+/// never runs instead. Found nowhere (an App Paths program such as chrome): the bare name as before, unless the
+/// pane's folder holds a file it would match; then None, nothing runs. Opening a file there on purpose takes its
+/// full name (cmd.exe), which the address bar opens as a file.
+pub(crate) fn addr_program(prog: &str, cur: Option<&str>) -> Option<String> {
+    let env = |k: &str| std::env::var(k).unwrap_or_default();
+    let root = Some(env("SystemRoot")).filter(|r| !r.is_empty()).unwrap_or_else(|| r"C:\Windows".into());
+    let exts = path_exts(&env("PATHEXT"));
+    // symlink_metadata: the Store's app aliases (wt.exe in WindowsApps) are reparse points metadata can't follow
+    let is_file = |p: &Path| std::fs::symlink_metadata(p).is_ok_and(|m| !m.is_dir());
+    if let Some(full) = find_prog(prog, &prog_dirs(&root, &env("PATH")), &exts, is_file) {
+        return Some(full);
+    }
+    let planted = cur.is_some_and(|c| find_prog(prog, &[c.to_string()], &exts, is_file).is_some());
+    (!planted).then(|| prog.to_string())
 }
 
 pub(crate) fn is_rel(p: &str) -> bool {
@@ -262,7 +307,8 @@ pub(crate) unsafe fn go_edit(i: usize) {
         // wt opens in its own default folder unless told; lpDirectory makes `.` this pane's
         let wt = prog.eq_ignore_ascii_case("wt") || prog.eq_ignore_ascii_case("wt.exe");
         let args = if wt && args.is_empty() && cur.is_some() { "-d ." } else { args };
-        let (prog, args) = (HSTRING::from(addr_program(prog, cur.as_deref())), HSTRING::from(args));
+        let Some(prog) = addr_program(prog, cur.as_deref()) else { break 'go None };
+        let (prog, args) = (HSTRING::from(prog), HSTRING::from(args));
         run(SHELLEXECUTEINFOW { fMask: SEE_MASK_FLAG_NO_UI, lpFile: PCWSTR(prog.as_ptr()), lpParameters: PCWSTR(args.as_ptr()), ..Default::default() }).then_some(false)
     };
     match done {
