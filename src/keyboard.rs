@@ -1,6 +1,54 @@
 use crate::*;
+use std::ffi::c_void;
 
 // ---------- keyboard ----------
+
+const GCS_COMPSTR: u32 = 0x0008;
+
+#[link(name = "imm32")]
+extern "system" {
+    #[link_name = "ImmGetContext"]
+    fn imm_get_context(hwnd: HWND) -> *mut c_void;
+    #[link_name = "ImmGetCompositionStringW"]
+    fn imm_get_composition_string(context: *mut c_void, index: u32, buffer: *mut c_void, len: u32) -> i32;
+    #[link_name = "ImmReleaseContext"]
+    fn imm_release_context(hwnd: HWND, context: *mut c_void) -> i32;
+}
+
+fn text_entry_class(class: &str) -> bool {
+    let class = class.to_ascii_lowercase();
+    class.starts_with("edit")
+        || class.starts_with("combobox")
+        || class.starts_with("richedit")
+        || class.starts_with("textbox")
+        || class.starts_with("windowsforms10.edit")
+        || class.starts_with("windowsforms10.combobox")
+        || class.starts_with("windowsforms10.richedit")
+        || class.starts_with("windowsforms10.richtextbox")
+}
+
+unsafe fn is_text_entry_window(hwnd: HWND) -> bool {
+    if hwnd.0.is_null() {
+        return false;
+    }
+    let mut class = [0u16; 64];
+    let len = GetClassNameW(hwnd, &mut class).max(0) as usize;
+    text_entry_class(&String::from_utf16_lossy(&class[..len]))
+}
+
+unsafe fn is_ime_composing(hwnd: HWND) -> bool {
+    if hwnd.0.is_null() {
+        return false;
+    }
+    let context = imm_get_context(hwnd);
+    if context.is_null() {
+        return false;
+    }
+    // IMM_ERROR_NODATA is negative; zero still means an active, empty composition.
+    let composing = imm_get_composition_string(context, GCS_COMPSTR, std::ptr::null_mut(), 0) >= 0;
+    _ = imm_release_context(hwnd, context);
+    composing
+}
 
 pub(crate) unsafe fn key(m: &MSG) -> bool {
     // the preview takes its own keys; pane shortcuts must not act behind it
@@ -30,7 +78,9 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
     if !fav.0.is_null() && m.hwnd == fav && fav_step(VIRTUAL_KEY(m.wParam.0 as u16), ctrl, alt, shift).is_some() {
         return false;
     }
-    if let Some(i) = pane_of(m.hwnd) {
+    let focus = GetFocus();
+    let pane = pane_of(m.hwnd).or_else(|| pane_of(focus));
+    if let Some(i) = pane {
         set_active(i);
     }
     let a = app(|a| a.s.active);
@@ -81,6 +131,7 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
         VK_LEFT if alt => browse(a, SBSP_NAVIGATEBACK),
         VK_RIGHT if alt => browse(a, SBSP_NAVIGATEFORWARD),
         VK_UP if alt => browse(a, SBSP_PARENT),
+        VK_L if ctrl && shift && !alt => toggle_latest(),
         VK_L if ctrl => return focus_ctl(a, ID_EDIT),
         VK_D if alt => return focus_ctl(a, ID_EDIT),
         VK_F4 if !alt => return focus_ctl(a, ID_EDIT),
@@ -141,6 +192,23 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
         }
         _ if addr || filt => return false,
         VK_C if ctrl && shift && !alt && list() => copy_paths(a),
+        VK_BACK => {
+            if ctrl || alt || shift {
+                return false;
+            }
+            if !BKSP_ON.load(Ordering::Relaxed) {
+                return shell();
+            }
+            if is_ime_composing(focus)
+                || (m.hwnd != focus && is_ime_composing(m.hwnd))
+                || is_text_entry_window(m.hwnd)
+                || is_text_entry_window(focus)
+            {
+                return false;
+            }
+            let Some(i) = pane else { return false };
+            browse(i, SBSP_NAVIGATEBACK);
+        }
         // held until released: one box / one inversion per press (Ctrl+Num+ stays Explorer's column fit)
         k @ (VK_ADD | VK_SUBTRACT | VK_MULTIPLY) if !ctrl && !alt && list() => {
             app(|x| x.held = Some(k.0));
@@ -288,4 +356,29 @@ pub(crate) fn types_char(vk: VIRTUAL_KEY) -> bool {
 /// Space opens the preview unless a name is being typed (a key within the last second).
 pub(crate) fn space_peeks(typed_ago: Option<Duration>) -> bool {
     typed_ago.is_none_or(|d| d >= Duration::from_secs(1))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::text_entry_class;
+
+    #[test]
+    fn backspace_does_not_capture_text_entry_controls() {
+        for class in [
+            "Edit",
+            "ComboBox",
+            "ComboBoxEx32",
+            "RichEdit50W",
+            "TextBox",
+            "WindowsForms10.EDIT.app",
+            "WindowsForms10.COMBOBOX.app",
+            "WindowsForms10.RichEdit20W.app",
+            "WindowsForms10.RichTextBox.app",
+        ] {
+            assert!(text_entry_class(class), "{class}");
+        }
+        for class in ["DirectUIHWND", "SysListView32", "GridsPane"] {
+            assert!(!text_entry_class(class), "{class}");
+        }
+    }
 }
