@@ -35,9 +35,14 @@ class Concept:
         wb = openpyxl.load_workbook(self.path)          # literal inputs, not formulas
         ws = wb["Concept_Checklist"]
         self.items: dict[str, dict] = {}
+        group = ""
         for r in ws.iter_rows(min_row=5, values_only=True):
             if r[0] and re.fullmatch(r"[A-Z]\d{2}", str(r[0])):
-                self.items[r[0]] = dict(name=r[1], value=r[3], default=r[4])
+                choices = [c.strip() for c in str(r[5] or "").split(" / ") if c.strip()]
+                self.items[r[0]] = dict(name=r[1], type=r[2], value=r[3], default=r[4],
+                                        choices=choices, effect=r[6] or "", basis=r[7] or "", group=group)
+            elif r[0]:
+                group = str(r[0])
         self.points: list[Point] = []
         for r in wb["Typical_Points"].iter_rows(min_row=5, values_only=True):
             if r[0]:
@@ -49,6 +54,62 @@ class Concept:
             if r[0] and str(r[0]) != "합계":
                 self.packages.append(dict(tag=str(r[0]), dwg=r[1], name=r[2], conn=r[3],
                                           typical=r[4], qty=r[5], note=r[6]))
+
+    # ---------------------------------------------------------- editing
+    def set(self, iid, value):
+        """Change a setting in memory (numbers kept numeric)."""
+        if iid not in self.items:
+            raise KeyError(iid)
+        it = self.items[iid]
+        if it["type"] == "숫자":
+            value = float(value)
+            if value.is_integer() and not isinstance(it["default"], float):
+                value = int(value)
+        it["value"] = value
+
+    def save(self, path: Path | None = None):
+        """Write settings and package rows back into the checklist workbook."""
+        path = Path(path or self.path)
+        wb = openpyxl.load_workbook(self.path)
+        ws = wb["Concept_Checklist"]
+        for row in ws.iter_rows(min_row=5):
+            k = row[0].value
+            if k in self.items:
+                row[3].value = self.items[k]["value"]
+        wp = wb["Package_Concept"]
+        rows = [r for r in wp.iter_rows(min_row=5) if str(r[0].value or "") != "합계"]
+        total_row = next((r for r in wp.iter_rows(min_row=5) if str(r[0].value or "") == "합계"), None)
+        limit = total_row[0].row if total_row else 10 ** 6
+        free = [r for r in rows if not r[0].value and r[0].row < limit]
+        by_tag = {str(r[0].value): r for r in rows if r[0].value}
+        for p in self.packages:
+            r = by_tag.get(p["tag"]) or (free.pop(0) if free else None)
+            if r is None:
+                continue
+            for k, col in (("tag", 0), ("dwg", 1), ("name", 2), ("conn", 3), ("typical", 4), ("qty", 5), ("note", 6)):
+                r[col].value = p.get(k)
+        wb.save(path)
+        self.path = path
+
+    def set_package(self, tag, conn=None, qty=None, typical=None, **info):
+        p = next((x for x in self.packages if x["tag"] == tag), None)
+        if p is None:
+            p = dict(tag=tag, dwg=info.get("dwg"), name=info.get("name"), conn=None, typical=None,
+                     qty=None, note=info.get("note"))
+            self.packages.append(p)
+        if conn is not None:
+            p["conn"] = conn
+            p["typical"] = typical or PKG_TYPICAL.get(conn)
+        if qty is not None:
+            p["qty"] = int(qty) if qty not in ("", None) else None
+
+    def alternatives(self, iid):
+        it = self.items[iid]
+        if it["type"] == "ON/OFF":
+            return ["OFF" if str(it["value"]).upper() == "ON" else "ON"]
+        if it["type"] == "선택":
+            return [c for c in it["choices"] if c != str(it["value"])]
+        return []
 
     # ---------------------------------------------------------- values
     def get(self, iid, default=None):
