@@ -2076,7 +2076,7 @@ mod tests {
         assert_eq!(unescape(&amp), "&".repeat(300_000));
         let open = "=?a?b?x ".repeat(50_000);
         assert_eq!(mime_words(&open), open);
-        assert_eq!(mime_words("=?UTF-8?B?7JWI64WV?= =?x"), "안녕 =?x");
+        assert_eq!(mime_words("=?UTF-8?B?7JWI64WV?= =?x"), "안녕=?x"); // as before: the space after a word goes
         let html = "<script>a</SCRIPT>b".repeat(50_000);
         assert_eq!(html_text(&html), "b".repeat(50_000));
         assert_eq!((find_ci("ab</ScRiPt", "</script"), find_ci("ab", "</script"), find_ci("가</a", "</a")), (Some(2), None, Some(3)));
