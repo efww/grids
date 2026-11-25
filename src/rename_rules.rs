@@ -247,8 +247,9 @@ pub(crate) fn invalid(name: &str) -> Option<Status> {
         return Some(Status::TooLong);
     }
     let base = name.split('.').next().unwrap_or("").trim_end().to_ascii_uppercase();
-    let numbered = |p: &str| base.strip_prefix(p).is_some_and(|d| d.len() == 1 && ("1"..="9").contains(&d));
-    if ["CON", "PRN", "AUX", "NUL"].contains(&base.as_str()) || numbered("COM") || numbered("LPT") {
+    // COM1-9 / LPT1-9, and the superscript ¹ ² ³ forms Windows reserves as well
+    let numbered = |p: &str| base.strip_prefix(p).is_some_and(|d| matches!(d, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"));
+    if ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"].contains(&base.as_str()) || numbered("COM") || numbered("LPT") {
         return Some(Status::Reserved);
     }
     None
@@ -438,7 +439,7 @@ mod tests {
         for (n, s) in [("", Status::Empty), ("a?b", Status::BadChar), ("a\tb", Status::BadChar), ("a.", Status::TrailingDot), ("a ", Status::TrailingDot)] {
             assert_eq!(invalid(n), Some(s), "{n}");
         }
-        for n in ["con", "CON.txt", "Lpt3.log", "nul .x", "com9"] {
+        for n in ["con", "CON.txt", "Lpt3.log", "nul .x", "com9", "conin$", "CONOUT$.txt", "com¹", "LPT³.log"] {
             assert_eq!(invalid(n), Some(Status::Reserved), "{n}");
         }
         for n in ["console", "com0", "com10.txt", "a.b", "가.txt"] {

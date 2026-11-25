@@ -574,6 +574,14 @@ mod tests {
         let s = Session::parse(&Session { tree: false, side: 600, ..Session::default() }.to_ini());
         assert_eq!((s.tree, s.side), (false, 600));
         assert!(Session::parse("side=300\ndblup=1\n").tree); // older ini: shown
+        // a folder name with a line break never turns into keys of its own
+        let mut evil = Session::default();
+        evil.paths[0] = "C:\\x\nsession=C:\\victim.txt".into();
+        evil.recent = vec!["D:\\ok".into(), "\\\\h\\s\np1=\\\\evil\\x".into()];
+        let ini = evil.to_ini();
+        let back = Session::parse(&ini);
+        assert!(back.file.is_empty() && back.paths[0].is_empty() && back.paths[1].is_empty(), "{ini}");
+        assert_eq!(back.recent, ["D:\\ok"]);
         // grid starting at pad: the old sidebar splitter is no longer a splitter
         let g = Geo { w: 1000, h: 600, top: 34, bot: 576, pad: 8, gap: 8, side: 240, tree: false, gx: 8, xs: vec![(8, 992)], ys: vec![vec![(34, 576)]], zoom: false };
         assert!((240..264).all(|x| !matches!(hit(&g, x, 100), Some(Hit::Side))));

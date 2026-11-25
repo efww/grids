@@ -727,12 +727,27 @@ fn join_path(dir: &str, name: &str) -> String {
     Path::new(dir).join(name).to_string_lossy().into_owned()
 }
 
+/// join_path for the file system calls themselves: with the \\?\ prefix, so a name Win32 would otherwise trim (a
+/// trailing dot or space, made on a share or by WSL) is that file, not the one without the dot.
+pub(crate) fn api_path(dir: &str, name: &str) -> String {
+    let full = join_path(dir, name);
+    if full.starts_with(r"\\?\") || full.starts_with(r"\\.\") {
+        full
+    } else if let Some(unc) = full.strip_prefix(r"\\") {
+        format!(r"\\?\UNC\{unc}")
+    } else if full.get(1..3) == Some(r":\") {
+        format!(r"\\?\{full}")
+    } else {
+        full
+    }
+}
+
 // The steps in order; if one fails, the ones done are moved back (newest first), so a batch is all or nothing.
 unsafe fn run_steps(dirs: &[String], steps: &[Move]) -> std::result::Result<(), (String, String)> {
     for (k, (d, from, to)) in steps.iter().enumerate() {
-        if let Err(e) = MoveFileExW(&HSTRING::from(join_path(&dirs[*d], from)), &HSTRING::from(join_path(&dirs[*d], to)), MOVE_FILE_FLAGS(0)) {
+        if let Err(e) = MoveFileExW(&HSTRING::from(api_path(&dirs[*d], from)), &HSTRING::from(api_path(&dirs[*d], to)), MOVE_FILE_FLAGS(0)) {
             for (d, from, to) in steps[..k].iter().rev() {
-                _ = MoveFileExW(&HSTRING::from(join_path(&dirs[*d], to)), &HSTRING::from(join_path(&dirs[*d], from)), MOVE_FILE_FLAGS(0));
+                _ = MoveFileExW(&HSTRING::from(api_path(&dirs[*d], to)), &HSTRING::from(api_path(&dirs[*d], from)), MOVE_FILE_FLAGS(0));
             }
             return Err((from.clone(), e.message()));
         }
@@ -788,7 +803,7 @@ unsafe fn do_rename(h: HWND) {
         _ = MessageBeep(MB_ICONWARNING);
         return;
     }
-    let busy: Vec<String> = moves.iter().filter_map(|(d, o, _)| in_use(&join_path(&dirs[*d], o)).map(|e| format!("{o}: {}", e.trim()))).collect();
+    let busy: Vec<String> = moves.iter().filter_map(|(d, o, _)| in_use(&api_path(&dirs[*d], o)).map(|e| format!("{o}: {}", e.trim()))).collect();
     let ko = KO.load(Ordering::Relaxed);
     if !busy.is_empty() {
         let head = if ko { format!("아무것도 바꾸지 않았음: 지금 바꿀 수 없는 파일 {}개", busy.len()) } else { format!("Nothing renamed: can't rename {} of the files now", busy.len()) };
@@ -848,7 +863,7 @@ unsafe fn do_undo(h: HWND) {
         }
     }
     let ko = KO.load(Ordering::Relaxed);
-    if let Some(busy) = ok.iter().find_map(|(d, o, _)| in_use(&join_path(&dirs[*d], o)).map(|e| format!("{o}: {}", e.trim()))) {
+    if let Some(busy) = ok.iter().find_map(|(d, o, _)| in_use(&api_path(&dirs[*d], o)).map(|e| format!("{o}: {}", e.trim()))) {
         rn(|r| r.undo = undo);
         let head = tr("Nothing put back", "되돌리지 않았음");
         return report(h, format!("{head}: {busy}"), Some(listing(head, &[busy])));
@@ -1175,6 +1190,14 @@ pub(crate) extern "system" fn rename_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPA
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rename_api_paths() {
+        assert_eq!(api_path(r"C:\Users\me", "foo."), r"\\?\C:\Users\me\foo.");
+        assert_eq!(api_path(r"C:\", "a b "), r"\\?\C:\a b ");
+        assert_eq!(api_path(r"\\srv\share\d", "x."), r"\\?\UNC\srv\share\d\x.");
+        assert_eq!(api_path(r"\\?\C:\d", "x"), r"\\?\C:\d\x");
+    }
 
     #[test]
     fn rename_layout() {

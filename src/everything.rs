@@ -411,8 +411,8 @@ pub(crate) unsafe fn open_ev() {
     };
     let square = DWMWCP_DONOTROUND;
     _ = DwmSetWindowAttribute(h, DWMWA_WINDOW_CORNER_PREFERENCE, &square as *const _ as _, 4);
-    // Everything may run elevated: let its replies through
-    _ = ChangeWindowMessageFilterEx(h, WM_COPYDATA, MSGFLT_ALLOW, None);
+    // No ChangeWindowMessageFilterEx: an elevated Everything's replies get through UIPI anyway (higher to lower);
+    // opening the filter only let lower-integrity processes post fake result lists.
     // the row tooltip: full name, folder, size and date, shown as soon as the pointer is on a row
     let tip_style = WS_POPUP | WINDOW_STYLE(0x01 | 0x02 | 0x10 | 0x20); // TTS_ALWAYSTIP | TTS_NOPREFIX | TTS_NOANIMATE | TTS_NOFADE: at once
     let tip = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, None, tip_style, 0, 0, 0, 0, Some(h), None, None, None).unwrap_or_default();

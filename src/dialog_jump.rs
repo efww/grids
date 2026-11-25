@@ -95,7 +95,8 @@ unsafe fn class_of(h: HWND) -> String {
 
 // WM_GETTEXT, not GetWindowTextW: that one gives another process' edit box its caption, not what is typed in it
 unsafe fn text_of(h: HWND) -> String {
-    let n = SendMessageW(h, WM_GETTEXTLENGTH, None, None).0.max(0) as usize;
+    // another process answers: a path box never holds more than this, whatever it claims
+    let n = (SendMessageW(h, WM_GETTEXTLENGTH, None, None).0.max(0) as usize).min(32 * 1024);
     let mut b = vec![0u16; n + 1];
     let got = SendMessageW(h, WM_GETTEXT, Some(WPARAM(b.len())), Some(LPARAM(b.as_mut_ptr() as isize))).0.max(0) as usize;
     String::from_utf16_lossy(&b[..got.min(n)])

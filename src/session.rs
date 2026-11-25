@@ -209,6 +209,9 @@ impl Session {
     }
 
     pub(crate) fn to_ini(&self) -> String {
+        // a folder name can hold a line break (made on a share, a USB image, WSL): such a value is left out rather
+        // than let its second half become a line of its own (session=, p0= ...) on the next start
+        let one = |s: &str| !s.contains(['\r', '\n']);
         let mut o = String::new();
         if let Some(w) = self.win {
             o += &format!("win={}\n", join(&w));
@@ -226,36 +229,36 @@ impl Session {
             o += &format!("ev_cols={:.4},{:.4},{:.4}\n", c[0], c[1], c[2]);
         }
         o += &format!("lang={}\n", if self.ko { "ko" } else { "en" });
-        if !self.file.is_empty() {
+        if !self.file.is_empty() && one(&self.file) {
             o += &format!("session={}\n", self.file);
         }
         if !self.order.is_empty() {
             o += &format!("order={}\n", join(&self.order));
         }
-        for f in &self.favs {
+        for f in self.favs.iter().filter(|f| one(f)) {
             o += &format!("fav={f}\n");
         }
-        for r in &self.recent {
+        for r in self.recent.iter().filter(|r| one(r)) {
             o += &format!("recent={r}\n");
         }
-        for p in &self.rn_presets {
+        for p in self.rn_presets.iter().filter(|p| one(p)) {
             o += &format!("rename_preset={p}\n");
         }
         for i in 0..MAXP {
-            if !self.paths[i].is_empty() {
+            if !self.paths[i].is_empty() && one(&self.paths[i]) {
                 o += &format!("p{i}={}\n", self.paths[i]);
             }
             if self.views[i].0 != 0 {
                 o += &format!("v{i}={},{}\n", self.views[i].0, self.views[i].1);
             }
-            if !self.cols[i].is_empty() {
+            if !self.cols[i].is_empty() && one(&self.cols[i]) {
                 o += &format!("c{i}={}\n", self.cols[i]);
             }
             if self.tints[i] != 0 {
                 o += &format!("t{i}={}\n", self.tints[i]);
             }
             let tabs = self.tab_list(i);
-            if tabs.len() > 1 {
+            if tabs.len() > 1 && tabs.iter().all(|t| one(t)) {
                 o += &format!("b{i}={}|{}\n", self.tab[i], tabs.join("|"));
             }
         }
