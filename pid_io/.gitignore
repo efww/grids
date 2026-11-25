@@ -3,3 +3,4 @@
 *.xlsx
 *.zip
 __pycache__/
+!protocols/concept_default.xlsx

@@ -1,15 +1,26 @@
-"""Turn extracted symbols into index rows with IO, using io_rules.yaml."""
+"""Symbols + notes + concept checklist -> index rows.
+
+Rule: one IO point = one index row. Anything a note or a checklist choice
+adds (train copies, limit switches, motor IO, package IO, spares) becomes
+its own row, with `origin` and `basis` saying where it came from, so that
+counting rows in the index always gives the IO total.
+"""
 from __future__ import annotations
 
+import copy
+import math
 import re
 from dataclasses import dataclass, field
 
+from .concept import Concept
 from .extract import Symbol
 
 SYSTEM_NAMES = {"FGS": "F&G", "PLC": "PKG PLC"}       # -> template "Lists" names
-IO_NAMES = {"DO-SOV": "DO", "DI(MCC)": "DI", "DO(MCC)": "DO"}
+IO_NAMES = {"DO-SOV": "DO", "DI(MCC)": "DI", "DO(MCC)": "DO", "COMM": "Serial/Comm"}
 LOCATION = {"FIELD": "Field", "DCS_SHARED": "CCR", "PANEL_CR": "CCR",
             "PANEL_BEHIND": "Local Panel", "PLC": "Local Panel"}
+HW_IO = ("AI", "AO", "DI", "DO")
+SPARE_IDS = {"AI": "H01", "AO": "H02", "DI": "H03", "DO": "H04"}
 
 
 @dataclass
@@ -24,7 +35,6 @@ class Row:
     location: str
     system: str
     io: str
-    io_detail: str
     signal: str
     page: int
     coord: str
@@ -32,8 +42,15 @@ class Row:
     status: str
     inform: list = field(default_factory=list)
     symbol_cls: str = ""
-    derived: bool = False
-    kind: str = "instrument"      # instrument | function (DCS soft tag) | implied | equipment
+    kind: str = "instrument"      # instrument | function (DCS soft tag)
+    origin: str = "도면인식"       # 도면인식 / Typical파생 / 트레인복제 / 장비Typical / 패키지 / 스페어
+    basis: str = ""
+    src_tag: str = ""
+    vendor_pkg: str = ""
+
+    @property
+    def derived(self):
+        return self.origin != "도면인식"
 
 
 def _rule_for(rules, func):
@@ -43,94 +60,139 @@ def _rule_for(rules, func):
     return rules[-1]
 
 
-def assign(symbols: list[Symbol], io_proto: dict, confirm=0.95, review=0.80) -> list[Row]:
+def _io(x):
+    return IO_NAMES.get(x, x) if x else "-"
+
+
+def _status(conf, notes, review_flag, confirm, review):
+    if review_flag:
+        return "검토필요"
+    if conf >= confirm and not notes:
+        return "확정"
+    return "검토필요" if conf >= review else "불명"
+
+
+def assign(symbols: list[Symbol], io_proto: dict, concept: Concept, notes: dict | None = None,
+           confirm=0.95, review=0.80):
+    notes = notes or {}
     rules = io_proto["rules"]
     by_sid = {s.sid: s for s in symbols}
     rows: list[Row] = []
     seen: dict[str, Row] = {}
+    log: list[tuple] = []                      # (dwg, text, effect) for the Notes sheet
 
-    typicals = io_proto.get("equipment_typicals", {})
+    # sheets that belong to a vendor package (title says PACKAGE, or the package is drawn there)
+    pkg_of_sheet = {}
+    for s in symbols:
+        if s.func == "EQUIP:PK":
+            t = (s.title or "").upper()
+            if "PACKAGE" in t or "PKG" in t or (notes.get(s.dwg) and notes[s.dwg].later):
+                pkg_of_sheet.setdefault(s.dwg, s.number)
+
     for s in symbols:
         if s.role == "interlock":
-            continue                       # interlocks are logic, not instruments
-        if s.role == "equipment":
-            kind = s.func.split(":")[1]
-            for t in typicals.get(kind, []):
-                tag = f"{t['tag']}-{s.number}"
-                cio = list(t.get("io", []))
-                rows.append(Row(unit=s.number[:2], tag=tag, loop=s.number, func=t["tag"], desc=t["desc"],
-                                dwg=s.dwg, title=s.title, location="MCC",
-                                system=SYSTEM_NAMES.get(t["system"], t["system"]),
-                                io="/".join(IO_NAMES.get(x, x) for x in cio) or "-",
-                                io_detail="/".join(cio) or "-", signal=t.get("signal", ""),
-                                page=s.page, coord="", conf=0.9, status="검토필요",
-                                inform=[f"motor typical for pump {s.number}"], symbol_cls="EQUIPMENT",
-                                derived=True, kind="equipment"))
             continue
-        rule = _rule_for(rules, s.func)
-        inform = list(s.notes)
 
+        # ------------------------------------------------ pumps -> motor typical
+        if s.func == "EQUIP:P":
+            typ = concept.get("D01", "MTR-LV-DOL")
+            unit, num = s.number[:2], s.number.split("-")[-1]
+            for main, fc, sfx, desc, sys_, io, ids in concept.expand(typ):
+                rows.append(Row(unit, f"{unit}-{fc}-{num}{sfx}", f"M-{num}", fc, f"{desc} [{s.number}]",
+                                s.dwg, s.title, "MCC", sys_, _io(io), "24VDC", s.page, "", 1.0, "검토필요",
+                                [], "EQUIPMENT", origin="장비Typical",
+                                basis=f"{s.number} / {typ} ({', '.join(['D01'] + ids)})", src_tag=s.number))
+            continue
+
+        # ------------------------------------------------ vendor packages
+        if s.func == "EQUIP:PK":
+            typ, conn, prow, src = concept.package_typical(s.number)
+            units = [u for u in s.notes[0].split(":", 1)[1].split("/") if u] if s.notes else []
+            n = int(prow["qty"]) if prow and prow.get("qty") else max(1, len(units))
+            unit = s.number[:2]
+            later = notes.get(s.dwg).later if notes.get(s.dwg) else ""
+            pts = list(concept.expand(typ))
+            if not [p for p in pts if p[5] and p[5] != "-"]:
+                if later and concept.on("C09"):
+                    rows.append(Row(unit, f"{unit}-PKG-XXXX", "", "PKG", f"패키지 물량 미상 [{s.number}]",
+                                    s.dwg, s.title, "Skid", "?", "-", "-", s.page, "", 0.0, "불명",
+                                    ["패키지 도면 미개발 + 전부 하드와이어: 계기 수를 알 수 없음"], "PACKAGE",
+                                    origin="패키지", basis=f"{s.number} / {typ} ({src}, C09)",
+                                    src_tag=s.number, vendor_pkg=s.number))
+                continue
+            for k in range(n):
+                letter = units[k] if k < len(units) else str(k + 1)
+                pk = f"{s.number}{letter}"
+                for main, fc, sfx, desc, sys_, io, ids in concept.expand(typ):
+                    rows.append(Row(unit, f"{unit}-{fc}-XXXX{sfx}", "", fc, f"{desc} [{pk}]", s.dwg, s.title,
+                                    "Skid", sys_, _io(io), "", s.page, "", 1.0, "검토필요",
+                                    [f"연결 방식: {conn}"], "PACKAGE", origin="패키지",
+                                    basis=f"{pk} / {typ} ({', '.join([src] + ids)})",
+                                    src_tag=s.number, vendor_pkg=pk))
+            continue
+
+        # ------------------------------------------------ drawn instruments
+        rule = _rule_for(rules, s.func)
+        if rule.get("gate") and not concept.on(rule["gate"]):
+            continue
+        inform = list(s.notes)
         system = rule.get("system", "?")
         esd_links = [by_sid[l] for l in s.links if l in by_sid and by_sid[l].cls == "ESD_INTERLOCK"]
         if system == "link":
             system = "ESD" if esd_links else "DCS"
             if esd_links:
                 inform.append("ESD interlock " + ",".join(sorted({f"{i.func}-{i.number}" for i in esd_links})))
-        kind = "instrument"
-        if s.role == "function" and s.system not in ("FIELD",):
-            # a DCS/PLC balloon decides the system itself; no physical IO
-            system = {"DCS": "DCS", "PLC": "PLC", "LOCAL": "-"}.get(s.system, system)
-            io = []
-            kind = "function"
-        else:
-            io = list(rule.get("io", []))
-        if rule.get("review"):
-            inform.append("function code not in IO protocol")
-        system = SYSTEM_NAMES.get(system, system)
-
-        conf = s.score
-        if rule.get("review") or system == "?":
-            status = "검토필요"
-        elif conf >= confirm and not s.notes:
-            status = "확정"
-        elif conf >= review:
-            status = "검토필요"
-        else:
-            status = "불명"
-
-        base = dict(unit=s.unit, func=s.func, dwg=s.dwg, title=s.title,
-                    location=LOCATION.get(s.cls, ""), page=s.page,
-                    coord=f"{round(s.cx)},{round(s.cy)}", conf=round(conf, 3),
+        base = dict(unit=s.unit, dwg=s.dwg, title=s.title, location=LOCATION.get(s.cls, ""),
+                    page=s.page, coord=f"{round(s.cx)},{round(s.cy)}", conf=round(s.score, 3),
                     symbol_cls=s.cls)
         loop = f"{s.func[0]}-{s.number}" if s.number else ""
-        io_main = "/".join(IO_NAMES.get(x, x) for x in io) or "-"
-        row = Row(tag=s.tag, loop=loop, desc=rule.get("desc", ""), system=system,
-                  io=io_main, io_detail="/".join(io) or "-", signal=rule.get("signal", ""),
-                  status=status, inform=inform, kind=kind, **base)
+        status = _status(s.score, s.notes, rule.get("review") or system == "?", confirm, review)
+        if rule.get("review"):
+            inform.append("function code not in IO protocol")
+        pkg = pkg_of_sheet.get(s.dwg, "")
 
-        if s.tag in seen:                  # same tag on another sheet (off-page / repeated)
-            first = seen[s.tag]
-            first.inform.append(f"same tag also on {s.dwg} p{s.page} - repeat or duplicate number?")
-            if first.status == "확정":
-                first.status = "검토필요"
+        if s.role == "function" and s.system != "FIELD":
+            sysn = {"DCS": "DCS", "PLC": "PLC", "LOCAL": "-"}.get(s.system, system)
+            row = Row(tag=s.tag, loop=loop, func=s.func, desc=rule.get("desc", ""),
+                      system=SYSTEM_NAMES.get(sysn, sysn), io="-", signal="-", status=status,
+                      inform=inform, kind="function", basis=s.dwg, vendor_pkg=pkg, **base)
+            _add(row, rows, seen)
             continue
-        seen[s.tag] = row
-        rows.append(row)
 
-        for ch in rule.get("children", []) if s.role == "device" else []:
-            ctag_func = ch["tag"].replace("{L}", s.func[0])
-            ctag = f"{s.unit}-{ctag_func}-{s.number}" if s.unit else f"{ctag_func}-{s.number}"
-            cio = list(ch.get("io", []))
-            rows.append(Row(tag=ctag, loop=loop, desc=ch["desc"], system=system,
-                            io="/".join(IO_NAMES.get(x, x) for x in cio) or "-",
-                            io_detail="/".join(cio) or "-", signal=ch.get("signal", ""),
-                            status=status, inform=[f"typical from {s.tag}"], derived=True,
-                            **{**base, "func": ctag_func}))
+        typ = rule.get("typical", "").replace("{SYS}", "ESD" if system == "ESD" else "DCS")
+        points = list(concept.expand(typ, s.func, SYSTEM_NAMES.get(system, system))) if typ else []
+        main_io = next((p[5] for p in points if p[0]), None) if typ else None
+        if main_io is None:
+            main_io = "/".join(rule.get("io", [])) or "-"
+        # vendor PLC package, its instruments not in our IO scope (A03 OFF)
+        vendor_out = False
+        if pkg:
+            ptyp, conn, _, _ = concept.package_typical(pkg)
+            if ptyp == "PKG-COMM" and not concept.on("A03"):
+                vendor_out = True
+                inform.append(f"벤더 PLC 내부 계기 - IO 제외 ({pkg}, A03 OFF)")
+        row = Row(tag=s.tag, loop=loop, func=s.func, desc=rule.get("desc", ""),
+                  system=SYSTEM_NAMES.get(system, system), io="-" if vendor_out else _io(main_io),
+                  signal=rule.get("signal", ""), status=status, inform=inform,
+                  basis=f"{s.dwg}" + (f" / {typ}" if typ else ""), vendor_pkg=pkg, **base)
+        if not _add(row, rows, seen):
+            continue
+        for main, fc, sfx, desc, sys_, io, ids in points:
+            if main:
+                continue
+            rows.append(Row(tag=f"{s.unit}-{fc}-{s.number}{sfx}" if s.unit else f"{fc}-{s.number}{sfx}",
+                            loop=loop, func=fc, desc=desc, system=sys_,
+                            io="-" if vendor_out else _io(io), signal="24VDC" if io in ("DI", "DO") else row.signal,
+                            status=status, inform=list(inform[-1:]) if vendor_out else [],
+                            origin="Typical파생", basis=f"{s.tag} / {typ} ({', '.join(ids)})",
+                            src_tag=s.tag, vendor_pkg=pkg, **base))
 
-    # implied tags (e.g. thermowell for every temperature point)
-    present = {(r.dwg, r.func, r.loop.split("-")[-1]) for r in rows}
+    # ------------------------------------------------ implied tags (thermowells ...)
+    present = {(r.dwg, r.func, r.tag.split("-")[-1]) for r in rows}
     have = {r.tag for r in rows}
     for imp in io_proto.get("implied", []):
+        if imp.get("gate") and not concept.on(imp["gate"]):
+            continue
         for r in list(rows):
             if r.kind != "instrument" or r.derived or not re.match(imp["from"], r.func):
                 continue
@@ -141,9 +203,55 @@ def assign(symbols: list[Symbol], io_proto: dict, confirm=0.95, review=0.80) -> 
             if tag in have:
                 continue
             have.add(tag)
-            rows.append(Row(unit=r.unit, tag=tag, loop=r.loop, func=imp["tag"], desc=imp["desc"],
-                            dwg=r.dwg, title=r.title, location=r.location, system=imp["system"],
-                            io="-", io_detail="-", signal=imp["signal"], page=r.page, coord=r.coord,
-                            conf=r.conf, status="검토필요", inform=[f"implied by {r.tag}"],
-                            symbol_cls="IMPLIED", derived=True, kind="implied"))
-    return rows
+            rows.append(Row(r.unit, tag, r.loop, imp["tag"], imp["desc"], r.dwg, r.title, r.location, "-", "-",
+                            "-", r.page, r.coord, r.conf, "검토필요", [], "IMPLIED", origin="Typical파생",
+                            basis=f"{r.tag} ({imp.get('gate', '')})", src_tag=r.tag, vendor_pkg=r.vendor_pkg))
+
+    # ------------------------------------------------ notes: train copies / only-one-shown
+    for dwg, pn in notes.items():
+        for text, effect in pn.notes:
+            log.append((dwg, pn.title, text, effect))
+        if pn.copies and concept.on("B01"):
+            src_rows = [r for r in rows if r.dwg == dwg]
+            for t in pn.copies:
+                for r in src_rows:
+                    c = copy.deepcopy(r)
+                    c.tag = re.sub(rf"^{re.escape(r.unit)}-", f"{t}-", r.tag) if r.unit else f"{t}-{r.tag}"
+                    c.vendor_pkg = re.sub(rf"^{re.escape(r.unit)}-", f"{t}-", r.vendor_pkg) if r.vendor_pkg else ""
+                    c.unit = t
+                    c.origin = "트레인복제"
+                    c.basis = f"{dwg} 노트 '{pn.copy_text}' (B01)"
+                    c.src_tag = r.tag
+                    rows.append(c)
+        if pn.only_one and concept.on("B03"):
+            for r in rows:
+                if r.dwg == dwg and r.origin in ("도면인식", "Typical파생", "장비Typical"):
+                    r.inform.append("노트 'ONLY ONE IS SHOWN': 대수 확인 필요 (B03)")
+                    if r.status == "확정":
+                        r.status = "검토필요"
+
+    # ------------------------------------------------ spares
+    counts = {}
+    for r in rows:
+        if r.kind == "instrument" and r.io in HW_IO and r.system not in ("-", "?"):
+            counts[(r.system, r.io)] = counts.get((r.system, r.io), 0) + 1
+    for (sys_, io), n in sorted(counts.items()):
+        rate = concept.num(SPARE_IDS[io], 0)
+        k = math.ceil(n * rate - 1e-9)
+        for i in range(k):
+            rows.append(Row("", f"{sys_}-{io}-SPARE-{i + 1:03d}", "", "SPARE", f"Spare {io}", "", "", "", sys_, io,
+                            "", 0, "", 1.0, "확정", [], "SPARE", origin="스페어",
+                            basis=f"{SPARE_IDS[io]} {rate:.0%} × {n}"))
+    return rows, log
+
+
+def _add(row, rows, seen):
+    if row.tag in seen:                  # same tag on another sheet (off-page / repeated)
+        first = seen[row.tag]
+        first.inform.append(f"same tag also on {row.dwg} p{row.page} - repeat or duplicate number?")
+        if first.status == "확정":
+            first.status = "검토필요"
+        return False
+    seen[row.tag] = row
+    rows.append(row)
+    return True

@@ -1,4 +1,4 @@
-# pid_io: P&ID → Instrument Index / IO List
+# pid_io: 계장 개념설계 I/O 리스트 산출 (P&ID → Instrument Index / IO List)
 
 벡터 PDF P&ID에서 계장 심볼(Balloon)을 인식해 태그를 뽑고, 심볼 종류(FIELD / DCS / ESD / PLC)와 IO 프로토콜에 따라 IO를 붙여 Instrument Index 양식에 채웁니다.
 
@@ -11,6 +11,7 @@ python -m pid_io run "P&ID.pdf" \
     --out result.xlsx \
     --ref reference_index.xlsx      # (선택) 정확도 비교
     --overlay review.pdf            # (선택) 인식 결과를 도면 위에 표시
+    --concept my_concept.xlsx       # (선택) 개념설계 체크리스트. 기본: protocols/concept_default.xlsx
     --pages 10-17,31                # (선택) 일부 페이지만
 ```
 
@@ -35,6 +36,31 @@ python -m pid_io run "P&ID.pdf" \
    - `Ref_Compare*`: 레퍼런스 인덱스와 도면별, 기능코드별, IO별 비교
    - `Ref_Title_Map`: 레퍼런스 도면명 ↔ PDF 시트 자동 매칭 결과. 틀리면 `protocols/dwg_map.yaml`에서 고칩니다.
 
+## 개념설계 체크리스트 (`--concept`)
+
+도면 인식은 항상 전부 수행하고, IO 물량을 바꾸는 것은 체크리스트(엑셀)뿐입니다.
+`python -m pid_io.make_concept_template`로 빈 템플릿을 다시 만들 수 있습니다.
+
+- **Concept_Checklist**: 설계 가정 53항목 (ON/OFF, 선택, 숫자)
+- **Typical_Points**: Typical 정의. IO 1점 = 1행이며, 수량과 조건에 체크리스트 ID를 씁니다. 엔진은 이 표대로 인덱스 행을 만듭니다.
+- **Package_Concept**: 패키지별 연결 방식 (없으면 C01 기본값)
+- **적용_원리**: 선택에 따라 인덱스에 어떤 행이 생기는지 예시
+
+**원칙: IO 1점 = 인덱스 1행.** 노트 배수(트레인), 파생 IO(리밋스위치, 솔레노이드), 모터 IO, 패키지 IO, 스페어까지 모두 행으로 생성합니다. 인덱스 끝에 세 열을 추가합니다.
+
+| 열 | 내용 |
+|---|---|
+| 산출구분 | 도면인식 / Typical파생 / 트레인복제 / 장비Typical / 패키지 / 스페어 |
+| 근거 | 예: `11-FV-0301 / CV (F01)`, `PID-0001 노트 'TRAIN 12~18 …' (B01)` |
+| 원본 Tag | 파생·복제된 행의 출처 계기 |
+
+번호가 정해지지 않은 행은 `10-XS-XXXX`처럼 표기합니다. 벤더 PLC 패키지 안의 계기(A03 OFF)는 행을 남기고 IO만 `-`로 둡니다.
+
+출력 시트:
+- `IO_Summary`: 산출구분 × System × IO를 인덱스 행에서 COUNTIFS로 셉니다. IO 카드 개략 수량도 포함합니다.
+- `Concept_Basis`: 적용한 가정
+- `Notes_Review`: 읽은 노트와 적용 효과
+
 ## 정확도를 올리는 방법 (프로토콜 수정)
 
 코드를 고치지 않고 YAML만 바꾸면 됩니다.
@@ -44,7 +70,7 @@ python -m pid_io run "P&ID.pdf" \
 | 새 프로젝트 레전드에서 심볼 모양이 다름 | `symbols.yaml`의 coverage 임계값, `midline`, `text_regex` |
 | 원 안의 글자가 태그가 아님 (GRADE, NOTE 등) | `symbols.yaml` → `ignore_words` |
 | 기능코드의 IO가 다름 | `io_rules.yaml` → `rules` (위에서부터 첫 매칭 적용) |
-| 펌프 외 장비(팬, 압축기)의 모터 IO | `io_rules.yaml` → `equipment_typicals`에 장비 문자 추가, `extract.find_equipment(kinds=...)` |
+| 모터, 밸브, 패키지 typical | 체크리스트 `Typical_Points` (코드 수정 없음) |
 | 레퍼런스 도면 매칭이 틀림 | `dwg_map.yaml` |
 
 ## Status 기준

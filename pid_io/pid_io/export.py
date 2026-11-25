@@ -14,7 +14,13 @@ from .io_assign import Row
 IO_COLS = ["AI", "AO", "DI", "DO", "DI(MCC)", "DO(MCC)", "DO-SOV"]
 
 
-def write_template(all_rows: list[Row], template: Path, out: Path, source_file: str, rev: str = ""):
+ORIGINS = ["도면인식", "Typical파생", "트레인복제", "장비Typical", "패키지", "스페어"]
+SYSTEMS = ["DCS", "ESD", "F&G", "PKG PLC"]
+HW = ["AI", "AO", "DI", "DO"]
+
+
+def write_template(all_rows: list[Row], template: Path, out: Path, source_file: str, rev: str = "",
+                   concept=None, log=None):
     rows = [r for r in all_rows if r.kind != "function"]
     funcs = [r for r in all_rows if r.kind == "function"]
     wb = openpyxl.load_workbook(template)
@@ -23,45 +29,138 @@ def write_template(all_rows: list[Row], template: Path, out: Path, source_file: 
     style_row = [copy(c._style) for c in ws[first + 3]]      # blank formatted row
     last = max(ws.max_row, first + len(rows) - 1)
     for r in range(first, last + 1):
-        for c in range(2, 28):
+        for c in range(2, 31):
             ws.cell(r, c).value = None
+    # extra columns: where each row came from
+    for c, h in ((28, "산출구분"), (29, "근거 (도면/노트/체크리스트)"), (30, "원본 Tag")):
+        cell = ws.cell(2, c, h)
+        cell._style = copy(ws.cell(2, 27)._style)
+        ws.column_dimensions[cell.column_letter].width = (12, 46, 16)[c - 28]
+    ws.cell(1, 28, "산출 근거")._style = copy(ws.cell(1, 19)._style)
     for i, row in enumerate(rows):
         r = first + i
         vals = {
             1: f'=IF(D{r}="","",ROW()-2)', 3: row.unit, 4: row.tag, 5: row.loop, 6: row.func,
             7: row.desc, 9: row.dwg, 10: rev, 14: row.location, 15: row.system, 16: row.io,
-            17: "", 18: "", 19: source_file, 20: row.page, 21: row.coord, 22: row.conf,
-            23: row.status, 24: "; ".join(row.inform),
-            27: f"{row.title} | {row.symbol_cls} | {row.signal} | IO={row.io_detail}",
+            17: "", 18: row.vendor_pkg, 19: source_file, 20: row.page or None, 21: row.coord,
+            22: row.conf, 23: row.status, 24: "; ".join(row.inform),
+            27: " | ".join(x for x in (row.title, row.symbol_cls, row.signal) if x),
+            28: row.origin, 29: row.basis, 30: row.src_tag,
         }
         for c, v in vals.items():
             cell = ws.cell(r, c)
             cell.value = v
             if r >= first + 3 and c - 1 < len(style_row):
                 cell._style = copy(style_row[c - 1])
+            elif c >= 28:
+                cell._style = copy(ws.cell(r, 27)._style)
             if c != 1:
                 cell.font = Font(color="000000")
-    # keep the formulas on Summary sized to the data
     n_last = first + len(rows) - 1
     if n_last > 502:
-        for wsn in ("Summary",):
-            s = wb[wsn]
-            for line in s.iter_rows():
-                for c in line:
-                    if isinstance(c.value, str) and "502" in c.value:
-                        c.value = c.value.replace("502", str(n_last))
-        ws.auto_filter.ref = f"A2:AA{n_last}"
+        for line in wb["Summary"].iter_rows():
+            for c in line:
+                if isinstance(c.value, str) and "502" in c.value:
+                    c.value = c.value.replace("502", str(n_last))
+    ws.auto_filter.ref = f"A2:AD{max(n_last, 502)}"
     _restore_rules(ws, max(n_last, 502))
+    _io_summary(wb, max(n_last, 502), concept)
+    if concept is not None:
+        _concept_basis(wb, concept)
+    if log:
+        _notes_sheet(wb, log)
     # DCS / panel soft tags (PI, FIC, PAHH ...) are kept for loop checking only
     wf = wb.create_sheet("DCS_Functions")
-    wf.append(["Tag No", "Func", "System", "Symbol", "P&ID No", "Title", "Page", "Coordination", "Conf."])
+    wf.append(["Tag No", "Func", "System", "Symbol", "P&ID No", "Title", "Page", "Coordination", "Conf.", "산출구분"])
     for c in wf[1]:
         c.font = Font(bold=True)
     for r in funcs:
-        wf.append([r.tag, r.func, r.system, r.symbol_cls, r.dwg, r.title, r.page, r.coord, r.conf])
-    for col, w in zip("ABCDEFGHI", (16, 8, 8, 14, 11, 34, 6, 12, 7)):
+        wf.append([r.tag, r.func, r.system, r.symbol_cls, r.dwg, r.title, r.page, r.coord, r.conf, r.origin])
+    for col, w in zip("ABCDEFGHIJ", (16, 8, 8, 14, 11, 34, 6, 12, 7, 12)):
         wf.column_dimensions[col].width = w
     wb.save(out)
+
+
+def _io_summary(wb, last, concept):
+    """IO points counted from the index rows themselves (COUNTIFS), split by
+    where the rows came from - so the totals can never disagree with the index."""
+    ws = wb.create_sheet("IO_Summary", 1)
+    ix = "Instrument_Index"
+    rng = lambda col: f"{ix}!${col}$3:${col}${last}"
+    ws["A1"] = "IO 집계 (인덱스 행을 직접 카운트)"
+    ws["A1"].font = Font(bold=True, size=14)
+    ws["A2"] = "모든 IO는 인덱스의 한 행입니다. 산출구분별로 어디서 생긴 IO인지 보여줍니다. 수식이므로 인덱스를 고치면 자동 갱신됩니다."
+    cols = [(s, io) for s in ("DCS", "ESD", "F&G") for io in HW] + [("*", "Serial/Comm")]
+    hdr = ["산출구분"] + [f"{s} {io}" for s, io in cols[:-1]] + ["통신 포트", "하드와이어 합계", "인덱스 행 수"]
+    ws.append([])
+    ws.append(hdr)
+    for c in ws[4]:
+        c.font = Font(bold=True, color="FFFFFF")
+        c.fill = PatternFill("solid", fgColor="1F3864")
+    for i, org in enumerate(ORIGINS + ["합계"]):
+        r = 5 + i
+        ws.cell(r, 1, org).font = Font(bold=org == "합계")
+        for k, (sy, io) in enumerate(cols):
+            col = 2 + k
+            if org == "합계":
+                L = ws.cell(5, col).column_letter
+                f = f"=SUM({L}5:{L}{r - 1})"
+            elif sy == "*":
+                f = f'=COUNTIFS({rng("AB")},$A{r},{rng("P")},"{io}")'
+            else:
+                f = f'=COUNTIFS({rng("AB")},$A{r},{rng("O")},"{sy}",{rng("P")},"{io}")'
+            ws.cell(r, col, f)
+        n = len(cols)
+        a, b = ws.cell(r, 2).column_letter, ws.cell(r, 1 + n - 1).column_letter
+        ws.cell(r, 2 + n, f"=SUM({a}{r}:{b}{r})").font = Font(bold=True)
+        ws.cell(r, 3 + n, f"=SUM({ws.cell(5, 3 + n).column_letter}5:{ws.cell(5, 3 + n).column_letter}{r - 1})"
+                if org == "합계" else f'=COUNTIF({rng("AB")},$A{r})')
+    tot = 5 + len(ORIGINS)
+    # cards per system / IO type
+    ch = concept.num("H05", 16) if concept is not None else 16
+    r0 = tot + 3
+    ws.cell(r0, 1, "IO 카드 개략 수량 (스페어 포함, 채널 수 = 체크리스트 H05)").font = Font(bold=True, size=12)
+    ws.cell(r0 + 1, 1, "채널/카드")
+    ws.cell(r0 + 1, 2, ch)
+    ws.cell(r0 + 1, 3, "← Concept H05")
+    ws.append([])
+    hr = r0 + 2
+    for k, h in enumerate(["System"] + HW + ["카드 합계"]):
+        c = ws.cell(hr, 1 + k, h)
+        c.font = Font(bold=True, color="FFFFFF")
+        c.fill = PatternFill("solid", fgColor="1F3864")
+    for j, sy in enumerate(("DCS", "ESD", "F&G")):
+        r = hr + 1 + j
+        ws.cell(r, 1, sy)
+        for k, io in enumerate(HW):
+            ws.cell(r, 2 + k, f'=ROUNDUP(COUNTIFS({rng("O")},"{sy}",{rng("P")},"{io}")/$B${r0 + 1},0)')
+        ws.cell(r, 6, f"=SUM(B{r}:E{r})").font = Font(bold=True)
+    for col, w in zip("ABCDEFGHIJKLMNOPQ", [14] + [9] * 16):
+        ws.column_dimensions[col].width = w
+
+
+def _concept_basis(wb, concept):
+    ws = wb.create_sheet("Concept_Basis")
+    ws.append([f"적용한 개념설계 가정 ({concept.path.name})"])
+    ws["A1"].font = Font(bold=True, size=14)
+    ws.append(["ID", "항목", "적용값", "기본값", "변경"])
+    for c in ws[2]:
+        c.font = Font(bold=True)
+    for k, v in concept.items.items():
+        ws.append([k, v["name"], v["value"], v["default"], "변경" if v["value"] != v["default"] else ""])
+    for col, w in zip("ABCDE", (7, 50, 22, 22, 7)):
+        ws.column_dimensions[col].width = w
+
+
+def _notes_sheet(wb, log):
+    ws = wb.create_sheet("Notes_Review")
+    ws.append(["P&ID No", "Title", "노트 원문 (발췌)", "적용 효과"])
+    for c in ws[1]:
+        c.font = Font(bold=True)
+    for row in log:
+        ws.append(list(row))
+    for col, w in zip("ABCD", (11, 30, 90, 46)):
+        ws.column_dimensions[col].width = w
 
 
 def _restore_rules(ws, last):
@@ -181,7 +280,7 @@ def compare(rows: list[Row], ref: list[dict], out_wb: Path, pages: dict, overrid
     for x in ref:
         dwg = title_map[(x["title"], x["dwg"])][0] or f"(ref) {x['title']}"
         ref_cnt[(dwg, x["func"])] += 1
-    rows = [r for r in rows if r.kind != "function"]
+    rows = [r for r in rows if r.kind != "function" and r.origin not in ("트레인복제", "스페어")]
     our_cnt = collections.Counter((r.dwg, r.func) for r in rows)
 
     wb = openpyxl.load_workbook(out_wb)
@@ -227,12 +326,12 @@ def compare(rows: list[Row], ref: list[dict], out_wb: Path, pages: dict, overrid
     for x in ref:
         if title_map[(x["title"], x["dwg"])][0]:
             for k, v in x["io_base"].items():
+                k = {"DO-SOV": "DO", "DI(MCC)": "DI", "DO(MCC)": "DO"}.get(k, k)
                 rio[(str(x["system"]).replace("FGS", "F&G"), k)] += v
     oio = collections.Counter()
     for r in rows:
-        for k in r.io_detail.split("/"):
-            if k and k != "-":
-                oio[(r.system, k)] += 1
+        if r.io and r.io != "-":
+            oio[(r.system, r.io)] += 1
     for key in sorted(set(rio) | set(oio)):
         wsI.append([key[0], key[1], round(rio[key], 1), oio[key], round(oio[key] - rio[key], 1)])
     wb.save(out_wb)

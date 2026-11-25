@@ -125,11 +125,11 @@ def _display_words(page: fitz.Page):
 EQUIP_RE = re.compile(r"^(\d{2})-([A-Z]{1,2})-(\d{3})([A-Z](?:/[A-Z])*)?$")
 
 
-def find_equipment(page: fitz.Page, kinds=("P",)):
+def find_equipment(page: fitz.Page, kinds=("P", "PK")):
     """Equipment drawn on this sheet (not FROM/TO references).
-    Returns {base_tag: sorted suffix letters}."""
+    Returns {base_tag: (kind, sorted suffix letters)}."""
     words = _display_words(page)
-    out: dict[str, set] = {}
+    out: dict[str, tuple] = {}
     for k, (r, t) in enumerate(words):
         m = EQUIP_RE.match(t)
         if not m or m.group(2) not in kinds:
@@ -138,14 +138,17 @@ def find_equipment(page: fitz.Page, kinds=("P",)):
         if prev in ("FROM", "TO"):
             continue
         base = f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
-        letters = out.setdefault(base, set())
+        kind, letters = out.setdefault(base, (m.group(2), set()))
         if m.group(4):
             letters.update(m.group(4).split("/"))
-        else:   # single letters printed next to the tag ("A", "B")
-            for r2, t2 in words:
+        else:
+            nxt = words[k + 1][1] if k + 1 < len(words) else ""
+            if re.fullmatch(r"[A-Z](?:/[A-Z])+", nxt):          # "10-PK-601 A/B/C"
+                letters.update(nxt.split("/"))
+            for r2, t2 in words:                                 # "A", "B" printed beside the tag
                 if len(t2) == 1 and t2.isalpha() and abs(r2.y0 - r.y0) < 3 and 0 < r2.x0 - r.x1 < 12:
                     letters.add(t2)
-    return {b: sorted(v) or [""] for b, v in out.items()}
+    return {b: (kd, sorted(v) or [""]) for b, (kd, v) in out.items()}
 
 
 def is_legend_page(page: fitz.Page) -> bool:
@@ -314,6 +317,7 @@ def extract_pdf(pdf: Path, proto: dict, pages=None, progress=None):
     doc = fitz.open(pdf)
     out = []
     seen_equipment: set[str] = set()
+    packages: dict[str, tuple] = {}
     for pno in range(doc.page_count):
         if pages and pno + 1 not in pages:
             continue
@@ -322,7 +326,13 @@ def extract_pdf(pdf: Path, proto: dict, pages=None, progress=None):
             continue
         syms = extract_page(page, proto)
         dwg, unit, title = _page_meta(page)
-        for base, letters in find_equipment(page).items():
+        for base, (kind, letters) in find_equipment(page).items():
+            if kind == "PK":                        # one entry per package; units merged over sheets
+                if base not in packages:
+                    packages[base] = (Symbol(pno + 1, dwg, title, "EQUIP:PK", base, "PACKAGE", "-",
+                                             "equipment", 1.0, 0, 0, 0, {}, ""), set())
+                packages[base][1].update(x for x in letters if x)
+                continue
             for L in letters:
                 if base + L in seen_equipment:      # same pump drawn on two sheets
                     continue
@@ -332,4 +342,7 @@ def extract_pdf(pdf: Path, proto: dict, pages=None, progress=None):
         if progress:
             progress(pno + 1, len(syms))
         out.extend(syms)
+    for base, (sym, letters) in packages.items():
+        sym.notes = ["units:" + "/".join(sorted(letters))]
+        out.append(sym)
     return out

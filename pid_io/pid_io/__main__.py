@@ -12,7 +12,9 @@ from pathlib import Path
 
 from .export import compare, load_reference, write_template
 from .extract import extract_pdf, load_protocol, page_texts
+from .concept import Concept
 from .io_assign import assign
+from .notes import read_notes
 
 HERE = Path(__file__).resolve().parent.parent / "protocols"
 
@@ -42,6 +44,8 @@ def main(argv=None):
     r.add_argument("--overlay", type=Path, help="write a review PDF with recognised symbols marked")
     r.add_argument("--symbols", type=Path, default=HERE / "symbols.yaml")
     r.add_argument("--io-rules", type=Path, default=HERE / "io_rules.yaml")
+    r.add_argument("--concept", type=Path, default=HERE / "concept_default.xlsx",
+                   help="concept checklist workbook (engineering assumptions)")
     r.add_argument("--dwg-map", type=Path, default=HERE / "dwg_map.yaml",
                    help="manual reference-title -> PDF drawing overrides")
     a = ap.parse_args(argv)
@@ -50,9 +54,13 @@ def main(argv=None):
     io_proto = load_protocol(a.io_rules)
     syms = extract_pdf(a.pdf, sym_proto, _pages(a.pages),
                        progress=lambda p, n: print(f"  page {p}: {n} symbols", file=sys.stderr))
-    rows = assign(syms, io_proto)
+    concept = Concept(a.concept)
+    notes = read_notes(a.pdf)
+    if a.pages:
+        notes = {d: n for d, n in notes.items() if n.page in _pages(a.pages)}
+    rows, log = assign(syms, io_proto, concept, notes)
     m = re.search(r"Rev\.?\s*([A-Z0-9]+)", a.pdf.name, re.I)
-    write_template(rows, a.template, a.out, a.pdf.name, m.group(1) if m else "")
+    write_template(rows, a.template, a.out, a.pdf.name, m.group(1) if m else "", concept, log)
     print(f"symbols: {len(syms)}  index rows: {len(rows)}  -> {a.out}")
     if a.overlay:
         from .overlay import write_overlay
