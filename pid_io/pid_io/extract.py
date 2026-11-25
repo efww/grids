@@ -14,6 +14,9 @@ from .geometry import PageGeom, load_page_geom, shape_features
 FUNC_RE = re.compile(r"^[A-Z]{1,6}$")
 NUM_RE = re.compile(r"^(\d{2,5}[A-Z]?|X{2,4}[A-Z]?)$")
 DWG_RE = re.compile(r"PID-\d{4}")
+# words that often sit above a number but are never instrument tags
+NOT_TAGS = {"FROM", "TO", "DRUM", "TANK", "PUMP", "POND", "MM", "CWS", "CWR", "HOLD", "NOTE", "SIZE",
+            "SET", "TYP", "LINE", "PIT", "BASIN", "VENT", "NNF", "CSO", "CSC", "LO", "LC", "NO", "NC"}
 PREFIX_RE = re.compile(r"PREFIXED\s+BY\s+(?:TRAIN|UNIT)\s+NUMBER\s+(\d+)", re.S)
 
 
@@ -36,6 +39,7 @@ class Symbol:
     vendor: str = ""          # vendor package / area the symbol sits in ('' = our scope)
     links: set = field(default_factory=set)   # ids of interlocks this symbol is wired to
     notes: list = field(default_factory=list)
+    override: dict = field(default_factory=dict)  # accepted review / AI decision (cls, io, system, ...)
 
     @property
     def tag(self):
@@ -163,6 +167,7 @@ def extract_page(page: fitz.Page, proto: dict) -> list[Symbol]:
     geom = load_page_geom(page)
     nums = [(r, t) for r, t in words if NUM_RE.match(t)]
     syms: list[Symbol] = []
+    cands: list[Symbol] = []
     seen = []
     ignore = set(proto.get("ignore_words", []))
     for r, t in words:
@@ -187,6 +192,14 @@ def extract_page(page: fitz.Page, proto: dict) -> list[Symbol]:
         feats = shape_features(geom, cx, cy)
         hit = _match(proto, feats, t)
         if not hit:
+            # tag-shaped text (letters over a number) that no legend rule
+            # accepted: keep it as a candidate for review / AI re-judgement
+            if (number and 2 <= len(t) <= 5 and t not in NOT_TAGS
+                    and max(feats["circle"], feats["square"], feats["diamond"]) >= 0.45):
+                cands.append(Symbol(page.number + 1, dwg, title, t, number, "UNMATCHED", "?", "candidate",
+                                    round(max(feats["circle"], feats["square"], feats["diamond"]), 3),
+                                    feats["cx"], feats["cy"], 18.0, feats, unit,
+                                    notes=["no legend rule matched"]))
             continue
         _, score, name, rule = hit
         if t in ("I", "IS") and rule["role"] != "interlock":
@@ -206,6 +219,11 @@ def extract_page(page: fitz.Page, proto: dict) -> list[Symbol]:
         syms.append(sym)
         seen.append(sym)
     trace_links(geom, syms)
+    # candidates sitting on an accepted symbol are just its second word
+    for c in cands:
+        if not any((abs(c.cx - s.cx) < 12 and abs(c.cy - s.cy) < 12) or
+                   (s.func == c.func and abs(c.cx - s.cx) < 40 and abs(c.cy - s.cy) < 40) for s in syms):
+            syms.append(c)
     return syms
 
 

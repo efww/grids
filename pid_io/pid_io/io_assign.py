@@ -82,8 +82,8 @@ def assign(symbols: list[Symbol], io_proto: dict, concept: Concept, notes: dict 
     log: list[tuple] = []                      # (dwg, text, effect) for the Notes sheet
 
     for s in symbols:
-        if s.role == "interlock":
-            continue
+        if s.role in ("interlock", "candidate", "ignored"):
+            continue           # candidates only count once a person (or AI + person) accepts them
 
         # ------------------------------------------------ pumps -> motor typical
         if s.func == "EQUIP:P":
@@ -152,11 +152,19 @@ def assign(symbols: list[Symbol], io_proto: dict, concept: Concept, notes: dict 
             _add(row, rows, seen)
             continue
 
+        if s.override:                      # accepted review / AI decision wins over the rule
+            if s.override.get("system") not in (None, "", "-"):
+                system = s.override["system"]
+            inform.append("검토 승인" + (f": {s.override['reason']}" if s.override.get("reason") else ""))
+        if rule.get("ai"):
+            inform.append("AI 제안 규칙 (승인됨)")
         typ = rule.get("typical", "").replace("{SYS}", "ESD" if system == "ESD" else "DCS")
         points = list(concept.expand(typ, s.func, SYSTEM_NAMES.get(system, system))) if typ else []
         main_io = next((p[5] for p in points if p[0]), None) if typ else None
         if main_io is None:
             main_io = "/".join(rule.get("io", [])) or "-"
+        if s.override and s.override.get("io") not in (None, ""):
+            main_io = s.override["io"]
         # vendor PLC package, its instruments not in our IO scope (A03 OFF)
         vendor_out = False
         if pkg and concept.on("B06"):

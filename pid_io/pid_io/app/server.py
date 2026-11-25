@@ -21,9 +21,12 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 import pymupdf as fitz
 
+from ..ai import providers as ai
+from ..ai import tasks as ait
 from ..concept import Concept
 from ..export import compare, load_reference, write_template
-from ..pipeline import ORIGINS, PROTO, compute, impact, load_extract, run_extract, summarize
+from ..extract import load_protocol
+from ..pipeline import ORIGINS, PROTO, apply_overrides, compute, impact, load_extract, run_extract, summarize
 
 STATIC = Path(__file__).resolve().parent / "static"
 HOME = Path(os.environ.get("PID_IO_HOME", Path.cwd() / "projects")).resolve()
@@ -93,8 +96,83 @@ def computed(name: str):
         return None
     data, syms, notes = ex
     con = concept(name)
-    rows, log = compute(syms, notes, con)
+    rows, log = compute(syms, notes, con, overrides=overrides(name))
     return data, syms, notes, con, rows, log
+
+
+def overrides(name: str):
+    return ait.load(pdir(name) / "overrides.json", {"symbols": {}, "rules": []})
+
+
+# ------------------------------------------------------------------ AI
+def ai_view(name: str):
+    ex = extracted(name)
+    st = ai.load_settings(HOME)
+    out = {"provider": st["provider"], "suggestions": ait.load(pdir(name) / "ai_suggestions.json", []),
+           "pending": ait.load(pdir(name) / "ai_pending.json", None), "job": JOBS.get(name + ":ai", {"state": "idle"})}
+    if ex:
+        rules = apply_overrides(ex[1], load_protocol(PROTO / "io_rules.yaml"), overrides(name))
+        syms, rl = rules
+        unknown = ait.unknown_funcs(syms, rl["rules"])
+        out["counts"] = {"symbols": len(ait.symbol_items(syms, set(unknown))), "funcs": len(unknown)}
+    return out
+
+
+def ai_run(name: str, kind: str):
+    ex = extracted(name)
+    if not ex:
+        raise ValueError("먼저 추출을 실행해 주세요")
+    d = pdir(name)
+    syms, rl = apply_overrides(ex[1], load_protocol(PROTO / "io_rules.yaml"), overrides(name))
+    unknown = ait.unknown_funcs(syms, rl["rules"])
+    if kind == "symbols":
+        prompt, files, asked = ait.build_symbols(d / "input" / meta(name)["files"]["pdf"], syms, set(unknown),
+                                                 d / "cache" / "ai_crops")
+    elif kind == "funcs":
+        prompt, asked = ait.build_funcs(unknown)
+        files = []
+    else:
+        raise ValueError("kind")
+    if not asked:
+        raise ValueError("AI에게 물어볼 항목이 없습니다")
+    st = ai.load_settings(HOME)
+    task = {"task_id": time.strftime("%H%M%S"), "kind": kind, "asked": asked, "prompt": prompt,
+            "crops": [f.name for f in files]}
+    if st["provider"] == "manual":
+        ait.save(d / "ai_pending.json", task)
+        return {"manual": True, **task}
+    key = name + ":ai"
+    JOBS[key] = {"state": "running", "msg": f"Copilot에 {len(asked)}건 질문 중", "started": time.time()}
+
+    def work():
+        try:
+            ans = ai.ask(st, prompt)
+            ai_accept_answer(name, task, ans, source=st["provider"])
+            JOBS[key].update(state="done", msg="완료", elapsed=round(time.time() - JOBS[key]["started"]))
+        except Exception as e:
+            JOBS[key].update(state="error", msg=str(e))
+
+    threading.Thread(target=work, daemon=True).start()
+    return {"manual": False, "started": True}
+
+
+def ai_accept_answer(name: str, task: dict, answer: str, source="manual"):
+    d = pdir(name)
+    if task["kind"] == "symbols":
+        items = ait.parse_symbols(answer, set(task["asked"]))
+        ex = extracted(name)
+        by = {s.sid: s for s in ex[1]} if ex else {}
+        for it in items:
+            s = by.get(it["id"])
+            if s:
+                it.update(page=s.page, dwg=s.dwg, coord=f"{round(s.cx)},{round(s.cy)}", text=f"{s.func} {s.number}")
+    else:
+        items = ait.parse_funcs(answer, set(task["asked"]))
+    if not items:
+        raise ValueError("답변에서 유효한 항목을 찾지 못했습니다 (형식 확인)")
+    ait.add_suggestions(d, task["kind"], items, source)
+    (d / "ai_pending.json").unlink(missing_ok=True)
+    return len(items)
 
 
 # ------------------------------------------------------------------ extraction job
@@ -217,6 +295,14 @@ def review_view(name: str, q: dict):
         items.append({"tag": r.tag, "desc": r.desc, "system": r.system, "io": r.io, "status": r.status,
                       "origin": r.origin, "dwg": r.dwg, "page": r.page, "coord": r.coord, "vendor": r.vendor_pkg,
                       "inform": text, "basis": r.basis, "reasons": tags})
+    ov = overrides(name)["symbols"]
+    for s in syms:
+        if s.role == "candidate" and s.sid not in ov:
+            counts["미인식 후보"] = counts.get("미인식 후보", 0) + 1
+            items.append({"tag": f"{s.func}-{s.number}", "desc": "규칙에 맞지 않은 태그 모양 글자", "system": "?", "io": "-",
+                          "status": "불명", "origin": "도면인식", "dwg": s.dwg, "page": s.page,
+                          "coord": f"{round(s.cx)},{round(s.cy)}", "vendor": s.vendor, "inform": "; ".join(s.notes),
+                          "basis": "", "reasons": ["미인식 후보"]})
     f = q.get("reason", [""])[0]
     if f:
         items = [i for i in items if f in i["reasons"]]
@@ -327,7 +413,47 @@ class H(BaseHTTPRequestHandler):
                     return self._send(200, {"projects": out, "home": str(HOME)})
                 create_project(self._json()["name"])
                 return self._send(200, {"ok": True})
+            if parts[1] == "ai":                          # global AI settings
+                if parts[2:] == ["settings"]:
+                    if method == "POST":
+                        st = ai.load_settings(HOME)
+                        st.update(self._json())
+                        ai.save_settings(HOME, st)
+                    return self._send(200, ai.load_settings(HOME))
+                if parts[2:] == ["test"]:
+                    try:
+                        ans = ai.test(ai.load_settings(HOME))
+                        ok = ait.extract_json(ans).get("ok") is True
+                        return self._send(200, {"ok": ok, "answer": ans[:500]})
+                    except ai.NeedsManual:
+                        return self._send(200, {"ok": True, "answer": "수동 모드: 테스트할 연결이 없습니다"})
             name, act = parts[2], parts[3] if len(parts) > 3 else ""
+            if act == "ai":
+                sub = parts[4] if len(parts) > 4 else ""
+                if sub == "" and method == "GET":
+                    return self._send(200, ai_view(name))
+                if sub == "run" and method == "POST":
+                    return self._send(200, ai_run(name, self._json()["kind"]))
+                if sub == "answer" and method == "POST":
+                    b = self._json()
+                    task = ait.load(pdir(name) / "ai_pending.json", None)
+                    if not task or task["task_id"] != b.get("task_id"):
+                        raise ValueError("대기 중인 질문이 없습니다. 다시 실행해 주세요")
+                    n = ai_accept_answer(name, task, b.get("text", ""), "manual")
+                    return self._send(200, {"ok": True, "added": n})
+                if sub == "decide" and method == "POST":
+                    b = self._json()
+                    d = pdir(name)
+                    if b.get("min_conf") is not None:
+                        for x in ait.load(d / "ai_suggestions.json", []):
+                            if x["status"] == "pending" and x.get("confidence", 0) >= float(b["min_conf"]):
+                                ait.decide(d, x["sid"], True)
+                    else:
+                        ait.decide(d, b["sid"], bool(b["accept"]))
+                    return self._send(200, ai_view(name))
+                if sub == "crop":
+                    f = pdir(name) / "cache" / "ai_crops" / Path(parts[5]).name
+                    return self._send(200, f.read_bytes(), "image/png")
             if act == "" and method == "GET":
                 return self._send(200, project_state(name))
             if act == "upload" and method == "POST":

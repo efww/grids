@@ -58,8 +58,46 @@ def load_extract(path: Path):
     return data, syms, notes
 
 
-def compute(syms, notes, concept: Concept, io_rules: Path = PROTO / "io_rules.yaml"):
-    rows, log = assign(syms, load_protocol(io_rules), concept, notes)
+ROLE_OF = {"FIELD": "device", "DCS_SHARED": "function", "PANEL_CR": "function", "PANEL_BEHIND": "function",
+           "PLC": "function", "ESD_INTERLOCK": "interlock", "DCS_INTERLOCK": "interlock", "HW_INTERLOCK": "interlock"}
+SYS_OF = {"FIELD": "FIELD", "DCS_SHARED": "DCS", "PANEL_CR": "DCS", "PANEL_BEHIND": "LOCAL", "PLC": "PLC",
+          "ESD_INTERLOCK": "ESD", "DCS_INTERLOCK": "DCS", "HW_INTERLOCK": "HARDWIRED"}
+
+
+def apply_overrides(syms, rules: dict, overrides: dict | None):
+    """Accepted review/AI decisions: per-symbol class/tag/IO and extra function-code rules."""
+    if not overrides:
+        return syms, rules
+    import copy
+    import re
+    out = []
+    so = overrides.get("symbols", {})
+    for s in syms:
+        o = so.get(s.sid)
+        if not o:
+            out.append(s)
+            continue
+        s = copy.copy(s)
+        if o["class"] == "NOT_A_TAG":
+            s.role = "ignored"
+        else:
+            s.cls, s.role, s.system = o["class"], ROLE_OF[o["class"]], SYS_OF[o["class"]]
+            m = re.match(r"^\s*(?:\d{2}-)?([A-Z]{1,6})-?(\w+)\s*$", o.get("tag") or "")
+            if m:
+                s.func, s.number = m.group(1), m.group(2)
+            s.override = {"io": o.get("io"), "system": o.get("system"), "reason": o.get("reason", "")}
+            s.score = max(s.score, 0.95)
+            s.notes = []
+        out.append(s)
+    extra = [{"match": f"^{re.escape(r['func'])}$", "desc": r["desc"], "io": r["io"],
+              "system": {"F&G": "FGS"}.get(r["system"], r["system"]), "signal": "", "ai": True}
+             for r in overrides.get("rules", [])]
+    return out, {**rules, "rules": extra + rules["rules"]}
+
+
+def compute(syms, notes, concept: Concept, io_rules: Path = PROTO / "io_rules.yaml", overrides: dict | None = None):
+    syms, rules = apply_overrides(syms, load_protocol(io_rules), overrides)
+    rows, log = assign(syms, rules, concept, notes)
     return rows, log
 
 

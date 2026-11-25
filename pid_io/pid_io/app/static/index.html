@@ -128,6 +128,7 @@ select{padding-right:26px}
     <div class="st" data-s="concept"><i>3</i>개념 체크리스트</div>
     <div class="st" data-s="review"><i>4</i>검토</div>
     <div class="st" data-s="output"><i>5</i>출력</div>
+    <div class="st" data-s="ai" style="margin-top:14px;border-top:1px solid var(--line-l)"><i>AI</i>AI 연결 설정</div>
     <div class="foot">도면 인식은 한 번,<br>체크리스트를 바꾸면 IO가<br>즉시 다시 계산됩니다.<br><br><span class="mono">IO 1점 = 인덱스 1행</span></div>
   </nav>
   <main id="main"></main>
@@ -160,7 +161,7 @@ function navState() {
   document.querySelectorAll("#nav .st").forEach(el => {
     const s = el.dataset.s;
     el.classList.toggle("on", s === S.screen);
-    el.classList.toggle("dis", (!S.project && s !== "projects") || (!ex && ["concept","review","output"].includes(s)));
+    el.classList.toggle("dis", (!S.project && !["projects","ai"].includes(s)) || (!ex && ["concept","review","output"].includes(s)));
     el.classList.toggle("done", (s==="projects" && S.project) || (s==="extract" && ex));
   });
   $("#pname").textContent = S.project || "선택 안 됨";
@@ -173,6 +174,7 @@ async function render() {
   const m = $("#main");
   try {
     if (S.screen === "projects") return renderProjects(m);
+    if (S.screen === "ai") return renderAISettings(m);
     await loadState();
     if (S.screen === "extract") return renderExtract(m);
     if (S.screen === "concept") return renderConcept(m);
@@ -393,6 +395,7 @@ async function renderReview(m) {
     <div style="flex:1.6;min-width:0"><div class="viewer" id="viewer"><img id="pimg" src="/api/${P("page/"+S.page)}" alt="도면"><div class="hl hidden" id="hl"></div></div>
       <div class="legend" style="margin-top:8px"><span><i style="background:#15ad60"></i>FIELD</span><span><i style="background:#4fa1e0"></i>DCS</span><span><i style="background:#d1335d"></i>ESD Interlock</span><span><i style="background:#ffba00"></i>DCS/HW Interlock</span><span><i style="background:#7e66cb"></i>벤더 경계</span></div></div>
     <div style="flex:1;min-width:300px">
+      <div id="aipanel"></div>
       <div style="margin-bottom:6px">${S.reason?`<span class="chip" data-r="" style="cursor:pointer;margin:0 6px 6px 0">전체 보기 ✕</span>`:""}${chips}</div>
       <div class="rlist" id="rlist">${r.items.map((x,i)=>`<div class="ritem ${S.sel===i?"on":""}" data-i="${i}">
         <div class="a"><b class="mono">${esc(x.tag)}</b><span>${x.reasons.map(t=>`<span class="chip ${/ESD/.test(t)?"r":/벤더/.test(t)?"p":/중복|대수|미분류/.test(t)?"y":""}">${esc(t)}</span>`).join(" ")}</span></div>
@@ -414,6 +417,107 @@ async function renderReview(m) {
     else { m.querySelectorAll(".ritem").forEach(e=>e.classList.toggle("on", e===el)); focusItem(x); }
   });
   if (S.sel != null && r.items[S.sel]) focusItem(r.items[S.sel]);
+  renderAIPanel();
+}
+
+/* ---------------------------------------------------------------- AI */
+const PROVIDER_NAME = {none:"사용 안 함", manual:"수동 (채팅 AI에 복사·붙여넣기)", copilot_cli:"GitHub Copilot CLI"};
+let aiPoll = null;
+async function renderAIPanel() {
+  const box = $("#aipanel"); if (!box) return;
+  const a = await api(P("ai"));
+  const c = a.counts || {symbols:0, funcs:0};
+  const pend = a.suggestions.filter(x=>x.status==="pending");
+  const running = a.job && a.job.state === "running";
+  box.innerHTML = `<div class="panel" style="padding:14px 16px;margin-bottom:12px;border-top:3px solid var(--green)">
+    <div style="display:flex;justify-content:space-between;align-items:center"><b>AI 재판정</b>
+      <span class="chip ${a.provider==="none"?"":"g"}" style="cursor:pointer" id="aiset">${esc(PROVIDER_NAME[a.provider])}</span></div>
+    <p class="lead" style="font-size:12.5px;margin:6px 0 10px">규칙이 확정하지 못한 것만 AI에게 묻습니다. 답은 제안으로 들어오고, 승인해야 반영됩니다.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn sm" data-ai="symbols" ${!c.symbols||running||a.provider==="none"?"disabled":""}>심볼 재판정 (${c.symbols})</button>
+      <button class="btn sm line" data-ai="funcs" ${!c.funcs||running||a.provider==="none"?"disabled":""}>미분류 기능코드 IO 제안 (${c.funcs})</button>
+    </div>
+    ${running?`<p style="margin-top:10px;color:var(--green-d)">${esc(a.job.msg)}…</p>`:""}
+    ${a.job && a.job.state==="error"?`<p style="margin-top:10px;color:var(--red)">${esc(a.job.msg)}</p>`:""}
+    ${a.pending?manualBox(a.pending):""}
+    ${pend.length?`<div style="margin-top:12px;border-top:1px solid var(--line-l);padding-top:10px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><b style="font-size:13px">AI 제안 ${pend.length}건</b>
+        <button class="btn sm line" id="aiall">신뢰도 0.8 이상 모두 승인</button></div>
+      ${pend.map(x=>`<div class="ritem" style="padding:8px 4px" data-sg="${x.sid}">
+        <div class="a"><span><b class="mono">${esc(x.kind==="symbols"?(x.text||x.tag):x.func)}</b> → ${esc(x.kind==="symbols"?`${x.class} ${x.tag} ${x.io}/${x.system}`:`${x.desc} ${x.io.join("/")||"IO 없음"} ${x.system}`)}</span>
+          <span class="mono" style="color:var(--sub)">${Math.round((x.confidence||0)*100)}%</span></div>
+        <div class="b">${esc(x.reason)}</div>
+        <div style="margin-top:6px;display:flex;gap:6px"><button class="btn sm" data-ok="${x.sid}">승인</button><button class="btn sm line" data-no="${x.sid}">거절</button></div>
+      </div>`).join("")}</div>`:""}
+  </div>`;
+  $("#aiset").onclick = () => go("ai");
+  box.querySelectorAll("[data-ai]").forEach(b => b.onclick = async () => {
+    try { const r = await post(P("ai/run"), {kind:b.dataset.ai}); if (!r.manual) toast("Copilot에 질문을 보냈습니다"); renderAIPanel(); }
+    catch(e) { toast(e.message, true); }
+  });
+  box.querySelectorAll("[data-ok],[data-no]").forEach(b => b.onclick = async (ev) => {
+    ev.stopPropagation();
+    await post(P("ai/decide"), {sid:b.dataset.ok||b.dataset.no, accept:!!b.dataset.ok});
+    S.summary = null; S.review = null; renderReview($("#main"));
+  });
+  box.querySelectorAll("[data-sg]").forEach(el => el.onclick = () => {
+    const x = a.suggestions.find(y=>y.sid===el.dataset.sg);
+    if (x && x.page) { if (x.page !== S.page) { S.page = x.page; renderReview($("#main")).then(()=>focusItem(x)); } else focusItem(x); }
+  });
+  const all = $("#aiall"); if (all) all.onclick = async () => { await post(P("ai/decide"), {min_conf:0.8}); S.summary=null; S.review=null; renderReview($("#main")); };
+  const cp = $("#aicopy"); if (cp) cp.onclick = async () => { const t=$("#aiprompt"); t.select(); try { await navigator.clipboard.writeText(t.value); } catch(e) { document.execCommand("copy"); } toast("질문을 복사했습니다. Copilot 채팅에 붙여넣으세요"); };
+  const sb = $("#aisubmit"); if (sb) sb.onclick = async () => {
+    try { const r = await post(P("ai/answer"), {task_id:a.pending.task_id, text:$("#aianswer").value}); toast(`제안 ${r.added}건 추가`); renderAIPanel(); }
+    catch(e) { toast(e.message, true); }
+  };
+  clearTimeout(aiPoll);
+  if (running) aiPoll = setTimeout(() => { if (S.screen==="review") renderAIPanel(); }, 3000);
+}
+function manualBox(t) {
+  return `<div style="margin-top:12px;border-top:1px solid var(--line-l);padding-top:10px">
+    <b style="font-size:13px">① 질문 복사 → Copilot 채팅에 붙여넣기</b>
+    ${t.crops.length?`<p class="lead" style="font-size:12px;margin:4px 0">이미지도 함께 올리면 정확해집니다:
+      ${t.crops.map(f=>`<a href="/api/${P("ai/crop/"+encodeURIComponent(f))}" download="${esc(f)}" class="mono" style="font-size:11.5px;margin-right:6px">${esc(f)}</a>`).join("")}</p>`:""}
+    <textarea id="aiprompt" readonly style="width:100%;height:90px;font-size:11.5px;font-family:Consolas,monospace;border:1px solid #bbb;padding:6px">${esc(t.prompt)}</textarea>
+    <button class="btn sm line" id="aicopy" style="margin:6px 0 10px">질문 복사</button><br>
+    <b style="font-size:13px">② Copilot 답변 붙여넣기</b>
+    <textarea id="aianswer" placeholder='{"items": [...]}' style="width:100%;height:90px;font-size:11.5px;font-family:Consolas,monospace;border:1px solid #bbb;padding:6px;margin-top:4px"></textarea>
+    <button class="btn sm" id="aisubmit" style="margin-top:6px">답변 적용</button>
+  </div>`;
+}
+async function renderAISettings(m) {
+  const st = await api("ai/settings");
+  m.innerHTML = `
+  <div class="head"><div><div class="eyebrow">SETTINGS</div><h1>AI 연결 설정</h1>
+    <p class="lead">AI는 규칙이 확정하지 못한 심볼과 기능코드에만 쓰입니다. 답은 항상 제안이며 승인해야 반영됩니다.</p></div></div>
+  <div class="grid g2">
+    <div class="panel"><h2>연결 방식</h2>
+      ${Object.entries(PROVIDER_NAME).map(([k,v])=>`<label class="kv" style="cursor:pointer"><span><input type="radio" name="prov" value="${k}" ${st.provider===k?"checked":""}> ${v}</span><span></span></label>`).join("")}
+      <div id="clibox" style="margin-top:14px">
+        <div class="lead" style="font-size:12.5px;margin-bottom:4px">Copilot CLI 명령 (JSON 배열, {prompt} {prompt_file} {model} 치환)</div>
+        <input type="text" id="cmd" style="width:100%;font-family:Consolas,monospace" value='${esc(JSON.stringify(st.command))}'>
+        <div style="display:flex;gap:10px;margin-top:10px;align-items:center;flex-wrap:wrap">
+          <span>모델</span><input type="text" id="model" value="${esc(st.model)}" placeholder="비우면 기본 모델" style="width:180px">
+          <span>시간 제한(초)</span><input type="number" id="tmo" value="${esc(st.timeout)}">
+          <label><input type="checkbox" id="stdin" ${st.stdin?"checked":""}> 질문을 표준입력으로 전달</label>
+        </div>
+      </div>
+      <div style="margin-top:16px;display:flex;gap:8px"><button class="btn" id="save">저장</button><button class="btn line" id="test">연결 테스트</button></div>
+      <pre id="tres" class="mono" style="margin-top:12px;white-space:pre-wrap;font-size:12px;color:var(--sub)"></pre>
+    </div>
+    <div class="panel"><h2>안내</h2>
+      <div class="kv"><span><b>수동</b>: 질문을 복사해 회사 Copilot(M365) 채팅에 붙여넣고, 답을 다시 붙여넣습니다. API 없이 바로 사용.</span></div>
+      <div class="kv"><span><b>GitHub Copilot CLI</b>: 이 PC에 설치된 <span class="mono">copilot</span> 명령을 버튼 하나로 실행합니다. 설치된 버전의 실행 옵션에 맞게 위 명령을 조정하세요 (명령창에서 <span class="mono">copilot --help</span>).</span></div>
+      <div class="kv"><span>질문에는 태그 글자, 주변 글자, 외곽선 측정값이 들어갑니다. 심볼 재판정은 주변을 자른 작은 이미지도 함께 만들어집니다 (도면 전체는 보내지 않음).</span></div>
+      <div class="kv"><span>승인된 판단은 프로젝트의 <span class="mono">overrides.json</span>에 저장되어 다음 계산부터 자동 적용됩니다.</span></div>
+    </div>
+  </div>`;
+  const sync = () => $("#clibox").style.opacity = (document.querySelector("input[name=prov]:checked").value==="copilot_cli") ? 1 : .4;
+  m.querySelectorAll("input[name=prov]").forEach(r => r.onchange = sync); sync();
+  const collect = () => { let cmd; try { cmd = JSON.parse($("#cmd").value); } catch(e) { throw new Error("명령은 JSON 배열이어야 합니다"); }
+    return {provider:document.querySelector("input[name=prov]:checked").value, command:cmd, model:$("#model").value.trim(), timeout:+$("#tmo").value||300, stdin:$("#stdin").checked}; };
+  $("#save").onclick = async () => { try { await post("ai/settings", collect()); toast("저장했습니다"); } catch(e) { toast(e.message, true); } };
+  $("#test").onclick = async () => { try { await post("ai/settings", collect()); $("#tres").textContent = "테스트 중…"; const r = await post("ai/test"); $("#tres").textContent = (r.ok?"✓ 연결됨\n":"응답은 왔지만 형식이 다릅니다\n") + r.answer; } catch(e) { $("#tres").textContent = "✕ " + e.message; } };
 }
 function focusItem(x) {
   const img = $("#pimg"), hl = $("#hl"), v = $("#viewer");
