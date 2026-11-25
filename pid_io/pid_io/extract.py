@@ -33,6 +33,7 @@ class Symbol:
     radius: float
     feats: dict
     unit: str = ""
+    vendor: str = ""          # vendor package / area the symbol sits in ('' = our scope)
     links: set = field(default_factory=set)   # ids of interlocks this symbol is wired to
     notes: list = field(default_factory=list)
 
@@ -314,7 +315,9 @@ def page_texts(pdf: Path) -> dict:
 
 
 def extract_pdf(pdf: Path, proto: dict, pages=None, progress=None):
+    from .boundary import find_regions, legend_width
     doc = fitz.open(pdf)
+    wmin = legend_width(doc)
     out = []
     seen_equipment: set[str] = set()
     packages: dict[str, tuple] = {}
@@ -325,6 +328,12 @@ def extract_pdf(pdf: Path, proto: dict, pages=None, progress=None):
         if is_legend_page(page):
             continue
         syms = extract_page(page, proto)
+        regions = find_regions(page, wmin)
+        for sm in syms:
+            for rg in regions:
+                if rg.rect.contains(fitz.Point(sm.cx, sm.cy)):
+                    sm.vendor = rg.package
+                    break
         dwg, unit, title = _page_meta(page)
         for base, (kind, letters) in find_equipment(page).items():
             if kind == "PK":                        # one entry per package; units merged over sheets

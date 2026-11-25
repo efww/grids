@@ -81,14 +81,6 @@ def assign(symbols: list[Symbol], io_proto: dict, concept: Concept, notes: dict 
     seen: dict[str, Row] = {}
     log: list[tuple] = []                      # (dwg, text, effect) for the Notes sheet
 
-    # sheets that belong to a vendor package (title says PACKAGE, or the package is drawn there)
-    pkg_of_sheet = {}
-    for s in symbols:
-        if s.func == "EQUIP:PK":
-            t = (s.title or "").upper()
-            if "PACKAGE" in t or "PKG" in t or (notes.get(s.dwg) and notes[s.dwg].later):
-                pkg_of_sheet.setdefault(s.dwg, s.number)
-
     for s in symbols:
         if s.role == "interlock":
             continue
@@ -149,13 +141,14 @@ def assign(symbols: list[Symbol], io_proto: dict, concept: Concept, notes: dict 
         status = _status(s.score, s.notes, rule.get("review") or system == "?", confirm, review)
         if rule.get("review"):
             inform.append("function code not in IO protocol")
-        pkg = pkg_of_sheet.get(s.dwg, "")
+        pkg = s.vendor            # from the dash-dot vendor boundary the symbol sits in
 
         if s.role == "function" and s.system != "FIELD":
             sysn = {"DCS": "DCS", "PLC": "PLC", "LOCAL": "-"}.get(s.system, system)
             row = Row(tag=s.tag, loop=loop, func=s.func, desc=rule.get("desc", ""),
                       system=SYSTEM_NAMES.get(sysn, sysn), io="-", signal="-", status=status,
-                      inform=inform, kind="function", basis=s.dwg, vendor_pkg=pkg, **base)
+                      inform=inform, kind="function", basis=s.dwg,
+                      vendor_pkg=pkg if concept.on("B06") else "", **base)
             _add(row, rows, seen)
             continue
 
@@ -166,7 +159,8 @@ def assign(symbols: list[Symbol], io_proto: dict, concept: Concept, notes: dict 
             main_io = "/".join(rule.get("io", [])) or "-"
         # vendor PLC package, its instruments not in our IO scope (A03 OFF)
         vendor_out = False
-        if pkg:
+        if pkg and concept.on("B06"):
+            inform.append(f"벤더 경계 안 ({pkg})")
             ptyp, conn, _, _ = concept.package_typical(pkg)
             if ptyp == "PKG-COMM" and not concept.on("A03"):
                 vendor_out = True
@@ -174,7 +168,8 @@ def assign(symbols: list[Symbol], io_proto: dict, concept: Concept, notes: dict 
         row = Row(tag=s.tag, loop=loop, func=s.func, desc=rule.get("desc", ""),
                   system=SYSTEM_NAMES.get(system, system), io="-" if vendor_out else _io(main_io),
                   signal=rule.get("signal", ""), status=status, inform=inform,
-                  basis=f"{s.dwg}" + (f" / {typ}" if typ else ""), vendor_pkg=pkg, **base)
+                  basis=f"{s.dwg}" + (f" / {typ}" if typ else ""),
+                  vendor_pkg=pkg if concept.on("B06") else "", **base)
         if not _add(row, rows, seen):
             continue
         for main, fc, sfx, desc, sys_, io, ids in points:
@@ -185,7 +180,7 @@ def assign(symbols: list[Symbol], io_proto: dict, concept: Concept, notes: dict 
                             io="-" if vendor_out else _io(io), signal="24VDC" if io in ("DI", "DO") else row.signal,
                             status=status, inform=list(inform[-1:]) if vendor_out else [],
                             origin="Typical파생", basis=f"{s.tag} / {typ} ({', '.join(ids)})",
-                            src_tag=s.tag, vendor_pkg=pkg, **base))
+                            src_tag=s.tag, vendor_pkg=row.vendor_pkg, **base))
 
     # ------------------------------------------------ implied tags (thermowells ...)
     present = {(r.dwg, r.func, r.tag.split("-")[-1]) for r in rows}

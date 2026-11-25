@@ -20,7 +20,9 @@ COLORS = {
 
 
 def write_overlay(pdf: Path, symbols: list[Symbol], out: Path):
+    from .boundary import find_regions, legend_width
     doc = fitz.open(pdf)
+    wmin = legend_width(doc)
     by_page: dict[int, list[Symbol]] = {}
     for s in symbols:
         if s.role != "equipment":
@@ -29,6 +31,13 @@ def write_overlay(pdf: Path, symbols: list[Symbol], out: Path):
     for pno in keep:
         page = doc[pno - 1]
         inv = ~page.rotation_matrix          # display -> unrotated page space
+        for rg in find_regions(page, wmin):  # vendor boundaries
+            shape = page.new_shape()
+            shape.draw_rect(rg.rect * inv)
+            shape.finish(color=(0.85, 0, 0.85), width=3, dashes="[12 4 3 4] 0")
+            shape.commit()
+            page.insert_text(fitz.Point(rg.rect.x0 + 4, rg.rect.y0 + 14) * inv, f"VENDOR: {rg.package}",
+                             fontsize=11, color=(0.85, 0, 0.85), rotate=page.rotation)
         for s in by_page[pno]:
             col = COLORS.get(s.cls, (0, 0, 0))
             r = s.radius * 1.15
