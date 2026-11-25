@@ -105,7 +105,17 @@ pub(crate) fn layout_label(h: &[usize]) -> String {
 }
 
 impl Session {
+    // The selection colour on screen: Windows' highlight under high contrast, else the saved one.
     pub(crate) fn accent_now(&self) -> u32 {
+        self.accent_in(hc_colors().map(|c| c.hl))
+    }
+
+    pub(crate) fn accent_in(&self, hc: Option<u32>) -> u32 {
+        hc.unwrap_or_else(|| self.accent_saved())
+    }
+
+    // The theme's own selection colour, as in grids.ini (menu ticks, the colour picker's start).
+    pub(crate) fn accent_saved(&self) -> u32 {
         if self.dark {
             self.accent_dark
         } else {

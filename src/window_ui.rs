@@ -140,11 +140,18 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                     update_nudge(); // and a release check an hour or more old is due again
                 }
             }
-            // Windows light/dark (or the accent) changed. Only queued: nothing is drawn inside the broadcast.
+            // Windows light/dark (or the accent), or high contrast, changed. Only queued: nothing is drawn
+            // inside the broadcast.
             WM_SETTINGCHANGE => {
-                if lp.0 != 0 && PCWSTR(lp.0 as *const u16).to_string().is_ok_and(|s| s == "ImmersiveColorSet") {
+                let immersive = lp.0 != 0 && PCWSTR(lp.0 as *const u16).to_string().is_ok_and(|s| s == "ImmersiveColorSet");
+                if immersive || wp.0 == SPI_SETHIGHCONTRAST.0 as usize {
                     _ = PostMessageW(Some(h), WM_THEME_SYNC, WPARAM(0), LPARAM(0));
                 }
+                return DefWindowProcW(h, msg, wp, lp);
+            }
+            // system colours changed (another contrast theme picked)
+            WM_SYSCOLORCHANGE => {
+                _ = PostMessageW(Some(h), WM_THEME_SYNC, WPARAM(0), LPARAM(0));
                 return DefWindowProcW(h, msg, wp, lp);
             }
             WM_THEME_SYNC => theme_sync(),
@@ -237,6 +244,9 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 id if id == ID_TB_THEME as usize => {
                     app(|a| (a.s.dark, a.s.follow) = (!a.s.dark, false)); // picked by hand: stop following Windows
                     retheme();
+                    if HC_ON.load(Ordering::Relaxed) {
+                        set_note(hc_text().into()); // saved; the screen keeps the contrast theme
+                    }
                 }
                 id if id == ID_TB_VIEW as usize => popup_menu(app(|a| a.view_menu), ID_TB_VIEW),
                 id if (ID_DRIVE as usize..ID_DRIVE as usize + 26).contains(&id) => {
@@ -283,15 +293,15 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 ID_HELP => open_help(),
                 ID_ABOUT => about(h),
                 ID_STAR => star_clicked(h),
-                id @ ID_ACCENT..=1405 => set_accent(pal().accents[id - ID_ACCENT].1),
+                id @ ID_ACCENT..=1405 => set_accent(theme_pal(app(|a| a.s.dark)).accents[id - ID_ACCENT].1),
                 ID_ACCENT_PICK => pick_accent(),
                 ID_KEYS => open_keys(),
                 ID_GATHER => gather_explorer(),
                 _ => {}
             },
             WM_INITMENUPOPUP => {
-                let (menu, dblup, tree, accent, hot, follow, jump) =
-                    app(|a| (a.view_menu, a.s.dblup, a.s.tree, a.s.accent_now(), a.hot_on, a.s.follow, a.s.dlgjump));
+                let (menu, dblup, tree, accent, hot, follow, jump, dark) =
+                    app(|a| (a.view_menu, a.s.dblup, a.s.tree, a.s.accent_saved(), a.hot_on, a.s.follow, a.s.dlgjump, a.s.dark));
                 let check = |id: usize, on: bool| CheckMenuItem(menu, id as u32, (MF_BYCOMMAND | if on { MF_CHECKED } else { MF_UNCHECKED }).0);
                 check(ID_TREE, tree);
                 check(ID_FOLLOW, follow);
@@ -304,7 +314,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 check(ID_UPDATES, app(|a| a.s.updates));
                 check(ID_LANG, KO.load(Ordering::Relaxed));
                 check(ID_STAR, starred());
-                for (k, (_, c)) in pal().accents.iter().enumerate() {
+                for (k, (_, c)) in theme_pal(dark).accents.iter().enumerate() {
                     check(ID_ACCENT + k, *c == accent);
                 }
             }
@@ -596,7 +606,7 @@ pub(crate) fn toolbar_tips() -> [(i32, &'static str, &'static str); 7] {
         (ID_TB_LOAD, tr("Load", "불러오기"), tr("Load a session", "세션 불러오기")),
         (ID_TB_VIEW, tr("View", "보기"), tr("View: hidden files · extensions · colours · language · help", "보기: 숨김 파일 · 확장명 · 선택 색 · 언어 · 도움말")),
         (ID_TB_FAV, tr("Favourites", "즐겨찾기"), tr("Favourite folders (Ctrl+B; open in the active pane)", "즐겨찾기 폴더 (Ctrl+B, 선택한 패널에서 열기)")),
-        (ID_TB_THEME, tr("Theme", "테마"), tr("Light / dark theme", "라이트 / 다크 테마")),
+        (ID_TB_THEME, tr("Theme", "테마"), theme_tip()),
         (ID_TB_EV, tr("Search with Everything", "Everything으로 검색"), tr("Search with Everything (Ctrl+Shift+F)", "Everything으로 검색 (Ctrl+Shift+F)")),
     ]
 }

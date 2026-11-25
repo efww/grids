@@ -225,9 +225,10 @@ pub(crate) fn tint_band(w: i32, dpi: i32, active: bool) -> RECT {
     RECT { left: inset, top: inset, right: w - inset, bottom: inset + s(3).min(top - inset) }
 }
 
-// A pane's colour label in this theme: one of the selection colour presets.
+// A pane's colour label in this theme: one of the selection colour presets (the light ones under high
+// contrast, whose presets are all Windows' highlight, so labels stay told apart).
 pub(crate) fn tint_color(k: u8) -> Option<u32> {
-    (1..=6).contains(&k).then(|| pal().accents[k as usize - 1].1)
+    (1..=6).contains(&k).then(|| theme_pal(DARK_ON.load(Ordering::Relaxed)).accents[k as usize - 1].1)
 }
 
 pub(crate) fn tint_name(k: u8) -> &'static str {

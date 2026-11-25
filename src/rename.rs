@@ -428,8 +428,7 @@ pub(crate) unsafe fn rename_theme() {
     let dark = DARK_ON.load(Ordering::Relaxed);
     let on = BOOL::from(dark);
     _ = DwmSetWindowAttribute(h, DWMWINDOWATTRIBUTE(20), &on as *const _ as _, 4);
-    let caption = cref(pal().bg);
-    _ = DwmSetWindowAttribute(h, DWMWA_CAPTION_COLOR, &caption as *const _ as _, 4);
+    set_caption(h);
     let lv = item(h, ID_LIST);
     let lb = item(h, ID_RULES);
     let theme = if dark { w!("DarkMode_Explorer") } else { w!("Explorer") };
@@ -568,8 +567,13 @@ unsafe fn paint(h: HWND) {
     });
 }
 
+// Warning ink: the red that reads on the backdrop (also on a black or white contrast theme, where DARK_ON
+// stays false); the text colour when neither red reaches 4.5:1.
 fn red() -> u32 {
-    if DARK_ON.load(Ordering::Relaxed) { 0xF08080 } else { 0xC0392B }
+    let p = pal();
+    let worst = |c: u32| contrast(c, p.bg).min(contrast(c, p.card));
+    let c = if worst(0xC0392B) >= worst(0xF08080) { 0xC0392B } else { 0xF08080 };
+    if worst(c) >= 4.5 { c } else { p.text }
 }
 
 unsafe fn draw_item(d: &DRAWITEMSTRUCT) {

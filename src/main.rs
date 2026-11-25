@@ -265,6 +265,7 @@ fn main() -> Result<()> {
         });
         KO.store(s.ko, Ordering::Relaxed);
         TABS_ON.store(s.tabs_on, Ordering::Relaxed);
+        refresh_hc(); // a contrast theme already on: its colours from the first paint
         let view_menu = make_menus()?;
         let main = CreateWindowExW(
             WINDOW_EX_STYLE(0),
@@ -280,9 +281,7 @@ fn main() -> Result<()> {
             Some(hinst),
             None,
         )?;
-        // caption in the ground colour, so title bar and toolbar read as one surface
-        let caption = cref(pal().bg);
-        _ = DwmSetWindowAttribute(main, DWMWA_CAPTION_COLOR, &caption as *const _ as _, 4);
+        set_caption(main);
         let square = DWMWCP_DONOTROUND;
         _ = DwmSetWindowAttribute(main, DWMWA_WINDOW_CORNER_PREFERENCE, &square as *const _ as _, 4);
         let dpi = GetDpiForWindow(main) as i32;
@@ -1414,19 +1413,6 @@ mod tests {
         assert_eq!(size_text(true, 0, false, None, true), " (크기 모름)");
     }
 
-    // WCAG 2 contrast ratio of two 0xRRGGBB colours.
-    fn contrast(a: u32, b: u32) -> f64 {
-        let lum = |c: u32| {
-            let lin = |v: u32| {
-                let s = v as f64 / 255.0;
-                if s <= 0.04045 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
-            };
-            0.2126 * lin(c >> 16 & 0xFF) + 0.7152 * lin(c >> 8 & 0xFF) + 0.0722 * lin(c & 0xFF)
-        };
-        let (x, y) = (lum(a), lum(b));
-        (x.max(y) + 0.05) / (x.min(y) + 0.05)
-    }
-
     // Every text-on-fill pair painted from a palette, in CONTRAST_FLOOR's order.
     fn contrast_pairs(p: &Palette) -> Vec<(String, f64)> {
         let mut v = vec![];
@@ -1500,6 +1486,50 @@ mod tests {
         }
         assert_eq!(blend(0x123456, 0xABCDEF, 0.0), 0x123456);
         assert_eq!(blend(0x123456, 0xABCDEF, 1.0), 0xABCDEF);
+    }
+
+    // Windows' contrast themes (white and black ground among them): every text in Grids' own chrome reads
+    // at 4.5:1 or better, and every selection colour is the theme's highlight.
+    #[test]
+    fn high_contrast_palette() {
+        let sys = |face, face_text, window, window_text, gray, hl, hl_text| SysColors { face, face_text, window, window_text, gray, hl, hl_text };
+        let themes = [
+            ("aquatic", sys(0x202020, 0xFFFFFF, 0x202020, 0xFFFFFF, 0xA6A6A6, 0x8EE3F0, 0x263B50)),
+            ("desert", sys(0xFFFAEF, 0x3D3D3D, 0xFFFAEF, 0x3D3D3D, 0x676767, 0x903909, 0xFFF5E3)),
+            ("dusk", sys(0x2D3236, 0xB6F6F0, 0x2D3236, 0xB6F6F0, 0xA6A6A6, 0xA1BFDE, 0x212D3B)),
+            ("night sky", sys(0x000000, 0xFFFFFF, 0x000000, 0xFFFFFF, 0xA6A6A6, 0xD6B4FD, 0x2B2B2B)),
+            ("hc black", sys(0x000000, 0xFFFFFF, 0x000000, 0xFFFFFF, 0x3FF23F, 0x1AEBFF, 0x000000)),
+            ("hc white", sys(0xFFFFFF, 0x000000, 0xFFFFFF, 0x000000, 0x600000, 0x37006E, 0xFFFFFF)),
+            // made up: a face whose own text differs, and a grey too faint to read
+            ("odd", sys(0x404040, 0xFFFFFF, 0xFFFFFF, 0x000000, 0xC8C8C8, 0x0050A0, 0xFFFFFF)),
+        ];
+        for (name, c) in themes {
+            let p = hc_palette(&c);
+            for f in [p.text, p.sub] {
+                for b in [p.bg, p.card, p.pill] {
+                    assert!(contrast(f, b) >= 4.5, "{name}: {f:06X} on {b:06X}");
+                }
+            }
+            assert!(p.accents.iter().all(|&(_, a)| a == c.hl), "{name}");
+            assert_eq!(p.accents.map(|(n, _)| n), LIGHT.accents.map(|(n, _)| n));
+        }
+        let odd = hc_palette(&themes[6].1);
+        assert_eq!((odd.bg, odd.sub), (0xFFFFFF, 0x000000)); // the window ground and its text instead
+        let desert = hc_palette(&themes[1].1);
+        assert_eq!((desert.bg, desert.sub), (0xFFFAEF, 0x676767));
+    }
+
+    // High contrast shows Windows' highlight but never writes it (or a theme) into grids.ini.
+    #[test]
+    fn high_contrast_keeps_saved_colours() {
+        for dark in [false, true] {
+            let s = Session { dark, accent: 0x8DB5E8, accent_dark: 0x4C6FA8, ..Default::default() };
+            let before = s.to_ini();
+            assert_eq!(s.accent_in(Some(0x1AEBFF)), 0x1AEBFF);
+            assert_eq!(s.accent_in(None), if dark { 0x4C6FA8 } else { 0x8DB5E8 });
+            assert_eq!(s.accent_saved(), s.accent_in(None));
+            assert_eq!(s.to_ini(), before);
+        }
     }
 
     #[test]

@@ -333,15 +333,26 @@ pub(crate) unsafe fn repaint_header(pane: HWND) {
     }
 }
 
+// A selection colour picked from the menu: saved for the current theme. Under high contrast the screen
+// keeps Windows' highlight and the status line says why.
 pub(crate) unsafe fn set_accent(c: u32) {
-    let (bars, panes) = app(|a| {
+    app(|a| {
         if a.s.dark {
             a.s.accent_dark = c;
         } else {
             a.s.accent = c;
         }
-        (a.bars, a.panes.iter().flatten().map(|p| p.hwnd).collect::<Vec<_>>())
     });
+    if HC_ON.load(Ordering::Relaxed) {
+        set_note(hc_text().into());
+    } else {
+        paint_accent(c);
+    }
+}
+
+// Paints the selection colour everywhere it shows, without saving it.
+pub(crate) unsafe fn paint_accent(c: u32) {
+    let (bars, panes) = app(|a| (a.bars, a.panes.iter().flatten().map(|p| p.hwnd).collect::<Vec<_>>()));
     let old = SetClassLongPtrW(bars[0], GCLP_HBRBACKGROUND, CreateSolidBrush(cref(c)).0 as isize);
     if old != 0 {
         _ = DeleteObject(HGDIOBJ(old as _));
@@ -613,9 +624,12 @@ pub(crate) unsafe fn system_dark() -> Option<bool> {
 // half-typed address all stay. A view still navigating gets the theme from on_nav when it lands.
 // Windows 11's newer list (DirectUIHWND, see in_view_list) takes light or dark only when it is made and
 // can't be recoloured in place, so there the panes are made again on their folders, as at start-up.
+// High contrast shows light lists whatever the saved theme, so only a change of what is shown (dark or not)
+// needs that rebuild; a contrast theme switching on or off over the light theme is recoloured in place.
 pub(crate) unsafe fn retheme() {
-    let (panes, popups) = app(|a| (a.panes.iter().flatten().map(|p| p.hwnd).collect::<Vec<_>>(), [a.fav_popup, a.load, a.grid, a.keys_popup, a.peek, a.matcher.as_ref().map_or(HWND::default(), |m| m.h)]));
-    if (0..MAXP).any(|i| unsafe { dui_list(i) }) {
+    let (panes, popups, dark) = app(|a| (a.panes.iter().flatten().map(|p| p.hwnd).collect::<Vec<_>>(), [a.fav_popup, a.load, a.grid, a.keys_popup, a.peek, a.matcher.as_ref().map_or(HWND::default(), |m| m.h)], a.s.dark));
+    let shown_changed = DARK_ON.load(Ordering::Relaxed) != shown_dark(dark);
+    if shown_changed && (0..MAXP).any(|i| unsafe { dui_list(i) }) {
         apply_theme();
     } else {
         theme_chrome();
@@ -634,13 +648,47 @@ pub(crate) unsafe fn retheme() {
     }
 }
 
+// Dark is shown only when saved and no contrast theme is on.
+pub(crate) fn shown_dark(saved: bool) -> bool {
+    saved && !HC_ON.load(Ordering::Relaxed)
+}
+
 // Following Windows: switch if its setting differs from Grids' (the setting broadcast comes in bursts).
+// High contrast switching on or off, or another contrast theme, recolours too; turning it off brings the
+// saved theme back (and Windows light/dark, when followed).
 pub(crate) unsafe fn theme_sync() {
-    let (follow, cur) = app(|a| (a.s.follow, a.s.dark));
-    if let Some(d) = theme_target(follow, system_dark(), cur) {
+    let hc = refresh_hc();
+    let (follow, cur, main) = app(|a| (a.s.follow, a.s.dark, a.main));
+    let target = theme_target(follow, system_dark(), cur);
+    if let Some(d) = target {
         app(|a| a.s.dark = d);
+    }
+    if hc {
+        if let Ok(b) = GetDlgItem(Some(main), ID_TB_THEME) {
+            tip_text(b, theme_tip(), TTM_UPDATETIPTEXTW);
+        }
+    }
+    if hc || target.is_some() {
         retheme();
     }
+}
+
+// The theme button's tooltip; under high contrast it says the button only changes the saved theme.
+pub(crate) fn theme_tip() -> &'static str {
+    match HC_ON.load(Ordering::Relaxed) {
+        true => tr(
+            "Light / dark theme (High contrast is on — Windows colours are used)",
+            "라이트 / 다크 테마 (고대비 테마 사용 중 — Windows 색을 씁니다)",
+        ),
+        false => tr("Light / dark theme", "라이트 / 다크 테마"),
+    }
+}
+
+// Title bar colour: the ground colour, so title bar and toolbar read as one surface; under high contrast
+// Windows' own (DWMWA_COLOR_DEFAULT).
+pub(crate) unsafe fn set_caption(h: HWND) {
+    let caption = if HC_ON.load(Ordering::Relaxed) { COLORREF(0xFFFF_FFFF) } else { cref(pal().bg) };
+    _ = DwmSetWindowAttribute(h, DWMWA_CAPTION_COLOR, &caption as *const _ as _, 4);
 }
 
 // Applies the current theme everywhere; panes are rebuilt so their Explorer views pick it up.
@@ -655,7 +703,7 @@ pub(crate) unsafe fn apply_theme() {
 
 // Everything but the panes' Explorer lists: tooltips, app mode (menus, scrollbars), title bar, tree, accent.
 pub(crate) unsafe fn theme_chrome() {
-    let (main, dark, tree, accent, tip) = app(|a| (a.main, a.s.dark, a.tree_hwnd, a.s.accent_now(), a.tip));
+    let (main, dark, tree, accent, tip) = app(|a| (a.main, shown_dark(a.s.dark), a.tree_hwnd, a.s.accent_now(), a.tip));
     // tooltips: dark on dark, back to the default on light (these windows outlive the theme switch)
     let tip_theme = |t: HWND| {
         if !t.0.is_null() {
@@ -666,7 +714,8 @@ pub(crate) unsafe fn theme_chrome() {
     DARK_ON.store(dark, Ordering::Relaxed);
     if let Some(f) = uxtheme(135) {
         let set_preferred_app_mode: unsafe extern "system" fn(i32) -> i32 = std::mem::transmute(f);
-        set_preferred_app_mode(if dark { 2 } else { 3 }); // ForceDark / ForceLight
+        // ForceDark / ForceLight; Default under high contrast, so menus and scrollbars take its colours
+        set_preferred_app_mode(if HC_ON.load(Ordering::Relaxed) { 0 } else if dark { 2 } else { 3 });
     }
     if let Some(f) = uxtheme(136) {
         let flush_menu_themes: unsafe extern "system" fn() = std::mem::transmute(f);
@@ -674,8 +723,7 @@ pub(crate) unsafe fn theme_chrome() {
     }
     let on = BOOL::from(dark);
     _ = DwmSetWindowAttribute(main, DWMWINDOWATTRIBUTE(20), &on as *const _ as _, 4); // immersive dark title bar
-    let caption = cref(pal().bg);
-    _ = DwmSetWindowAttribute(main, DWMWA_CAPTION_COLOR, &caption as *const _ as _, 4);
+    set_caption(main);
     if let Ok(tv) = FindWindowExW(Some(tree), None, w!("SysTreeView32"), PCWSTR::null()) {
         _ = SetWindowTheme(tv, if dark { w!("DarkMode_Explorer") } else { w!("Explorer") }, PCWSTR::null());
         let colour = |c: u32| LPARAM(if dark { cref(c).0 as isize } else { -1 }); // -1: system default
@@ -683,12 +731,12 @@ pub(crate) unsafe fn theme_chrome() {
         SendMessageW(tv, TVM_SETTEXTCOLOR, None, Some(colour(pal().text)));
         tip_theme(HWND(SendMessageW(tv, TVM_GETTOOLTIPS, None, None).0 as _));
     }
-    set_accent(accent);
+    paint_accent(accent);
     rename_theme();
 }
 
 pub(crate) unsafe fn pick_accent() {
-    let (main, cur) = app(|a| (a.main, a.s.accent_now()));
+    let (main, cur) = app(|a| (a.main, a.s.accent_saved()));
     let mut custom = [COLORREF(0xFFFFFF); 16];
     let mut cc = CHOOSECOLORW {
         lStructSize: size_of::<CHOOSECOLORW>() as u32,

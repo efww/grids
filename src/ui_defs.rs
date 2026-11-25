@@ -77,6 +77,7 @@ pub(crate) const MOVE: SET_WINDOW_POS_FLAGS = SET_WINDOW_POS_FLAGS(SWP_NOZORDER.
 
 // Themes, 0xRRGGBB. Light: an ivory frame around white plates; dark: charcoal. Each theme has its own
 // selection colours (same names, tuned to the ground): pastels on light, muted mid tones on dark.
+#[derive(Clone, Copy)]
 pub(crate) struct Palette {
     pub(crate) bg: u32,   // frame: window, toolbar, gaps, status line
     pub(crate) card: u32, // plates and lists
@@ -122,12 +123,92 @@ pub(crate) fn tr(en: &'static str, ko: &'static str) -> &'static str {
 
 pub(crate) const ACCENT_EN: [&str; 6] = ["Sky", "Gray", "Lavender", "Sage", "Peach", "Rose"];
 
-pub(crate) fn pal() -> &'static Palette {
-    if DARK_ON.load(Ordering::Relaxed) {
+// The colours Grids paints with now: Windows' own under high contrast, else the light or dark theme.
+pub(crate) fn pal() -> Palette {
+    match hc_colors() {
+        Some(c) => hc_palette(&c),
+        None => *theme_pal(DARK_ON.load(Ordering::Relaxed)),
+    }
+}
+
+// The saved theme's palette, whatever is on screen: selection colour presets, menu ticks, colour labels.
+pub(crate) fn theme_pal(dark: bool) -> &'static Palette {
+    if dark {
         &DARK
     } else {
         &LIGHT
     }
+}
+
+// Windows high contrast (Settings > Accessibility > Contrast themes): Grids' own chrome takes the theme's
+// system colours, in pairs, instead of its palette. Saved settings (dark, accent) are left alone.
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
+pub(crate) struct SysColors {
+    pub(crate) face: u32, // COLOR_BTNFACE and the text on it, COLOR_BTNTEXT
+    pub(crate) face_text: u32,
+    pub(crate) window: u32, // COLOR_WINDOW / COLOR_WINDOWTEXT
+    pub(crate) window_text: u32,
+    pub(crate) gray: u32, // COLOR_GRAYTEXT
+    pub(crate) hl: u32,   // COLOR_HIGHLIGHT / COLOR_HIGHLIGHTTEXT
+    pub(crate) hl_text: u32,
+}
+
+pub(crate) static HC_ON: AtomicBool = AtomicBool::new(false);
+// The SysColors fields in order, 0xRRGGBB; read only while HC_ON. The UI thread writes them.
+static HC_SYS: [AtomicU32; 7] = [const { AtomicU32::new(0) }; 7];
+
+pub(crate) fn hc_colors() -> Option<SysColors> {
+    if !HC_ON.load(Ordering::Relaxed) {
+        return None;
+    }
+    let v = |k: usize| HC_SYS[k].load(Ordering::Relaxed);
+    Some(SysColors { face: v(0), face_text: v(1), window: v(2), window_text: v(3), gray: v(4), hl: v(5), hl_text: v(6) })
+}
+
+// Reads high contrast and its colours again; true when either changed (switched on or off, or another
+// contrast theme picked while on).
+pub(crate) unsafe fn refresh_hc() -> bool {
+    use windows::Win32::UI::Accessibility::{HCF_HIGHCONTRASTON, HIGHCONTRASTW};
+    let mut hc = HIGHCONTRASTW { cbSize: size_of::<HIGHCONTRASTW>() as u32, ..Default::default() };
+    let got = SystemParametersInfoW(SPI_GETHIGHCONTRAST, hc.cbSize, Some(&mut hc as *mut _ as _), SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0));
+    let on = got.is_ok() && hc.dwFlags.0 & HCF_HIGHCONTRASTON.0 != 0;
+    // GetSysColor is BGR; swapping red and blue (cref) gives 0xRRGGBB
+    let sys = |i: SYS_COLOR_INDEX| crate::draw::cref(GetSysColor(i)).0;
+    let now = [COLOR_BTNFACE, COLOR_BTNTEXT, COLOR_WINDOW, COLOR_WINDOWTEXT, COLOR_GRAYTEXT, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT].map(sys);
+    let mut changed = on != HC_ON.load(Ordering::Relaxed);
+    for (slot, c) in HC_SYS.iter().zip(now) {
+        // also while off: colours can land after the switch-off notice, and the list keeps them until recoloured
+        changed |= slot.swap(c, Ordering::Relaxed) != c;
+    }
+    HC_ON.store(on, Ordering::Relaxed);
+    changed
+}
+
+// The palette for a contrast theme. One `text` is painted on frame, plates and fields alike, so the frame
+// takes the button face only where its text is that same ink and reads; grey text only where it reads.
+pub(crate) fn hc_palette(c: &SysColors) -> Palette {
+    let (card, text) = (c.window, c.window_text);
+    let bg = if c.face_text == text && contrast(text, c.face) >= 4.5 { c.face } else { card };
+    let sub = if contrast(c.gray, bg).min(contrast(c.gray, card)) >= 4.5 { c.gray } else { text };
+    Palette { bg, card, line: text, pill: card, text, sub, accents: LIGHT.accents.map(|(n, _)| (n, c.hl)) }
+}
+
+// WCAG 2 contrast ratio of two 0xRRGGBB colours.
+pub(crate) fn contrast(a: u32, b: u32) -> f64 {
+    let lum = |c: u32| {
+        let lin = |v: u32| {
+            let s = v as f64 / 255.0;
+            if s <= 0.04045 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
+        };
+        0.2126 * lin(c >> 16 & 0xFF) + 0.7152 * lin(c >> 8 & 0xFF) + 0.0722 * lin(c & 0xFF)
+    };
+    let (x, y) = (lum(a), lum(b));
+    (x.max(y) + 0.05) / (x.min(y) + 0.05)
+}
+
+// Status line note (and theme button tooltip) while a theme or colour pick only changes the saved setting.
+pub(crate) fn hc_text() -> &'static str {
+    tr("High contrast is on — Windows colours are used", "고대비 테마 사용 중 — Windows 색을 씁니다")
 }
 
 pub(crate) const INK: u32 = 0x2A2825; // dark text on light selection colours
@@ -141,7 +222,11 @@ pub(crate) fn blend(a: u32, b: u32, t: f32) -> u32 {
 }
 
 // Text/icons on a coloured fill: near-black on light colours, white on dark ones (black accent -> white text).
+// Under high contrast the highlight takes the theme's own highlight text.
 pub(crate) fn on_color(bg: u32) -> u32 {
+    if let Some(c) = hc_colors().filter(|c| c.hl == bg) {
+        return c.hl_text;
+    }
     let l = 0.2126 * (bg >> 16 & 0xFF) as f32 + 0.7152 * (bg >> 8 & 0xFF) as f32 + 0.0722 * (bg & 0xFF) as f32;
     if l > 160.0 {
         INK
