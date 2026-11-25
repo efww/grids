@@ -1,0 +1,90 @@
+# Symbol protocol - built from the project legend (PID-9001 "BALLOON" section).
+# Each entry describes the outline evidence that must surround the tag text.
+# Coverage values are 0..1 (fraction of the outline found around the text).
+# Rules are tried in order of `priority` (high first); the first match wins.
+#
+#   circle / square / diamond : minimum outline coverage required
+#   no_circle / no_square / no_diamond : outline must be weaker than this
+#   midline        : 'solid' | 'dashed' | 'none' | 'any'
+#   text_regex     : regex the function letters must match (optional)
+
+thresholds:
+  strong: 0.60          # outline counts as present
+  weak: 0.35            # outline counts as absent below this
+
+# Words that sit inside circles/boxes but are not instrument tags.
+ignore_words: [GRADE, NOTE, HOLD, TYP, SET, SIZE, FO, FC, FL, NC, NO, LO, LC]
+
+symbols:
+  ESD_INTERLOCK:
+    legend: "ESD INTERLOCK (square + diamond, 'IS')"
+    square: 0.6
+    diamond: 0.6
+    text_regex: '^IS$'
+    system: ESD
+    role: interlock
+    priority: 100
+
+  DCS_INTERLOCK:
+    legend: "DCS INTERLOCK (square + dashed midline, 'I')"
+    square: 0.6
+    no_circle: 0.85        # a square alone already scores ~0.7 on the circle test
+    no_diamond: 0.35
+    text_regex: '^I$'
+    system: DCS
+    role: interlock
+    priority: 95
+
+  HW_INTERLOCK:
+    legend: "HARDWIRED INTERLOCK (diamond, 'I')"
+    diamond: 0.6
+    no_square: 0.35
+    text_regex: '^I$'
+    system: HARDWIRED
+    role: interlock
+    priority: 90
+
+  DCS_SHARED:
+    legend: "DCS (circle inside square, shared display/control)"
+    square: 0.9            # neighbouring pipe/leader lines can fake a partial square
+    circle: 0.85
+    system: DCS
+    role: function
+    priority: 80
+
+  PLC:
+    legend: "PLC MAIN PANEL (square with chamfered corners)"
+    square: 0.6
+    no_circle: 0.85
+    no_diamond: 0.6
+    midline: solid
+    system: PLC
+    role: function
+    priority: 70
+
+  PANEL_CR:
+    legend: "Discrete instrument, control room (circle + solid midline)"
+    circle: 0.85
+    no_square: 0.9
+    midline: solid
+    system: DCS
+    role: function
+    priority: 60
+
+  PANEL_BEHIND:
+    legend: "Instrument behind control board (circle + dashed midline)"
+    circle: 0.85
+    no_square: 0.9
+    midline: dashed
+    system: LOCAL
+    role: function
+    priority: 55
+
+  FIELD:
+    legend: "FIELD MOUNTED INSTRUMENT (plain circle)"
+    circle: 0.85
+    no_square: 0.9
+    midline: none
+    system: FIELD
+    role: device
+    priority: 50

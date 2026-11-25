@@ -1,0 +1,7 @@
+# Manual overrides: reference-index P&ID title -> drawing number in the PDF.
+# Key is "TITLE|REF DWG No" (or just "TITLE"). Use "-" when the drawing is
+# not in this PDF. Only needed where the automatic title match fails
+# (check the Ref_Title_Map sheet of the output).
+map:
+  "PEM ELECTROLYSIS|1": PID-0001
+  "PEM ELECTROLYSIS|2": PID-0002

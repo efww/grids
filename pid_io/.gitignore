@@ -1,0 +1,5 @@
+# project drawings / indexes are confidential - never commit them
+*.pdf
+*.xlsx
+*.zip
+__pycache__/

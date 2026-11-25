@@ -1,0 +1,74 @@
+# IO protocol - function code -> IO points.
+# Derived from the project's reference index (Rev.A) and legend typicals
+# (PID-9006: on/off valves are drawn as XV only, but carry XY solenoid +
+# open/close limit switches).
+#
+# First matching rule wins. Fields:
+#   match     : regex on the function code (e.g. PT, FV, XV)
+#   desc      : instrument type text for the index
+#   io        : list of IO columns (AI, AO, DI, DO, DI(MCC), DO(MCC), DO-SOV), [] = none
+#   system    : default system (DCS / ESD / FGS / -). 'link' = ESD if the symbol
+#               is wired to an ESD interlock, else DCS.
+#   signal    : signal type text
+#   children  : extra tags generated per instrument ({L} = first letter, {N} = number)
+
+rules:
+  # ---------- no IO (local / mechanical) ----------
+  - {match: '^(PG|TG|LG|FG|PDG|DPG)$', desc: 'Local Gauge', io: [], system: '-', signal: '-'}
+  - {match: '^(TW)$',                 desc: 'Thermowell', io: [], system: '-', signal: '-'}
+  - {match: '^(PSV|PRV|PCV|TCV|LCV|FCV|PSE|PVRV|VRV)$', desc: 'Self-actuated / Relief', io: [], system: '-', signal: '-'}
+  - {match: '^(FE|FO|RO|SC|AE|TE|LS)$', desc: 'Primary element', io: [], system: '-', signal: '-'}
+
+  # ---------- F&G ----------
+  - {match: '^(GD|FD|SD|HD)$', desc: 'F&G Detector', io: [AI], system: FGS, signal: '4-20mA (HART)'}
+  - {match: '^(AA|AL|XA|XL)$', desc: 'Alarm / Light', io: [DO], system: link, signal: '24VDC'}
+
+  # ---------- transmitters ----------
+  - {match: '^[A-Z]{1,3}T$', desc: 'Transmitter', io: [AI], system: link, signal: '4-20mA (HART)'}
+
+  # ---------- control valves (modulating) ----------
+  - match: '^(FV|LV|PV|TV|HV|PDV)$'
+    desc: 'Control Valve'
+    io: [AO]
+    system: DCS
+    signal: '4-20mA (HART)'
+    children:
+      - {tag: '{L}LSO', desc: 'Limit Switch (Open)',  io: [DI], signal: '24VDC'}
+      - {tag: '{L}LSC', desc: 'Limit Switch (Close)', io: [DI], signal: '24VDC'}
+
+  # ---------- on/off valves ----------
+  - match: '^(XV|SDV|BDV|UV)$'
+    desc: 'On-Off Valve'
+    io: [DO-SOV]
+    system: link
+    signal: '24VDC'
+    children:
+      - {tag: '{L}LSO', desc: 'Limit Switch (Open)',  io: [DI], signal: '24VDC'}
+      - {tag: '{L}LSC', desc: 'Limit Switch (Close)', io: [DI], signal: '24VDC'}
+
+  - {match: '^MOV$', desc: 'Motor Operated Valve', io: [AI, DI, DO], system: DCS, signal: '4-20mA (HART) / 24VDC'}
+
+  # ---------- switches ----------
+  - {match: '^HS$', desc: 'Hand Switch', io: [DI], system: link, signal: '24VDC'}
+  - {match: '^[A-Z]S[HL]{1,2}$', desc: 'Switch', io: [DI], system: link, signal: '24VDC'}
+
+  # ---------- DCS soft functions (no physical IO) ----------
+  - {match: '^[A-Z]{1,2}(I|IC|R|RC|Y|AH|AL|AHH|ALL|AHL|Q|QI|C|K)$', desc: 'DCS Function', io: [], system: DCS, signal: '-'}
+
+  # ---------- fallback ----------
+  - {match: '.*', desc: 'Unclassified', io: [], system: '?', signal: '?', review: true}
+
+# Implied tags that are not drawn as balloons.
+implied:
+  # every temperature point on a process line sits in a thermowell
+  - {from: '^(TG|TE)$', tag: 'TW', desc: 'Thermowell', io: [], system: '-', signal: '-'}
+  - {from: '^TT$', tag: 'TW', desc: 'Thermowell', io: [], system: '-', signal: '-', unless: 'TE'}
+
+# Equipment IO typicals (reference index "IO typical" sheet).
+equipment_typicals:
+  P:            # pumps: one motor each
+    - {tag: 'MHS',  desc: 'Motor Local/Remote Signal',          io: ['DI(MCC)'], system: DCS, signal: '24VDC'}
+    - {tag: 'MXS',  desc: 'Motor Running Indication/Fault',     io: ['DI(MCC)'], system: DCS, signal: '24VDC'}
+    - {tag: 'MHSR', desc: 'Motor Start Command',                io: ['DO(MCC)'], system: DCS, signal: '24VDC'}
+    - {tag: 'MHSS', desc: 'Motor Stop Command',                 io: ['DO(MCC)'], system: DCS, signal: '24VDC'}
+    - {tag: 'HS',   desc: 'Hand Switch (Emergency Motor Stop)', io: ['DO(MCC)'], system: ESD, signal: '24VDC'}
