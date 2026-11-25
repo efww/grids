@@ -708,12 +708,13 @@ mod tests {
         let dirs = prog_dirs(r"C:\Windows\", r#"C:\Tools;.;bin;"C:\Program Files\Git\cmd\";c:\windows\system32;;"#);
         assert_eq!(dirs, [r"C:\Windows\System32", r"C:\Windows", r"C:\Tools", r"C:\Program Files\Git\cmd"]);
         let files = [r"C:\Windows\System32\cmd.exe", r"C:\Tools\code.cmd", r"C:\Windows\notepad.exe"];
-        let is_file = |p: &Path| files.iter().any(|f| Path::new(f) == p);
-        assert_eq!(find_prog("cmd", &dirs, &exts, is_file).as_deref(), Some(files[0]));
-        assert_eq!(find_prog("cmd.exe", &dirs, &exts, is_file).as_deref(), Some(files[0]));
-        assert_eq!(find_prog("code", &dirs, &exts, is_file).as_deref(), Some(files[1]));
-        assert_eq!(find_prog("notepad", &dirs, &exts, is_file).as_deref(), Some(files[2]));
-        assert_eq!(find_prog("chrome", &dirs, &exts, is_file), None);
+        // the file system ignores case (PATHEXT gives .EXE, the file is cmd.exe)
+        let is_file = |p: &Path| files.iter().any(|f| f.eq_ignore_ascii_case(&p.to_string_lossy()));
+        let found = |p: &str| find_prog(p, &dirs, &exts, is_file).map(|f| f.to_ascii_lowercase());
+        for (typed, file) in [("cmd", files[0]), ("cmd.exe", files[0]), ("code", files[1]), ("notepad", files[2])] {
+            assert_eq!(found(typed), Some(file.to_ascii_lowercase()), "{typed}");
+        }
+        assert_eq!(found("chrome"), None);
         assert_eq!(find_prog(".exe", &dirs, &exts, |_| false), None);
     }
 
