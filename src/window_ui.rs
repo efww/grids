@@ -148,6 +148,9 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 return DefWindowProcW(h, msg, wp, lp);
             }
             WM_THEME_SYNC => theme_sync(),
+            // a folder was renamed or removed somewhere: only queued (shell_change), looked at by TIMER_SHELL
+            WM_SHELL_CHANGE => shell_change(h, wp, lp),
+            WM_TIMER if wp.0 == TIMER_SHELL => shell_tick(h),
             WM_UPDATE => update_msg(h, wp.0),
             WM_STAR => star_msg(wp.0 != 0),
             WM_HASH => hash_msg(h, wp.0, lp.0 != 0),
@@ -338,6 +341,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             WM_TIMER if wp.0 == dialog_jump::TIMER_DLG_RETRY || wp.0 == dialog_jump::TIMER_DLG_RESTORE => dialog_jump::on_timer(wp.0),
             WM_DESTROY => {
                 _ = KillTimer(Some(h), TIMER_STATUS);
+                unwatch_folders();
                 dialog_jump::shutdown();
                 if app(|a| a.hot_on) {
                     set_hotkey(h, false);

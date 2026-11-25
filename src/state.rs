@@ -11,6 +11,7 @@ pub(crate) struct Pane {
     pub(crate) pending: Option<String>, // columns to put on when the next folder shows (session restore, open in)
     pub(crate) settle: Option<(String, u8)>, // columns just put on, and passes left to hold narrow widths (TIMER_SETTLE)
     pub(crate) recover: Option<(String, String)>, // missing folder, parent being opened instead (go_near)
+    pub(crate) follow: Option<(String, String)>,  // folder renamed elsewhere, its new name being opened (shell_tick)
     pub(crate) icon: i32,   // current folder's icon in the system image list, -1 = none (yet)
     pub(crate) ticket: u32, // its lookup (WM_PANE_ICON); 0 = none asked
     pub(crate) slot: Arc<AtomicUsize>, // where it is now (swap_panes moves it); its Explorer callbacks read it
@@ -86,6 +87,7 @@ pub(crate) struct App {
     pub(crate) focus_keep: HWND,             // focus when Grids last went to the back; coming back puts it there again
     pub(crate) click_nc: bool,               // the click that is bringing Grids back is outside the client area (title bar)
     pub(crate) focus_wait: bool,             // TIMER_FOCUS running
+    pub(crate) shell_q: Vec<Change>,         // folder renames / removals from the shell, waiting for TIMER_SHELL
 }
 
 // The Num+ / Num− box: popup, its edit, the pane it acts on, that pane's folder when it opened, deselect mode.
@@ -167,6 +169,7 @@ thread_local! {
         focus_keep: HWND::default(),
         click_nc: false,
         focus_wait: false,
+        shell_q: Vec::new(),
     });
 }
 

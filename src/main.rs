@@ -353,6 +353,7 @@ fn main() -> Result<()> {
         app(|a| a.base = Some(startup_base(&a.s, saved.as_deref())));
         refresh_save_button();
         SetTimer(Some(main), TIMER_STATUS, 300, None);
+        watch_folders(main); // folders renamed / removed elsewhere (shell_change)
         // taken by another app: the menu shows it off, s.hotkey stays on so the next start tries again
         if app(|a| a.s.hotkey) {
             let on = set_hotkey(main, true);
@@ -1117,6 +1118,47 @@ mod tests {
         assert!(r.is_none());
         let mut r = start(); // some other folder completed
         assert!(rec_step(&mut r, Nav::Complete, r"C:\x").is_none() && r.is_none());
+    }
+
+    #[test]
+    fn renamed_folders() {
+        // whole names only, any case
+        assert_eq!(remap_dir(r"C:\a\b", r"C:\a\b", r"C:\a\z").as_deref(), Some(r"C:\a\z"));
+        assert_eq!(remap_dir(r"c:\A\B\x\y", r"C:\a\b", r"C:\a\z").as_deref(), Some(r"C:\a\z\x\y"));
+        assert_eq!(remap_dir(r"C:\a\bc", r"C:\a\b", r"C:\a\z"), None);
+        assert_eq!(remap_dir(r"C:\a", r"C:\a\b", r"C:\a\z"), None);
+        assert_eq!(remap_dir(r"C:\a\b", "", r"C:\z"), None);
+        assert_eq!(remap_dir(r"C:\한글\b", r"C:\한", r"C:\z"), None); // a longer name, any script
+        assert_eq!(remap_dir(r"C:\한", r"C:\한글", r"C:\z"), None);
+        assert!(in_bin(r"D:\$Recycle.Bin\S-1-5-21\$RX1") && in_bin(r"d:\$RECYCLE.BIN") && !in_bin(r"D:\$Recycle.Binder"));
+
+        use Change::{Removed as D, Renamed as R};
+        let r = |o: &str, n: &str| R(o.into(), n.into());
+        let to = |p: &str| Some(Follow::To(p.into()));
+        assert_eq!(follow(r"C:\w\a\x", &[r(r"C:\w\a", r"C:\w\b")]), to(r"C:\w\b\x"));
+        assert_eq!(follow(r"C:\w\ab", &[r(r"C:\w\a", r"C:\w\b")]), None); // a look-alike name
+        // a rename of a rename, in any order of parent and child
+        assert_eq!(follow(r"C:\w\a\x", &[r(r"C:\w\a", r"C:\w\b"), r(r"C:\w\b", r"C:\w\c")]), to(r"C:\w\c\x"));
+        assert_eq!(follow(r"C:\w\a\x", &[r(r"C:\w\a\x", r"C:\w\a\y"), r(r"C:\w\a", r"C:\w\b")]), to(r"C:\w\b\y"));
+        assert_eq!(follow(r"C:\w\a", &[r(r"C:\w\a", r"C:\w\b"), r(r"C:\w\b", r"C:\w\a")]), None); // back where it was
+        assert_eq!(follow(r"C:\w\Foo", &[r(r"C:\w\Foo", r"C:\w\foo")]), to(r"C:\w\foo")); // case only
+        // removed, or moved into the Recycle Bin (shell_change makes that a removal)
+        assert_eq!(follow(r"C:\w\a\x", &[D(r"C:\w\a".into())]), Some(Follow::Gone));
+        assert_eq!(follow(r"C:\w\a\x", &[r(r"C:\w\a", r"C:\w\b"), D(r"C:\w\b".into())]), Some(Follow::Gone));
+        assert_eq!(follow(r"C:\w\ab", &[D(r"C:\w\a".into())]), None);
+        // path reused: another folder took its name, or a removed one came back renamed: hold off
+        assert_eq!(follow(r"C:\w\a", &[r(r"C:\w\n", r"C:\w\a"), r(r"C:\w\a", r"C:\w\b")]), None);
+        assert_eq!(follow(r"C:\w\a", &[D(r"C:\w\a".into()), r(r"C:\w\a", r"C:\w\b")]), None);
+        // the pane already shows the new name (the view followed by itself): nothing to do
+        assert_eq!(follow(r"C:\w\b", &[r(r"C:\w\a", r"C:\w\b")]), None);
+
+        // the follow mark ends like a recovery: only the new name completing confirms it
+        let mut f = Some((r"C:\w\a".to_string(), r"C:\w\b".to_string()));
+        rec_step(&mut f, Nav::Pending, r"C:\elsewhere"); // the user went somewhere else first
+        assert!(f.is_none());
+        let mut f = Some((r"C:\w\a".to_string(), r"C:\w\b".to_string()));
+        rec_step(&mut f, Nav::Failed, r"C:\w\b");
+        assert!(f.is_none());
     }
 
     #[test]

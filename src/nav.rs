@@ -72,9 +72,15 @@ pub(crate) unsafe fn go_near(i: usize, path: &str) -> bool {
         return false;
     }
     let Some(up) = near_dir(path, |p| std::fs::metadata(p).map(|m| m.is_dir())) else { return false };
+    browse_marked(i, &up, path, false)
+}
+
+// Opens `to` in pane i with a mark (the folder it stands in for, `to`'s parsing name) on the pane: its `recover`,
+// or its `follow` for a renamed folder. on_nav acts on it once `to` has opened; another navigation drops it.
+pub(crate) unsafe fn browse_marked(i: usize, to: &str, from: &str, follow: bool) -> bool {
     let Some(eb) = eb_of(i) else { return false };
     let mut pidl = std::ptr::null_mut();
-    if SHParseDisplayName(&HSTRING::from(up.as_str()), None, &mut pidl, 0, None).is_err() {
+    if SHParseDisplayName(&HSTRING::from(to), None, &mut pidl, 0, None).is_err() {
         return false;
     }
     let target = name(pidl, SIGDN_DESKTOPABSOLUTEPARSING);
@@ -82,10 +88,11 @@ pub(crate) unsafe fn go_near(i: usize, path: &str) -> bool {
     let rec = |set: bool| {
         app(|a| {
             if let Some(p) = a.panes[i].as_mut() {
+                let m = if follow { &mut p.follow } else { &mut p.recover };
                 if set {
-                    p.recover = Some((path.to_string(), target.clone()));
-                } else if p.recover.as_ref().is_some_and(|(_, t)| *t == target) {
-                    p.recover = None;
+                    *m = Some((from.to_string(), target.clone()));
+                } else if m.as_ref().is_some_and(|(_, t)| *t == target) {
+                    *m = None;
                 }
             }
         })
@@ -112,11 +119,222 @@ pub(crate) fn gone_note(a: &mut App, missing: &str, opened: &str) {
     a.note = Some((text, Instant::now() + Duration::from_secs(8)));
 }
 
-// Pending / Failed events of a pane with a recovery waiting; Complete goes through on_nav.
+// ---------- folders renamed or removed elsewhere ----------
+// Like an Explorer window (and Total Commander / XYplorer for a removal): a pane inside a folder another pane,
+// Explorer or any shell app renamed opens its new name; one inside a removed folder opens the nearest parent.
+// The notification only queues; TIMER_SHELL looks at the disk once, after a short pause, for the whole batch.
+// ponytail: local fixed drives only (no blocking probe, no USB removal); renames that bypass the shell aren't seen.
+
+pub(crate) const WM_SHELL_CHANGE: u32 = WM_APP + 51; // wParam = notification handle, lParam = process id (SHCNRF_NewDelivery)
+pub(crate) const TIMER_SHELL: usize = 1160; // on main: the queued changes are looked at
+static SHELL_REG: AtomicU32 = AtomicU32::new(0); // SHChangeNotifyRegister id, 0 = none
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum Change {
+    Renamed(String, String), // old, new
+    Removed(String),         // also a move into the Recycle Bin
+}
+
+#[derive(Debug, PartialEq)]
+pub(crate) enum Follow {
+    To(String),
+    Gone,
+}
+
+// What follows `dir` in `path` when `path` is `dir` or inside it: whole names only, any case.
+pub(crate) fn under<'a>(path: &'a str, dir: &str) -> Option<&'a str> {
+    let rest = path.get(dir.len()..)?;
+    let whole = rest.is_empty() || rest.starts_with('\\') || dir.ends_with('\\');
+    (!dir.is_empty() && whole && path[..dir.len()].eq_ignore_ascii_case(dir)).then_some(rest)
+}
+
+// `path` with its leading `old` swapped for `new`; None when it isn't `old` or inside it (C:\a\bc is not in C:\a\b).
+pub(crate) fn remap_dir(path: &str, old: &str, new: &str) -> Option<String> {
+    under(path, old).map(|rest| format!("{new}{rest}"))
+}
+
+pub(crate) fn in_bin(path: &str) -> bool {
+    let l = path.get(2..).unwrap_or("").to_ascii_lowercase();
+    l == r"\$recycle.bin" || l.starts_with(r"\$recycle.bin\")
+}
+
+// Where `path` ends up after `changes` in order (a rename of a rename is followed through). None: untouched, or
+// unclear: another folder took its place (path reused), or a removed one came back under a new name.
+pub(crate) fn follow(path: &str, changes: &[Change]) -> Option<Follow> {
+    let (mut cur, mut gone) = (path.to_string(), false);
+    for c in changes {
+        match c {
+            Change::Renamed(old, new) => {
+                if under(&cur, new).is_some() && under(&cur, old).is_none() {
+                    return None;
+                }
+                if let Some(p) = remap_dir(&cur, old, new) {
+                    if gone {
+                        return None;
+                    }
+                    cur = p;
+                }
+            }
+            Change::Removed(old) => gone |= under(&cur, old).is_some(),
+        }
+    }
+    if gone {
+        Some(Follow::Gone)
+    } else {
+        (cur != path).then_some(Follow::To(cur))
+    }
+}
+
+fn fixed_drive(path: &str) -> bool {
+    path.get(1..3) == Some(":\\") && unsafe { GetDriveTypeW(&HSTRING::from(&path[..3])) } == 3 // DRIVE_FIXED
+}
+
+fn missing(path: &str) -> bool {
+    std::fs::metadata(path).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+}
+
+// The rename really happened: `from` is gone and `to` is a folder; a change of case only shows in the name on disk.
+fn moved_on_disk(from: &str, to: &str) -> bool {
+    if !fixed_drive(from) {
+        return false;
+    }
+    if from.eq_ignore_ascii_case(to) {
+        return std::fs::canonicalize(to).is_ok_and(|c| c.to_str().and_then(|c| c.strip_prefix(r"\\?\")) == Some(to));
+    }
+    missing(from) && std::fs::metadata(to).is_ok_and(|m| m.is_dir())
+}
+
+pub(crate) unsafe fn watch_folders(h: HWND) {
+    static DESKTOP: [u16; 2] = [0; 2]; // an empty ID list: the desktop, with every folder under it
+    let e = SHChangeNotifyEntry { pidl: DESKTOP.as_ptr() as *mut ITEMIDLIST, fRecursive: true.into() };
+    let ev = (SHCNE_RENAMEFOLDER.0 | SHCNE_RMDIR.0) as i32;
+    SHELL_REG.store(SHChangeNotifyRegister(h, SHCNRF_ShellLevel | SHCNRF_NewDelivery, ev, WM_SHELL_CHANGE, 1, &e), Ordering::Relaxed);
+}
+
+pub(crate) unsafe fn unwatch_folders() {
+    let id = SHELL_REG.swap(0, Ordering::Relaxed);
+    if id != 0 {
+        _ = SHChangeNotifyDeregister(id);
+    }
+}
+
+// WM_SHELL_CHANGE: the two ID lists become paths (copied while locked), and a change that concerns a pane, a tab,
+// the recent list or an earlier queued change waits for TIMER_SHELL. No disk calls here.
+pub(crate) unsafe fn shell_change(h: HWND, wp: WPARAM, lp: LPARAM) {
+    let mut pp: *mut *mut ITEMIDLIST = std::ptr::null_mut();
+    let mut ev = 0i32;
+    let lock = SHChangeNotification_Lock(HANDLE(wp.0 as _), lp.0 as u32, Some(&mut pp), Some(&mut ev));
+    if lock.is_invalid() {
+        return;
+    }
+    let path = |k: usize| {
+        let p = if pp.is_null() { std::ptr::null_mut() } else { *pp.add(k) };
+        let mut buf = vec![0u16; 32768];
+        if p.is_null() || !SHGetPathFromIDListEx(p, &mut buf, GPFIDL_DEFAULT).as_bool() {
+            return String::new();
+        }
+        String::from_utf16_lossy(&buf[..buf.iter().position(|&c| c == 0).unwrap_or(0)])
+    };
+    let change = if ev as u32 & SHCNE_RENAMEFOLDER.0 != 0 {
+        let (old, new) = (path(0), path(1));
+        // a new name that cannot be read (or one inside the Recycle Bin) counts as a removal: shell_tick still checks
+        // that the pane's folder is really gone before it moves.
+        if new.is_empty() || in_bin(&new) { Change::Removed(old) } else { Change::Renamed(old, new) }
+    } else if ev as u32 & SHCNE_RMDIR.0 != 0 {
+        Change::Removed(path(0))
+    } else {
+        Change::Removed(String::new())
+    };
+    _ = SHChangeNotification_Unlock(lock);
+    let old = match &change {
+        Change::Renamed(o, _) | Change::Removed(o) => o.clone(),
+    };
+    if old.len() < 4 || !is_fs(&old) {
+        return;
+    }
+    let start = app(|a| {
+        let s = &a.s;
+        let ours = s.paths.iter().chain(s.tabs.iter().flatten()).chain(&s.recent).any(|p| under(p, &old).is_some());
+        let chained = a.shell_q.iter().any(|c| matches!(c, Change::Renamed(_, n) if under(n, &old).is_some() || under(&old, n).is_some()));
+        if !(ours || chained) || a.shell_q.len() >= 256 {
+            return false;
+        }
+        a.shell_q.push(change);
+        a.shell_q.len() == 1
+    });
+    if start {
+        SetTimer(Some(h), TIMER_SHELL, 300, None);
+    }
+}
+
+// TIMER_SHELL: renames that really happened move tabs and the recent list along, and panes open the new name
+// (on_nav confirms it and says so); a pane inside a removed folder opens its nearest parent (go_near).
+pub(crate) unsafe fn shell_tick(h: HWND) {
+    _ = KillTimer(Some(h), TIMER_SHELL);
+    let (changes, paths, tabs, recent) = app(|a| (std::mem::take(&mut a.shell_q), a.s.paths.clone(), a.s.tabs.clone(), a.s.recent.clone()));
+    if changes.is_empty() {
+        return;
+    }
+    let moved = |p: &String| match follow(p, &changes) {
+        Some(Follow::To(t)) if moved_on_disk(p, &t) => t,
+        _ => p.clone(),
+    };
+    let tabs: Vec<Vec<String>> = tabs.iter().map(|t| t.iter().map(moved).collect()).collect();
+    let mut recent: Vec<String> = recent.iter().map(moved).collect();
+    let mut seen: Vec<String> = Vec::new();
+    recent.retain(|p| {
+        let new = !seen.iter().any(|s| s.eq_ignore_ascii_case(p));
+        seen.push(p.clone());
+        new
+    });
+    let live = app(|a| {
+        a.s.recent = recent;
+        for (i, t) in tabs.into_iter().enumerate().take(a.s.tabs.len()) {
+            a.s.tabs[i] = t;
+        }
+        (0..MAXP).filter(|&i| a.panes[i].is_some()).collect::<Vec<_>>()
+    });
+    for i in live {
+        let p = &paths[i];
+        if is_fs(p) {
+            match follow(p, &changes) {
+                Some(Follow::To(t)) if moved_on_disk(p, &t) => _ = browse_marked(i, &t, p, true),
+                Some(Follow::Gone) if fixed_drive(p) && missing(p) => {
+                    if !go_near(i, p) {
+                        app(|a| {
+                            if a.s.paths[i].is_empty() {
+                                a.s.paths[i] = p.clone(); // no parent opened: the pane keeps its folder
+                            }
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+        if tabs_on() {
+            repaint_tabs(i);
+        }
+    }
+}
+
+// "Followed renamed folder: name" for 5 s.
+pub(crate) fn follow_note(a: &mut App, disp: &str) {
+    let leaf = disp.trim_end_matches('\\').rsplit('\\').next().unwrap_or(disp);
+    let text = if KO.load(Ordering::Relaxed) { format!("폴더 이름이 바뀌어 따라감: {leaf}") } else { format!("Followed renamed folder: {leaf}") };
+    a.note = Some((text, Instant::now() + Duration::from_secs(5)));
+    a.lost = 0;
+}
+
+// Pending / Failed events of a pane with a recovery or a rename follow waiting; Complete goes through on_nav.
 pub(crate) unsafe fn rec_event(i: usize, ev: Nav, pidl: *const ITEMIDLIST) {
-    if app(|a| a.panes[i].as_ref().is_some_and(|p| p.recover.is_some())) {
+    if app(|a| a.panes[i].as_ref().is_some_and(|p| p.recover.is_some() || p.follow.is_some())) {
         let path = name(pidl, SIGDN_DESKTOPABSOLUTEPARSING);
-        app(|a| a.panes[i].as_mut().map(|p| rec_step(&mut p.recover, ev, &path)));
+        app(|a| {
+            a.panes[i].as_mut().map(|p| {
+                rec_step(&mut p.recover, ev, &path);
+                rec_step(&mut p.follow, ev, &path)
+            })
+        });
     }
 }
 
@@ -835,7 +1053,13 @@ pub(crate) unsafe fn on_nav(i: usize, pidl: *const ITEMIDLIST) {
     let Some((h, eb, view, cols, ticket)) = app(|a| {
         let fs = is_fs(&parse);
         let old = std::mem::replace(&mut a.s.paths[i], parse.clone());
-        visit(&mut a.s.recent, &old, &a.s.paths[i]);
+        // a followed rename is no visit: its old name no longer exists (shell_tick fixed the recent list)
+        let followed = a.panes[i].as_mut().and_then(|p| rec_step(&mut p.follow, Nav::Complete, &parse)).is_some();
+        if followed {
+            follow_note(a, &disp);
+        } else {
+            visit(&mut a.s.recent, &old, &a.s.paths[i]);
+        }
         if let Some(m) = a.panes[i].as_mut().and_then(|p| rec_step(&mut p.recover, Nav::Complete, &parse)) {
             gone_note(a, &m, &disp); // update_status shows it
         }
