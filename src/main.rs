@@ -699,6 +699,38 @@ mod tests {
         assert!(!is_rel(r"C:\") && !is_rel(r"\\srv\s") && !is_rel("shell:Downloads") && !is_rel("::{GUID}"));
     }
 
+    // Repro: a bare command typed in the address bar must never run a same-named file planted in the pane's folder.
+    // A cmd.bat that leaves hit.txt sits in the folder; the address bar's launch of "cmd /c exit" there must not run it.
+    #[test]
+    fn addr_command_ignores_planted_file() {
+        use windows::Win32::System::Threading::WaitForSingleObject;
+        let d = std::env::temp_dir().join(format!("grids-plant-{}", std::process::id()));
+        _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("cmd.bat"), "@echo planted> \"%~dp0hit.txt\"\r\n").unwrap();
+        let dir = HSTRING::from(d.as_os_str());
+        let (prog, args) = (HSTRING::from(addr_program("cmd", Some(&d.to_string_lossy()))), HSTRING::from("/c exit"));
+        let mut sei = SHELLEXECUTEINFOW {
+            cbSize: size_of::<SHELLEXECUTEINFOW>() as u32,
+            fMask: SEE_MASK_FLAG_NO_UI | SEE_MASK_NOCLOSEPROCESS,
+            lpFile: PCWSTR(prog.as_ptr()),
+            lpParameters: PCWSTR(args.as_ptr()),
+            lpDirectory: PCWSTR(dir.as_ptr()),
+            nShow: SW_HIDE.0,
+            ..Default::default()
+        };
+        unsafe {
+            ShellExecuteExW(&mut sei).unwrap();
+            if !sei.hProcess.is_invalid() {
+                WaitForSingleObject(sei.hProcess, 10_000);
+                _ = CloseHandle(sei.hProcess);
+            }
+        }
+        let hit = d.join("hit.txt").exists();
+        _ = std::fs::remove_dir_all(&d);
+        assert!(!hit, "the planted cmd.bat in the pane's folder ran");
+    }
+
     #[test]
     fn paste() {
         let v = |s: &[&str]| s.iter().map(|s| s.to_string()).collect::<Vec<_>>();

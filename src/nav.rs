@@ -204,6 +204,11 @@ pub(crate) fn addr_parts(raw: &str) -> Option<(Option<&str>, Option<(&str, &str)
     Some((path, cmd.filter(|(prog, _)| !prog.is_empty())))
 }
 
+/// What the address bar hands ShellExecuteEx for a typed command.
+pub(crate) fn addr_program(prog: &str, _cur: Option<&str>) -> String {
+    prog.to_string()
+}
+
 pub(crate) fn is_rel(p: &str) -> bool {
     !p.contains(':') && !p.starts_with(['\\', '/'])
 }
@@ -257,7 +262,7 @@ pub(crate) unsafe fn go_edit(i: usize) {
         // wt opens in its own default folder unless told; lpDirectory makes `.` this pane's
         let wt = prog.eq_ignore_ascii_case("wt") || prog.eq_ignore_ascii_case("wt.exe");
         let args = if wt && args.is_empty() && cur.is_some() { "-d ." } else { args };
-        let (prog, args) = (HSTRING::from(prog), HSTRING::from(args));
+        let (prog, args) = (HSTRING::from(addr_program(prog, cur.as_deref())), HSTRING::from(args));
         run(SHELLEXECUTEINFOW { fMask: SEE_MASK_FLAG_NO_UI, lpFile: PCWSTR(prog.as_ptr()), lpParameters: PCWSTR(args.as_ptr()), ..Default::default() }).then_some(false)
     };
     match done {
