@@ -1554,15 +1554,16 @@ mod tests {
                         (w.min(max_w), lines * lh)
                     }
                 };
-                for text in [KEYS_EN, KEYS_KO] {
-                    let g = keys_layout(&key_rows(text), dip * dpi / 96, dpi, &measure);
+                for (text, stacked) in [KEYS_EN, KEYS_KO].into_iter().flat_map(|t| [(t, false), (t, true)]) {
+                    let g = keys_layout(&key_rows(text), dip * dpi / 96, dpi, stacked, &measure);
                     let (pad, gap) = (KEYS_PAD * dpi / 96, 16 * dpi / 96);
                     let mut prev = 0;
                     for r in &g.rows {
                         assert!(r.row.top >= prev, "rows overlap at {dpi} dpi, {dip} dip");
                         for k in &r.keys {
-                            // key column: from the padding to a gap before the description
-                            assert!(k.left >= pad && k.right + gap <= r.desc.left && k.bottom <= r.row.bottom);
+                            // key column: from the padding to a gap before the description, or (stacked) above it
+                            let clear = if stacked { k.bottom <= r.desc.top } else { k.right + gap <= r.desc.left };
+                            assert!(k.left >= pad && k.right <= dip * dpi / 96 - pad && clear && k.bottom <= r.row.bottom);
                         }
                         let cap_lines = r.keys.iter().map(|k| k.bottom).max().unwrap() - r.row.top;
                         assert!(r.row.bottom - r.row.top >= cap_lines.max(r.desc.bottom - r.desc.top));
@@ -1570,9 +1571,33 @@ mod tests {
                         prev = r.row.bottom;
                     }
                     assert!(prev <= g.h && g.titles[1].top > g.titles[0].bottom);
+                    // list items: back to back from 0 to the bottom, each holding its row (and a section's title)
+                    let bands = keys_bands(&g, dpi);
+                    assert_eq!(bands.len(), g.rows.len());
+                    let mut end = 0;
+                    for (i, (b, r)) in bands.iter().zip(&g.rows).enumerate() {
+                        assert!(b.0 == end && b.0 <= r.row.top && r.row.bottom <= b.1, "item {i} at {dpi} dpi, {dip} dip");
+                        if i == 0 || g.rows[i - 1].sec != r.sec {
+                            assert!(b.0 <= g.titles[r.sec].top);
+                        }
+                        end = b.1;
+                    }
+                    assert_eq!(end, g.h);
                 }
             }
         }
+        // what a screen reader hears: one item per drawn row, a section's name before its first
+        for text in [KEYS_EN, KEYS_KO] {
+            let items = key_items(text, ["Keyboard", "Mouse"]);
+            let rows = key_rows(text);
+            assert_eq!(items.len(), rows[0].len() + rows[1].len());
+            assert_eq!(items[0], "Keyboard. Ctrl+Tab / Ctrl+Shift+Tab: ".to_string() + &rows[0][0].desc);
+            assert!(items[1].starts_with("Ctrl+1"));
+            assert!(items[rows[0].len()].starts_with("Mouse. "));
+            assert!(items.iter().all(|t| !t.contains('\n') && !t.contains('\t')));
+        }
+        // a mouse line without ": " continues the one above
+        assert_eq!(key_items("A\ta\n\nB: b\nmore", ["K", "M"]), ["K. A: a", "M. B: b more"]);
     }
 
     #[test]

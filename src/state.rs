@@ -53,7 +53,6 @@ pub(crate) struct App {
     pub(crate) fav_press: Option<FavPress>,    // mouse press / drag in the list
     pub(crate) keys_popup: HWND, // keyboard shortcuts window while open
     pub(crate) keys_prev: HWND,  // focus before it opened; Esc / ✕ / Ctrl+/ go back there
-    pub(crate) keys_scroll: i32,
     pub(crate) cards: Vec<(PathBuf, Session, String)>,
     pub(crate) hover: HWND, // owner-drawn button under the mouse
     pub(crate) tip: HWND,
@@ -135,7 +134,6 @@ thread_local! {
         fav_press: None,
         keys_popup: HWND::default(),
         keys_prev: HWND::default(),
-        keys_scroll: 0,
         cards: Vec::new(),
         hover: HWND::default(),
         tip: HWND::default(),

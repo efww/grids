@@ -58,7 +58,7 @@ unsafe fn name_fields(h: HWND, i: usize) {
 
 // The name a screen reader reads for a control (Dynamic Annotation); None takes it off before the window goes.
 // Failing only loses the name.
-unsafe fn a11y_name(h: HWND, name: Option<&str>) {
+pub(crate) unsafe fn a11y_name(h: HWND, name: Option<&str>) {
     let Ok(acc) = CoCreateInstance::<_, IAccPropServices>(&CLSID_AccPropServices, None, CLSCTX_INPROC_SERVER) else { return };
     _ = match name {
         Some(n) => acc.SetHwndPropStr(h, OBJID_CLIENT.0 as u32, CHILDID_SELF, PROPID_ACC_NAME, &HSTRING::from(n)),

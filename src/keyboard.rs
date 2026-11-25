@@ -25,6 +25,21 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
         }
         return true;
     }
+    // the shortcut list: Esc and Ctrl+/ close it (focus goes back), every other key is the list's (no pane shortcuts behind it)
+    let keys = app(|a| a.keys_popup);
+    if !keys.0.is_null() && (m.hwnd == keys || IsChild(keys, m.hwnd).as_bool()) {
+        match VIRTUAL_KEY(m.wParam.0 as u16) {
+            VK_ESCAPE => close_keys(),
+            // auto-repeat (bit 30) is swallowed: holding Ctrl+/ toggles once
+            VK_OEM_2 if ctrl && !shift && !alt => {
+                if m.lParam.0 & (1 << 30) == 0 {
+                    close_keys();
+                }
+            }
+            _ => return false,
+        }
+        return true;
+    }
     // Alt+↑/↓ in the favourites list reorders it, not the pane behind (Up / recent folders)
     let fav = app(|a| a.fav_popup);
     if !fav.0.is_null() && m.hwnd == fav && fav_step(VIRTUAL_KEY(m.wParam.0 as u16), ctrl, alt, shift).is_some() {
