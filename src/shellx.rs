@@ -184,7 +184,7 @@ unsafe fn windows_of(pid: u32) -> Vec<HWND> {
 
 // TaskDialogIndirect only exists in common controls v6 (our manifest): looked up at run time so a
 // binary without the manifest (the unit tests) still loads.
-unsafe fn task_dialog(cfg: &TASKDIALOGCONFIG) -> Option<(i32, i32)> {
+pub(crate) unsafe fn task_dialog(cfg: &TASKDIALOGCONFIG) -> Option<(i32, i32)> {
     type Tdi = unsafe extern "system" fn(*const TASKDIALOGCONFIG, *mut i32, *mut i32, *mut BOOL) -> HRESULT;
     let f = GetProcAddress(LoadLibraryW(w!("comctl32.dll")).ok()?, s!("TaskDialogIndirect"))?;
     let (mut btn, mut radio) = (0, 0);
@@ -367,10 +367,20 @@ unsafe fn run_winmerge(exe: &str, left: &str, right: &str) {
 
 // Adds "Which program is using this?" and, with WinMerge found, "Compare with WinMerge" to the ⇄ menu.
 // others: (pane, menu label, folder it showed). Returns the WinMerge exe for shell_pick.
-pub(crate) unsafe fn shell_menu(menu: HMENU, src: usize, picked: &std::result::Result<Vec<String>, Pick>, others: &[(usize, HSTRING, String)]) -> Option<String> {
+// all_files: the selection is up to HASH_MAX items, none of them a folder (checksum menu item).
+pub(crate) unsafe fn shell_menu(menu: HMENU, src: usize, picked: &std::result::Result<Vec<String>, Pick>, all_files: bool, others: &[(usize, HSTRING, String)]) -> Option<String> {
     _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
     let flags = if picked.is_ok() { MF_STRING } else { MF_STRING | MF_GRAYED };
     _ = AppendMenuW(menu, flags, ID_INUSE, &HSTRING::from(tr("Which program is using this?", "어떤 프로그램이 쓰고 있나요?")));
+    // SHA-256: up to HASH_MAX picked files, no folders; while one runs, the same place stops it
+    let (flags, label) = match hash_busy() {
+        Some(pct) => (MF_STRING, tr("Stop the checksum ({p}%)", "체크섬 계산 중지 ({p}%)").replace("{p}", &pct.to_string())),
+        None => {
+            let ok = all_files && picked.as_ref().is_ok_and(|p| p.len() <= HASH_MAX);
+            (if ok { MF_STRING } else { MF_STRING | MF_GRAYED },tr("Checksum (SHA-256) of the selected files", "선택한 파일의 체크섬(SHA-256)").to_string())
+        }
+    };
+    _ = AppendMenuW(menu, flags, ID_HASH, &HSTRING::from(label));
     let exe = winmerge_exe()?;
     match picked {
         Ok(two) if two.len() == 2 => {
@@ -392,12 +402,13 @@ pub(crate) unsafe fn shell_menu(menu: HMENU, src: usize, picked: &std::result::R
 }
 
 pub(crate) fn is_shell_pick(p: usize) -> bool {
-    p == ID_INUSE || p == ID_WM_PAIR || (ID_WM_PANE..ID_WM_PANE + MAXP).contains(&p)
+    p == ID_INUSE || p == ID_WM_PAIR || p == ID_HASH || (ID_WM_PANE..ID_WM_PANE + MAXP).contains(&p)
 }
 
 pub(crate) unsafe fn shell_pick(h: HWND, src: usize, p: usize, picked: std::result::Result<Vec<String>, Pick>, exe: Option<String>, others: &[(usize, HSTRING, String)]) {
     match (p, picked, exe) {
         (ID_INUSE, Ok(paths), _) => _ = who_uses(h, &paths),
+        (ID_HASH, picked, _) => hash_pick(h, picked),
         (ID_WM_PAIR, Ok(two), Some(exe)) if two.len() == 2 => run_winmerge(&exe, &two[0], &two[1]),
         (p, _, Some(exe)) if p >= ID_WM_PANE => {
             // only the folder the menu showed for that pane
@@ -455,6 +466,6 @@ mod tests {
         assert_eq!(quote_arg(r#"a\"b"#), r#""a\\\"b""#);
         assert_eq!(winmerge_args(r"C:\", r"D:\x y", true), r#"/e /u /r "C:\\" "D:\x y""#);
         assert_eq!(winmerge_args("a.txt", "b.txt", false), r#"/e /u "a.txt" "b.txt""#);
-        assert!(is_shell_pick(ID_INUSE) && is_shell_pick(ID_WM_PANE + 15) && !is_shell_pick(ID_WM_PANE + 16) && !is_shell_pick(301));
+        assert!(is_shell_pick(ID_INUSE) && is_shell_pick(ID_HASH) && is_shell_pick(ID_WM_PANE + 15) && !is_shell_pick(ID_WM_PANE + 16) && !is_shell_pick(301));
     }
 }

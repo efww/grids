@@ -363,6 +363,12 @@ pub(crate) unsafe fn open_in_menu(h: HWND, src: usize) {
     let arr = view_of::<IFolderView2>(src).and_then(|fv| fv.GetSelection(false).ok());
     let count = arr.as_ref().and_then(|a| a.GetCount().ok()).unwrap_or(0);
     let picked = collect_all(count, |k| unsafe { arr.as_ref()?.GetItemAt(k).ok()?.GetDisplayName(SIGDN_FILESYSPATH).ok().map(|p| pwstr(p)) });
+    // checksum: only a selection of files (ZIPs count as files), judged from the attributes the view already holds
+    let all_files = picked.as_ref().is_ok_and(|p| p.len() <= HASH_MAX)
+        && (0..count).all(|k| unsafe {
+            let attr = arr.as_ref().and_then(|a| a.GetItemAt(k).ok()).and_then(|it| it.GetAttributes(SFGAO_FLAGS(SFGAO_FOLDER.0 | SFGAO_STREAM.0)).ok());
+            attr.is_some_and(|f| !real_folder(f.0))
+        });
     let Ok(menu) = CreatePopupMenu() else { return };
     _ = AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, &HSTRING::from(tr("Open the selected folder (or this one) in:", "선택한 폴더(없으면 현재 폴더)를 열 패널:")));
     _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
@@ -404,7 +410,7 @@ pub(crate) unsafe fn open_in_menu(h: HWND, src: usize) {
         }
     }
     let others: Vec<(usize, HSTRING, String)> = items.iter().map(|(k, disp, path, t)| (*k, label(*k, *t, disp), path.clone())).collect();
-    let wm = shell_menu(menu, src, &picked, &others);
+    let wm = shell_menu(menu, src, &picked, all_files, &others);
     let mut rc = RECT::default();
     if let Some(b) = pane_ctl(src, ID_OPEN_IN) {
         _ = GetWindowRect(b, &mut rc);

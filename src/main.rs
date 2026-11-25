@@ -74,6 +74,7 @@ mod shellx;
 mod everything;
 mod update;
 mod star;
+mod hashsum;
 
 use ui_defs::*;
 // explicit, so it wins over the same name glob-imported from windows (a glob clash would turn match patterns into bindings)
@@ -106,6 +107,7 @@ use shellx::*;
 use everything::*;
 use update::*;
 use star::*;
+use hashsum::*;
 
 /// Let a drive with no disk (empty card reader slot, DVD drive, pulled USB stick) just fail the file call,
 /// instead of Windows' "No Disk" system box freezing the calling thread until it is answered.
