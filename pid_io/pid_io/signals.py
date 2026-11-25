@@ -148,7 +148,10 @@ def collect(page: fitz.Page, geom: PageGeom, syms, gap=4.5, max_steps=300):
             at_sys = any(math.dist(tip, far_end) < 9 or inside(tip, dest, pad=6) for c, tip in on_line)
             at_dev = any(math.dist(tip, start_pt) < 9 or inside(tip, src, pad=6) for c, tip in on_line)
             flow = "to_system" if at_sys and not at_dev else "to_device" if at_dev and not at_sys else "?"
-            r = {"type": kind, "to": dest.cls, "to_tag": f"{dest.func}-{dest.number}".strip("-"), "flow": flow}
+            step = max(1, len(pts) // 40)
+            r = {"type": kind, "to": dest.cls, "to_tag": f"{dest.func}-{dest.number}".strip("-"), "flow": flow,
+                 "path": [[round(x, 1), round(y, 1)] for x, y in pts[::step]] + [[round(far_end[0], 1), round(far_end[1], 1)]],
+                 "to_xy": [round(dest.cx, 1), round(dest.cy, 1), round(dest.radius, 1)]}
             same = next((x for x in results if x["to_tag"] == r["to_tag"] and x["type"] == r["type"]), None)
             if same is None:
                 results.append(r)

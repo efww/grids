@@ -183,6 +183,12 @@ def assign(symbols: list[Symbol], io_proto: dict, concept: Concept, notes: dict 
             status = "검토필요"
         elif verdict == "agree":
             inform.append("신호선 근거 일치 - " + why)
+            # an interlock link guessed through the actuator is confirmed when the
+            # drawn signal line reaches the same interlock
+            for x in list(inform):
+                if x.startswith("interlock link via actuator") and any(e["to_tag"] in x for e in s.line):
+                    inform.remove(x)
+                    inform.append("Interlock 연결 확인 (신호선)")
         row = Row(tag=s.tag, loop=loop, func=s.func, desc=rule.get("desc", ""), sid=s.sid, line=verdict,
                   system=SYSTEM_NAMES.get(system, system), io="-" if vendor_out else _io(main_io),
                   signal=rule.get("signal", ""), status=status, inform=inform,

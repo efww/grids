@@ -110,6 +110,11 @@ select{padding-right:26px}
 .ritem:hover{background:#f7faf8} .ritem.on{background:var(--green-l);border-left:3px solid var(--green)}
 .ritem .a{display:flex;justify-content:space-between;gap:8px}
 .ritem .b{font-size:12px;color:var(--sub);margin-top:3px}
+.thumb{width:92px;height:92px;flex:none;object-fit:contain;background:#fff;border:1px solid var(--line);cursor:zoom-in}
+#bigview{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:60}
+#bigview .bigbox{background:#fff;padding:14px;max-width:80vw;max-height:86vh;display:flex;flex-direction:column;gap:8px;border-top:4px solid var(--green)}
+#bigview img{max-width:76vw;max-height:76vh;object-fit:contain}
+#bigview .cap{font-size:12.5px;color:var(--sub);cursor:pointer}
 .toast{position:fixed;right:24px;bottom:24px;background:#111;color:#fff;padding:12px 18px;font-size:13.5px;z-index:50;display:none;max-width:420px}
 .toast.err{background:var(--red)}
 .hidden{display:none!important}
@@ -393,6 +398,7 @@ async function renderReview(m) {
   <div class="head"><div><div class="eyebrow">STEP 4</div><h1>검토</h1>
     <p class="lead">확인이 필요한 행만 모았습니다. 항목을 누르면 도면에서 위치를 보여줍니다.</p></div>
     <div style="display:flex;gap:8px;align-items:center"><select id="pg">${r.pages.map(p=>`<option value="${p.page}" ${p.page==S.page?"selected":""}>p${p.page} · ${esc(p.dwg)} ${esc(p.title||"")}</option>`).join("")}</select>
+      <button class="btn line" id="pkt" title="판단이 필요한 항목을 표시된 도면 조각과 질문 카드로 묶은 PDF">판단 요청서 PDF</button>
       <button class="btn" id="too">출력 →</button></div></div>
   <div style="display:flex;gap:16px;align-items:flex-start">
     <div style="flex:1.6;min-width:0"><div class="viewer" id="viewer"><img id="pimg" src="/api/${P("page/"+S.page)}" alt="도면"><div class="hl hidden" id="hl"></div></div>
@@ -400,10 +406,12 @@ async function renderReview(m) {
     <div style="flex:1;min-width:300px">
       <div id="aipanel"></div>
       <div style="margin-bottom:6px">${S.reason?`<span class="chip" data-r="" style="cursor:pointer;margin:0 6px 6px 0">전체 보기 ✕</span>`:""}${chips}</div>
-      <div class="rlist" id="rlist">${r.items.map((x,i)=>`<div class="ritem ${S.sel===i?"on":""}" data-i="${i}">
+      <div class="rlist" id="rlist">${r.items.map((x,i)=>`<div class="ritem ${S.sel===i?"on":""}" data-i="${i}" style="display:flex;gap:10px">
+        ${x.card?`<img class="thumb" loading="lazy" data-big="/api/${P("card?k="+encodeURIComponent(x.card))}" src="/api/${P("card?k="+encodeURIComponent(x.card))}" alt="">`:`<div class="thumb"></div>`}
+        <div style="flex:1;min-width:0">
         <div class="a"><b class="mono">${esc(x.tag)}</b><span>${x.reasons.map(t=>`<span class="chip ${/불일치/.test(t)?"r":/ESD/.test(t)?"r":/벤더/.test(t)?"p":/중복|대수|미분류/.test(t)?"y":""}">${esc(t)}</span>`).join(" ")}</span></div>
         <div class="b">${esc(x.desc)} · ${esc(x.system)} ${esc(x.io)} · ${esc(x.dwg)} p${x.page||"-"} · <span style="color:${ORIGIN_COLOR[x.origin]||"#999"}">${esc(x.origin)}</span></div>
-        ${x.inform?`<div class="b" style="color:#444">${esc(x.inform)}</div>`:""}</div>`).join("") || `<div class="empty">검토할 항목이 없습니다.</div>`}
+        ${x.inform?`<div class="b" style="color:#444">${esc(x.inform)}</div>`:""}</div></div>`).join("") || `<div class="empty">검토할 항목이 없습니다.</div>`}
       </div>
       <p class="lead" style="font-size:12px;margin-top:6px">${fmt(r.total)}건${r.total>r.items.length?` 중 ${r.items.length}건 표시`:""}</p>
     </div>
@@ -414,6 +422,10 @@ async function renderReview(m) {
   m.querySelectorAll("[data-r]").forEach(c => c.onclick = () => { S.reason = c.dataset.r; S.sel = null; renderReview(m); });
   $("#pg").onchange = e => { S.page = +e.target.value; S.sel = null; renderReview(m); };
   $("#too").onclick = () => go("output");
+  $("#pkt").onclick = async () => { const b=$("#pkt"); b.disabled=true; b.textContent="만드는 중…";
+    try { const res = await post(P("packet")); toast(`판단 요청서 ${res.count}건 생성 → 출력 화면에서 받기`); }
+    catch(e) { toast(e.message, true); } b.disabled=false; b.textContent="판단 요청서 PDF"; };
+  m.querySelectorAll("img.thumb").forEach(im => im.onclick = (ev) => { ev.stopPropagation(); showBig(im.dataset.big); });
   m.querySelectorAll(".ritem").forEach(el => el.onclick = () => {
     const x = r.items[+el.dataset.i]; S.sel = +el.dataset.i;
     if (x.page && x.page !== S.page) { S.page = x.page; renderReview(m).then(() => focusItem(x)); }
@@ -522,6 +534,13 @@ async function renderAISettings(m) {
     return {provider:document.querySelector("input[name=prov]:checked").value, command:cmd, model:$("#model").value.trim(), timeout:+$("#tmo").value||300, stdin:$("#stdin").checked}; };
   $("#save").onclick = async () => { try { await post("ai/settings", collect()); toast("저장했습니다"); } catch(e) { toast(e.message, true); } };
   $("#test").onclick = async () => { try { await post("ai/settings", collect()); $("#tres").textContent = "테스트 중…"; const r = await post("ai/test"); $("#tres").textContent = (r.ok?"✓ 연결됨\n":"응답은 왔지만 형식이 다릅니다\n") + r.answer; } catch(e) { $("#tres").textContent = "✕ " + e.message; } };
+}
+function showBig(src) {
+  let o = $("#bigview");
+  if (!o) { o = document.createElement("div"); o.id = "bigview"; document.body.appendChild(o);
+    o.onclick = () => o.style.display = "none"; }
+  o.innerHTML = `<div class="bigbox"><img src="${src}"><div class="cap">빨강: 판단 대상 · 주황: 따라간 신호선 · 파랑: 신호선 도착 심볼 · 보라: 벤더 경계 <span style="float:right">닫기 ✕</span></div></div>`;
+  o.style.display = "flex";
 }
 function focusItem(x) {
   const img = $("#pimg"), hl = $("#hl"), v = $("#viewer");

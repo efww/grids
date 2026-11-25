@@ -300,14 +300,15 @@ def review_view(name: str, q: dict):
             tags = ["파생/가정 행"] if r.derived else ["도형 일치도 낮음"]
         for t in tags:
             counts[t] = counts.get(t, 0) + 1
-        items.append({"tag": r.tag, "desc": r.desc, "system": r.system, "io": r.io, "status": r.status,
+        items.append({"card": r.sid or (f"p{r.page}_{r.coord}" if r.page and r.coord else ""),
+                      "tag": r.tag, "desc": r.desc, "system": r.system, "io": r.io, "status": r.status,
                       "origin": r.origin, "dwg": r.dwg, "page": r.page, "coord": r.coord, "vendor": r.vendor_pkg,
                       "inform": text, "basis": r.basis, "reasons": tags})
     ov = overrides(name)["symbols"]
     for s in syms:
         if s.role == "candidate" and s.sid not in ov:
             counts["미인식 후보"] = counts.get("미인식 후보", 0) + 1
-            items.append({"tag": f"{s.func}-{s.number}", "desc": "규칙에 맞지 않은 태그 모양 글자", "system": "?", "io": "-",
+            items.append({"card": s.sid, "tag": f"{s.func}-{s.number}", "desc": "규칙에 맞지 않은 태그 모양 글자", "system": "?", "io": "-",
                           "status": "불명", "origin": "도면인식", "dwg": s.dwg, "page": s.page,
                           "coord": f"{round(s.cx)},{round(s.cy)}", "vendor": s.vendor, "inform": "; ".join(s.notes),
                           "basis": "", "reasons": ["미인식 후보"]})
@@ -347,6 +348,39 @@ def page_png(name: str, page: int) -> Path:
         sh.commit()
     pg.get_pixmap(dpi=60).save(out)
     return out
+
+
+def card_png(name: str, key: str) -> Path:
+    """Marked-up crop for one review item. key = symbol id, or 'p<page>_<x>,<y>'."""
+    import hashlib
+    from ..markup import crop
+    d = pdir(name)
+    out = d / "cache" / "cards" / (hashlib.md5(key.encode()).hexdigest()[:16] + ".png")
+    if out.exists():
+        return out
+    out.parent.mkdir(parents=True, exist_ok=True)
+    ex = extracted(name)
+    sym = next((s for s in ex[1] if s.sid == key), None) if ex else None
+    if sym:
+        page, cx, cy, r = sym.page, sym.cx, sym.cy, sym.radius
+    else:
+        pg, xy = key[1:].split("_", 1)
+        page, (cx, cy), r = int(pg), map(float, xy.split(",")), 18
+    c = CACHE.setdefault(name, {}).setdefault("regions", {})
+    pdf = d / "input" / meta(name)["files"]["pdf"]
+    if page not in c:
+        from ..boundary import find_regions, legend_width
+        doc = fitz.open(pdf)
+        c[page] = find_regions(doc[page - 1], legend_width(doc))
+    return crop(pdf, page, cx, cy, out, sym=sym, radius=r, regions=c[page])
+
+
+def packet(name: str):
+    from ..review_packet import build
+    r = review_view(name, {})
+    out = pdir(name) / "output" / f"판단요청서_{safe_name(name)}_{time.strftime('%Y%m%d_%H%M')}.pdf"
+    n = build(r["items"], out, name, lambda it: card_png(name, it["card"]))
+    return {"files": [out.name], "count": n}
 
 
 def export(name: str, body: dict):
@@ -528,6 +562,14 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, m["scenarios"])
             if act == "review":
                 return self._send(200, review_view(name, q))
+            if act == "card":
+                key = q.get("k", [""])[0]
+                if not key:
+                    return self._send(404, {"error": "no key"})
+                return self._send(200, card_png(name, key).read_bytes(), "image/png",
+                                  {"Cache-Control": "max-age=3600"})
+            if act == "packet" and method == "POST":
+                return self._send(200, packet(name))
             if act == "page":
                 f = page_png(name, int(parts[4]))
                 return self._send(200, f.read_bytes(), "image/png")

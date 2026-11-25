@@ -95,7 +95,8 @@ def build_symbols(pdf: Path, syms, rules_unknown, crop_dir: Path, limit=40):
     for k, (s, why) in enumerate(items, 1):
         page = doc[s.page - 1]
         img = crop_dir / f"{k:02d}_{s.dwg}_{s.func}-{s.number}.png"
-        crop(page, s.cx, s.cy, img)
+        from ..markup import crop as mark_crop          # red box on the item, traced line if any
+        mark_crop(pdf, s.page, s.cx, s.cy, img, sym=s, radius=s.radius)
         files.append(img)
         f = s.feats or {}
         lines.append(json.dumps({
@@ -110,7 +111,8 @@ Classes:
 {CLASS_HELP}
 
 "outline" = share (0..1) of a circle / square / diamond / midline found around the tag text.
-Images (if you can see them) are crops centred on each item, file names given in "image".
+Images (if you can see them) are crops around each item, file names given in "image": the item is in a
+RED box, a traced signal line is ORANGE, the symbol that line reaches is in a BLUE box.
 
 Items (one JSON per line):
 {chr(10).join(lines)}
