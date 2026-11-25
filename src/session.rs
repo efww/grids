@@ -706,6 +706,85 @@ pub(crate) fn short_name(path: &str) -> String {
     t.rsplit('\\').next().filter(|x| !x.starts_with("::")).unwrap_or(t).to_string()
 }
 
+// Shell places the folder tree opens, whose whole parsing name is "::{GUID}": (GUID, English, Korean).
+const PLACES: [(&str, &str, &str); 8] = [
+    ("645FF040-5081-101B-9F08-00AA002F954E", "Recycle Bin", "휴지통"),
+    ("F02C1A0D-BE21-4350-88B0-7367FC96EF3C", "Network", "네트워크"),
+    (CONTROL_PANEL, "Control Panel", "제어판"),
+    ("21EC2020-3AEA-1069-A2DD-08002B30309D", "Control Panel", "제어판"),
+    (LIBRARIES, "Libraries", "라이브러리"),
+    ("F874310E-B6B7-47DC-BC84-B9E6B38F5934", "Home", "홈"),
+    ("679F85CB-0220-4080-B29B-5540CC05AAB6", "Quick access", "빠른 액세스"),
+    ("E88865EA-0E1C-4E20-9AA6-EDCD0212C87C", "Gallery", "갤러리"),
+];
+const CONTROL_PANEL: &str = "26EE0668-A00A-44D7-9371-BEB064C98683";
+const LIBRARIES: &str = "031E4825-7B94-4DC3-B131-E946B44C8DD5";
+const LIBRARY_NAMES: [(&str, &str); 4] = [("Documents", "문서"), ("Music", "음악"), ("Pictures", "사진"), ("Videos", "동영상")];
+
+/// A tab's or session card's label: a shell place by its name instead of "::{GUID}" text, else short_name.
+pub(crate) fn place_label(path: &str) -> String {
+    shell_place(path, KO.load(Ordering::Relaxed)).unwrap_or_else(|| short_name(path))
+}
+
+/// The name of a shell place in one of the exact parsing-name forms Windows gives; None for anything else
+/// (folders, UNC, unknown GUIDs, searches without a term), which keeps short_name's label.
+pub(crate) fn shell_place(path: &str, ko: bool) -> Option<String> {
+    let pick = |en: &str, k: &str| if ko { k } else { en }.to_string();
+    if path.len() > 10 && path.is_char_boundary(10) && path[..10].eq_ignore_ascii_case("search-ms:") {
+        return search_term(&path[10..]).map(|t| format!("{}: {t}", pick("Search", "검색")));
+    }
+    let (head, tail) = path.split_once('\\').unwrap_or((path, ""));
+    let guid = head.strip_prefix("::{")?.strip_suffix('}')?;
+    let &(id, en, k) = PLACES.iter().find(|p| p.0.eq_ignore_ascii_case(guid))?;
+    match tail {
+        "" => Some(pick(en, k)),
+        // Control Panel's category view: "::{26EE0668-…}\0"
+        "0" if id == CONTROL_PANEL => Some(pick(en, k)),
+        // one library: "::{031E4825-…}\Documents.library-ms"
+        t if id == LIBRARIES && !t.contains('\\') && t.len() > 11 && t.is_char_boundary(t.len() - 11)
+            && t[t.len() - 11..].eq_ignore_ascii_case(".library-ms") =>
+        {
+            let stem = &t[..t.len() - 11];
+            let known = LIBRARY_NAMES.iter().find(|l| l.0.eq_ignore_ascii_case(stem));
+            Some(known.map_or_else(|| stem.to_string(), |l| pick(l.0, l.1)))
+        }
+        _ => None,
+    }
+}
+
+// The words searched for in a search-ms query ("query=" or a System.Generic.String crumb), percent-decoded;
+// a term that isn't valid UTF-8 once decoded ("%FF") is skipped rather than shown as "�".
+fn search_term(q: &str) -> Option<String> {
+    let decode = |s: &str| {
+        let (b, mut out, mut i) = (s.as_bytes(), Vec::new(), 0);
+        while i < b.len() {
+            let hex = s.get(i + 1..i + 3).and_then(|h| u8::from_str_radix(h, 16).ok());
+            match hex {
+                Some(v) if b[i] == b'%' => {
+                    out.push(v);
+                    i += 3;
+                }
+                _ => {
+                    out.push(b[i]);
+                    i += 1;
+                }
+            }
+        }
+        String::from_utf8(out).ok()
+    };
+    q.split('&').find_map(|kv| {
+        let (k, v) = kv.split_once('=')?;
+        let v = decode(v)?;
+        let t = match k.to_ascii_lowercase().as_str() {
+            "query" => v,
+            "crumb" => v.strip_prefix("System.Generic.String:")?.to_string(),
+            _ => return None,
+        };
+        let t = t.trim();
+        (!t.is_empty()).then(|| t.to_string())
+    })
+}
+
 // Title bar, taskbar and Alt+Tab follow the active pane's folder.
 pub(crate) fn window_title(disp: &str) -> String {
     if disp.is_empty() { "Grids".into() } else { format!("{} - Grids", short_name(disp)) }

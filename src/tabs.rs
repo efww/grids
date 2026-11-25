@@ -182,7 +182,7 @@ pub(crate) unsafe fn paint_tabs(dc: HDC, pg: &PaneGeo, tabs: &[String], cur: usi
     let (rects, plus) = tab_rects(pg.tabs, tabs.len(), dpi);
     for (k, (r, path)) in rects.iter().zip(tabs).enumerate() {
         let on = k == cur;
-        let name = match short_name(path) {
+        let name = match place_label(path) {
             n if n.is_empty() => "…".to_string(),
             n => n,
         };

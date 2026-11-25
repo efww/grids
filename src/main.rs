@@ -958,6 +958,41 @@ mod tests {
         assert!(f.is_fav(r"c:\work") && !f.is_fav(r"C:\Work\x") && !f.is_fav(""));
         assert!(!f.snapshot().contains("fav="));
         assert_eq!((short_name(r"C:\Users\x\"), short_name("C:\\"), short_name(THIS_PC)), ("x".into(), "C:".into(), "This PC".into()));
+    }
+
+    #[test]
+    fn shell_place_names() {
+        let lib = "::{031E4825-7B94-4DC3-B131-E946B44C8DD5}";
+        for (path, en, ko) in [
+            ("::{645FF040-5081-101B-9F08-00AA002F954E}", "Recycle Bin", "휴지통"),
+            ("::{f02c1a0d-be21-4350-88b0-7367fc96ef3c}", "Network", "네트워크"),
+            (r"::{26EE0668-A00A-44D7-9371-BEB064C98683}\0", "Control Panel", "제어판"),
+            ("::{21EC2020-3AEA-1069-A2DD-08002B30309D}", "Control Panel", "제어판"),
+            (lib, "Libraries", "라이브러리"),
+            (&format!(r"{lib}\Documents.library-ms"), "Documents", "문서"),
+            (&format!(r"{lib}\Work.LIBRARY-MS"), "Work", "Work"),
+            ("::{f874310e-b6b7-47dc-bc84-b9e6b38f5934}", "Home", "홈"),
+            ("::{679f85cb-0220-4080-b29b-5540cc05aab6}", "Quick access", "빠른 액세스"),
+            ("::{e88865ea-0e1c-4e20-9aa6-edcd0212c87c}", "Gallery", "갤러리"),
+            ("search-ms:query=x", "Search: x", "검색: x"),
+            ("search-ms:displayname=Search%20Results&crumb=System.Generic.String%3A%EB%B3%B4%EA%B3%A0%20%EC%84%9C&crumb=location:C%3A%5Cx", "Search: 보고 서", "검색: 보고 서"),
+        ] {
+            assert_eq!(shell_place(path, false).as_deref(), Some(en), "{path}");
+            assert_eq!(shell_place(path, true).as_deref(), Some(ko), "{path}");
+        }
+        // folders, UNC, This PC, unknown GUIDs, other library forms and searches without a term keep short_name's label
+        let unknown = "::{11111111-2222-3333-4444-555555555555}";
+        for (path, label) in [
+            (r"C:\Users\x\", "x"), ("C:\\", "C:"), (r"\\srv\share", "share"), (THIS_PC, "This PC"),
+            (r"C:\Libraries\Documents.library-ms", "Documents.library-ms"), (unknown, unknown),
+            (r"::{645FF040-5081-101B-9F08-00AA002F954E}\0", "0"), (&format!(r"{lib}\a.library-ms\b"), "b"),
+            (r"::{26EE0668-A00A-44D7-9371-BEB064C98683}\123", "123"), ("search-ms:query=%FF", "search-ms:query=%FF"),
+            ("search-ms:displayname=Found&crumb=location:C%3A%5Cx", "search-ms:displayname=Found&crumb=location:C%3A%5Cx"),
+        ] {
+            assert_eq!(shell_place(path, false), None, "{path}");
+            assert_eq!(place_label(path), short_name(path), "{path}");
+            assert_eq!(short_name(path), label, "{path}");
+        }
 
         // cells tile the length exactly, with `gap` between neighbours
         let c = cells(10, 305, &[0.25, 0.25, 0.5], 5);

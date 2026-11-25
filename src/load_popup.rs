@@ -65,7 +65,7 @@ pub(crate) unsafe fn draw_thumb(dc: HDC, r: RECT, s: &Session, font: HFONT) {
             frame(dc, pane, 1, pal().line);
             if x1 - x0 > 24 && y1 - y0 > 12 {
                 let inner = RECT { left: x0 + 3, right: x1 - 3, ..pane };
-                text(dc, inner, &short_name(&s.paths[i]), font, pal().sub, DT_CENTER);
+                text(dc, inner, &place_label(&s.paths[i]), font, pal().sub, DT_CENTER);
             }
             i += 1;
         }
