@@ -171,7 +171,8 @@ details summary::marker{color:var(--green)}
     <div class="st" data-s="concept"><i>3</i>개념 체크리스트</div>
     <div class="st" data-s="review"><i>4</i>검토</div>
     <div class="st" data-s="output"><i>5</i>출력</div>
-    <div class="st ext" data-s="cable"><i>6</i>케이블 · JB<span class="chip" style="margin-left:auto;font-size:10.5px;padding:0 6px">확장</span></div>
+    <div class="st ext" data-s="cable"><i>6</i>케이블<span class="chip" style="margin-left:auto;font-size:10.5px;padding:0 6px">확장</span></div>
+    <div class="st ext" data-s="jb"><i>7</i>JB<span class="chip" style="margin-left:auto;font-size:10.5px;padding:0 6px">확장</span></div>
     <div class="st" data-s="ai" style="margin-top:14px;border-top:1px solid var(--line-l)"><i>AI</i>AI 연결 설정</div>
     <div class="foot">도면 인식은 한 번,<br>체크리스트를 바꾸면 IO가<br>즉시 다시 계산됩니다.<br><br><span class="mono">IO 1점 = 인덱스 1행</span><br><br><span id="fontst"></span></div>
   </nav>
@@ -197,7 +198,7 @@ const post = (path, data) => api(path, {method:"POST", headers:{"Content-Type":"
 const P = p => `p/${encodeURIComponent(S.project)}/${p}`;
 function toast(msg, err) { const t=$("#toast"); t.textContent=msg; t.className="toast"+(err?" err":""); t.style.display="block"; clearTimeout(t._h); t._h=setTimeout(()=>t.style.display="none", err?6000:2500); }
 
-function go(screen) { S.tok++; S.screen = screen; if (screen === "cable") CK.data = null; $("#main").className = ""; render(); }
+function go(screen) { S.tok++; S.screen = screen; if (screen === "cable" || screen === "jb") CK.data = null; $("#main").className = ""; render(); }
 document.querySelectorAll("#nav .st").forEach(el => el.onclick = () => go(el.dataset.s));
 
 function navState() {
@@ -205,7 +206,7 @@ function navState() {
   document.querySelectorAll("#nav .st").forEach(el => {
     const s = el.dataset.s;
     el.classList.toggle("on", s === S.screen);
-    el.classList.toggle("dis", (!S.project && !["projects","ai"].includes(s)) || (!ex && ["concept","review","output","cable"].includes(s)));
+    el.classList.toggle("dis", (!S.project && !["projects","ai"].includes(s)) || (!ex && ["concept","review","output","cable","jb"].includes(s)));
     el.classList.toggle("done", (s==="projects" && S.project) || (s==="extract" && ex));
   });
   $("#pname").textContent = S.project || "선택 안 됨";
@@ -226,6 +227,7 @@ async function render() {
     if (S.screen === "review") return await renderReview(m);
     if (S.screen === "output") return await renderOutput(m);
     if (S.screen === "cable") return await renderCable(m);
+    if (S.screen === "jb") return await renderJB(m);
   } catch (e) { toast(e.message, true); }
 }
 
@@ -1067,9 +1069,9 @@ async function renderCable(m) {
   const g = G[Math.max(0, CK.tab)];
   m.className = "ext-page";
   m.innerHTML = `
-  <div class="head"><div><div class="eyebrow">STEP 6</div><h1>케이블 · JB</h1>
-    <p class="lead">만들어진 인덱스의 IO로 분기 케이블, JB, 멀티 케이블을 뽑습니다. PLOT PLAN이 있으면 도면 좌표로, 없으면 가정 길이로 계산합니다. (변경 ${d.changed}건)</p></div>
-    <div style="display:flex;gap:8px"><button class="btn line" id="ckreset">기본값으로</button><button class="btn" id="ckmk">케이블 엑셀 만들기</button></div></div>
+  <div class="head"><div><div class="eyebrow">STEP 6</div><h1>케이블</h1>
+    <p class="lead">만들어진 인덱스의 IO로 분기 케이블, 멀티 케이블을 뽑습니다. 분리 기준은 여기서 정해 STEP 7 JB로 내려갑니다. JB 크기·위치는 STEP 7 결과를 씁니다. PLOT PLAN이 있으면 도면 좌표로, 없으면 가정 길이로 계산합니다. (변경 ${d.changed}건)</p></div>
+    <div style="display:flex;gap:8px"><button class="btn line" id="ckreset">기본값으로</button><button class="btn" id="ckmk">케이블 · JB 엑셀 만들기</button></div></div>
   <div style="display:flex;gap:20px;align-items:flex-start">
     <div style="flex:1;min-width:0">
       <div class="panel">
@@ -1095,7 +1097,184 @@ async function renderCable(m) {
   $("#ckmk").onclick = async () => { const b = $("#ckmk"); b.disabled = true; b.textContent = "만드는 중…";
     try { const r = await post(P("cable_export"), {}); toast(r.files.join(", ") + " 생성 · 5 출력 화면에서 받을 수 있습니다"); }
     catch(e) { toast(e.message, true); }
-    if ($("#ckmk")) { $("#ckmk").disabled = false; $("#ckmk").textContent = "케이블 엑셀 만들기"; } };
+    if ($("#ckmk")) { $("#ckmk").disabled = false; $("#ckmk").textContent = "케이블 · JB 엑셀 만들기"; } };
+}
+/* ---------------------------------------------------------------- 7 JB */
+const JM = {tab:0, sel:null, drag:null, hover:null, single:null, showSlots:false, view:"list"};
+const JB_SYS = {DCS:"#f08a24", ESD:"#d1335d", "F&G":"#7e66cb", MIX:"#888"};
+function jbSizeTable(d) {
+  return `<h2 style="font-size:14px;margin:16px 0 4px">크기표 (지금 스페어 기준, 자동 계산)</h2>
+    <p class="xnote">스페어율·크기·멀티 방식을 바꾸면 이 표와 JB·멀티가 바로 다시 계산됩니다.</p>
+    <table class="mini"><tr><th>JB</th><th>받는 1P 최대</th><th>멀티 (1가닥)</th><th>케이블 스페어</th><th>단자 스페어</th><th>단자 수</th></tr>
+    ${d.size_table.map(x=>`<tr><td><b>${x.size}P</b></td><td>${x.max_in}가닥</td><td class="mono">${x.multi}P</td><td>${x.spare_cable}P (${x.max_in?Math.round(x.spare_cable/x.max_in*100):0}%)</td><td>${x.spare_term}P</td><td>${x.terms}</td></tr>`).join("")}</table>`;
+}
+function jbChecklist(d) {
+  return `<p class="xnote" style="margin-top:10px">JB 설계 가정 체크리스트입니다. 노란 줄 = 기본값에서 바꾼 항목. 엑셀 JB_Checklist 시트에도 그대로 들어갑니다.</p>
+    <table class="mini"><tr><th>No</th><th>구분</th><th>항목</th><th>적용값</th><th>기본값</th><th>설명</th></tr>
+    ${d.checklist.map(c=>`<tr style="${c.changed?"background:var(--chg)":""}"><td class="mono">${esc(c.code)}</td><td>${esc(c.group)}</td><td><b>${esc(c.name)}</b></td>
+      <td>${esc(typeof c.value==="number"&&c.value<1&&c.value>0?Math.round(c.value*100)+"%":c.value)}</td><td style="color:var(--sub)">${esc(typeof c.default==="number"&&c.default<1&&c.default>0?Math.round(c.default*100)+"%":c.default)}</td>
+      <td style="font-size:11.5px;color:var(--sub)">${esc(c.help)}</td></tr>`).join("")}</table>`;
+}
+function jbGeo(d) { return ((d.plot||{}).geo)||{}; }
+function jbOverlay(d) {
+  const pp = d.plot, g = jbGeo(d), [W,H] = pp.size, k = Math.max(W,H)/700;
+  const room = (pp.questions.find(q=>q.id==="room")||{}).pos;
+  const racks = (pp.racks||[]).filter(r=>!r[6]).map(r => `<rect x="${r[0]}" y="${r[1]}" width="${r[2]-r[0]}" height="${r[3]-r[1]}" fill="#2c7fc0" opacity=".16"/>`).join("")
+    + (pp.racks_user||[]).map(pl => `<polyline points="${pl.map(q=>q.join(",")).join(" ")}" fill="none" stroke="#2c7fc0" stroke-width="${6*k}" opacity=".3"/>`).join("");
+  const jbs = g.jbs || [], st = g.stations || [], slots = g.slots || [];
+  const byNo = Object.fromEntries(jbs.map(j => [j[0], j]));
+  const selSt = JM.sel ? st.find(x => x.id === JM.sel) : null;
+  const selJbs = selSt ? selSt.jbs : [];
+  // lines instrument -> JB for the selected station
+  let lines = "";
+  if (selSt) for (const no of selJbs) { const jb = (d.jbs||[]).find(x => x.no === no); const j = byNo[no]; if (!jb || !j) continue;
+    for (const t of jb.tags||[]) { const p = (g.inst||{})[t]; if (p) lines += `<polyline points="${p[0]},${p[1]} ${j[1]},${p[1]} ${j[1]},${j[2]}" fill="none" stroke="${JB_SYS[j[3]]||"#888"}" stroke-width="${.9*k}" opacity=".8"/>`; } }
+  const inst = Object.values(g.inst||{}).map(p => `<circle cx="${p[0]}" cy="${p[1]}" r="${1.8*k}" fill="${p[2].startsWith("추정")?"#9aa":"#15ad60"}" opacity=".7"/>`).join("");
+  const showSlots = JM.showSlots || JM.drag || JM.single;
+  const sl = showSlots ? slots.map(s => `<circle cx="${s[1]}" cy="${s[2]}" r="${1.6*k}" fill="${s[3]==="랙"?"#2c7fc0":"#8a6d00"}" opacity=".55"><title>${esc(s[4])}</title></circle>`).join("") : "";
+  const stm = st.map(x => { const n = x.jbs.length, js = x.jbs.map(no => byNo[no]).filter(Boolean);
+    const moved = js.some(j => j[6]), on = x.id === JM.sel, sz = (5 + Math.min(n,4)*1.3) * k;
+    const col = n === 1 ? (JB_SYS[js[0][3]]||"#f08a24") : "#f08a24";
+    return `<g data-st="${esc(x.id)}" style="cursor:grab"><rect x="${x.x-sz}" y="${x.y-sz}" width="${2*sz}" height="${2*sz}" rx="${1.5*k}" fill="${col}" stroke="${on?"#e0002a":moved?"#2c7fc0":"#fff"}" stroke-width="${(on?2.6:moved?2:1)*k}"/>
+      ${n>1?`<text x="${x.x}" y="${x.y+3.6*k}" font-size="${10*k}" text-anchor="middle" fill="#fff" font-weight="700" style="pointer-events:none">${n}</text>`:""}
+      <title>${esc(x.label||"계기 중심")} · ${x.jbs.map(esc).join(", ")}</title></g>`; }).join("");
+  const hv = JM.hover ? `<circle cx="${JM.hover.x}" cy="${JM.hover.y}" r="${9*k}" fill="none" stroke="${JM.hover.ok?"#15ad60":"#e0002a"}" stroke-width="${2.5*k}"/>` : "";
+  const ghost = JM.drag && JM.drag.p ? `<rect x="${JM.drag.p[0]-6*k}" y="${JM.drag.p[1]-6*k}" width="${12*k}" height="${12*k}" fill="#f08a24" opacity=".5" style="pointer-events:none"/>` : "";
+  const mark = room ? `<circle cx="${room[0]}" cy="${room[1]}" r="${11*k}" fill="none" stroke="#2c7fc0" stroke-width="${3*k}"/><text x="${room[0]+14*k}" y="${room[1]+5*k}" font-size="${15*k}" font-weight="700" fill="#2c7fc0">제어실</text>` : "";
+  return `<svg viewBox="0 0 ${W} ${H}" style="position:absolute;inset:0;width:100%;height:100%" id="jbsvg">${racks}${inst}${sl}${lines}${mark}${stm}${hv}${ghost}</svg>`;
+}
+function jbStationCard(d) {
+  const g = jbGeo(d), st = (g.stations||[]).find(x => x.id === JM.sel);
+  if (JM.single) return `<div class="ritem on" style="cursor:default"><div class="a"><b>${esc(JM.single)} 옮기기</b></div>
+    <div class="b">도면에서 옮길 자리를 누르세요. 가장 가까운 자리(랙 기둥·장비 가장자리)에 붙습니다.</div>
+    <div style="margin-top:8px"><button class="btn sm line" id="jbsc">그만</button></div></div>`;
+  if (!st) return `<div class="ritem" style="cursor:default;background:#f7faf8"><div class="b">
+    네모 = JB 스테이션 (숫자 = 그 자리의 JB 수). 누르면 연결된 계기를 보여 주고, 끌어서 다른 자리로 옮길 수 있습니다.
+    놓는 곳은 가장 가까운 자리에 붙고, 자리가 아니거나 스테이션이 꽉 차면 빨간 원으로 표시됩니다.</div></div>`;
+  const rows = st.jbs.map(no => { const j = (d.jbs||[]).find(x => x.no === no) || {};
+    return `<tr><td class="mono"><b>${esc(no)}</b>${j.moved?' <span class="chip b" style="font-size:10px;padding:0 4px">이동</span>':""}</td><td>${esc(j.system)} ${esc(j.cls)}</td><td>${esc(j.size)} · ${j.used}</td>
+      <td><a data-jbone="${esc(no)}" style="cursor:pointer;font-size:12px">따로 옮기기</a>${j.moved?` · <a data-jbrs="${esc(no)}" style="cursor:pointer;font-size:12px">되돌리기</a>`:""}</td></tr>`; }).join("");
+  return `<div class="ritem on" style="cursor:default"><div class="a"><b>${esc(st.label || "계기 중심 (자리 없음)")}</b><span class="chip">${st.jbs.length} JB</span></div>
+    <table class="mini" style="margin-top:6px"><tr><th>JB</th><th>신호</th><th>크기·사용</th><th></th></tr>${rows}</table>
+    <div style="display:flex;gap:6px;margin-top:8px"><button class="btn sm line" id="jbsx">선택 해제</button></div></div>`;
+}
+function jbPlotTab(d) {
+  const pp = d.plot;
+  if (!pp) return `<div class="empty" style="margin-top:12px">STEP 6 'PLOT PLAN 초안' 탭에서 PLOT PLAN을 올리면 JB를 랙 기둥·장비 가장자리에 배치합니다. 지금은 도면 순서로 묶기만 합니다.</div>`;
+  const g = jbGeo(d), s = d.summary;
+  return `<div style="display:flex;gap:16px;align-items:flex-start;margin-top:12px">
+    <div style="width:320px;flex:none">
+      <div class="panel" style="padding:0">${jbStationCard(d)}
+        <div class="ritem" style="cursor:default"><div class="a"><b>배치 결과</b></div><div class="b">JB ${fmt(s.jbs)}개 · 스테이션 ${fmt(s.stations||0)}곳 · 사용자 이동 ${fmt(s.moved||0)}<br>
+          자리 ${fmt((g.slots||[]).length)}곳 (랙 ${fmt((g.slots||[]).filter(x=>x[3]==="랙").length)} · 장비 ${fmt((g.slots||[]).filter(x=>x[3]==="장비").length)})</div>
+          <label style="display:flex;gap:6px;align-items:center;margin-top:8px;font-size:12.5px"><input type="checkbox" id="jbslots" ${JM.showSlots?"checked":""}> 자리(슬롯) 보기</label></div>
+      </div>
+      <div class="legend" style="margin-top:10px"><span><i style="background:#f08a24"></i>DCS / 여러 JB</span><span><i style="background:#d1335d"></i>ESD</span><span><i style="background:#7e66cb"></i>F&amp;G</span><span><i style="background:#2c7fc0"></i>랙 자리</span><span><i style="background:#8a6d00"></i>장비 자리</span><span><i style="background:#15ad60"></i>계기</span></div>
+      <p class="xnote">파란 테두리 = 사용자가 옮긴 JB. 옮기면 분기·멀티 길이, 케이블 스케줄, 인덱스 JB 열이 바로 바뀝니다. 위치는 자리 이름(랙 n 기둥 m, 장비 변)으로 저장됩니다.</p>
+    </div>
+    <div class="viewer" style="flex:1;height:calc(100vh - 260px);cursor:${JM.single?"crosshair":"default"}">
+      <div style="position:relative;width:100%;max-width:${Math.round(pp.size[0]*50/72)*2}px" id="jbwrap"><img src="/api/${P("plot_png")}?v=${encodeURIComponent(pp.file)}" style="width:100%;display:block">${jbOverlay(d)}</div>
+    </div></div>`;
+}
+function jbSide(d) {
+  const s = d.summary, K = s.kinds || {};
+  const br = K["분기"] || {count:0,length:0}, mu = K["멀티"] || {count:0,length:0};
+  return `<div class="panel">
+    <div style="font-size:12.5px;color:var(--sub)">JB</div>
+    <div style="font-size:46px;font-weight:300;line-height:1.05;letter-spacing:-.03em"><span class="uline">${fmt(s.jbs)}</span><small style="font-size:16px;color:var(--sub)"> 개</small></div>
+    <div style="font-size:12.5px;color:var(--sub);margin:8px 0 10px">스테이션 ${fmt(s.stations||0)}곳 · 평균 채움 ${Math.round(s.jb_fill*100)}%</div>
+    <div class="kv"><span>크기</span><b>${Object.entries(s.jb_sizes).map(([k,n])=>`${k} × ${n}`).join(" · ")||"-"}</b></div>
+    <div class="kv"><span>분기 (계기→JB)</span><b>${fmt(br.count)}가닥 · ${fmt(br.length)} m</b></div>
+    <div class="kv"><span>멀티 (JB→룸)</span><b>${fmt(mu.count)}가닥 · ${fmt(mu.length)} m</b></div>
+    <div class="kv"><span>사용자 이동</span><b>${fmt(s.moved||0)}</b></div>
+  </div>
+  <div class="panel" style="font-size:12px;color:var(--sub);line-height:1.6"><b style="color:var(--ink)">STEP 6에서 내려오는 것</b><br>
+    분리 기준 (시스템 ${esc(d.values.seg_system)}, 아날로그/디지털 ${esc(d.values.seg_ad)}, DO ${esc(d.values.seg_do)}, RTD ${esc(d.values.rtd_mode)}, IS ${esc(d.values.is_rule)}), 케이블 사양, 경로·높이.<br>
+    <a data-go="cable" style="cursor:pointer">STEP 6에서 바꾸기 →</a></div>`;
+}
+function jbList(d) {
+  return `<div class="panel" style="margin-top:16px"><h2 style="font-size:14px;margin-bottom:8px">JB 리스트 (${d.jbs.length})</h2>
+    <table class="nw"><tr><th>JB</th><th>구분</th><th>System</th><th>신호</th><th>IS</th><th>크기</th><th>사용</th><th>스페어</th><th>채움</th><th>멀티</th><th>방폭</th><th>단자</th><th>글랜드</th><th>위치</th></tr>
+    ${d.jbs.map(j=>`<tr><td class="mono"><b>${esc(j.no)}</b></td><td>${esc(j.kind)}</td><td>${esc(j.system)}</td><td>${esc(j.cls)}</td><td>${esc(j.is)}</td><td>${esc(j.size)}</td><td>${j.used}</td><td>${j.spare}</td><td>${Math.round((j.fill||0)*100)}%</td>
+      <td class="mono" style="font-size:12px">${esc(j.multi)} (${esc(j.multi_size)})</td><td style="font-size:12px">${esc(j.ex)}</td><td>${j.terminals}</td><td>${j.gl_branch}+${j.gl_multi}</td>
+      <td style="font-size:12px">${esc(j.place)}${j.moved?' <span class="chip b" style="font-size:10px;padding:0 4px">이동</span>':""}</td></tr>`).join("")}</table></div>`;
+}
+async function renderJB(m) {
+  const t = S.tok;
+  if (!CK.data || CK.data._p !== S.project) { CK.data = await api(P("cable")); CK.data._p = S.project; }
+  if (t !== S.tok) return;
+  const d = CK.data, G = d.jb_schema, V = d.values, NT = G.length;
+  if (JM.tab > NT + 1 || JM.tab < 0) JM.tab = 0;
+  const g = G[JM.tab];
+  m.className = "ext-page";
+  const tabs = G.map((x,i)=>`<a class="${i===JM.tab?"on":""}" data-jbt="${i}">${esc(x.title)}</a>`).join("")
+    + `<a class="${JM.tab===NT?"on":""}" data-jbt="${NT}">PLOT 배치${d.plot?` <span class="chip b" style="font-size:10.5px;padding:0 5px">${fmt(d.summary.stations||0)}</span>`:""}</a>`
+    + `<a class="${JM.tab===NT+1?"on":""}" data-jbt="${NT+1}">체크리스트</a>`;
+  let body;
+  if (JM.tab === NT) body = jbPlotTab(d);
+  else if (JM.tab === NT+1) body = jbChecklist(d);
+  else body = `<p class="xnote" style="margin-top:10px">${esc(g.lead)}</p>${ckItems(g, V, d)}${g.id==="jbsize"?jbSizeTable(d):""}`;
+  const moved = (d.jbs||[]).filter(j => j.moved).map(j => j.no);
+  m.innerHTML = `
+  <div class="head"><div><div class="eyebrow">STEP 7</div><h1>JB (정션박스)</h1>
+    <p class="lead">STEP 6 분리 기준으로 묶인 계기를 JB에 담습니다. 크기(40·60·80P)와 스페어로 JB·멀티를 정하고, PLOT PLAN의 랙 기둥·장비 가장자리 자리에 배치합니다.</p></div>
+    <div style="display:flex;gap:8px">${moved.length?`<button class="btn line" id="jbrall">옮긴 JB 모두 자동으로 (${moved.length})</button>`:""}<button class="btn" id="jbmk">케이블 · JB 엑셀 만들기</button></div></div>
+  <div style="display:flex;gap:20px;align-items:flex-start">
+    <div style="flex:1;min-width:0"><div class="panel"><div class="tabs">${tabs}</div>${body}</div>${jbList(d)}</div>
+    <div class="side">${jbSide(d)}</div>
+  </div>`;
+  const upd = async body => { try { CK.data = await post(P("cable"), body); CK.data._p = S.project; if (S.screen==="jb") renderJB(m); } catch(e) { toast(e.message, true); } };
+  const plotUpd = async body => { try { CK.data = await post(P("plot"), body); CK.data._p = S.project;
+      if (JM.sel && !(jbGeo(CK.data).stations||[]).some(x => x.id === JM.sel)) {
+        const no = (body.jb_move||{}).jbs ? body.jb_move.jbs[0] : null;
+        const ns = no ? (jbGeo(CK.data).stations||[]).find(x => x.jbs.includes(no)) : null; JM.sel = ns ? ns.id : null; }
+      if (S.screen==="jb") renderJB(m); } catch(e) { toast(e.message, true); } };
+  m.querySelectorAll("[data-jbt]").forEach(a => a.onclick = () => { JM.tab = +a.dataset.jbt; JM.single = null; renderJB(m); });
+  m.querySelectorAll("[data-go]").forEach(a => a.onclick = () => go(a.dataset.go));
+  m.querySelectorAll("[data-ck]").forEach(el => el.onchange = () => upd({set:{[el.dataset.ck]: el.value}}));
+  m.querySelectorAll("[data-cktog]").forEach(el => el.onclick = () => { const it = G.flatMap(x=>x.items).find(x=>x.id===el.dataset.cktog);
+    upd({set:{[it.id]: el.classList.contains("on") ? it.options.find(o=>o!==it.on) : it.on}}); });
+  if ($("#jbrall")) $("#jbrall").onclick = () => { if (confirm("옮긴 JB를 모두 자동 위치로 되돌릴까요?")) plotUpd({jb_reset: moved}); };
+  $("#jbmk").onclick = async () => { const b = $("#jbmk"); b.disabled = true; b.textContent = "만드는 중…";
+    try { const r = await post(P("cable_export"), {}); toast(r.files.join(", ") + " 생성 · 5 출력 화면에서 받을 수 있습니다"); } catch(e) { toast(e.message, true); }
+    if ($("#jbmk")) { $("#jbmk").disabled = false; $("#jbmk").textContent = "케이블 · JB 엑셀 만들기"; } };
+  if (JM.tab !== NT || !d.plot) return;
+  const gg = jbGeo(d), slots = gg.slots || [], st = gg.stations || [], smax = +V.st_max || 4, mpt = d.plot.m_per_pt || .155;
+  const occ = {}; st.forEach(x => { if (!x.id.includes(",")) occ[x.id] = x.jbs.length; });
+  const nearest = (p, moving) => { let b = null, bd = Infinity;
+    for (const s of slots) { const dd = Math.abs(s[1]-p[0]) + Math.abs(s[2]-p[1]); if (dd < bd) { bd = dd; b = s; } }
+    if (!b) return null;
+    const mine = moving.filter(no => { const j = (gg.jbs||[]).find(x => x[0] === no); return j && j[4] === b[0]; }).length;
+    const ok = bd * mpt <= 15 && (occ[b[0]]||0) - mine + moving.length <= smax;
+    return {id:b[0], x:b[1], y:b[2], label:b[4], ok, why: bd*mpt > 15 ? "가까운 자리가 없습니다 (15m 안)" : !ok ? `그 자리는 JB ${smax}개로 꽉 찼습니다` : ""}; };
+  const wrap = $("#jbwrap");
+  const toPt = e => { const r = wrap.getBoundingClientRect(), [W,H] = d.plot.size; return [(e.clientX - r.left) / r.width * W, (e.clientY - r.top) / r.height * H]; };
+  $("#jbslots").onchange = e => { JM.showSlots = e.target.checked; renderJB(m); };
+  if ($("#jbsx")) $("#jbsx").onclick = () => { JM.sel = null; renderJB(m); };
+  if ($("#jbsc")) $("#jbsc").onclick = () => { JM.single = null; renderJB(m); };
+  m.querySelectorAll("[data-jbone]").forEach(a => a.onclick = () => { JM.single = a.dataset.jbone; renderJB(m); });
+  m.querySelectorAll("[data-jbrs]").forEach(a => a.onclick = () => plotUpd({jb_reset: a.dataset.jbrs}));
+  const finish = () => { const dr = JM.drag; JM.drag = null; const h = JM.hover; JM.hover = null;
+    if (!dr) return;
+    if (!dr.moved) { JM.sel = JM.sel === dr.id ? null : dr.id; renderJB(m); return; }
+    if (!h || !h.ok) { toast(h ? h.why : "자리가 없습니다", true); renderJB(m); return; }
+    if (h.id === dr.id) { renderJB(m); return; }
+    JM.sel = h.id; plotUpd({jb_move: {jbs: dr.jbs, slot: h.id}}); };
+  const bindSvg = svg => {
+    svg.querySelectorAll("[data-st]").forEach(el => el.onmousedown = e => { if (JM.single) return; e.preventDefault(); e.stopPropagation();
+      const x = st.find(s => s.id === el.dataset.st); JM.drag = {id: x.id, jbs: x.jbs, start: toPt(e), p: null, moved: false}; });
+    svg.onmousemove = e => { if (!JM.drag && !JM.single) return; const p = toPt(e);
+      if (JM.drag) { if ((Math.abs(p[0]-JM.drag.start[0]) + Math.abs(p[1]-JM.drag.start[1])) * mpt > 2) JM.drag.moved = true;
+        if (!JM.drag.moved) return; JM.drag.p = p; }
+      JM.hover = nearest(p, JM.drag ? JM.drag.jbs : [JM.single]);
+      svg.outerHTML = jbOverlay(d); bindSvg(wrap.querySelector("#jbsvg")); };
+    svg.onmouseup = finish;
+    svg.onmouseleave = () => { if (JM.drag) { JM.drag = null; JM.hover = null; renderJB(m); } };
+    svg.onclick = e => { if (!JM.single) return; const h = nearest(toPt(e), [JM.single]); const no = JM.single; JM.single = null; JM.hover = null;
+      if (!h || !h.ok) { toast(h ? h.why : "자리가 없습니다", true); renderJB(m); return; }
+      JM.sel = h.id; plotUpd({jb_move: {jbs: [no], slot: h.id}}); };
+  };
+  bindSvg($("#jbsvg"));
 }
 
 api("font").then(f => { const k = Object.keys(f.found||{}); $("#fontst").innerHTML = k.length

@@ -22,7 +22,8 @@ HW = ["AI", "AO", "DI", "DO"]
 
 
 def write_template(all_rows: list[Row], template: Path, out: Path, source_file: str, sheets: dict | None = None,
-                   concept=None, log=None, scenarios=None, impact=None, area_map: dict | None = None):
+                   concept=None, log=None, scenarios=None, impact=None, area_map: dict | None = None,
+                   cable_map: dict | None = None):
     """sheets: {page: {rev, plant_no, sheet_no}} from the title blocks (extract.json).
     area_map: {dwg or plant_no: Area} - Area is filled only from this map (decision 1)."""
     sheets = {str(k): v for k, v in (sheets or {}).items()}
@@ -44,7 +45,7 @@ def write_template(all_rows: list[Row], template: Path, out: Path, source_file: 
     style_row = [copy(c._style) for c in ws[first + 3]]      # blank formatted row
     last = max(ws.max_row, first + len(rows) - 1)
     for r in range(first, last + 1):
-        for c in range(2, 34):
+        for c in range(2, 39):
             ws.cell(r, c).value = None
     # extra columns: where each row came from
     for c, h in ((28, "산출구분"), (29, "근거 (도면/노트/체크리스트)"), (30, "원본 Tag"), (31, "Plant No"),
@@ -58,6 +59,13 @@ def write_template(all_rows: list[Row], template: Path, out: Path, source_file: 
     except Exception:
         pass
     ws.cell(1, 28, "산출 근거")._style = copy(ws.cell(1, 19)._style)
+    if cable_map is not None:                          # STEP 6 cable / STEP 7 JB results
+        for c, h in ((34, "Junction Box"), (35, "Multi Cable Number"), (36, "Multi Cable Spec."),
+                     (37, "Field Cable No"), (38, "Field Cable Spec.")):
+            cell = ws.cell(2, c, h)
+            cell._style = copy(ws.cell(2, 27)._style)
+            ws.column_dimensions[cell.column_letter].width = (16, 18, 24, 18, 20)[c - 34]
+        ws.cell(1, 34, "케이블 · JB (STEP 6·7)")._style = copy(ws.cell(1, 19)._style)
     for i, row in enumerate(rows):
         r = first + i
         sh = sheets.get(str(row.page), {}) if row.page else {}
@@ -72,6 +80,12 @@ def write_template(all_rows: list[Row], template: Path, out: Path, source_file: 
             28: row.origin, 29: row.basis, 30: row.src_tag, 31: sh.get("plant_no", ""), 32: sh.get("sheet_no", ""),
             33: signal_type(row),
         }
+        if cable_map is not None:
+            cm = cable_map.get(row.tag) or cable_map.get(f"{row.unit}-{row.tag}")
+            if cm:
+                vals.update({34: cm["jb"], 35: cm["multi"], 36: cm["multi_spec"], 37: cm["cable"], 38: cm["cable_spec"]})
+            else:
+                vals.update({34: "-", 35: "-", 36: "-", 37: "-", 38: "-"})
         for c, v in vals.items():
             cell = ws.cell(r, c)
             cell.value = v
@@ -87,7 +101,7 @@ def write_template(all_rows: list[Row], template: Path, out: Path, source_file: 
             for c in line:
                 if isinstance(c.value, str) and "502" in c.value:
                     c.value = c.value.replace("502", str(n_last))
-    ws.auto_filter.ref = f"A2:AG{max(n_last, 502)}"
+    ws.auto_filter.ref = f"A2:{'AL' if cable_map is not None else 'AG'}{max(n_last, 502)}"
     _restore_rules(ws, max(n_last, 502))
     _io_summary(wb, max(n_last, 502), concept, spares)
     if "Settings" in wb.sheetnames:                    # decision 19

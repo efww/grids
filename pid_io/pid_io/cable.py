@@ -25,21 +25,7 @@ SHIELD = ["OS (전체 차폐)", "IS+OS (개별+전체 차폐)", "비차폐"]
 SHIELD_CODE = {"OS (전체 차폐)": "OS", "IS+OS (개별+전체 차폐)": "IS-OS", "비차폐": ""}
 
 
-def _sel(id, name, options, default, help="", on=None):
-    """on: the option a toggle switch means when it is ON (two-option items shown as switches)."""
-    d = {"id": id, "name": name, "type": "select", "options": options, "default": default, "help": help}
-    if on:
-        d["on"] = on
-    return d
-
-
-def _num(id, name, default, unit="", help="", step=1, pct=False):
-    return {"id": id, "name": name, "type": "number", "default": default, "unit": unit, "help": help, "step": step,
-            "pct": pct}
-
-
-def _txt(id, name, default, help=""):
-    return {"id": id, "name": name, "type": "text", "default": default, "help": help}
+from .schema import _num, _sel, _txt  # noqa: E402
 
 
 def _io_items(io, form, sq, shield, forms):
@@ -63,21 +49,15 @@ SCHEMA = [
                   _txt("FO_spec", "광케이블 사양", "FO 12C SM Armoured", "코어 수·모드·외장"),
                   _txt("COMM_spec", "RS-485 통신 케이블 사양", "RS-485 1P x 0.75SQ IS-OS",
                        "패키지를 동선으로 할 때, 그리고 MCC 통신 포트")])},
-    {"id": "jb", "title": "JB · 멀티 케이블 (JB → 룸)",
-     "lead": "JB에 모인 페어가 멀티페어 케이블 하나로 랙을 타고 룸까지 갑니다.",
+    {"id": "multi", "title": "멀티 케이블 (JB → 룸)",
+     "lead": "JB에 모인 페어가 멀티페어 케이블 하나로 랙을 타고 룸까지 갑니다. 페어 수(크기)와 스페어는 STEP 7 JB에서 정합니다.",
      "items": [
-         _sel("jb_size_A", "아날로그 JB 크기", [f"{n}P" for n in MULTI_STD], "24P"),
-         _sel("jb_size_D", "디지털 JB 크기", [f"{n}P" for n in MULTI_STD], "24P"),
-         _sel("jb_size_R", "RTD JB 크기", [f"{n}T" for n in MULTI_STD], "12T"),
-         _num("jb_spare", "JB 스페어율", 0.2, "", "사용 페어 × (1 + 스페어율) ≤ JB 크기. 20%면 24P JB에 20페어까지", 0.05, True),
-         _sel("multi_sizing", "멀티 케이블 크기", ["JB 크기와 같게", "사용+스페어 최소 규격"], "JB 크기와 같게",
-              "최소 규격: 사용 페어 × (1+스페어율)을 담는 가장 작은 표준 규격 (6/12/24/36/48)"),
          _sel("multi_sq", "멀티 케이블 굵기 (SQ)", SQ, "1.25"),
          _sel("multi_shield_A", "아날로그 멀티 차폐", SHIELD, "IS+OS (개별+전체 차폐)"),
          _sel("multi_shield_D", "디지털 멀티 차폐", SHIELD, "OS (전체 차폐)"),
      ]},
-    {"id": "seg", "title": "JB 분리 기준",
-     "lead": "같은 JB에 섞지 않는 기준입니다. 분리할수록 JB 수가 늘고 페어당 채움이 줄어듭니다.",
+    {"id": "seg", "title": "분리 기준 (케이블 · JB 공통)",
+     "lead": "같은 JB·멀티에 섞지 않는 기준입니다. 여기서 정한 묶음이 STEP 7 JB로 내려갑니다. 분리할수록 JB 수가 늘고 채움이 줄어듭니다.",
      "items": [
          _sel("group_by", "JB 묶는 단위", ["유닛(트레인)별", "P&ID 시트별", "Area 매핑표"], "유닛(트레인)별",
               "같은 단위 안에서 도면 순서(시트·위치)대로 채웁니다. Area 매핑표가 없으면 유닛별로 묶습니다"),
@@ -116,7 +96,6 @@ SCHEMA = [
          _num("rack_width", "직접 그린 랙 폭", 6, "m", "PLOT 화면에서 다각선으로 그린 랙의 폭"),
          _num("route_factor", "분기 우회계수", 1.1, "", "계기 → JB 직각 거리 × 계수 (짧은 구간이라 경로 탐색 생략)", 0.05),
          _num("field_min", "계기 → JB 최소 수평 길이", 5, "m", "같은 장비 옆이라 도면 거리가 0에 가까울 때"),
-         _num("jb_radius", "JB 반경", 40, "m", "PLOT 좌표가 있으면 이 거리 안의 계기끼리 JB로 묶습니다 (분리 기준은 그대로)"),
      ]},
     {"id": "len", "title": "길이 가정",
      "lead": "PLOT PLAN이 없거나 위치를 못 찾은 케이블에 쓰는 가정 길이입니다. 유닛별 간선 길이는 아래 표에서 따로 줄 수 있습니다.",
@@ -131,7 +110,9 @@ SCHEMA = [
          _txt("room_F&G", "F&G 도착 룸", "CCR"),
      ]},
 ]
-ITEMS = {it["id"]: it for g in SCHEMA for it in g["items"]}
+from . import jb as JB  # noqa: E402  (STEP 7 settings live in the same cable.json)
+
+ITEMS = {it["id"]: it for g in SCHEMA + JB.SCHEMA for it in g["items"]}
 DEFAULTS = {k: v["default"] for k, v in ITEMS.items()}
 
 
@@ -447,43 +428,70 @@ def build(rows, s: dict, area_map: dict | None = None, layout=None):
                            "to": room(sys_) if sys_ != "MIX" else room("DCS"), "to_type": "룸", "spec": spec,
                            "io": CLS_NAME[cls], "system": sys_, "is": "IS" if is_ else "Non-IS",
                            "length": _round_len(tl, v), "area": area, "dwg": ch[0].dwg, "coord": "",
-                           "unit": ch[0].unit, "pairs_used": len(ch),
+                           "unit": ch[0].unit, "pairs_used": len(ch), "tags": [r.tag for r in ch],
                            "basis": f"패키지 인터페이스 {len(ch)}점 ({', '.join(r.tag for r in ch[:6])}"
                                     f"{' …' if len(ch) > 6 else ''}) · 스페어 {spare:.0%} · {how}"})
 
-    # ---------------- field / package JBs, chunked in drawing order
+    # ---------------- field / package JBs: group (STEP 6 segregation) -> cluster -> place (STEP 7) -> cables
+    cap = JB.capacity(v)
+    boxes = []
     for (route, area, sys_, cls, is_), members in sorted(groups.items(), key=lambda kv: [str(x) for x in kv[0]]):
         if route == "ucp":
             continue
         members.sort(key=lambda r: (r.dwg or "", r.page or 0, *_xy(r), r.tag))
-        unit = "T" if cls == "R" else "P"
-        size = _n(v[f"jb_size_{'R' if cls == 'R' else ('A' if cls in ('A', 'X') else 'D')}"])
-        cap = max(1, int(math.floor(size / (1 + spare) + 1e-9)))
         chunks = _spatial(members, cap, G) if G else [members[i:i + cap] for i in range(0, len(members), cap)]
+        for ch in chunks:
+            boxes.append({"key": (route, area, sys_, cls, is_), "pkg": route == "pkg", "rows": list(ch),
+                          "pts": [G.loc(r)[0] for r in ch] if G else [None] * len(ch)})
+    slots = JB.place(boxes, G, v) if G else []
+    moves = (getattr(layout, "jb_moves", None) or {}) if G else {}
+    slot_by = {x["id"]: x for x in slots}
+    # numbering per group: nearest the control room first (plot), else drawing order
+    if G:
+        R = layout.router(float(v["rack_pref"]), float(v["rack_width"]), v["main_route"].startswith("랙"))
+        far = lambda b: R.dist[R.free(b["pos"])] if b.get("pos") else float("inf")
+    else:
+        far = lambda b: 0
+    by_key = {}
+    for bx in boxes:
+        by_key.setdefault(bx["key"], []).append(bx)
+    for key, bl in sorted(by_key.items(), key=lambda kv: [str(x) for x in kv[0]]):
+        route, area, sys_, cls, is_ = key
+        bl.sort(key=far)
+        unit = "T" if cls == "R" else "P"
         sl = SYS_LETTER.get(sys_, "M")
         base = f"JB-{area}-{sl}{cls}{'I' if is_ else ''}"
-        for k, ch in enumerate(chunks, 1):
-            jb = base + (f"-{k:02d}" if route != "pkg" or len(chunks) > 1 else "")
-            if v["multi_sizing"].startswith("JB"):
-                msize = size
-            else:
-                msize = _std(int(math.ceil(len(ch) * (1 + spare) - 1e-9)))
+        for k, bx in enumerate(bl, 1):
+            ch = bx["rows"]
+            jb = base + (f"-{k:02d}" if route != "pkg" or len(bl) > 1 else "")
+            size, msize = JB.size_for(len(ch), v)
+            moved = False
+            if jb in moves and moves[jb] in slot_by:
+                s_ = slot_by[moves[jb]]
+                bx["pos"], bx["slot"], bx["slot_label"] = (s_["x"], s_["y"]), s_["id"], s_["label"]
+                bx["how"], moved = f"사용자 이동: {s_['label']}", True
             mshield = v["multi_shield_A"] if cls in ("A", "R", "X") else v["multi_shield_D"]
             room_ = room(sys_) if sys_ != "MIX" else room("DCS")
             mc = "MC-" + jb[3:]
             tl = _trunk(area if route != "pkg" else (ch[0].unit or "00"), v, trunk)
             how = f"JB→룸 {tl:g}m 가정" + (" (유닛별 값)" if area in trunk else "")
-            pj = _centre([G.loc(r)[0] for r in ch]) if G else None
+            pj = bx.get("pos") if G else None
             if pj:
                 tl, how = G.run(pj, float(v["jb_el"]), float(v["room_el"]), "jb", jb)
-                how += f" (JB = 계기 {len(ch)}개 중심)"
-                G.geo["jbs"].append([jb, round(pj[0], 1), round(pj[1], 1), sys_])
-            jbs.append({"no": jb, "kind": "패키지 Skid" if route == "pkg" else "필드", "area": area, "system": sys_,
-                        "cls": CLS_NAME[cls], "is": "IS" if is_ else "Non-IS", "size": f"{size}{unit}",
-                        "used": len(ch), "spare": size - len(ch), "fill": round(len(ch) / size, 3),
-                        "multi": mc, "dwgs": ", ".join(sorted({r.dwg for r in ch if r.dwg})),
-                        "units": ", ".join(sorted({r.unit for r in ch if r.unit})),
-                        "tags": [r.tag for r in ch]})
+                how += f" (JB {bx.get('how') or ''})"
+                G.geo["jbs"].append([jb, round(pj[0], 1), round(pj[1], 1), sys_, bx.get("slot", ""),
+                                     bx.get("slot_label", ""), moved, CLS_NAME[cls], len(ch), f"{size}{unit}"])
+            jrow = {"no": jb, "kind": "패키지 Skid" if route == "pkg" else "필드", "area": area, "system": sys_,
+                    "cls": CLS_NAME[cls], "is": "IS" if is_ else "Non-IS", "size": f"{size}{unit}",
+                    "used": len(ch), "spare": size - len(ch), "fill": round(len(ch) / size, 3),
+                    "multi": mc, "multi_size": f"{msize}{unit}", "dwgs": ", ".join(sorted({r.dwg for r in ch if r.dwg})),
+                    "units": ", ".join(sorted({r.unit for r in ch if r.unit})),
+                    "tags": [r.tag for r in ch], "slot": bx.get("slot", ""), "place": bx.get("slot_label", "") or
+                    ("계기 중심" if pj else "PLOT 없음"), "moved": moved,
+                    "x_m": round(pj[0] * layout.m_per_pt, 1) if pj else None,
+                    "y_m": round(pj[1] * layout.m_per_pt, 1) if pj else None}
+            jrow.update(JB.spec(jrow, v))
+            jbs.append(jrow)
             for r in ch:
                 io = "RTD" if r.io == "TC/RTD" else r.io
                 spec = _spec(v[f"{io}_form"], v[f"{io}_sq"], v[f"{io}_shield"])
@@ -503,7 +511,11 @@ def build(rows, s: dict, area_map: dict | None = None, layout=None):
                            "spec": spec, "io": CLS_NAME[cls], "system": sys_, "is": "IS" if is_ else "Non-IS",
                            "length": _round_len(tl, v), "area": area, "dwg": "", "coord": "",
                            "unit": ch[0].unit, "pairs_used": len(ch),
-                           "basis": f"사용 {len(ch)}{unit} · 스페어 {spare:.0%} · {v['multi_sizing']} · {how}"})
+                           "basis": f"사용 {len(ch)}{unit} · 케이블 스페어 {spare:.0%} · {v['multi_sizing']} · {how}"})
+    if G:
+        G.geo["slots"] = [[s_["id"], s_["x"], s_["y"], s_["kind"], s_["label"]] for s_ in slots]
+        G.geo["stations"] = JB.stations([{"no": j[0], "x": j[1], "y": j[2], "slot": j[4], "slot_label": j[5]}
+                                         for j in G.geo["jbs"]])
 
     # ---------------- MCC signals straight to the room
     if mcc:
@@ -527,7 +539,7 @@ def build(rows, s: dict, area_map: dict | None = None, layout=None):
                                    "frm": src, "frm_type": src, "to": room(sys_) if sys_ != "MIX" else room("DCS"),
                                    "to_type": "룸", "spec": spec, "io": CLS_NAME[cls], "system": sys_, "is": "Non-IS",
                                    "length": _round_len(mlen, v), "area": "MCC", "dwg": "",
-                                   "coord": "", "unit": "", "pairs_used": len(ch),
+                                   "coord": "", "unit": "", "pairs_used": len(ch), "tags": [r.tag for r in ch],
                                    "basis": f"모터 신호 {len(ch)}점 · 스페어 {spare:.0%} · {mhow}"
                                             + (" · MCC↔IRP는 전기 범위 (미집계)" if src == "IRP" else "")})
         else:
@@ -541,7 +553,7 @@ def build(rows, s: dict, area_map: dict | None = None, layout=None):
                                "frm_type": src, "to": room(sys_), "to_type": "룸", "spec": spec,
                                "io": "/".join(sorted({r.io for r in members})), "system": sys_, "is": "Non-IS",
                                "length": _round_len(mlen, v), "area": "MCC", "dwg": "", "coord": "",
-                               "unit": members[0].unit, "pairs_used": len(members),
+                               "unit": members[0].unit, "pairs_used": len(members), "tags": [r.tag for r in members],
                                "basis": f"{motor} 신호 {len(members)}점 × 2심 · 스페어 {spare:.0%} · {mhow}"})
 
     # ---------------- comm ports: home run (one per port when redundant, else one per package / MCC)
@@ -564,6 +576,7 @@ def build(rows, s: dict, area_map: dict | None = None, layout=None):
                        "frm_type": "MCC" if r.location == "MCC" else "패키지", "to": room(r.system if r.system in SYS_LETTER else "DCS"),
                        "to_type": "룸", "spec": v["FO_spec"] if fo else v["COMM_spec"], "io": r.io, "system": r.system, "is": "Non-IS",
                        "length": _round_len(tl, v), "area": area, "dwg": r.dwg, "coord": r.coord, "unit": r.unit,
+                       "tags": [r.tag],
                        "basis": f"{'패키지 PLC 통신 (광)' if fo else '통신 포트 직결'} · {v['comm_redund'].split(' ')[0]} · {how}"})
 
     order = {"분기": 0, "멀티": 0, "패키지": 1, "MCC": 2, "통신": 3}   # JB branches stay next to their multi
@@ -572,7 +585,29 @@ def build(rows, s: dict, area_map: dict | None = None, layout=None):
     res["summary"]["by_plot"] = sum(1 for c in cables if "PLOT" in c["basis"] or "사용자 수정 경로" in c["basis"])
     res["summary"]["edited_routes"] = len(layout.route_edit) if (G and layout is not None) else 0
     res["geo"] = G.geo if G else None
+    res["summary"]["stations"] = len(G.geo.get("stations") or []) if G else 0
+    res["summary"]["moved"] = sum(1 for j in jbs if j.get("moved"))
     return res
+
+
+def index_map(res):
+    """tag -> {jb, multi, multi_spec, cable, cable_spec} for the index columns.
+    Field instruments: their JB and its multi. Package interface / MCC rows: no JB, their multi.
+    Comm ports: their home-run cable."""
+    multi = {c["frm"]: c for c in res["cables"] if c["kind"] == "멀티"}
+    out = {}
+    for c in res["cables"]:
+        if c["kind"] == "분기":
+            m = multi.get(c["to"]) or {}
+            out.setdefault(c["frm"], {"jb": c["to"], "multi": m.get("no", ""), "multi_spec": m.get("spec", ""),
+                                      "cable": c["no"], "cable_spec": c["spec"]})
+        elif c["kind"] in ("패키지", "MCC"):
+            for t in c.get("tags") or []:
+                out.setdefault(t, {"jb": "-", "multi": c["no"], "multi_spec": c["spec"], "cable": "", "cable_spec": ""})
+        elif c["kind"] == "통신":
+            for t in c.get("tags") or []:
+                out.setdefault(t, {"jb": "-", "multi": "", "multi_spec": "", "cable": c["no"], "cable_spec": c["spec"]})
+    return out
 
 
 def summarize(cables, jbs, skipped):
@@ -655,17 +690,33 @@ def write_xlsx(res: dict, s: dict, out: Path, project: str = ""):
           [24, 7, 22, 9, 22, 8, 26, 10, 8, 8, 10, 6, 14, 11, 11, 60])
 
     sheet(wb.create_sheet("JB_List"),
-          ["JB No", "구분", "그룹", "System", "신호", "IS", "크기", "사용", "스페어", "채움률", "멀티 케이블", "Unit",
-           "P&ID", "계기 태그"],
+          ["JB No", "구분", "그룹", "System", "신호", "IS", "크기", "사용 (1P)", "스페어", "채움률", "멀티 케이블", "멀티 크기",
+           "재질", "방폭", "보호등급", "단자 수", "분기 글랜드", "멀티 글랜드", "인입", "위치 (자리)", "X (m)", "Y (m)",
+           "Unit", "P&ID", "계기 태그"],
           [[j["no"], j["kind"], j["area"], j["system"], j["cls"], j["is"], j["size"], j["used"], j["spare"],
-            j["fill"], j["multi"], j["units"], j["dwgs"], ", ".join(j["tags"])] for j in res["jbs"]],
-          [20, 10, 12, 8, 10, 8, 7, 6, 7, 8, 20, 8, 24, 80])
+            j["fill"], j["multi"], j.get("multi_size", ""), j.get("material", ""), j.get("ex", ""), j.get("ip", ""),
+            j.get("terminals", ""), j.get("gl_branch", ""), j.get("gl_multi", ""), j.get("entry", ""),
+            (j.get("place", "") + (" (사용자 이동)" if j.get("moved") else "")), j.get("x_m"), j.get("y_m"),
+            j["units"], j["dwgs"], ", ".join(j["tags"])] for j in res["jbs"]],
+          [20, 10, 12, 8, 10, 8, 7, 8, 7, 8, 20, 8, 9, 16, 8, 7, 8, 8, 6, 22, 8, 8, 8, 24, 80])
     for r in wb["JB_List"].iter_rows(min_row=2, min_col=10, max_col=10):
         r[0].number_format = "0%"
+    jsum = {}
+    for j in res["jbs"]:
+        k = (j["size"], j.get("material", ""), j.get("ex", ""), j.get("ip", ""))
+        jsum[k] = jsum.get(k, 0) + 1
+    sheet(wb.create_sheet("JB_Summary"), ["크기", "재질", "방폭", "보호등급", "개수"],
+          [[*k, n] for k, n in sorted(jsum.items())] + [[], ["크기표 (현재 스페어 기준)"],
+           ["JB 크기", "받는 1P 최대", "멀티", "케이블 스페어 (P)", "단자 스페어 (P)", "단자 수"]]
+          + [[x["size"], x["max_in"], x["multi"], x["spare_cable"], x["spare_term"], x["terms"]]
+             for x in JB.size_table(s["values"])], [10, 14, 22, 18, 16, 10])
+    sheet(wb.create_sheet("JB_Checklist"), ["No", "구분", "항목", "적용값", "기본값", "", "설명"],
+          [[c["code"], c["group"], c["name"], c["value"], c["default"], "변경" if c["changed"] else "", c["help"]]
+           for c in JB.checklist(s["values"])], [6, 14, 30, 22, 22, 6, 80])
 
     v = s["values"]
     data = []
-    for g in SCHEMA:
+    for g in SCHEMA + JB.SCHEMA:
         for it in g["items"]:
             val = v[it["id"]]
             data.append([g["title"], it["name"], val, it["default"], "변경" if val != it["default"] else "",

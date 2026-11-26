@@ -206,8 +206,10 @@ def read_plot(pdf: Path, ref_pdf: Path | None = None) -> dict:
     sc = detect_scale(page, ref)
     eq = equipment(page)
     m = sc.m_per_pt or 0.2                   # size filters only; lengths wait for a confirmed scale
+    cols = []
+    racks = detect_racks(page, m, cols_out=cols)
     return {
-        "racks": detect_racks(page, m), "obstacles": detect_obstacles(page, m),
+        "racks": racks, "rack_cols": cols, "obstacles": detect_obstacles(page, m),
         "pdf": Path(pdf).name, "size": [page.rect.width, page.rect.height],
         "scale": {"m_per_pt": sc.m_per_pt, "method": sc.method, "evidence": sc.evidence, "confident": sc.confident},
         "equipment": {t: [[round(x, 1), round(y, 1)] for x, y in v] for t, v in eq.items()},
@@ -304,6 +306,7 @@ class Layout:
         self.racks_auto = [r + [i in off] for i, r in enumerate(plot.get("racks") or [])]
         self.racks_user = [p for p in (dec.get("racks_add") or []) if len(p) >= 2]
         self._router = {}
+        self.jb_moves = dict(dec.get("jb_moves") or {})      # STEP 7: {JB no: slot id}
         self.route_edit = {k: orthogonal(v) for k, v in (dec.get("routes_edit") or {}).items() if len(v) >= 2}
         self.room_src = "사용자 지정" if dec.get("room") else ("도면 글자" if self.room else "")
         self.irp_src = "사용자 지정" if dec.get("irp") else ("도면 글자" if self.irp else "")
@@ -416,10 +419,11 @@ class Layout:
 
 
 # ------------------------------------------------------------------ pipe racks and obstacles
-def detect_racks(page, m_per_pt: float, tol=1.5):
+def detect_racks(page, m_per_pt: float, tol=1.5, cols_out: list | None = None):
     """Pipe racks seen from above look like ladders: two rows of column markers (a ~1 m box
     around an H-beam) at a steady bay (2-13 m), the rows 3-12 m apart. Returns rects in pt:
-    [x0, y0, x1, y1, 'H'|'V', bents]."""
+    [x0, y0, x1, y1, 'H'|'V', bents]. cols_out (if given) gets, per rack, its column centres
+    [[x, y], ...] - the faces JBs are mounted on."""
     m = m_per_pt
     cols = []
     for d in page.get_drawings():
@@ -452,6 +456,11 @@ def detect_racks(page, m_per_pt: float, tol=1.5):
                 if len(run) >= 3 and (run[-1] - run[0]) * m >= 10:
                     r = [run[0], lo, run[-1], hi] if axis == 0 else [lo, run[0], hi, run[-1]]
                     out.append([round(v, 1) for v in r] + ["H" if axis == 0 else "V", len(run)])
+                    if cols_out is not None:
+                        cols_out.append([[round(x, 1), round(lo, 1)] if axis == 0 else [round(lo, 1), round(x, 1)]
+                                         for x in run]
+                                        + [[round(x, 1), round(hi, 1)] if axis == 0 else [round(hi, 1), round(x, 1)]
+                                           for x in run])
                 run = [x] if x is not None else []
     return out
 

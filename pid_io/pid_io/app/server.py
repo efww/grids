@@ -718,7 +718,7 @@ def plot_read(name: str):
         return None
     pf = d / "input" / files["plot"]
     rf = d / "input" / files["plotref"] if files.get("plotref") else None
-    key = [files["plot"], pf.stat().st_mtime_ns, files.get("plotref"), rf.stat().st_mtime_ns if rf else 0, "v2"]
+    key = [files["plot"], pf.stat().st_mtime_ns, files.get("plotref"), rf.stat().st_mtime_ns if rf else 0, "v3"]
     cj = d / "cache" / "plot.json"
     if cj.exists():
         old = json.loads(cj.read_text(encoding="utf-8"))
@@ -766,6 +766,13 @@ def plot_update(name: str, b: dict):
         dd["m_per_pt"] = float(b["scale_n"]) * 25.4 / 72 / 1000
     if b.get("route_edit"):                          # {rid, poly}: a route dragged on the plot
         dd.setdefault("routes_edit", {})[b["route_edit"]["rid"]] = [[float(x), float(y)] for x, y in b["route_edit"]["poly"]]
+    if b.get("jb_move"):                             # STEP 7: {jbs: [JB no], slot: slot id}
+        mv = dd.setdefault("jb_moves", {})
+        for j in b["jb_move"]["jbs"]:
+            mv[str(j)] = str(b["jb_move"]["slot"])
+    if b.get("jb_reset"):
+        for j in (b["jb_reset"] if isinstance(b["jb_reset"], list) else [b["jb_reset"]]):
+            (dd.get("jb_moves") or {}).pop(str(j), None)
     if b.get("route_reset"):
         (dd.get("routes_edit") or {}).pop(b["route_reset"], None)
     if b.get("rack_add"):                            # polyline drawn on the plot, pt
@@ -836,8 +843,11 @@ def cable_view(name: str):
     return {"schema": cable.SCHEMA, "values": s["values"], "trunk": s["trunk"], "preset": s.get("preset", ""),
             "presets": cable.list_presets(HOME), "changed": len(cable.changed(s)),
             "summary": res["summary"], "areas": trunk_areas,
-            "jbs": [{k: j[k] for k in ("no", "kind", "area", "system", "cls", "is", "size", "used", "spare", "multi",
-                                       "dwgs")} for j in res["jbs"]],
+            "jbs": [{k: j.get(k) for k in ("no", "kind", "area", "system", "cls", "is", "size", "used", "spare", "multi",
+                                           "multi_size", "dwgs", "slot", "place", "moved", "material", "ex", "ip",
+                                           "terminals", "gl_branch", "gl_multi", "fill", "tags")} for j in res["jbs"]],
+            "jb_schema": cable.JB.SCHEMA, "size_table": cable.JB.size_table(s["values"]),
+            "checklist": cable.JB.checklist(s["values"]),
             "cables": res["cables"][:400], "cables_total": len(res["cables"]),
             "plot": plot_view(name, lay, res)}
 
@@ -888,8 +898,13 @@ def export(name: str, body: dict):
     area = ((load_protocol(am) or {}).get("map") or {}) if am.exists() else {}
     with CALC:
         imp = impact(syms_ov, notes, con, top=None, decisions=dec.load(d))
+    try:                                             # STEP 6/7 -> index Junction Box / multi columns
+        _, cres, _ = cable_result(name)
+        cmap = cable.index_map(cres)
+    except Exception:
+        cmap = None
     write_template(rows, d / "input" / files["template"], out, files["pdf"], data.get("sheets"), con, log,
-                   m.get("scenarios"), imp, area_map=area)
+                   m.get("scenarios"), imp, area_map=area, cable_map=cmap)
     made = [out.name]
     warn = []
     if files.get("ref"):
