@@ -56,8 +56,11 @@ SCHEMA = [
                + _io_items("DI", "1P", "1.25", "OS (전체 차폐)", ["1P", "2C", "3C"])
                + _io_items("DO", "2C", "2.0", "OS (전체 차폐)", ["1P", "2C", "3C"])
                + _io_items("RTD", "1T", "1.25", "OS (전체 차폐)", ["1T", "2P"])
-               + [_txt("COMM_spec", "통신 케이블 사양", "RS-485 1P x 0.75SQ IS-OS",
-                       "패키지·MCC 통신 포트에서 룸까지 직접 가는 케이블")])},
+               + [_sel("comm_pkg", "패키지 PLC 통신 케이블", ["광케이블 (Fiber Optic)", "RS-485 동선"],
+                       "광케이블 (Fiber Optic)", "벤더PLC+통신 / 혼합 패키지의 통신 포트 → DCS. 포트(이중화 A/B)마다 1가닥"),
+                  _txt("FO_spec", "광케이블 사양", "FO 12C SM Armoured", "코어 수·모드·외장"),
+                  _txt("COMM_spec", "RS-485 통신 케이블 사양", "RS-485 1P x 0.75SQ IS-OS",
+                       "패키지를 동선으로 할 때, 그리고 MCC 통신 포트")])},
     {"id": "jb", "title": "JB · 멀티 케이블 (JB → 룸)",
      "lead": "JB에 모인 페어가 멀티페어 케이블 하나로 랙을 타고 룸까지 갑니다.",
      "items": [
@@ -549,11 +552,12 @@ def build(rows, s: dict, area_map: dict | None = None, layout=None):
             p = G.L.irp if r.location == "MCC" else G.loc(r)[0]
             if p:
                 tl, how = G.run(p, float(v["jb_el"]), float(v["room_el"]), "comm", f"COMM {src}")
-        cables.append({"no": uniq(f"CB-{r.tag}"), "kind": "통신", "frm": src,
+        fo = r.location != "MCC" and v["comm_pkg"].startswith("광")
+        cables.append({"no": uniq(f"{'FO' if fo else 'CB'}-{r.tag}"), "kind": "통신", "frm": src,
                        "frm_type": "MCC" if r.location == "MCC" else "패키지", "to": room(r.system if r.system in SYS_LETTER else "DCS"),
-                       "to_type": "룸", "spec": v["COMM_spec"], "io": r.io, "system": r.system, "is": "Non-IS",
+                       "to_type": "룸", "spec": v["FO_spec"] if fo else v["COMM_spec"], "io": r.io, "system": r.system, "is": "Non-IS",
                        "length": _round_len(tl, v), "area": area, "dwg": r.dwg, "coord": r.coord, "unit": r.unit,
-                       "basis": f"통신 포트 직결 · {how}"})
+                       "basis": f"{'패키지 PLC 통신 (광)' if fo else '통신 포트 직결'} · {how}"})
 
     order = {"분기": 0, "멀티": 0, "패키지": 1, "MCC": 2, "통신": 3}   # JB branches stay next to their multi
     cables.sort(key=lambda c: order[c["kind"]])

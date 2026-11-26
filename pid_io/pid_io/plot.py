@@ -304,7 +304,7 @@ class Layout:
         self.racks_auto = [r + [i in off] for i, r in enumerate(plot.get("racks") or [])]
         self.racks_user = [p for p in (dec.get("racks_add") or []) if len(p) >= 2]
         self._router = {}
-        self.route_edit = {k: v for k, v in (dec.get("routes_edit") or {}).items() if len(v) >= 2}
+        self.route_edit = {k: orthogonal(v) for k, v in (dec.get("routes_edit") or {}).items() if len(v) >= 2}
         self.room_src = "사용자 지정" if dec.get("room") else ("도면 글자" if self.room else "")
         self.irp_src = "사용자 지정" if dec.get("irp") else ("도면 글자" if self.irp else "")
 
@@ -499,6 +499,29 @@ def detect_obstacles(page, m_per_pt: float):
         if q not in out:
             out.append(q)
     return out
+
+
+def orthogonal(poly):
+    """Cable routes run along x / y only: an inclined step becomes an L (along the longer axis first),
+    repeated and collinear points are dropped."""
+    pts = [tuple(map(float, p)) for p in poly]
+    out = [pts[0]] if pts else []
+    for q in pts[1:]:
+        a = out[-1]
+        if abs(a[0] - q[0]) > 0.05 and abs(a[1] - q[1]) > 0.05:
+            out.append((q[0], a[1]) if abs(q[0] - a[0]) >= abs(q[1] - a[1]) else (a[0], q[1]))
+        out.append(q)
+    clean = []
+    for p in out:
+        if clean and abs(p[0] - clean[-1][0]) < 0.05 and abs(p[1] - clean[-1][1]) < 0.05:
+            continue
+        if len(clean) >= 2:
+            a, b = clean[-2], clean[-1]
+            if (abs(a[0] - b[0]) < 0.05 and abs(b[0] - p[0]) < 0.05) or (abs(a[1] - b[1]) < 0.05 and abs(b[1] - p[1]) < 0.05):
+                clean[-1] = p
+                continue
+        clean.append(p)
+    return [[round(x, 1), round(y, 1)] for x, y in clean]
 
 
 class Router:

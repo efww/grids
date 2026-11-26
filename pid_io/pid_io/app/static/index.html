@@ -933,6 +933,18 @@ function ckTables(d) {
 }
 /* ---- PLOT PLAN tab (inside step 6) */
 const PL = {pick:null, pts:[], sel:null, edit:null, drag:null};
+function ortho(poly) {               // x / y only, like pid_io.plot.orthogonal
+  const out = poly.length ? [poly[0].slice()] : [];
+  for (const q of poly.slice(1)) { const a = out[out.length-1];
+    if (Math.abs(a[0]-q[0]) > .05 && Math.abs(a[1]-q[1]) > .05) out.push(Math.abs(q[0]-a[0]) >= Math.abs(q[1]-a[1]) ? [q[0], a[1]] : [a[0], q[1]]);
+    out.push(q.slice()); }
+  const c = [];
+  for (const p of out) { if (c.length && Math.abs(p[0]-c[c.length-1][0]) < .05 && Math.abs(p[1]-c[c.length-1][1]) < .05) continue;
+    if (c.length >= 2) { const a = c[c.length-2], b = c[c.length-1];
+      if ((Math.abs(a[0]-b[0]) < .05 && Math.abs(b[0]-p[0]) < .05) || (Math.abs(a[1]-b[1]) < .05 && Math.abs(b[1]-p[1]) < .05)) { c[c.length-1] = p; continue; } }
+    c.push(p); }
+  return c;
+}
 function plotOverlay(pp) {
   const [W,H] = pp.size, g = pp.geo || {}, k = Math.max(W,H)/700;
   const room = (pp.questions.find(q=>q.id==="room")||{}).pos, irp = (pp.questions.find(q=>q.id==="irp")||{}).pos;
@@ -977,7 +989,7 @@ function plotTab(d) {
   const sr = PL.sel ? ((pp.geo||{}).routes||[]).find(r => r.rid === PL.sel) : null;
   const selCard = sr ? `<div class="ritem on" style="cursor:default">
       <div class="a"><b>선택한 경로: ${esc(sr.rid)}</b>${sr.edited?`<span class="chip b">수정됨</span>`:`<span class="chip">자동</span>`}</div>
-      <div class="b">케이블 ${sr.cables}가닥 · 가닥당 ${fmt(sr.len)}m (랙 ${fmt(sr.rack)}m, 높이 포함)<br>흰 점을 끌어 옮기고, 빨간 선을 더블클릭하면 점 추가, 흰 점을 더블클릭하면 삭제. 놓으면 바로 케이블 스케줄에 반영됩니다.</div>
+      <div class="b">케이블 ${sr.cables}가닥 · 가닥당 ${fmt(sr.len)}m (랙 ${fmt(sr.rack)}m, 높이 포함)<br>흰 점을 끌어 옮기면 가로·세로로만 꺾여 붙습니다. 빨간 선 더블클릭 = 점 추가, 흰 점 더블클릭 = 삭제. 놓으면 바로 케이블 스케줄에 반영됩니다.</div>
       <div style="display:flex;gap:6px;margin-top:8px">${sr.edited?`<button class="btn sm line" id="plrreset">자동 경로로 되돌리기</button>`:""}<button class="btn sm line" id="plrclose">선택 해제</button></div></div>`
     : `<div class="ritem" style="cursor:default;background:#f7faf8"><div class="b">경로 선을 누르면 꺾이는 점을 끌어서 경로를 고칠 수 있습니다.</div></div>`;
   return files + `<div style="display:flex;gap:16px;align-items:flex-start">
@@ -1008,7 +1020,7 @@ function bindPlot(m, upd) {
   const sb = $("#plscaleb"); if (sb) sb.onclick = () => { const n = +$("#plscale").value; if (!n) return toast("축척 1:N의 N을 입력하세요", true); plotPost({scale_n:n}, m); };
   const svg = $("#plsvg"), toPt = e => { const r = $("#plwrap").getBoundingClientRect(), [W,H] = CK.data.plot.size;
     return [Math.round((e.clientX - r.left) / r.width * W * 10) / 10, Math.round((e.clientY - r.top) / r.height * H * 10) / 10]; };
-  const saveRoute = () => plotPost({route_edit: {rid: PL.sel, poly: PL.edit}}, m);
+  const saveRoute = () => { PL.edit = ortho(PL.edit); plotPost({route_edit: {rid: PL.sel, poly: PL.edit}}, m); };
   if (svg) {
     svg.querySelectorAll("[data-rid]").forEach(el => el.onclick = e => { e.stopPropagation();
       const r = CK.data.plot.geo.routes.find(x => x.rid === el.dataset.rid); PL.sel = r.rid; PL.edit = r.poly.map(q => q.slice()); renderCable(m); });
@@ -1024,7 +1036,7 @@ function bindPlot(m, upd) {
       PL.edit.splice(best, 0, p); saveRoute(); };
     svg.onmousemove = e => { if (PL.drag == null) return; const p = toPt(e); PL.edit[PL.drag] = p;
       const ln = $("#plselline"), hd = svg.querySelector(`[data-vi="${PL.drag}"]`);
-      if (ln) ln.setAttribute("points", PL.edit.map(q=>q.join(",")).join(" ")); if (hd) { hd.setAttribute("cx", p[0]); hd.setAttribute("cy", p[1]); } };
+      if (ln) ln.setAttribute("points", ortho(PL.edit).map(q=>q.join(",")).join(" ")); if (hd) { hd.setAttribute("cx", p[0]); hd.setAttribute("cy", p[1]); } };
     svg.onmouseup = svg.onmouseleave = () => { if (PL.drag == null) return; PL.drag = null; saveRoute(); };
   }
   const rr = $("#plrreset"); if (rr) rr.onclick = () => { const rid = PL.sel; PL.edit = null; plotPost({route_reset: rid}, m).then(() => {
