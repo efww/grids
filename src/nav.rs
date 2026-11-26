@@ -579,6 +579,7 @@ pub(crate) const M_HASH_STOP: (&str, &str) = ("Stop the chec&ksum ({p}%)", "체�
 pub(crate) const M_ORG: (&str, &str) = ("Sort the selected files into &date folders", "선택한 파일을 날짜별 폴더로 정리(&D)");
 pub(crate) const M_GROUP_N: (&str, &str) = ("Move {n} selected items into a &new folder  (Ctrl+F7)", "선택한 {n}개를 새 폴더로 묶기(&N)  (Ctrl+F7)");
 pub(crate) const M_GROUP: (&str, &str) = ("Move the selected items into a &new folder  (Ctrl+F7)", "선택한 항목을 새 폴더로 묶기(&N)  (Ctrl+F7)");
+pub(crate) const M_EMPTY: (&str, &str) = ("Remove &empty folders in this folder…", "이 폴더 안의 빈 폴더 지우기…(&E)");
 pub(crate) const M_WM_PAIR: (&str, &str) = ("Compa&re the 2 selected items with WinMerge", "선택한 2개를 WinMerge로 비교(&R)");
 pub(crate) const M_WM_PANE: (&str, &str) = ("Compa&re this folder with WinMerge", "이 폴더를 WinMerge로 비교(&R)");
 

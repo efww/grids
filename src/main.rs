@@ -516,7 +516,7 @@ mod tests {
             assert_eq!(open_in_pick(ID_WM_PANE + k), OpenPick::Shell);
             menu.extend([ID_OPEN_TO + k, ID_COPY_TO + k, ID_MOVE_TO + k, ID_SWAP_TO + k, ID_WM_PANE + k]);
         }
-        let shell = [ID_INUSE, ID_WM_PAIR, ID_HASH, ID_GROUP, ID_ORG, ID_ORG + 1, ID_ORG + 2];
+        let shell = [ID_INUSE, ID_WM_PAIR, ID_HASH, ID_GROUP, ID_ORG, ID_ORG + 1, ID_ORG + 2, ID_EMPTY];
         for p in shell {
             assert_eq!(open_in_pick(p), OpenPick::Shell, "{p}");
         }
@@ -533,7 +533,7 @@ mod tests {
         distinct("⇄ menu", &menu);
         assert_eq!(open_in_pick(0), OpenPick::Nothing);
         // just past each range: never an open in, or a copy / move to, a pane
-        for p in [17, 100, 117, 200, 217, 317, 441, 1129, 1137, 3116, 5000] {
+        for p in [17, 100, 117, 200, 217, 317, 441, 1129, 1138, 3116, 5000] {
             assert_eq!(open_in_pick(p), OpenPick::Unknown, "{p}");
         }
         for p in 0..5000 {
@@ -2409,8 +2409,8 @@ mod tests { tr("in", "안") }
     // none the first letter of an unmarked item (the grey title, "Pane 10" …), in both languages.
     #[test]
     fn open_in_menu_letters() {
-        let slots: [&[(&str, &str)]; 8] =
-            [&[M_SWAP], &[M_COPY], &[M_MOVE], &[M_INUSE], &[M_HASH, M_HASH_STOP], &[M_ORG], &[M_GROUP_N, M_GROUP], &[M_WM_PAIR, M_WM_PANE]];
+        let slots: [&[(&str, &str)]; 9] =
+            [&[M_SWAP], &[M_COPY], &[M_MOVE], &[M_INUSE], &[M_HASH, M_HASH_STOP], &[M_ORG], &[M_GROUP_N, M_GROUP], &[M_EMPTY], &[M_WM_PAIR, M_WM_PANE]];
         for ko in [false, true] {
             let mut seen: Vec<char> = "123456789".chars().collect();
             seen.extend(["Open the selected folder", "Pane"].iter().map(|s| s.chars().next().unwrap()));

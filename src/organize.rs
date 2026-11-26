@@ -239,6 +239,209 @@ unsafe fn organize_work(srcs: &[String], parent: &str, level: usize, ko: bool) {
     }
 }
 
+// ---------- ⇄ menu: empty folders under this one, to the Recycle Bin ----------
+// A folder is empty when it holds no file at all (hidden and system files count) and only empty folders.
+// Never walked into nor removed: junctions / symbolic links, online-only or offline folders, hidden or system
+// folders (.git, $RECYCLE.BIN, AppData …), folders that can't be read, and the pane's own folder.
+
+pub(crate) const ID_EMPTY: usize = 1137;
+pub(crate) const EMPTY_CAP: usize = 200_000; // items looked at, at most
+const EMPTY_DEPTH: usize = 256; // deeper than this: left alone
+
+// A folder entry's attributes say: leave it alone and count it as content.
+// hidden 0x2, system 0x4, reparse point 0x400, offline 0x1000, recall on open 0x4_0000, recall on data access 0x40_0000
+pub(crate) fn keep_dir(attr: u32) -> bool {
+    attr & (0x2 | 0x4 | 0x400 | 0x1000 | 0x4_0000 | 0x40_0000) != 0
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct EmptyPlan {
+    pub(crate) tops: Vec<(PathBuf, usize)>, // the outermost empty folders, each with how many empty folders it is (itself included)
+    pub(crate) partial: bool,               // stopped at the cap: whatever wasn't seen to the end counts as not empty
+}
+
+impl EmptyPlan {
+    pub(crate) fn total(&self) -> usize {
+        self.tops.iter().map(|t| t.1).sum()
+    }
+}
+
+// The empty folders under `root` (never `root` itself): a\b\c all empty is one entry, a, counted as 3.
+pub(crate) fn empty_plan(root: &Path, cap: usize) -> EmptyPlan {
+    let (mut seen, mut partial) = (0, false);
+    let (_, mut tops) = walk_empty(root, 0, cap, &mut seen, &mut partial);
+    tops.sort_by_key(|t| t.0.to_string_lossy().to_lowercase());
+    EmptyPlan { tops, partial }
+}
+
+// (dir is empty, the empty folders found in it). An empty dir hands back its children; the caller takes dir instead.
+fn walk_empty(dir: &Path, depth: usize, cap: usize, seen: &mut usize, partial: &mut bool) -> (bool, Vec<(PathBuf, usize)>) {
+    let Ok(list) = std::fs::read_dir(dir) else { return (false, Vec::new()) };
+    let (mut empty, mut tops) = (true, Vec::new());
+    for e in list {
+        *seen += 1;
+        if *seen > cap {
+            *partial = true;
+        }
+        if *partial {
+            empty = false;
+            break;
+        }
+        // the listing's own attributes: a link is never followed to read them
+        let Some(attr) = e.as_ref().ok().and_then(|e| e.metadata().ok()).map(|m| m.file_attributes()) else {
+            empty = false;
+            continue;
+        };
+        if attr & 0x10 == 0 || keep_dir(attr) || depth >= EMPTY_DEPTH {
+            empty = false;
+            continue;
+        }
+        let path = e.map(|e| e.path()).unwrap_or_default();
+        // a .git that lost its hidden bit (unzipped, copied out of WSL): its empty refs folders still hold the repository together
+        if path.file_name().is_some_and(|n| n.eq_ignore_ascii_case(".git")) {
+            empty = false;
+            continue;
+        }
+        let (sub_empty, sub_tops) = walk_empty(&path, depth + 1, cap, seen, partial);
+        if sub_empty && !*partial {
+            let n = 1 + sub_tops.iter().map(|t| t.1).sum::<usize>();
+            tops.push((path, n));
+        } else {
+            empty = false;
+            tops.extend(sub_tops);
+        }
+    }
+    (empty, tops)
+}
+
+// Checked again right before the delete: still a plain folder, and still empty all the way down.
+fn still_empty(dir: &Path) -> bool {
+    let plain = std::fs::symlink_metadata(dir).is_ok_and(|m| m.file_attributes() & 0x10 != 0 && !keep_dir(m.file_attributes()));
+    let (mut seen, mut partial) = (0, false);
+    plain && walk_empty(dir, 0, EMPTY_CAP, &mut seen, &mut partial).0 && !partial
+}
+
+// "Send 12 empty folders (counting the empty ones inside them) to the Recycle Bin?" with the first 4 named.
+pub(crate) fn empty_ask_text(ko: bool, total: usize, names: &[String], partial: bool) -> String {
+    let mut list = names.iter().take(4).cloned().collect::<Vec<_>>().join(", ");
+    if names.len() > 4 {
+        list.push_str(", …");
+    }
+    let nested = total > names.len();
+    let mut text = match (ko, nested) {
+        (true, true) => format!("빈 폴더 {total}개(그 안의 빈 폴더 포함)를 휴지통으로 보낼까요?"),
+        (true, false) => format!("빈 폴더 {total}개를 휴지통으로 보낼까요?"),
+        (false, true) => format!("Send {total} empty folders (counting the empty ones inside them) to the Recycle Bin?"),
+        (false, false) if total == 1 => "Send 1 empty folder to the Recycle Bin?".to_string(),
+        (false, false) => format!("Send {total} empty folders to the Recycle Bin?"),
+    };
+    text.push_str(&format!("\n\n{list}\n\n"));
+    text.push_str(match ko {
+        true => "파일이 하나라도(숨김 파일 포함) 든 폴더와 숨김·시스템 폴더, 링크는 그대로 둡니다.",
+        false => "Folders holding any file (hidden ones too), hidden or system folders and links stay.",
+    });
+    if partial {
+        text.push_str(match ko {
+            true => "\n항목이 20만 개를 넘어 이 폴더의 일부만 확인했습니다.",
+            false => "\nStopped after 200,000 items: only part of this folder was checked.",
+        });
+    }
+    text
+}
+
+// "Remove empty folders in this folder…": live for a file system folder while no date sort / removal runs.
+pub(crate) unsafe fn empty_menu(menu: HMENU, ok: bool) {
+    let flags = if ok && !ORGANIZING.load(Ordering::SeqCst) { MF_STRING } else { MF_STRING | MF_GRAYED };
+    _ = AppendMenuW(menu, flags, ID_EMPTY, &HSTRING::from(tr2(M_EMPTY)));
+}
+
+// Picked from the ⇄ menu: the folder the pane shows now, looked through on a worker thread.
+pub(crate) unsafe fn remove_empty(src: usize) {
+    let root = app(|a| a.s.paths[src].clone());
+    if !is_fs(&root) || ORGANIZING.swap(true, Ordering::SeqCst) {
+        _ = MessageBeep(MB_ICONWARNING);
+        return;
+    }
+    let done = OrganizingDone; // released when the worker ends, or right away if it can't start
+    set_note(tr("Looking for empty folders…", "빈 폴더 찾는 중…").to_string());
+    let ko = KO.load(Ordering::Relaxed);
+    let busy = Busy::new();
+    let job = std::thread::Builder::new().spawn(move || {
+        let _busy = busy;
+        let _done = done;
+        let com = CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok();
+        empty_work(Path::new(&root), ko);
+        if com {
+            CoUninitialize();
+        }
+    });
+    match job {
+        Ok(job) => keep_job(job),
+        Err(_) => _ = MessageBeep(MB_ICONWARNING),
+    }
+}
+
+// Worker thread: the plan, one question (No by default), each folder checked again, then one undoable delete.
+unsafe fn empty_work(root: &Path, ko: bool) {
+    let note = |text: String| *SAVED.lock().unwrap_or_else(|e| e.into_inner()) = Some(text);
+    let none = || if ko { "빈 폴더 없음" } else { "No empty folders" }.to_string();
+    let plan = empty_plan(root, EMPTY_CAP);
+    if plan.tops.is_empty() {
+        note(none());
+        return;
+    }
+    let names: Vec<String> = plan.tops.iter().map(|(p, _)| p.strip_prefix(root).unwrap_or(p).to_string_lossy().into_owned()).collect();
+    let ask = HSTRING::from(empty_ask_text(ko, plan.total(), &names, plan.partial));
+    let flags = MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2 | MB_SETFOREGROUND | MB_TOPMOST;
+    if MessageBoxW(None, &ask, w!("Grids"), flags) != IDYES {
+        return;
+    }
+    // anything that turned up meanwhile keeps its folder
+    let tops: Vec<(PathBuf, usize)> = plan.tops.into_iter().filter(|(p, _)| still_empty(p)).collect();
+    if tops.is_empty() {
+        note(none());
+        return;
+    }
+    let op = delete_dirs(&tops);
+    let aborted = op.as_ref().map_or(true, |op| op.GetAnyOperationsAborted().map_or(true, |b| b.as_bool()));
+    if let Err(e) = &op {
+        if e.code() != COPYENGINE_E_USER_CANCELLED && e.code() != ERROR_CANCELLED.to_hresult() {
+            let warn = format!("{}{}", tr("Removing failed: ", "지우지 못했습니다: "), e.message());
+            _ = MessageBoxW(None, &HSTRING::from(warn), w!("Grids"), MB_ICONWARNING | MB_SETFOREGROUND);
+        }
+    }
+    if aborted {
+        return;
+    }
+    // what is really gone, not what was planned. Worded so it holds on a drive with no Recycle Bin too,
+    // where Windows (after its own warning) deletes for good and Ctrl+Z has nothing to bring back.
+    let gone: usize = tops.iter().filter(|(p, _)| std::fs::symlink_metadata(p).is_err()).map(|t| t.1).sum();
+    note(match (gone, ko) {
+        (0, _) => none(),
+        (n, true) => format!("빈 폴더 {n}개를 지움 (휴지통으로 갔으면 Ctrl+Z로 되돌리기)"),
+        (1, false) => "Removed 1 empty folder (Ctrl+Z brings it back from the Recycle Bin)".to_string(),
+        (n, false) => format!("Removed {n} empty folders (Ctrl+Z brings them back from the Recycle Bin)"),
+    });
+}
+
+// One shell delete for every folder: one progress window, one undo record. A folder the shell can't name
+// (too long a path …) is left out, not the whole lot. Windows still warns before anything is deleted for good.
+unsafe fn delete_dirs(dirs: &[(PathBuf, usize)]) -> Result<IFileOperation> {
+    let op: IFileOperation = CoCreateInstance(&FileOperation, None, CLSCTX_ALL)?;
+    op.SetOperationFlags(FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_WANTNUKEWARNING | FOFX_RECYCLEONDELETE | FOFX_ADDUNDORECORD)?;
+    let mut any = false;
+    for (d, _) in dirs {
+        let item: Result<IShellItem> = SHCreateItemFromParsingName(&HSTRING::from(d.as_os_str()), None);
+        let Ok(item) = item else { continue };
+        any |= op.DeleteItem(&item, None).is_ok();
+    }
+    if !any {
+        return Err(Error::from(E_FAIL));
+    }
+    op.PerformOperations()?;
+    Ok(op)
+}
+
 // The photo's date taken (EXIF), as a local date; None when it has none.
 unsafe fn date_taken(path: &str) -> Option<[u16; 6]> {
     let item: IShellItem2 = SHCreateItemFromParsingName(&HSTRING::from(path), None).ok()?;
@@ -299,7 +502,68 @@ mod tests {
         assert_eq!(common_parent(&[r"E:\a.jpg".into(), r"e:\b.jpg".into()]).as_deref(), Some(r"E:\"));
         assert!(is_fs(&common_parent(&[r"E:\a.jpg".into()]).unwrap()));
         assert!(photo_ext(r"C:\p\IMG_1.JPG") && photo_ext("x.heic") && photo_ext("raw.CR3") && !photo_ext("a.txt") && !photo_ext(r"C:\a.jpg\noext"));
-        assert!(is_shell_pick(ID_ORG) && is_shell_pick(ID_ORG + 2) && !is_org_pick(ID_ORG + 3) && !is_shell_pick(ID_ORG + 3));
+        assert!(is_shell_pick(ID_ORG) && is_shell_pick(ID_ORG + 2) && !is_org_pick(ID_ORG + 3) && !is_org_pick(ID_EMPTY));
+        assert!(is_shell_pick(ID_EMPTY) && !is_shell_pick(ID_EMPTY + 1));
+    }
+
+    #[test]
+    fn empty_folder_attributes() {
+        assert!(!keep_dir(0x10) && !keep_dir(0x10 | 0x20)); // a plain folder
+        assert!(keep_dir(0x10 | 0x400)); // junction / symbolic link: never followed
+        assert!(keep_dir(0x10 | 0x2) && keep_dir(0x10 | 0x4) && keep_dir(0x10 | 0x2 | 0x4)); // .git, $RECYCLE.BIN, AppData
+        assert!(keep_dir(0x10 | 0x40_0000) && keep_dir(0x10 | 0x4_0000) && keep_dir(0x10 | 0x1000)); // online-only / offline
+    }
+
+    #[test]
+    fn empty_folder_plan() {
+        use windows::Win32::Storage::FileSystem::{SetFileAttributesW, FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_NORMAL};
+        let root = std::env::temp_dir().join(format!("grids-empty-{}", std::process::id()));
+        _ = std::fs::remove_dir_all(&root);
+        let mk = |p: &str| std::fs::create_dir_all(root.join(p)).unwrap();
+        let file = |p: &str| std::fs::write(root.join(p), b"x").unwrap();
+        mk(r"a\b\c"); // a chain: only a, counted as 3
+        mk("d");
+        file(r"d\desktop.ini"); // a hidden-style file is content
+        mk(r"e\f");
+        file(r"e\g.txt"); // e stays, its empty f goes
+        mk("h");
+        mk(r".git\refs\heads"); // hidden: never walked into nor removed
+        unsafe { SetFileAttributesW(&HSTRING::from(root.join(".git").as_os_str()), FILE_ATTRIBUTE_HIDDEN).unwrap() };
+        mk(r"w\.git\refs\tags"); // a .git without its hidden bit (unzipped): still left alone, and so is w
+        file("x.txt");
+        let plan = empty_plan(&root, EMPTY_CAP);
+        let tops: Vec<(String, usize)> = plan.tops.iter().map(|(p, n)| (p.strip_prefix(&root).unwrap().to_string_lossy().into_owned(), *n)).collect();
+        assert_eq!(tops, [("a".to_string(), 3), (r"e\f".into(), 1), ("h".into(), 1)]);
+        assert!(!plan.partial && plan.total() == 5);
+        assert!(still_empty(&root.join("a")) && !still_empty(&root.join("e")) && !still_empty(&root.join(".git")));
+        // the pane's own folder is never on the list, even when empty
+        assert!(empty_plan(&root.join("h"), EMPTY_CAP).tops.is_empty());
+        // the cap: a\b\c is 3 items; stopping at 2 leaves the whole chain alone
+        let chain = root.join("a");
+        assert_eq!(empty_plan(&chain, 1).tops.len(), 0);
+        assert!(empty_plan(&chain, 1).partial);
+        let two = empty_plan(&chain, 2);
+        assert_eq!((two.tops.len(), two.partial), (1, false)); // b (with c), all seen
+        let short = empty_plan(&root, 4);
+        assert!(short.partial && short.tops.iter().all(|(p, _)| still_empty(p)));
+        _ = unsafe { SetFileAttributesW(&HSTRING::from(root.join(".git").as_os_str()), FILE_ATTRIBUTE_NORMAL) };
+        _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn empty_folder_question() {
+        let f = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let three = f(&[r"사진\2024-03", "old", r"temp\a"]);
+        assert!(empty_ask_text(true, 12, &three, false).starts_with("빈 폴더 12개(그 안의 빈 폴더 포함)를 휴지통으로 보낼까요?\n\n사진\\2024-03, old, temp\\a\n"));
+        assert!(empty_ask_text(false, 12, &three, false).starts_with("Send 12 empty folders (counting the empty ones inside them) to the Recycle Bin?"));
+        assert!(empty_ask_text(false, 1, &f(&["old"]), false).starts_with("Send 1 empty folder to the Recycle Bin?\n\nold\n"));
+        assert!(empty_ask_text(false, 3, &three, false).starts_with("Send 3 empty folders to the Recycle Bin?"));
+        assert!(empty_ask_text(true, 3, &three, false).starts_with("빈 폴더 3개를 휴지통으로 보낼까요?"));
+        let six = f(&["a", "b", "c", "d", "e", "f"]);
+        assert!(empty_ask_text(false, 6, &six, false).contains("\n\na, b, c, d, …\n"));
+        assert!(empty_ask_text(true, 6, &six, true).ends_with("이 폴더의 일부만 확인했습니다."));
+        assert!(empty_ask_text(false, 6, &six, true).contains("only part of this folder"));
+        assert!(!empty_ask_text(false, 6, &six, false).contains("200,000"));
     }
 
     #[test]
