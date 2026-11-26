@@ -561,7 +561,7 @@ pub(crate) unsafe fn go_edit(i: usize) {
     let Some(e) = pane_ctl(i, ID_EDIT) else { return };
     let raw = text_of(e);
     let Some((path, cmd)) = addr_parts(raw.trim()) else {
-        _ = MessageBeep(MB_ICONWARNING);
+        fail(Fail::AddrQuotes, "");
         return;
     };
     // none inside a zip or in a shell place; metadata (not GetFileAttributes) also takes a bare \\server\share
@@ -572,10 +572,12 @@ pub(crate) unsafe fn go_edit(i: usize) {
         sei.cbSize = size_of::<SHELLEXECUTEINFOW>() as u32;
         sei.lpDirectory = dir.as_ref().map_or(PCWSTR::null(), |d| PCWSTR(d.as_ptr()));
         sei.nShow = SW_SHOWNORMAL.0;
-        ShellExecuteExW(&mut sei).is_ok()
+        ShellExecuteExW(&mut sei)
     };
     // Some(true) = browsed, Some(false) = opened or ran
     let mut resolved = false;
+    // the command was there but wouldn't run (elevation declined, blocked…): not a spelling slip
+    let mut ran_bad = false;
     let done = 'go: {
         if let Some(p) = path {
             // std::path::absolute is GetFullPathNameW: folds `..` and `.`
@@ -586,7 +588,7 @@ pub(crate) unsafe fn go_edit(i: usize) {
                 let r = if sfgao & SFGAO_FOLDER.0 != 0 {
                     eb_of(i).is_some_and(|eb| eb.BrowseToIDList(pidl, SBSP_ABSOLUTE).is_ok()).then_some(true)
                 } else {
-                    run(SHELLEXECUTEINFOW { fMask: SEE_MASK_IDLIST | SEE_MASK_FLAG_NO_UI, lpIDList: pidl as _, ..Default::default() }).then_some(false)
+                    run(SHELLEXECUTEINFOW { fMask: SEE_MASK_IDLIST | SEE_MASK_FLAG_NO_UI, lpIDList: pidl as _, ..Default::default() }).is_ok().then_some(false)
                 };
                 CoTaskMemFree(Some(pidl as _));
                 resolved = true;
@@ -599,8 +601,12 @@ pub(crate) unsafe fn go_edit(i: usize) {
         let args = if wt && args.is_empty() && cur.is_some() { "-d ." } else { args };
         let Some(prog) = addr_program(prog, cur.as_deref()) else { break 'go None };
         let (prog, args) = (HSTRING::from(prog), HSTRING::from(args));
-        run(SHELLEXECUTEINFOW { fMask: SEE_MASK_FLAG_NO_UI, lpFile: PCWSTR(prog.as_ptr()), lpParameters: PCWSTR(args.as_ptr()), ..Default::default() }).then_some(false)
+        let r = run(SHELLEXECUTEINFOW { fMask: SEE_MASK_FLAG_NO_UI, lpFile: PCWSTR(prog.as_ptr()), lpParameters: PCWSTR(args.as_ptr()), ..Default::default() });
+        ran_bad = r.as_ref().is_err_and(|e| !gone(e.code()));
+        r.is_ok().then_some(false)
     };
+    // as typed, less the quotes around a whole path (the note puts its own around it)
+    let name = path.unwrap_or(raw.trim());
     match done {
         Some(true) => focus_view(i),
         Some(false) => addr_reset(i, e),
@@ -608,13 +614,14 @@ pub(crate) unsafe fn go_edit(i: usize) {
             // as the recent menu and favourites open a folder
             Some(p) => {
                 if !go_near(i, &p) {
-                    _ = MessageBeep(MB_ICONWARNING);
+                    fail(Fail::FolderCantOpen, &p);
                 }
                 focus_view(i);
             }
-            None => _ = MessageBeep(MB_ICONWARNING),
+            None => fail(if ran_bad { Fail::AddrCantOpen } else { Fail::AddrNotFound }, name),
         },
-        None => _ = MessageBeep(MB_ICONWARNING),
+        // a path that resolved but wouldn't browse or open
+        None => fail(Fail::AddrCantOpen, name),
     }
 }
 
@@ -829,18 +836,19 @@ pub(crate) unsafe fn open_in_menu(h: HWND, src: usize) {
                 _ => false,
             };
             if !sent {
-                _ = MessageBeep(MB_ICONWARNING);
+                fail(Fail::SendCant, "");
             }
         }
         (OpenPick::Send { mv, k }, Ok(srcs)) => {
             // only to the folder the menu showed, and only the whole selection it counted
             let shown = items.iter().find(|(i, ..)| *i == k).map(|(_, _, path, _)| path.clone());
-            let sent = shown.filter(|s| *s == app(|a| a.s.paths[k].clone())).and_then(|dst| {
-                let rename = send_mode(&srcs, &dst, mv)?;
-                Some(start_copy(srcs, dst, rename, mv))
-            });
-            if sent != Some(true) {
-                _ = MessageBeep(MB_ICONWARNING);
+            let Some(dst) = shown.filter(|s| *s == app(|a| a.s.paths[k].clone())) else {
+                fail(Fail::SendChanged, "");
+                return;
+            };
+            let sent = send_mode(&srcs, &dst, mv).is_some_and(|rename| start_copy(srcs, dst, rename, mv));
+            if !sent {
+                fail(Fail::SendCant, "");
             }
         }
         (OpenPick::Send { .. }, Err(_)) => {}
@@ -887,7 +895,7 @@ pub(crate) unsafe fn recent_menu(i: usize) {
     let pick = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN, rc.left, rc.bottom, None, h, None).0;
     _ = DestroyMenu(menu);
     if pick > 0 && !go_near(i, &items[pick as usize - 1]) {
-        _ = MessageBeep(MB_ICONWARNING); // gone or unreachable
+        fail(Fail::FolderCantOpen, &items[pick as usize - 1]); // gone or unreachable
     }
     focus_view(i);
 }
@@ -1325,12 +1333,12 @@ pub(crate) unsafe fn sort_by(i: usize, kind: usize) {
         Ok(s.first().map(|c| (c.propkey, c.direction.0)))
     };
     let Some((fv, cur)) = view_of::<IFolderView2>(i).and_then(|fv| top(&fv).ok().map(|c| (fv, c))) else {
-        _ = MessageBeep(MB_ICONWARNING);
+        fail(Fail::SortHere, "");
         return;
     };
     let dir = sort_next(cur, key, first);
     if fv.SetSortColumns(&[SORTCOLUMN { propkey: key, direction: SORTDIRECTION(dir) }]).is_err() || top(&fv).ok() != Some(Some((key, dir))) {
-        _ = MessageBeep(MB_ICONWARNING);
+        fail(Fail::SortHere, "");
         return;
     }
     app(|a| {

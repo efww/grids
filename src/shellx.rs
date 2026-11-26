@@ -50,7 +50,7 @@ pub(crate) unsafe fn new_text_file(i: usize) {
     let name = fresh_name(tr("New Text Document.txt", "새 텍스트 문서.txt"), |n| Path::new(&dir).join(n).exists());
     let full = Path::new(&dir).join(&name).to_string_lossy().into_owned();
     if !is_fs(&dir) || name.is_empty() || std::fs::OpenOptions::new().write(true).create_new(true).open(&full).is_err() {
-        _ = MessageBeep(MB_ICONWARNING);
+        fail(Fail::NewFileHere, "");
         return;
     }
     let wide = HSTRING::from(full.as_str());
@@ -168,13 +168,14 @@ pub(crate) unsafe fn group_key(i: usize) {
 // anything); the rename starts only after every item is in. Ctrl+F7 and the ⇄ menu both end up here.
 pub(crate) unsafe fn group_into_folder(i: usize, picked: std::result::Result<Vec<String>, Pick>) {
     let (dir, main) = app(|a| (a.s.paths[i].clone(), a.main.0 as usize));
-    let Some(srcs) = picked.ok().filter(|s| group_ok(s, &dir)) else {
-        _ = MessageBeep(MB_ICONWARNING);
-        return;
+    let srcs = match picked {
+        Ok(s) if group_ok(&s, &dir) => s,
+        Err(Pick::Empty) => return fail(Fail::GroupEmpty, ""),
+        Err(Pick::TooMany) => return fail(Fail::GroupTooMany, ""),
+        _ => return fail(Fail::GroupCant, ""), // unreadable items, a zip or shell place, items from elsewhere
     };
     if GROUPING.swap(true, Ordering::SeqCst) {
-        _ = MessageBeep(MB_ICONWARNING);
-        return;
+        return fail(Fail::GroupBusy, "");
     }
     let done = GroupingDone; // released when the worker ends, or right away if it can't start
     let names: Vec<&str> = srcs.iter().map(|s| base_of(s)).collect();

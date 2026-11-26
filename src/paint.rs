@@ -350,8 +350,8 @@ pub(crate) unsafe fn crumb_click(h: HWND, i: usize, x: i32, y: i32) {
             return;
         }
     };
-    if target.is_some_and(|p| !navigate(i, &p)) {
-        _ = MessageBeep(MB_ICONWARNING); // gone or unreachable
+    if let Some(p) = target.filter(|p| !navigate(i, p)) {
+        fail(Fail::FolderCantOpen, &p); // gone or unreachable
     }
     focus_view(i);
 }
@@ -529,8 +529,9 @@ pub(crate) unsafe fn kids_show(h: HWND, id: usize) {
     let pick = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN, p.x, p.y, None, h, None).0;
     _ = DestroyMenu(menu);
     if let Some(name) = names.get((pick as usize).wrapping_sub(1)) {
-        if !navigate(k.i, &format!("{}\\{name}", k.dir.trim_end_matches('\\'))) {
-            _ = MessageBeep(MB_ICONWARNING); // gone or unreachable
+        let to = format!("{}\\{name}", k.dir.trim_end_matches('\\'));
+        if !navigate(k.i, &to) {
+            fail(Fail::FolderCantOpen, &to); // gone or unreachable
         }
     }
     focus_view(k.i);
@@ -550,8 +551,7 @@ pub(crate) fn sibling_of(path: &str) -> Option<(String, String)> {
 pub(crate) unsafe fn sibling_step(i: usize, step: i32) {
     let Some((h, path)) = app(|a| Some((a.panes[i].as_ref()?.hwnd, a.s.paths[i].clone()))) else { return };
     let Some((dir, name)) = sibling_of(&path) else {
-        _ = MessageBeep(MB_ICONWARNING);
-        set_note(tr("This folder has no sibling folders", "이 폴더에는 같은 단계 폴더가 없음").into());
+        warn(tr("This folder has no sibling folders", "이 폴더에는 같은 단계 폴더가 없음").into());
         return;
     };
     kids_cancel();
@@ -592,24 +592,20 @@ pub(crate) fn pick_sibling(names: &[String], cur: &str, step: i32, cut: bool) ->
 }
 
 unsafe fn sibling_go(k: &KidsAsk, list: &KidsList) {
-    let warn = |t: &str| {
-        _ = MessageBeep(MB_ICONWARNING);
-        set_note(t.to_string());
-    };
-    let Ok((names, cut)) = list else { return warn(tr("Can't read this folder list", "이 폴더 목록을 읽을 수 없음")) };
+    let Ok((names, cut)) = list else { return warn(tr("Can't read this folder list", "이 폴더 목록을 읽을 수 없음").into()) };
     match pick_sibling(names, k.next.as_deref().unwrap_or_default(), k.step, *cut) {
         Sibling::Go(n) => {
             if !navigate(k.i, &format!("{}\\{}", k.dir.trim_end_matches('\\'), names[n])) {
-                return warn(tr("Can't open that folder", "그 폴더를 열 수 없음"));
+                return warn(tr("Can't open that folder", "그 폴더를 열 수 없음").into());
             }
             let total = if *cut { format!("{}+", names.len()) } else { names.len().to_string() };
             let dir = k.dir.trim_end_matches('\\');
             let parent = dir.rsplit('\\').next().filter(|s| !s.is_empty()).unwrap_or(dir);
             set_note(format!("{} {}/{total} · {parent}", tr("Folder", "폴더"), n + 1));
         }
-        Sibling::First => warn(tr("First folder", "첫 폴더")),
-        Sibling::Last => warn(tr("Last folder", "마지막 폴더")),
-        Sibling::Unknown => warn(tr("Can't read this folder list", "이 폴더 목록을 읽을 수 없음")),
+        Sibling::First => warn(tr("First folder", "첫 폴더").into()),
+        Sibling::Last => warn(tr("Last folder", "마지막 폴더").into()),
+        Sibling::Unknown => warn(tr("Can't read this folder list", "이 폴더 목록을 읽을 수 없음").into()),
     }
 }
 

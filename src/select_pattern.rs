@@ -113,6 +113,81 @@ pub(crate) unsafe fn set_progress_note(note: String) {
     update_status();
 }
 
+// Why something the user just tried didn't work, said in the status line (warn) next to the beep.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Fail {
+    AddrNotFound,
+    AddrQuotes,
+    AddrCantOpen,
+    FolderCantOpen,
+    LastTab,
+    DriveCantOpen,
+    SortHere,
+    PaneMin,
+    NoBorder,
+    GroupEmpty,
+    GroupTooMany,
+    GroupCant,
+    GroupBusy,
+    NewFileHere,
+    NewFolder,
+    SendChanged,
+    SendCant,
+    PatternEmpty,
+}
+
+#[cfg(test)] // every kind, for the fail_texts test
+pub(crate) const FAILS: [Fail; 18] = {
+    use Fail::*;
+    [
+        AddrNotFound, AddrQuotes, AddrCantOpen, FolderCantOpen, LastTab, DriveCantOpen, SortHere, PaneMin, NoBorder, GroupEmpty, GroupTooMany,
+        GroupCant, GroupBusy, NewFileHere, NewFolder, SendChanged, SendCant, PatternEmpty,
+    ]
+};
+
+// (English, Korean), one line each; {name} is the path, name or drive the text is about.
+pub(crate) fn fail_pair(kind: Fail) -> (&'static str, &'static str) {
+    match kind {
+        Fail::AddrNotFound => ("No folder, file or command named '{name}' · check the spelling", "'{name}' 폴더·파일·명령을 찾을 수 없음 · 철자를 확인하세요"),
+        Fail::AddrQuotes => ("The quotes in the address don't pair up", "주소의 따옴표 짝이 맞지 않음"),
+        Fail::AddrCantOpen => ("Can't open '{name}'", "'{name}'을(를) 열 수 없음"),
+        Fail::FolderCantOpen => ("Can't open {name} · it may be gone or not connected", "{name}을(를) 열 수 없음 · 없어졌거나 연결되지 않았을 수 있음"),
+        Fail::LastTab => ("The last tab can't be closed", "마지막 탭은 닫을 수 없음"),
+        Fail::DriveCantOpen => ("Drive {name} has no disc or can't be opened", "{name} 드라이브에 디스크가 없거나 열 수 없음"),
+        Fail::SortHere => ("This sort isn't available here", "여기서는 이 정렬을 쓸 수 없음"),
+        Fail::PaneMin => ("The pane on that side is already at its smallest", "그쪽 패널이 이미 최소 크기임"),
+        Fail::NoBorder => ("No pane border to move that way", "그 방향으로는 옮길 패널 경계가 없음"),
+        Fail::GroupEmpty => ("Select the items to group first", "묶을 항목을 먼저 고르세요"),
+        Fail::GroupTooMany => ("Too many items to group (over 10,000)", "묶을 항목이 너무 많음 (1만 개 초과)"),
+        Fail::GroupCant => ("These items can't be grouped into a folder here", "이 항목들은 여기서 폴더로 묶을 수 없음"),
+        Fail::GroupBusy => ("Already grouping · wait until it's done", "이미 묶는 중 · 끝날 때까지 기다리세요"),
+        Fail::NewFileHere => ("Can't make a file in this place", "이 위치에는 파일을 만들 수 없음"),
+        Fail::NewFolder => ("Couldn't make a new folder", "새 폴더를 만들지 못함"),
+        Fail::SendChanged => ("Not sent · that pane now shows another folder", "보내지 않음 · 그 패널이 다른 폴더로 바뀌었음"),
+        Fail::SendCant => ("Can't send there", "그곳으로는 보낼 수 없음"),
+        Fail::PatternEmpty => ("Type a pattern first, e.g. *.jpg", "패턴을 먼저 입력하세요 (예: *.jpg)"),
+    }
+}
+
+// The text for `kind` with `arg` (cut to 80 characters, by char: never inside a Korean letter) in place of {name}.
+pub(crate) fn fail_text(kind: Fail, arg: &str, ko: bool) -> String {
+    let (en, k) = fail_pair(kind);
+    let arg: String = arg.split(['\r', '\n']).next().unwrap_or_default().trim().to_string();
+    let arg = if arg.chars().count() > 80 { arg.chars().take(79).chain(['…']).collect() } else { arg };
+    if ko { k } else { en }.replace("{name}", &arg)
+}
+
+// A beep with its reason in the status line (read out like any note). Not from inside app(): set_note borrows it.
+pub(crate) unsafe fn warn(text: String) {
+    _ = MessageBeep(MB_ICONWARNING);
+    app(|a| a.lost = 0); // a "Not found" note right after starts its own count
+    set_note(text);
+}
+
+pub(crate) unsafe fn fail(kind: Fail, arg: &str) {
+    warn(fail_text(kind, arg, KO.load(Ordering::Relaxed)));
+}
+
 // Calls `each` for every item in the view with redraw off; true = that item changed. None: over SEND_MAX,
 // nothing touched (and the status line says so).
 pub(crate) unsafe fn bulk_select(fv: &IFolderView2, mut each: impl FnMut(i32) -> bool) -> Option<usize> {
@@ -141,7 +216,7 @@ pub(crate) unsafe fn run_match(flip: bool) {
     let text = text_of(edit).trim().to_string();
     let spec = filter_spec(&text);
     if spec.is_empty() {
-        _ = MessageBeep(MB_ICONWARNING);
+        fail(Fail::PatternEmpty, "");
         return;
     }
     app(|a| a.match_last = text.clone());

@@ -99,7 +99,7 @@ unsafe fn tab_go(i: usize, change: impl FnOnce(&mut Session) -> Option<String>) 
         went = go_near(i, &to);
         if !went {
             app(|a| (a.s.tabs[i], a.s.tab[i]) = before);
-            _ = MessageBeep(MB_ICONWARNING);
+            fail(Fail::FolderCantOpen, &to);
         }
     }
     repaint_tabs(i);
@@ -173,7 +173,7 @@ pub(crate) unsafe fn tab_menu(h: HWND, i: usize, k: usize, at: POINT) {
 
 pub(crate) unsafe fn close_tab(i: usize, k: usize) -> bool {
     if app(|a| a.s.tab_list(i).len()) < 2 {
-        _ = MessageBeep(MB_ICONWARNING); // the last tab stays
+        fail(Fail::LastTab, ""); // the last tab stays
         return false;
     }
     tab_go(i, |s| s.close_tab(i, k))

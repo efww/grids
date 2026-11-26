@@ -516,7 +516,7 @@ pub(crate) unsafe fn new_folder(i: usize) {
             ..Default::default()
         };
         if cm.InvokeCommand(&ci).is_err() {
-            _ = MessageBeep(MB_ICONWARNING);
+            fail(Fail::NewFolder, "");
         }
     }
     _ = DestroyMenu(menu);

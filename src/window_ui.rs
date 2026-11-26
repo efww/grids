@@ -908,7 +908,7 @@ pub(crate) unsafe fn open_drive(c: u8) {
     if navigate(i, &format!("{}:\\", c as char)) {
         focus_view(i);
     } else {
-        _ = MessageBeep(MB_ICONWARNING); // no medium, or gone since
+        fail(Fail::DriveCantOpen, &format!("{}:", c as char)); // no medium, or gone since
     }
 }
 

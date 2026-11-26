@@ -2617,6 +2617,31 @@ mod tests { tr("in", "안") }
         assert!(bad.is_empty(), "{} English / Korean pairs disagree:\n{}", bad.len(), bad.join("\n"));
     }
 
+    // Every reason a beep now comes with: both languages, one status line, the name in both, and seen by the
+    // pair check above (one ("en", "ko") line each in select_pattern.rs).
+    #[test]
+    fn fail_texts() {
+        let seen = ui_pairs(include_str!("select_pattern.rs"));
+        for kind in FAILS {
+            let (en, ko) = fail_pair(kind);
+            assert!(seen.iter().any(|(_, e, k)| e == en && k == ko), "{kind:?} is not one (\"en\", \"ko\") line");
+            assert_eq!(en.contains("{name}"), ko.contains("{name}"), "{kind:?}");
+            for lang in [false, true] {
+                let t = fail_text(kind, "D:\\문서\\Docuemnts", lang);
+                assert!(!t.trim().is_empty() && !t.contains(['\n', '\r', '{']), "{kind:?}: {t:?}");
+                assert_eq!(t.contains("D:\\문서\\Docuemnts"), en.contains("{name}"), "{kind:?}: {t:?}");
+            }
+        }
+        assert!(FAILS.iter().enumerate().all(|(n, k)| !FAILS[..n].contains(k)), "a kind twice in FAILS");
+        assert_eq!(FAILS.map(|k| fail_pair(k).0).iter().collect::<std::collections::BTreeSet<_>>().len(), FAILS.len());
+        // a long typed address is cut by characters (Korean ones too), never mid-letter; a pasted line break is dropped
+        let long = "가".repeat(200);
+        let t = fail_text(Fail::AddrNotFound, &long, true);
+        assert!(t.contains(&format!("{}…", "가".repeat(79))) && !t.contains(&"가".repeat(80)), "{t}");
+        assert_eq!(fail_text(Fail::AddrCantOpen, " a\r\nb ", false), "Can't open 'a'");
+        assert_eq!(fail_text(Fail::DriveCantOpen, "E:", true), "E: 드라이브에 디스크가 없거나 열 수 없음");
+    }
+
     #[test]
     fn file_kinds() {
         for (_, _, spec) in FILE_KINDS {

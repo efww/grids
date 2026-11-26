@@ -410,7 +410,7 @@ pub(crate) extern "system" fn fav_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                     let (i, path) = app(|a| (a.s.active, a.s.favs[k].clone()));
                     _ = DestroyWindow(h);
                     if !go_near(i, &path) {
-                        _ = MessageBeep(MB_ICONWARNING); // gone or unreachable
+                        fail(Fail::FolderCantOpen, &path); // gone or unreachable
                     }
                     focus_view(i);
                 };
