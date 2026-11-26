@@ -593,6 +593,47 @@ pub(crate) fn pane_label(word: &str, k: usize, tint: &str, disp: &str) -> String
     format!("{word} {num}{tag}    {}", disp.replace('&', "&&"))
 }
 
+// ⇄ menu numbers for the pane rows: + pane index. The shell helpers (1130…, 3100…) and the favourite / recent
+// folders (401… / 501…, paste.rs) share the menu; open_in_pick tells them apart.
+pub(crate) const ID_OPEN_TO: usize = 1;
+pub(crate) const ID_COPY_TO: usize = 101;
+pub(crate) const ID_MOVE_TO: usize = 201;
+pub(crate) const ID_SWAP_TO: usize = 301;
+
+#[derive(Debug, PartialEq)]
+pub(crate) enum OpenPick {
+    Nothing,                     // menu closed
+    Open(usize),                 // open in pane k
+    Swap(usize),                 // swap places with pane k
+    Shell,                       // shell_pick's: which program, checksum, date folders, new folder, WinMerge
+    Elsewhere,                   // send_pick's: a favourite / recent folder or "Choose another folder…"
+    Send { mv: bool, k: usize }, // copy / move the selection to pane k's folder
+    Unknown,                     // nothing the menu puts up: a beep, never a copy / move
+}
+
+// Same order as before: pane rows, then the shell helpers, then the other folders, then copy / move. A number
+// outside every range is Unknown instead of being read as a copy / move to some pane.
+pub(crate) fn open_in_pick(p: usize) -> OpenPick {
+    let row = |base: usize| (base..base + MAXP).contains(&p).then(|| p - base);
+    if p == 0 {
+        OpenPick::Nothing
+    } else if let Some(k) = row(ID_OPEN_TO) {
+        OpenPick::Open(k)
+    } else if let Some(k) = row(ID_SWAP_TO) {
+        OpenPick::Swap(k)
+    } else if is_shell_pick(p) {
+        OpenPick::Shell
+    } else if send_pick(p).is_some() {
+        OpenPick::Elsewhere
+    } else if let Some(k) = row(ID_COPY_TO) {
+        OpenPick::Send { mv: false, k }
+    } else if let Some(k) = row(ID_MOVE_TO) {
+        OpenPick::Send { mv: true, k }
+    } else {
+        OpenPick::Unknown
+    }
+}
+
 pub(crate) unsafe fn open_in_menu(h: HWND, src: usize) {
     // (pane, shown name, folder it held when the menu opened, colour label)
     let items = app(|a| {
@@ -622,12 +663,12 @@ pub(crate) unsafe fn open_in_menu(h: HWND, src: usize) {
     _ = AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, &HSTRING::from(tr("Open the selected folder (or this one) in:", "선택한 폴더(없으면 현재 폴더)를 열 패널:")));
     _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
     for (k, disp, _, t) in &items {
-        _ = AppendMenuW(menu, MF_STRING, k + 1, &label(*k, *t, disp));
+        _ = AppendMenuW(menu, MF_STRING, ID_OPEN_TO + k, &label(*k, *t, disp));
     }
     _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
     if let Ok(sub) = CreatePopupMenu() {
         for (k, disp, _, t) in &items {
-            _ = AppendMenuW(sub, MF_STRING, 301 + k, &label(*k, *t, disp));
+            _ = AppendMenuW(sub, MF_STRING, ID_SWAP_TO + k, &label(*k, *t, disp));
         }
         let flags = if items.is_empty() { MF_POPUP | MF_GRAYED } else { MF_POPUP };
         _ = AppendMenuW(menu, flags, sub.0 as usize, &HSTRING::from(tr2(M_SWAP)));
@@ -637,8 +678,8 @@ pub(crate) unsafe fn open_in_menu(h: HWND, src: usize) {
             let n = srcs.len();
             let keys = src_keys(srcs);
             let titles = [
-                (false, 101, tr2(M_COPY).replace("{n}", &n.to_string())),
-                (true, 201, tr2(M_MOVE).replace("{n}", &n.to_string())),
+                (false, ID_COPY_TO, tr2(M_COPY).replace("{n}", &n.to_string())),
+                (true, ID_MOVE_TO, tr2(M_MOVE).replace("{n}", &n.to_string())),
             ];
             for (mv, base, title) in titles {
                 let Ok(sub) = CreatePopupMenu() else { continue };
@@ -689,13 +730,13 @@ pub(crate) unsafe fn open_in_menu(h: HWND, src: usize) {
         app(|a| a.held = Some(VK_RETURN.0));
     }
     _ = DestroyMenu(menu);
-    match (pick as usize, picked) {
-        (0, _) => {}
-        (p @ 1..=100, _) => open_in(src, p - 1),
-        (p @ 301..=316, _) => swap_panes(src, p - 301),
-        (p, picked) if is_shell_pick(p) => shell_pick(h, src, p, picked, wm, &others),
-        // before the pane rows below: their p > 200 would take a move number for a pane
-        (p, picked) if send_pick(p).is_some() => {
+    let p = pick as usize;
+    match (open_in_pick(p), picked) {
+        (OpenPick::Nothing, _) => {}
+        (OpenPick::Open(k), _) => open_in(src, k),
+        (OpenPick::Swap(k), _) => swap_panes(src, k),
+        (OpenPick::Shell, picked) => shell_pick(h, src, p, picked, wm, &others),
+        (OpenPick::Elsewhere, picked) => {
             let sent = match (send_pick(p), picked) {
                 (Some(SendPick::To(mv, n)), Ok(srcs)) => targets.get(n).is_some_and(|(_, dst)| send_elsewhere(srcs, dst, mv)),
                 (Some(SendPick::Choose(mv)), Ok(srcs)) => {
@@ -716,9 +757,8 @@ pub(crate) unsafe fn open_in_menu(h: HWND, src: usize) {
                 _ = MessageBeep(MB_ICONWARNING);
             }
         }
-        (p, Ok(srcs)) => {
+        (OpenPick::Send { mv, k }, Ok(srcs)) => {
             // only to the folder the menu showed, and only the whole selection it counted
-            let (mv, k) = (p > 200, (p - 1) % 100);
             let shown = items.iter().find(|(i, ..)| *i == k).map(|(_, _, path, _)| path.clone());
             let sent = shown.filter(|s| *s == app(|a| a.s.paths[k].clone())).and_then(|dst| {
                 let rename = send_mode(&srcs, &dst, mv)?;
@@ -728,7 +768,8 @@ pub(crate) unsafe fn open_in_menu(h: HWND, src: usize) {
                 _ = MessageBeep(MB_ICONWARNING);
             }
         }
-        _ => {}
+        (OpenPick::Send { .. }, Err(_)) => {}
+        (OpenPick::Unknown, _) => _ = MessageBeep(MB_ICONWARNING),
     }
 }
 

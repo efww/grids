@@ -481,6 +481,70 @@ fn main() -> Result<()> {
 mod tests {
     use super::*;
 
+    // Three separate number spaces: the ⇄ menu (TPM_RETURNCMD, read by open_in_pick), main_proc's WM_COMMAND,
+    // and each window's timers. The lists are written by hand: a new constant left out of them is not checked;
+    // open_in_pick turning a stray number into Unknown (never a copy / move) holds whatever the lists say.
+    #[test]
+    fn command_ids_dont_collide() {
+        use std::collections::HashSet;
+        fn distinct(what: &str, ids: &[usize]) {
+            let mut seen = HashSet::new();
+            for id in ids {
+                assert!(seen.insert(*id), "{what}: {id} used twice");
+            }
+        }
+        // (a) ⇄ menu: every number it puts up reads back as its own action
+        let mut menu = vec![];
+        for k in 0..MAXP {
+            assert_eq!(open_in_pick(ID_OPEN_TO + k), OpenPick::Open(k));
+            assert_eq!(open_in_pick(ID_COPY_TO + k), OpenPick::Send { mv: false, k });
+            assert_eq!(open_in_pick(ID_MOVE_TO + k), OpenPick::Send { mv: true, k });
+            assert_eq!(open_in_pick(ID_SWAP_TO + k), OpenPick::Swap(k));
+            assert_eq!(open_in_pick(ID_WM_PANE + k), OpenPick::Shell);
+            menu.extend([ID_OPEN_TO + k, ID_COPY_TO + k, ID_MOVE_TO + k, ID_SWAP_TO + k, ID_WM_PANE + k]);
+        }
+        let shell = [ID_INUSE, ID_WM_PAIR, ID_HASH, ID_GROUP, ID_ORG, ID_ORG + 1, ID_ORG + 2];
+        for p in shell {
+            assert_eq!(open_in_pick(p), OpenPick::Shell, "{p}");
+        }
+        menu.extend(shell);
+        for n in 0..SEND_SLOTS {
+            assert_eq!(open_in_pick(ID_SEND_COPY + n), OpenPick::Elsewhere);
+            assert_eq!(open_in_pick(ID_SEND_MOVE + n), OpenPick::Elsewhere);
+            menu.extend([ID_SEND_COPY + n, ID_SEND_MOVE + n]);
+        }
+        for p in [ID_CHOOSE_COPY, ID_CHOOSE_MOVE] {
+            assert_eq!(open_in_pick(p), OpenPick::Elsewhere);
+        }
+        menu.extend([ID_CHOOSE_COPY, ID_CHOOSE_MOVE]);
+        distinct("⇄ menu", &menu);
+        assert_eq!(open_in_pick(0), OpenPick::Nothing);
+        // just past each range: never an open in, or a copy / move to, a pane
+        for p in [17, 100, 117, 200, 217, 317, 441, 1129, 1137, 3116, 5000] {
+            assert_eq!(open_in_pick(p), OpenPick::Unknown, "{p}");
+        }
+        for p in 0..5000 {
+            if let OpenPick::Send { k, .. } | OpenPick::Open(k) | OpenPick::Swap(k) = open_in_pick(p) {
+                assert!(k < MAXP && menu.contains(&p), "{p}");
+            }
+        }
+        // (b) main_proc's WM_COMMAND: toolbar and status line children, drive buttons, view menu, selection colours
+        let mut main = [ID_TB_LAYOUT, ID_TB_SAVE, ID_TB_VIEW, ID_TB_LOAD, ID_TB_THEME, ID_TB_FAV, ID_TB_EV, ID_TB_UPDATE, ID_STATUS, ID_STATUS_NOTE]
+            .map(|id| id as usize)
+            .to_vec();
+        main.extend((0..26).map(|d| ID_DRIVE as usize + d));
+        main.extend([
+            ID_HIDDEN, ID_KEYS, ID_GATHER, ID_DBLUP, ID_LANG, ID_HELP, ID_ABOUT, ID_TREE, ID_EXT, ID_HOTKEY, ID_FOLLOW, ID_TABS, ID_KEY_TIPS,
+            ID_DLGJUMP, ID_CTXMENU, ID_AUTOSTART, ID_UPDATES, ID_STAR, ID_TOUR,
+        ]);
+        main.extend((0..LIGHT.accents.len()).map(|k| ID_ACCENT + k));
+        main.push(ID_ACCENT_PICK);
+        distinct("main WM_COMMAND", &main);
+        // (c) timers, per window: SetTimer with a number already running replaces that timer
+        distinct("main timers", &[TIMER_STATUS, TIMER_REVEAL, TIMER_FOCUS, dialog_jump::TIMER_DLG_RETRY, dialog_jump::TIMER_DLG_RESTORE, TIMER_SHELL, TIMER_EV_SELECT]);
+        distinct("pane timers", &[TIMER_FILTER, TIMER_SETTLE, TIMER_SPIN]);
+    }
+
     #[test]
     fn start_lock_name_per_exe() {
         let a = start_lock_name(r"C:\Tools\Grids\grids.exe");
