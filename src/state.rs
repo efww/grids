@@ -44,6 +44,8 @@ pub(crate) struct App {
     pub(crate) view_menu: HMENU,
     pub(crate) base: Option<Session>, // last loaded/saved (or startup) state; differs -> green dot
     pub(crate) dirty: bool,
+    pub(crate) tick_no: u32, // TIMER_STATUS ticks so far (tick_plan: every 7th one behind another app)
+    pub(crate) tick_ms: u32, // TIMER_STATUS interval now: TICK_FAST, or TICK_SLOW while minimized
     pub(crate) small_font: HFONT,
     pub(crate) load: HWND, // load popup while open
     pub(crate) load_closed: Option<Instant>,
@@ -141,6 +143,8 @@ thread_local! {
         view_menu: HMENU::default(),
         base: None,
         dirty: false,
+        tick_no: 0,
+        tick_ms: TICK_FAST,
         small_font: HFONT::default(),
         load: HWND::default(),
         load_closed: None,

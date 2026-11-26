@@ -1,4 +1,5 @@
 use crate::*;
+use windows::Win32::System::Threading::GetCurrentProcessId;
 
 // ---------- window procs ----------
 
@@ -32,6 +33,33 @@ pub(crate) unsafe fn gap_hover(h: HWND, d: Option<Hit>) {
     }
 }
 
+// Grids or one of its own windows (a popup, a dialog, the preview) is the foreground window.
+unsafe fn app_in_front() -> bool {
+    let fg = GetForegroundWindow();
+    if fg.0.is_null() {
+        return false;
+    }
+    let mut pid = 0;
+    GetWindowThreadProcessId(fg, Some(&mut pid));
+    pid == GetCurrentProcessId()
+}
+
+// Same timer id: SetTimer only changes the interval (WM_DESTROY's KillTimer still ends it).
+unsafe fn set_tick(h: HWND, ms: u32) {
+    app(|a| a.tick_ms = ms);
+    SetTimer(Some(h), TIMER_STATUS, ms, None);
+}
+
+// Shown again after the slow minimized ticks (WM_SIZE, WM_ACTIVATEAPP): back to every 0.3 seconds, and one tick right
+// away so the status line, the Everything button and (Grids in front) the save dot are current. Posted, so it runs after
+// relayout, restore_focus and quiet_size (its late panes' go_near). A resize drag's WM_SIZEs find it fast already.
+unsafe fn tick_wake(h: HWND) {
+    if app(|a| a.tick_ms == TICK_SLOW) {
+        set_tick(h, TICK_FAST);
+        _ = PostMessageW(Some(h), WM_TIMER, WPARAM(TIMER_STATUS), LPARAM(0));
+    }
+}
+
 pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     unsafe {
         // a drive's shell menu is open: its submenus are filled and drawn by the shell
@@ -58,6 +86,9 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                     restore_focus();
                 }
                 quiet_size(h, wp.0 as u32); // first shown after a minimized sign-in start
+                if wp.0 as u32 != SIZE_MINIMIZED {
+                    tick_wake(h); // back from minimized: the status tick fast again, one right away
+                }
                 // last: was_max, the minimized save and quiet_size above need this WM_SIZE as it was
                 if wp.0 as u32 == SIZE_MINIMIZED {
                     hide_if_min(h);
@@ -158,6 +189,9 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 if wp.0 != 0 {
                     _ = PostMessageW(Some(h), WM_DRIVES, WPARAM(0), LPARAM(0));
                     update_nudge(); // and a release check an hour or more old is due again
+                    if !IsIconic(h).as_bool() {
+                        tick_wake(h); // a taskbar restore comes here still minimized: WM_SIZE wakes it then
+                    }
                 }
             }
             // Windows light/dark (or the accent), or high contrast, changed. Only queued: nothing is drawn
@@ -191,10 +225,24 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             }
             WM_TIMER if wp.0 == TIMER_EV_SELECT => ev_pick_tick(h),
             WM_TIMER if wp.0 == TIMER_STATUS => {
-                ev_watch(); // Everything started or quit: its button comes or goes
-                update_status();
-                check_dirty();
-                autosave();
+                let (n, now) = app(|a| {
+                    a.tick_no = a.tick_no.wrapping_add(1);
+                    (a.tick_no, a.tick_ms)
+                });
+                let p = tick_plan(IsIconic(h).as_bool(), app_in_front(), n, now == TICK_SLOW);
+                if p.ms != now {
+                    set_tick(h, p.ms);
+                }
+                if p.status {
+                    ev_watch(); // Everything started or quit: its button comes or goes
+                    update_status();
+                }
+                if p.views {
+                    check_dirty();
+                }
+                if p.save {
+                    autosave();
+                }
                 shutdown_tick(h); // a refused restart's reason goes once the copy is over
                 // a menu's modal loop or Ctrl+Alt+Del can swallow the key release: Ctrl or Alt up ends the nudge anyway
                 let up = |k: VIRTUAL_KEY| GetAsyncKeyState(k.0 as i32) >= 0;

@@ -435,7 +435,7 @@ fn main() -> Result<()> {
             app(|a| a.note = Some((text, Instant::now() + Duration::from_secs(5))));
             _ = MessageBeep(MB_ICONWARNING);
         }
-        SetTimer(Some(main), TIMER_STATUS, 300, None);
+        SetTimer(Some(main), TIMER_STATUS, TICK_FAST, None); // a minimized start slows it on its first tick
         watch_folders(main); // folders renamed / removed elsewhere (shell_change)
         // taken by another app: the menu shows it off, s.hotkey stays on so the next start tries again
         if app(|a| a.s.hotkey) {

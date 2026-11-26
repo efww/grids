@@ -356,3 +356,68 @@ pub(crate) unsafe fn check_dirty() {
         refresh_save_button();
     }
 }
+
+pub(crate) const TICK_FAST: u32 = 300; // ms, TIMER_STATUS while the window is shown
+pub(crate) const TICK_SLOW: u32 = 5000; // ms, while minimized (or hidden in the notification area)
+const IDLE_EVERY: u32 = 7; // behind another app: the views and grids.ini every 7th tick (about 2 seconds)
+
+/// What one TIMER_STATUS tick runs. `status`: ev_watch + update_status, `views`: check_dirty (every pane's
+/// columns and view mode), `save`: autosave (grids.ini, jump list), `ms`: the interval from here on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TickPlan {
+    pub(crate) status: bool,
+    pub(crate) views: bool,
+    pub(crate) save: bool,
+    pub(crate) ms: u32,
+}
+
+/// Like a browser slowing a background tab's timers. `iconic`: minimized (wins over `active`, which a taskbar
+/// restore reports while still minimized); `active`: one of Grids' own windows is in front; `slow`: the timer runs
+/// at TICK_SLOW now. In front: everything, every tick. Shown behind another app: the status line every tick, the
+/// views and grids.ini every IDLE_EVERY-th (a Ctrl+wheel over the inactive window still counts). Minimized: nothing
+/// on screen can change, so only autosave (a folder renamed elsewhere, a failed write's retry), every 5 seconds;
+/// the first minimized tick still reads the views, for a column changed just before minimizing.
+pub(crate) fn tick_plan(iconic: bool, active: bool, tick_no: u32, slow: bool) -> TickPlan {
+    if iconic {
+        return TickPlan { status: false, views: !slow, save: true, ms: TICK_SLOW };
+    }
+    let all = active || tick_no % IDLE_EVERY == 0;
+    TickPlan { status: true, views: all, save: all, ms: TICK_FAST }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn in_front_every_tick_does_everything() {
+        for n in 0..20 {
+            assert_eq!(tick_plan(false, true, n, false), TickPlan { status: true, views: true, save: true, ms: TICK_FAST });
+        }
+    }
+
+    #[test]
+    fn behind_another_app_views_every_seventh_tick() {
+        let full: Vec<u32> = (1..=21).filter(|&n| tick_plan(false, false, n, false).views).collect();
+        assert_eq!(full, [7, 14, 21]);
+        for n in 1..=21 {
+            let p = tick_plan(false, false, n, false);
+            assert!(p.status && p.save == p.views && p.ms == TICK_FAST);
+        }
+    }
+
+    #[test]
+    fn minimized_saves_only_and_slows_down() {
+        // first tick after minimizing (timer still fast): the views once more, then grids.ini only
+        assert_eq!(tick_plan(true, false, 3, false), TickPlan { status: false, views: true, save: true, ms: TICK_SLOW });
+        assert_eq!(tick_plan(true, false, 4, true), TickPlan { status: false, views: false, save: true, ms: TICK_SLOW });
+        // a taskbar restore activates Grids before the window leaves the minimized state
+        assert_eq!(tick_plan(true, true, 5, true).ms, TICK_SLOW);
+    }
+
+    #[test]
+    fn shown_again_is_fast() {
+        assert_eq!(tick_plan(false, true, 9, true), TickPlan { status: true, views: true, save: true, ms: TICK_FAST });
+        assert_eq!(tick_plan(false, false, 9, true).ms, TICK_FAST);
+    }
+}
