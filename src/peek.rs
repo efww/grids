@@ -321,6 +321,22 @@ pub(crate) struct PeekView {
     pub(crate) rename: Option<(HWND, Option<&'static str>)>, // the name box in the header, its complaint
     pub(crate) busy: bool, // the shell's own dialogs are up: going inactive doesn't close the preview
     pub(crate) settle: i32, // timer ticks waited for the shell's progress window to go
+    pub(crate) said: Option<String>, // what a screen reader was last told for the item shown (None: a new item)
+}
+
+/// What a screen reader says for the file on screen: its name first (so held arrows say what differs first),
+/// then what the popup is and the header's own facts; an online-only card adds how to fetch it.
+pub(crate) fn peek_speech(name: &str, meta: &[String], cloud: bool, ko: bool) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    if !name.is_empty() {
+        parts.push(name);
+    }
+    parts.push(if ko { "미리보기" } else { "Preview" });
+    parts.extend(meta.iter().map(String::as_str).filter(|m| !m.is_empty()));
+    if cloud {
+        parts.push(if ko { "Enter로 내려받기" } else { "Enter: download" });
+    }
+    parts.join(", ")
 }
 
 #[derive(Clone, Copy, PartialEq, Default, Debug)]
@@ -361,7 +377,8 @@ pub(crate) unsafe fn open_peek(i: usize) {
     let (w, h) = ((rc.right * 86 / 100).min(s(1120)), (rc.bottom * 88 / 100).min(s(860)));
     let mut pt = POINT { x: (rc.right - w) / 2, y: (rc.bottom - h) / 2 };
     _ = ClientToScreen(main, &mut pt);
-    let style = WS_POPUP | WS_VISIBLE | WS_CLIPCHILDREN;
+    // shown below, once a screen reader has its name: the first focus already says what it is
+    let style = WS_POPUP | WS_CLIPCHILDREN;
     let Ok(h) = CreateWindowExW(WS_EX_TOOLWINDOW, w!("GridsPeek"), w!(""), style, pt.x, pt.y, w, h, Some(main), None, None, None) else {
         return;
     };
@@ -369,6 +386,10 @@ pub(crate) unsafe fn open_peek(i: usize) {
     _ = DwmSetWindowAttribute(h, DWMWA_WINDOW_CORNER_PREFERENCE, &square as *const _ as _, 4);
     app(|a| (a.peek, a.peek_pane) = (h, i));
     load_peek(false);
+    // the keys, read on opening only: show_item takes them off for the next file
+    a11y_role(h, ROLE_SYSTEM_DIALOG);
+    a11y_desc(h, Some(tr("←/→: previous/next file · Esc: close · F2: rename · Del: Recycle Bin", "←/→: 이전·다음 파일 · Esc: 닫기 · F2: 이름 바꾸기 · Del: 휴지통")));
+    _ = ShowWindow(h, SW_SHOW);
 }
 
 // Asks the worker for the pane's focused item at the picture area's size. plain: skip the preview handler.
@@ -380,7 +401,18 @@ pub(crate) unsafe fn load_peek(plain: bool) {
 // A new item never carries the download asked for the last one: an online-only file shows its card again.
 unsafe fn show_item(it: Option<IShellItem>, plain: bool) {
     let shown = |kind| it.as_ref().and_then(|it| it.GetDisplayName(kind).ok()).map(|p| pwstr(p));
-    app(|a| a.peek_name = shown(SIGDN_NORMALDISPLAY).unwrap_or_default());
+    let name = shown(SIGDN_NORMALDISPLAY).unwrap_or_default();
+    let h = app(|a| {
+        a.peek_name = name.clone();
+        a.peek
+    });
+    // quietly the new name, so the focus coming back after a step doesn't read the last file; the facts are said
+    // with it once they come (say_peek). The keys were for opening only.
+    a11y_name(h, Some(&peek_speech(&name, &[], false, KO.load(Ordering::Relaxed))));
+    if IsWindowVisible(h).as_bool() {
+        a11y_desc(h, None);
+    }
+    view(|v| v.said = None);
     let path = shown(SIGDN_FILESYSPATH).or_else(|| shown(SIGDN_DESKTOPABSOLUTEPARSING));
     ask(path.map(|path| PeekReq { path, w: 0, h: 0, hwnd: 0, plain, fetch: false }));
 }
@@ -408,9 +440,14 @@ unsafe fn ask(req: Option<PeekReq>) {
     match req {
         Some(r) => want_peek(Some(PeekReq { w: st.right - st.left, h: st.bottom - st.top, hwnd: h.0 as isize, ..r })),
         None => {
-            let mut j = peek_job();
-            j.want(None);
-            j.done = Some(Peeked { body: Body::Card { icon: None, rows: Vec::new() }, icon: -1, meta: Vec::new(), cloud: false });
+            let gen = {
+                let mut j = peek_job();
+                j.want(None);
+                j.done = Some(Peeked { body: Body::Card { icon: None, rows: Vec::new() }, icon: -1, meta: Vec::new(), cloud: false });
+                j.gen
+            };
+            // no worker to say it's done: the popup tells itself, so a screen reader still hears the name
+            _ = PostMessageW(Some(h), WM_PEEK_DONE, WPARAM(gen), LPARAM(0));
         }
     }
     _ = InvalidateRect(Some(h), None, false);
@@ -429,6 +466,31 @@ pub(crate) unsafe fn step_peek(prev: bool) {
         load_peek(false);
     }
     refocus();
+}
+
+// The item's name and facts said out loud, once each time they change: a new file, or the card after Enter's
+// download. More PDF pages, sharper pictures and the plain retry come back with the same words and stay quiet.
+unsafe fn say_peek(h: HWND, gen: usize) {
+    let (meta, cloud) = {
+        let j = peek_job();
+        match &j.done {
+            Some(d) if j.gen == gen => (d.meta.clone(), d.cloud),
+            _ => return,
+        }
+    };
+    let name = app(|a| a.peek_name.clone());
+    let speech = peek_speech(&name, &meta, cloud, KO.load(Ordering::Relaxed));
+    let new = view(|v| {
+        let new = v.said.as_ref() != Some(&speech);
+        if new {
+            v.said = Some(speech.clone());
+        }
+        new
+    });
+    // outside the lock and app(): the reader may call straight back in
+    if new {
+        a11y_say(h, &speech, true);
+    }
 }
 
 // Selecting puts the focus in the list; the preview stays open and keeps the keys, like Quick Look.
@@ -1694,6 +1756,7 @@ pub(crate) extern "system" fn peek_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             WM_PEEK_DONE => {
                 start_handler(h, wp.0);
                 _ = InvalidateRect(Some(h), None, false);
+                say_peek(h, wp.0);
             }
             WM_PEEK_HOSTED => handler_ready(h, wp.0, lp.0 != 0),
             WM_MOUSEMOVE if view(|v| v.drag.is_some()) => drag_to(h, lp),
@@ -1777,8 +1840,9 @@ pub(crate) extern "system" fn peek_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 view(|v| (v.rename, v.drag, v.zoom, v.zwant, v.zsent, v.busy, v.settle) = (None, None, 0, None, None, false, 0));
                 unload_handler();
                 want_peek(None);
-                view(|v| (v.layout, v.y, v.x) = (None, 0, 0));
+                view(|v| (v.layout, v.y, v.x, v.said) = (None, 0, 0, None));
                 app(|a| a.peek = HWND::default());
+                a11y_clear(h);
             }
             _ => return DefWindowProcW(h, msg, wp, lp),
         }

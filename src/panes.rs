@@ -81,10 +81,19 @@ pub(crate) unsafe fn a11y_say(h: HWND, name: &str, say: bool) {
     }
 }
 
-// Name and role off before a popup goes, so a reused HWND value doesn't inherit them.
+// What a reader adds after the name (the keys a popup takes); None takes it off.
+pub(crate) unsafe fn a11y_desc(h: HWND, desc: Option<&str>) {
+    let Ok(acc) = CoCreateInstance::<_, IAccPropServices>(&CLSID_AccPropServices, None, CLSCTX_INPROC_SERVER) else { return };
+    _ = match desc {
+        Some(d) => acc.SetHwndPropStr(h, OBJID_CLIENT.0 as u32, CHILDID_SELF, PROPID_ACC_DESCRIPTION, &HSTRING::from(d)),
+        None => acc.ClearHwndProps(h, OBJID_CLIENT.0 as u32, CHILDID_SELF, &[PROPID_ACC_DESCRIPTION]),
+    };
+}
+
+// Name, role and description off before a popup goes, so a reused HWND value doesn't inherit them.
 pub(crate) unsafe fn a11y_clear(h: HWND) {
     let Ok(acc) = CoCreateInstance::<_, IAccPropServices>(&CLSID_AccPropServices, None, CLSCTX_INPROC_SERVER) else { return };
-    _ = acc.ClearHwndProps(h, OBJID_CLIENT.0 as u32, CHILDID_SELF, &[PROPID_ACC_NAME, PROPID_ACC_ROLE]);
+    _ = acc.ClearHwndProps(h, OBJID_CLIENT.0 as u32, CHILDID_SELF, &[PROPID_ACC_NAME, PROPID_ACC_ROLE, PROPID_ACC_DESCRIPTION]);
 }
 
 // filter_hint_proc's ref data: the shortcut window's find box (0: a pane's name filter)

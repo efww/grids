@@ -24,8 +24,8 @@ use windows::Win32::System::SystemServices::{MK_CONTROL, MK_SHIFT, MODIFIERKEYS_
 use windows::Win32::System::Threading::{CreateEventW, CreateMutexW, ReleaseMutex, WaitForSingleObject, SetEvent, OpenProcess, INFINITE,QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION};
 use windows::Win32::System::Variant::{VariantClear, VARIANT, VT_I4};
 use windows::Win32::UI::Accessibility::{
-    AccessibleObjectFromPoint, LiveSetting_Property_GUID, NotifyWinEvent, Polite, CLSID_AccPropServices, IAccPropServices, IAccessible, PROPID_ACC_NAME, PROPID_ACC_ROLE,
-    ROLE_SYSTEM_LIST, ROLE_SYSTEM_LISTITEM, ROLE_SYSTEM_STATUSBAR,
+    AccessibleObjectFromPoint, LiveSetting_Property_GUID, NotifyWinEvent, Polite, CLSID_AccPropServices, IAccPropServices, IAccessible, PROPID_ACC_DESCRIPTION, PROPID_ACC_NAME, PROPID_ACC_ROLE,
+    ROLE_SYSTEM_DIALOG, ROLE_SYSTEM_LIST, ROLE_SYSTEM_LISTITEM, ROLE_SYSTEM_STATUSBAR,
 };
 use windows::Win32::UI::Controls::Dialogs::{ChooseColorW, CC_FULLOPEN, CC_RGBINIT, CHOOSECOLORW};
 use windows::Win32::UI::Controls::{
@@ -629,6 +629,23 @@ mod tests {
         let text = String::from_utf8_lossy(&out.stdout);
         assert!(out.status.success(), "child failed:\n{text}\n{}", String::from_utf8_lossy(&out.stderr));
         assert!(text.contains("1 passed"), "child did not run the test:\n{text}");
+    }
+
+    #[test]
+    fn peek_speech_reads_name_then_facts() {
+        let meta: Vec<String> = ["PDF document", "12 pages", "2.3 MB", "2026-11-20"].map(String::from).to_vec();
+        assert_eq!(peek_speech("report.pdf", &meta, false, false), "report.pdf, Preview, PDF document, 12 pages, 2.3 MB, 2026-11-20");
+        let ko: Vec<String> = ["PDF 문서", "12쪽", "2.3 MB"].map(String::from).to_vec();
+        assert_eq!(peek_speech("보고서.pdf", &ko, false, true), "보고서.pdf, 미리보기, PDF 문서, 12쪽, 2.3 MB");
+        // before the facts come, or with none; nothing at all to show
+        assert_eq!(peek_speech("notes.txt", &[], false, false), "notes.txt, Preview");
+        assert_eq!(peek_speech("", &[], false, true), "미리보기");
+        // an online-only card: the facts already say so, the tail says how to fetch it
+        let cloud: Vec<String> = ["Online-only".into(), "4 MB".into()].to_vec();
+        assert_eq!(peek_speech("a.mp4", &cloud, true, false), "a.mp4, Preview, Online-only, 4 MB, Enter: download");
+        assert_eq!(peek_speech("a.mp4", &[], true, true), "a.mp4, 미리보기, Enter로 내려받기");
+        // a comma in the name stays as it is
+        assert_eq!(peek_speech("Smith, J. - CV.docx", &[], false, false), "Smith, J. - CV.docx, Preview");
     }
 
     #[test]
