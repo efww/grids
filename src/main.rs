@@ -81,6 +81,7 @@ mod hashsum;
 mod organize;
 mod jumplist;
 mod autostart;
+mod tour;
 
 use ui_defs::*;
 // explicit, so it wins over the same name glob-imported from windows (a glob clash would turn match patterns into bindings)
@@ -117,6 +118,7 @@ use hashsum::*;
 use organize::*;
 use jumplist::*;
 use autostart::*;
+use tour::*;
 
 /// Let a drive with no disk (empty card reader slot, DVD drive, pulled USB stick) just fail the file call,
 /// instead of Windows' "No Disk" system box freezing the calling thread until it is answered.
@@ -195,6 +197,7 @@ fn main() -> Result<()> {
                 }
             }
         };
+        let fresh = ini.is_none(); // a new install: the getting started tour once the window is up
         // a new install (no settings yet) follows Windows' light/dark
         let mut s = ini.map(|t| Session::parse(&t)).unwrap_or(Session { follow: true, ..Session::default() });
         if let Some(d) = theme_target(s.follow, system_dark(), s.dark) {
@@ -203,6 +206,7 @@ fn main() -> Result<()> {
         // a jump-list folder link: folders only, even one named like a session file
         let mut args = args;
         let folders = take_folder_flag(&mut args);
+        let bare = args.is_empty() && !folders; // no folder or session given
         match session_arg(&args).filter(|_| !folders).and_then(|f| std::fs::read_to_string(f).ok()) {
             Some(t) => s.take_layout(&Session::parse(&t)),
             None => apply_args(&mut s, args),
@@ -249,6 +253,14 @@ fn main() -> Result<()> {
             hInstance: hinst,
             hCursor: arrow,
             lpszClassName: w!("GridsKeys"),
+            ..Default::default()
+        });
+        RegisterClassW(&WNDCLASSW {
+            style: CS_DROPSHADOW,
+            lpfnWndProc: Some(tour_proc),
+            hInstance: hinst,
+            hCursor: arrow,
+            lpszClassName: w!("GridsTour"),
             ..Default::default()
         });
         RegisterClassW(&WNDCLASSW {
@@ -409,6 +421,9 @@ fn main() -> Result<()> {
             quiet_placed(main); // focus comes with the first restore (WM_SIZE → restore_focus)
         } else {
             focus_view(app(|a| a.s.active));
+            if fresh && bare {
+                _ = PostMessageW(Some(main), WM_TOUR, WPARAM(0), LPARAM(0)); // after the first paint
+            }
         }
         let file = app(|a| a.s.file.clone());
         let saved = std::fs::read_to_string(&file).ok();

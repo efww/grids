@@ -40,6 +40,10 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
         }
         return true;
     }
+    // the getting started tour: Enter, ←/→, Tab, Esc and Ctrl+/ are its own; other keys stay with its buttons
+    if let Some(used) = tour_key(m) {
+        return used;
+    }
     // Alt+↑/↓ in the favourites list reorders it, not the pane behind (Up / recent folders)
     let fav = app(|a| a.fav_popup);
     if !fav.0.is_null() && m.hwnd == fav && fav_step(VIRTUAL_KEY(m.wParam.0 as u16), ctrl, alt, shift).is_some() {

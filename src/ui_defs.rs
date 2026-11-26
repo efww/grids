@@ -40,6 +40,7 @@ pub(crate) const ID_CTXMENU: usize = 1145; // view menu: "Open in Grids" in Expl
 pub(crate) const ID_AUTOSTART: usize = 1146; // view menu: start with Windows, minimized
 pub(crate) const ID_UPDATES: usize = 1150; // view menu: check for updates
 pub(crate) const ID_STAR: usize = 1151; // view menu: star on GitHub
+pub(crate) const ID_TOUR: usize = 1152; // view menu: the getting started tour again
 pub(crate) const HOME: &str = "https://github.com/efww/grids";
 pub(crate) const ID_ACCENT: usize = 1400; // + preset index
 pub(crate) const ID_ACCENT_PICK: usize = 1410;

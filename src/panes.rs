@@ -696,7 +696,7 @@ pub(crate) unsafe fn system_dark() -> Option<bool> {
 // High contrast shows light lists whatever the saved theme, so only a change of what is shown (dark or not)
 // needs that rebuild; a contrast theme switching on or off over the light theme is recoloured in place.
 pub(crate) unsafe fn retheme() {
-    let (panes, popups, dark) = app(|a| (a.panes.iter().flatten().map(|p| p.hwnd).collect::<Vec<_>>(), [a.fav_popup, a.load, a.grid, a.keys_popup, a.peek, a.matcher.as_ref().map_or(HWND::default(), |m| m.h)], a.s.dark));
+    let (panes, popups, dark) = app(|a| (a.panes.iter().flatten().map(|p| p.hwnd).collect::<Vec<_>>(), [a.fav_popup, a.load, a.grid, a.keys_popup, a.peek, a.matcher.as_ref().map_or(HWND::default(), |m| m.h), tour_hwnd()], a.s.dark));
     let shown_changed = DARK_ON.load(Ordering::Relaxed) != shown_dark(dark);
     if shown_changed && (0..MAXP).any(|i| unsafe { dui_list(i) }) {
         apply_theme();

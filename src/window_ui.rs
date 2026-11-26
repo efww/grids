@@ -46,6 +46,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 if !sizing {
                     relayout();
                     redraw_all(); // maximize / restore
+                    tour_place(); // its button moved with the window
                 }
                 // back from minimized: WM_ACTIVATE came while still minimized and left focus alone
                 let f = GetFocus();
@@ -111,6 +112,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 refresh_drives(); // one that came or went mid-resize
                 relayout();
                 redraw_all();
+                tour_place();
             }
             WM_PAINT => paint_main(h),
             WM_ERASEBKGND => return LRESULT(1), // paint_main covers everything
@@ -318,6 +320,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 id @ ID_ACCENT..=1405 => set_accent(theme_pal(app(|a| a.s.dark)).accents[id - ID_ACCENT].1),
                 ID_ACCENT_PICK => pick_accent(),
                 ID_KEYS => open_keys(),
+                ID_TOUR => open_tour(),
                 ID_GATHER => gather_explorer(),
                 _ => {}
             },
@@ -354,6 +357,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             }
             WM_DPICHANGED => {
                 kids_cancel();
+                close_tour(false); // measured for the old DPI
                 let dpi = (wp.0 & 0xffff) as i32;
                 app(|a| {
                     a.s.side = a.s.side * dpi / a.dpi;
@@ -370,6 +374,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             }
             // Windows restart / sign-out: no WM_CLOSE comes. WM_QUERYENDSESSION stays with DefWindowProcW (never blocks).
             WM_ENDSESSION if wp.0 != 0 => save_session(),
+            WM_TOUR => open_tour(),
             WM_HOTKEY if wp.0 == HOTKEY_ID as usize => hotkey_pressed(h),
             WM_HOTKEY if wp.0 == dialog_jump::DLG_HOTKEY_ID as usize => dialog_jump::on_hotkey(),
             WM_TIMER if wp.0 == dialog_jump::TIMER_DLG_RETRY || wp.0 == dialog_jump::TIMER_DLG_RESTORE => dialog_jump::on_timer(wp.0),
@@ -816,6 +821,7 @@ pub(crate) unsafe fn make_menus() -> Result<HMENU> {
     AppendMenuW(view, MF_SEPARATOR, 0, PCWSTR::null())?;
     item(view, MF_STRING, ID_LANG, "한국어 (Korean)")?;
     AppendMenuW(view, MF_SEPARATOR, 0, PCWSTR::null())?;
+    item(view, MF_STRING, ID_TOUR, tr("Getting started tour", "처음 사용 안내"))?;
     item(view, MF_STRING, ID_KEYS, tr("Keyboard shortcuts\tCtrl+/", "단축키\tCtrl+/"))?;
     item(view, MF_STRING, ID_HELP, tr("Help (online)\tF1", "도움말 (온라인)\tF1"))?;
     item(view, MF_STRING, ID_UPDATES, tr("Check for updates", "업데이트 확인"))?;

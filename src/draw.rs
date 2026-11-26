@@ -85,12 +85,23 @@ pub(crate) fn press_tint(tinted: bool, pressed: bool) -> f32 {
 }
 
 pub(crate) unsafe fn draw_button(d: &DRAWITEMSTRUCT) {
+    draw_button_face(d);
+    // the button the getting started tour points at: a ring in the selection colour (the header ink on a tinted header)
+    if tour_target() == d.hwndItem {
+        let (main, accent, dpi) = app(|a| (a.main, a.s.accent_now(), a.dpi));
+        let parent = GetParent(d.hwndItem).unwrap_or_default();
+        let ring = if parent == main { accent } else { header_colors(parent).1 };
+        frame(d.hDC, d.rcItem, (2 * dpi / 96).max(2), ring);
+    }
+}
+
+unsafe fn draw_button_face(d: &DRAWITEMSTRUCT) {
     let (hover, dpi, font, icon_font, main) = app(|a| (a.hover, a.dpi, a.font, a.icon_font, a.main));
     let parent = GetParent(d.hwndItem).unwrap_or_default();
     let on_main = parent == main;
     let (dc, rc, id) = (d.hDC, d.rcItem, d.CtlID as i32);
     let pressed = d.itemState.0 & ODS_SELECTED.0 != 0;
-    let hot = hover == d.hwndItem;
+    let hot = hover == d.hwndItem || tour_target() == d.hwndItem;
     let (bg, ink) = if on_main { (pal().bg, pal().text) } else { header_colors(parent) };
     let tinted = bg != pal().bg && bg != pal().card;
     fill(dc, rc, bg);

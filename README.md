@@ -114,6 +114,8 @@ Double-clicking empty space in a pane goes up a folder (can be turned off in the
 
 Address bar: click a folder in the path to go there; click a › to list the folders inside; click the current folder or empty space, or press Ctrl+L, to type a path.
 
+Getting started tour: the first time Grids starts on a new install (no grids.ini yet, started without folders), bubbles point at the layout button, the address bar, ⇄, save and the View button one by one, with how to use each and the moves that are easy to miss. → / Enter next, ← back, Tab between its buttons, Esc or a click elsewhere closes; screen readers read each step. View menu → Getting started tour shows it again any time (where grids.ini can't be written next to the exe, it comes up at every start).
+
 ## Known issues
 
 **Don't run Grids as administrator.** A user reported that PowerToys Mouse Crosshairs (and similar tools) stopped following the cursor and froze where they clicked over Grids. It happens only when Grids runs as administrator: Windows doesn't let a program without administrator rights receive mouse input over a window that has them (UIPI), so a normal PowerToys gets no mouse movement over an elevated Grids. Give both the same rights, either way:
