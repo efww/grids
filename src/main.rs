@@ -21,7 +21,7 @@ use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress, Lo
 use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
 use windows::Win32::System::Ole::*;
 use windows::Win32::System::SystemServices::{MK_CONTROL, MK_SHIFT, MODIFIERKEYS_FLAGS, SFGAO_FLAGS, SFGAO_FOLDER, SFGAO_STREAM};
-use windows::Win32::System::Threading::{CreateEventW, SetEvent, OpenProcess, INFINITE,QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION};
+use windows::Win32::System::Threading::{CreateEventW, CreateMutexW, ReleaseMutex, WaitForSingleObject, SetEvent, OpenProcess, INFINITE,QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION};
 use windows::Win32::System::Variant::{VariantClear, VARIANT, VT_I4};
 use windows::Win32::UI::Accessibility::{
     AccessibleObjectFromPoint, LiveSetting_Property_GUID, NotifyWinEvent, Polite, CLSID_AccPropServices, IAccPropServices, IAccessible, PROPID_ACC_NAME, PROPID_ACC_ROLE,
@@ -128,13 +128,35 @@ fn main() -> Result<()> {
     quiet_critical_errors();
     unsafe {
         let args: Vec<String> = menu_args(std::env::args().skip(1).collect()).into_iter().map(resolve).collect();
+        // One start at a time, held until the message loop runs (released there, or on any early return).
+        let Some(mut start) = StartLock::take() else {
+            // another start has held it for 10 s (slow drive, a dialog): going on would open a second window
+            MessageBoxW(
+                None,
+                w!("Grids is still starting. Try again once its window is open.\n\nGrids가 아직 시작하는 중입니다. 창이 열린 뒤 다시 실행해 주세요."),
+                w!("Grids"),
+                MB_OK | MB_ICONINFORMATION,
+            );
+            return Ok(());
+        };
         // Single instance: hand the arguments to the running window and leave.
         if let Some(prev) = running_instance() {
+            start.release();
             if !args.is_empty() {
                 let data: Vec<u16> = args.join("\n").encode_utf16().collect();
                 let cd = CopyData { dw: COPY_ID, cb: (data.len() * 2) as u32, lp: data.as_ptr() as _ };
                 let lp = LPARAM(&cd as *const CopyData as isize);
-                SendMessageTimeoutW(prev, WM_COPYDATA, WPARAM(0), lp, SMTO_ABORTIFHUNG, 5000, None);
+                let mut reply = 0usize;
+                let sent = SendMessageTimeoutW(prev, WM_COPYDATA, WPARAM(0), lp, SMTO_ABORTIFHUNG, 5000, Some(&mut reply));
+                // the window answers 1 once it has the paths; a hung or busy Grids must not lose them silently
+                if sent.0 == 0 || reply != 1 {
+                    let shown = args.iter().filter(|a| *a != FOLDER_FLAG).cloned().collect::<Vec<_>>().join("\n");
+                    let text = HSTRING::from(format!(
+                        "Grids is running but answered late, so this may not have opened:\n{shown}\n\n\
+                         Grids가 실행 중이지만 응답이 늦어 다음이 열리지 않았을 수 있습니다:\n{shown}"
+                    ));
+                    MessageBoxW(None, &text, w!("Grids"), MB_OK | MB_ICONWARNING);
+                }
             }
             if IsIconic(prev).as_bool() {
                 _ = ShowWindow(prev, SW_RESTORE);
@@ -371,6 +393,7 @@ fn main() -> Result<()> {
             dialog_jump::enable(true);
         }
         refresh_jump_list(true); // taskbar / Start jump list: sessions, favourites, recent folders
+        start.release(); // panes are up: the next start finds this window and hands it its folders
 
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
@@ -407,6 +430,27 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn start_lock_name_per_exe() {
+        let a = start_lock_name(r"C:\Tools\Grids\grids.exe");
+        // case does not matter on Windows paths; the same path always gives the same name
+        assert_eq!(a, start_lock_name(r"c:\tools\GRIDS\Grids.EXE"));
+        assert_eq!(a, start_lock_name(r"C:\Tools\Grids\grids.exe"));
+        assert_ne!(a, start_lock_name(r"D:\Portable\grids.exe"));
+        // only the namespace prefix has a '\'
+        let rest = a.strip_prefix("Local\\").unwrap();
+        assert!(!rest.contains('\\'), "{a}");
+        assert!(rest.starts_with("Grids.Start.") && rest.len() == "Grids.Start.".len() + 16, "{a}");
+    }
+
+    #[test]
+    fn start_turn_got_or_not() {
+        assert_eq!(start_turn(WAIT_OBJECT_0), StartTurn::Ours);
+        assert_eq!(start_turn(WAIT_ABANDONED), StartTurn::Ours); // the last owner died holding it
+        assert_eq!(start_turn(WAIT_TIMEOUT), StartTurn::Busy); // told and quits
+        assert_eq!(start_turn(WAIT_FAILED), StartTurn::Failed); // starts unlocked, as before
+    }
 
     /// The error mode is process-wide, so the check runs in a child copy of this test binary
     /// that runs only this test; the shared test process keeps its own mode untouched.

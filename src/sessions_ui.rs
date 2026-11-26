@@ -238,6 +238,64 @@ pub(crate) unsafe fn running_instance() -> Option<HWND> {
     }
 }
 
+// Start lock: two starts at once (several .grids files opened together, a double click on the taskbar)
+// would both find no window and open two Grids that overwrite each other's grids.ini. One start at a time:
+// the next one checks for a window only after this one has its panes and its message loop.
+// Per exe path, like running_instance; FNV-1a of the lowercase path, as a name may hold no '\'.
+pub(crate) fn start_lock_name(exe: &str) -> String {
+    let h = exe.to_lowercase().bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x0100_0000_01b3));
+    format!("Local\\Grids.Start.{h:016x}")
+}
+
+#[derive(Debug, PartialEq)]
+pub(crate) enum StartTurn {
+    Ours,   // got it (an owner that died without releasing it counts too)
+    Busy,   // another start still holds it after the wait
+    Failed, // the wait itself failed
+}
+
+// The wait's result as a turn.
+pub(crate) fn start_turn(wait: WAIT_EVENT) -> StartTurn {
+    match wait {
+        WAIT_OBJECT_0 | WAIT_ABANDONED => StartTurn::Ours,
+        WAIT_TIMEOUT => StartTurn::Busy,
+        _ => StartTurn::Failed,
+    }
+}
+
+pub(crate) struct StartLock(Option<HANDLE>);
+
+impl StartLock {
+    // Waits up to 10 s. None = another start still holds it (slow start, a dialog): the caller tells and quits,
+    // as going on would open a second window. A lock that cannot be opened or waited on (a name an elevated
+    // Grids owns) starts as before, unlocked.
+    pub(crate) unsafe fn take() -> Option<StartLock> {
+        let Ok(exe) = std::env::current_exe() else { return Some(StartLock(None)) };
+        let name = HSTRING::from(start_lock_name(&exe.to_string_lossy()));
+        let Ok(h) = CreateMutexW(None, false, &name) else { return Some(StartLock(None)) };
+        let turn = start_turn(WaitForSingleObject(h, 10_000));
+        if turn == StartTurn::Ours {
+            return Some(StartLock(Some(h)));
+        }
+        _ = CloseHandle(h);
+        (turn == StartTurn::Failed).then_some(StartLock(None))
+    }
+
+    // Lets the next start in; also on every early return, by drop. Same thread that took it.
+    pub(crate) unsafe fn release(&mut self) {
+        if let Some(h) = self.0.take() {
+            _ = ReleaseMutex(h);
+            _ = CloseHandle(h);
+        }
+    }
+}
+
+impl Drop for StartLock {
+    fn drop(&mut self) {
+        unsafe { self.release() }
+    }
+}
+
 #[repr(C)]
 pub(crate) struct CopyData {
     pub(crate) dw: usize,
