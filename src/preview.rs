@@ -950,3 +950,120 @@ pub(crate) unsafe fn version_rows(path: &str) -> Vec<(String, String)> {
     }
     rows
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tests::zip_bytes;
+
+    // Writes the document to a file of its own, reads it the way F3 does with no preview handler, then
+    // deletes it before anything is checked, so a failing test leaves nothing behind.
+    fn read_as(test: &str, ext: &str, bytes: &[u8]) -> Option<Body> {
+        let path = std::env::temp_dir().join(format!("grids_office_{}_{test}.{ext}", std::process::id()));
+        std::fs::write(&path, bytes).unwrap();
+        let body = office_text(path.to_str().unwrap(), ext);
+        let _ = std::fs::remove_file(&path);
+        body
+    }
+
+    fn text_of(test: &str, ext: &str, bytes: &[u8]) -> String {
+        let Some(Body::Text { text, kind: TextKind::Plain, cut: false }) = read_as(test, ext, bytes) else {
+            panic!("{test}.{ext}: no plain text");
+        };
+        text
+    }
+
+    #[test]
+    fn office_word() {
+        let doc = concat!(
+            "<w:document><w:body>",
+            "<w:p><w:r><w:t>A</w:t><w:tab/><w:t>B</w:t></w:r></w:p>",
+            r#"<w:p><w:r><w:t>C</w:t><w:br/><w:t xml:space="preserve">D &amp; E</w:t></w:r></w:p>"#,
+            "</w:body></w:document>"
+        );
+        let z = zip_bytes(&[(b"[Content_Types].xml", b"<Types/>", false, 0x800), (b"word/document.xml", doc.as_bytes(), true, 0x800)]);
+        for ext in ["docx", "docm", "dotx"] {
+            assert_eq!(text_of("word", ext, &z), "A\tB\nC\nD & E", "{ext}");
+        }
+    }
+
+    #[test]
+    fn office_sheet() {
+        let strings = "<sst><si><t>Name</t></si><si><t>값</t></si></sst>";
+        let sheet = r#"<worksheet><sheetData><row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row><row r="2"><c r="A2"><v>42</v></c><c r="B2"><v>1.5</v></c></row></sheetData></worksheet>"#;
+        // no sheet1.xml: the first sheet there is gets shown, not its relationships file
+        let z = zip_bytes(&[
+            (b"xl/sharedStrings.xml", strings.as_bytes(), false, 0x800),
+            (b"xl/worksheets/_rels/sheet3.xml.rels", b"<Relationships/>", false, 0x800),
+            (b"xl/worksheets/sheet3.xml", sheet.as_bytes(), true, 0x800),
+        ]);
+        for ext in ["xlsx", "xlsm", "xltx"] {
+            let Some(Body::Table { rows, cut: false }) = read_as("sheet", ext, &z) else { panic!("{ext}: no table") };
+            assert_eq!(rows, vec![vec!["Name", "값"], vec!["42", "1.5"]], "{ext}");
+        }
+        let none = zip_bytes(&[(b"xl/sharedStrings.xml", strings.as_bytes(), false, 0x800), (b"xl/workbook.xml", b"<workbook/>", false, 0x800)]);
+        assert!(read_as("nosheet", "xlsx", &none).is_none());
+    }
+
+    #[test]
+    fn office_slides() {
+        let slide = |t: &str| format!("<p:sld><p:cSld><p:spTree><p:sp><p:txBody><a:p><a:r><a:t>{t}</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>");
+        let (one, two, ten, layout, notes) = (slide("One"), slide("Two"), slide("Ten"), slide("Layout"), slide("Notes"));
+        let z = zip_bytes(&[
+            (b"ppt/slides/slide10.xml", ten.as_bytes(), true, 0x800),
+            (b"ppt/slides/slide2.xml", two.as_bytes(), false, 0x800),
+            (b"ppt/slideLayouts/slideLayout1.xml", layout.as_bytes(), false, 0x800),
+            (b"ppt/notesSlides/notesSlide1.xml", notes.as_bytes(), false, 0x800),
+            (b"ppt/slides/_rels/slide1.xml.rels", b"<Relationships/>", false, 0x800),
+            (b"ppt/slides/slide1.xml", one.as_bytes(), true, 0x800),
+        ]);
+        // in the language the UI has now: the test does not switch it
+        let label = tr("Slide", "슬라이드");
+        let want = format!("── {label} 1 ──\nOne\n\n── {label} 2 ──\nTwo\n\n── {label} 10 ──\nTen");
+        for ext in ["pptx", "pptm", "ppsx", "potx"] {
+            let text = text_of("slides", ext, &z);
+            assert_eq!(text, want, "{ext}");
+            assert!(!text.contains("Layout") && !text.contains("Notes"), "{ext}");
+        }
+    }
+
+    #[test]
+    fn office_open_document() {
+        let odt = r#"<office:document-content><office:body><office:text><text:h text:outline-level="1">Title</text:h><text:p>a<text:tab/>b <text:span text:style-name="T1">bold <text:span>inner</text:span></text:span> end</text:p></office:text></office:body></office:document-content>"#;
+        let z = zip_bytes(&[(b"mimetype", b"application/vnd.oasis.opendocument.text", false, 0x800), (b"content.xml", odt.as_bytes(), true, 0x800)]);
+        assert_eq!(text_of("odt", "odt", &z), "Title\na\tb bold inner end");
+        let odp = concat!(
+            r#"<office:presentation><draw:page draw:name="p1"><draw:frame><draw:text-box><text:p>Hello<text:line-break/>world</text:p></draw:text-box></draw:frame></draw:page>"#,
+            r#"<draw:page draw:name="p2"><draw:frame><draw:text-box><text:h>Next</text:h></draw:text-box></draw:frame></draw:page></office:presentation>"#
+        );
+        let z = zip_bytes(&[(b"content.xml", odp.as_bytes(), false, 0x800)]);
+        assert_eq!(text_of("odp", "odp", &z), "Hello\nworld\nNext");
+        let ods = r#"<table:table><table:table-row><table:table-cell office:value-type="string"><text:p>Item</text:p></table:table-cell><table:table-cell office:value-type="float" office:value="3"><text:p>3</text:p></table:table-cell></table:table-row></table:table>"#;
+        let z = zip_bytes(&[(b"content.xml", ods.as_bytes(), true, 0x800)]);
+        assert_eq!(text_of("ods", "ods", &z), "Item\n3");
+    }
+
+    #[test]
+    fn office_unreadable() {
+        // None sends the preview on to the file's card
+        assert!(read_as("plain", "docx", b"not a zip at all").is_none());
+        let z = zip_bytes(&[(b"word/styles.xml", b"<w:styles/>", false, 0x800)]);
+        assert!(read_as("nobody", "docx", &z).is_none());
+        assert!(read_as("noodf", "odt", &z).is_none());
+        let gone = std::env::temp_dir().join(format!("grids_office_{}_missing.docx", std::process::id()));
+        assert!(office_text(gone.to_str().unwrap(), "docx").is_none());
+    }
+
+    #[test]
+    fn document_limit() {
+        let mut exact = "a".repeat(TEXT_MAX);
+        let mut cut = false;
+        limit_document(&mut exact, &mut cut);
+        assert_eq!((exact.len(), cut), (TEXT_MAX, false));
+        // "한" is three bytes from one byte before the limit: cut before it, not inside it
+        let mut over = "a".repeat(TEXT_MAX - 1) + "한";
+        limit_document(&mut over, &mut cut);
+        assert_eq!((over.len(), cut), (TEXT_MAX - 1, true));
+        assert!(over.ends_with('a'));
+    }
+}

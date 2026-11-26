@@ -2649,7 +2649,7 @@ mod tests {
     }
 
     // A ZIP made by hand: one stored entry, one deflated, a Korean name without the UTF-8 flag.
-    fn zip_bytes(files: &[(&[u8], &[u8], bool, u16)]) -> Vec<u8> {
+    pub(crate) fn zip_bytes(files: &[(&[u8], &[u8], bool, u16)]) -> Vec<u8> {
         let mut out = Vec::new();
         let mut cd = Vec::new();
         for (name, data, deflate, flags) in files {
