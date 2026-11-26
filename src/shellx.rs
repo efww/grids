@@ -1,5 +1,7 @@
 use crate::*;
-use windows::Win32::System::Registry::{RegGetValueW, HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ};
+use windows::Win32::System::Registry::{
+    RegCloseKey, RegDeleteTreeW, RegGetValueW, RegOpenKeyExW, RegSetKeyValueW, HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, REG_SZ, RRF_RT_REG_SZ,
+};
 use windows::Win32::System::RestartManager::*;
 use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::UI::Controls::{
@@ -555,6 +557,152 @@ unsafe fn run_winmerge(exe: &str, left: &str, right: &str) {
     }
 }
 
+// ---------- "Open in Grids" in Explorer's right-click menu ----------
+// Per user only (HKCU\Software\Classes): no admin rights. The registry is the only record, nothing in grids.ini.
+
+const CTX_BASE: &str = r"Software\Classes";
+// fixed names: only these three verbs are ever written or deleted
+const CTX_KEYS: [&str; 3] = [r"Directory\shell\Grids", r"Directory\Background\shell\Grids", r"Drive\shell\Grids"];
+// value on Grids' own keys: a "Grids" verb without it belongs to something else and is left alone
+const CTX_MARK: &str = "GridsMenu";
+
+/// The menu's command: folder mode (never a session), and `\.` after %V so a drive root "D:\"
+/// does not end in `\"` and eat its closing quote. menu_args takes the `\.` off again.
+pub(crate) fn ctx_command(exe: &str) -> String {
+    format!(r#""{exe}" {FOLDER_FLAG} "%V\.""#)
+}
+
+/// True = the registered command runs this exe (paths compared without case).
+pub(crate) fn ctx_owned(cmd: &str, exe: &str) -> bool {
+    cmd.trim().to_lowercase() == ctx_command(exe).to_lowercase()
+}
+
+/// Arguments of a folder-mode launch lose the `\.` the menu command adds: "C:\x\." → "C:\x", "D:\\." → "D:\".
+pub(crate) fn menu_args(mut args: Vec<String>) -> Vec<String> {
+    if args.first().is_some_and(|a| a == FOLDER_FLAG) {
+        for a in args.iter_mut().skip(1) {
+            if let Some(p) = a.strip_suffix(r"\.") {
+                *a = if p.len() == 2 && p.ends_with(':') { format!(r"{p}\") } else { p.to_string() };
+            }
+        }
+    }
+    args
+}
+
+unsafe fn reg_text(key: &str, name: Option<&str>) -> Option<String> {
+    let (mut buf, mut n) = ([0u16; 1024], 2048u32);
+    let name = name.map(HSTRING::from);
+    let v = name.as_ref().map_or(PCWSTR::null(), |s| PCWSTR(s.as_ptr()));
+    RegGetValueW(HKEY_CURRENT_USER, &HSTRING::from(key), v, RRF_RT_REG_SZ, None, Some(buf.as_mut_ptr() as _), Some(&mut n)).ok().ok()?;
+    Some(String::from_utf16_lossy(&buf[..(n as usize / 2).min(1024)]).trim_end_matches('\0').to_string())
+}
+
+unsafe fn reg_put(key: &str, name: Option<&str>, text: &str) -> bool {
+    let data: Vec<u16> = text.encode_utf16().chain([0]).collect();
+    let name = name.map(HSTRING::from);
+    let v = name.as_ref().map_or(PCWSTR::null(), |s| PCWSTR(s.as_ptr()));
+    RegSetKeyValueW(HKEY_CURRENT_USER, &HSTRING::from(key), v, REG_SZ.0, Some(data.as_ptr() as _), (data.len() * 2) as u32).is_ok()
+}
+
+unsafe fn reg_has(key: &str) -> bool {
+    let mut k = HKEY::default();
+    let found = RegOpenKeyExW(HKEY_CURRENT_USER, &HSTRING::from(key), None, KEY_READ, &mut k).is_ok();
+    if found {
+        _ = RegCloseKey(k);
+    }
+    found
+}
+
+// absent, or carrying Grids' mark
+unsafe fn ctx_free(key: &str) -> bool {
+    !reg_has(key) || reg_text(key, Some(CTX_MARK)).is_some()
+}
+
+// on = all three carry Grids' mark and run this exe (same test ctx_remove uses, so "on" can always be removed)
+unsafe fn ctx_on_at(base: &str, exe: &str) -> bool {
+    CTX_KEYS.iter().all(|k| {
+        let key = format!(r"{base}\{k}");
+        reg_text(&key, Some(CTX_MARK)).is_some() && reg_text(&format!(r"{key}\command"), None).is_some_and(|c| ctx_owned(&c, exe))
+    })
+}
+
+unsafe fn ctx_write(base: &str, exe: &str, label: &str) -> bool {
+    CTX_KEYS.iter().all(|k| {
+        let key = format!(r"{base}\{k}");
+        // the mark first, so a half-written key is still Grids' to clean up
+        reg_put(&key, Some(CTX_MARK), "1")
+            && reg_put(&key, None, label)
+            && reg_put(&key, Some("Icon"), &format!(r#""{exe}",0"#))
+            && reg_put(&format!(r"{key}\command"), None, &ctx_command(exe))
+    })
+}
+
+// deletes Grids' own keys (a foreign "Grids" verb stays); true = none of Grids' is left
+unsafe fn ctx_remove(base: &str) -> bool {
+    CTX_KEYS.iter().fold(true, |ok, k| {
+        let key = format!(r"{base}\{k}");
+        let gone = !reg_has(&key) || reg_text(&key, Some(CTX_MARK)).is_none() || RegDeleteTreeW(HKEY_CURRENT_USER, &HSTRING::from(key.as_str())).is_ok();
+        ok && gone
+    })
+}
+
+// All three or none: a failed half is undone (on: removed again; off: written back for this exe).
+unsafe fn set_ctx_at(base: &str, exe: &str, label: &str, on: bool) -> bool {
+    if on {
+        if !CTX_KEYS.iter().all(|k| ctx_free(&format!(r"{base}\{k}"))) {
+            return false; // another program's "Grids" verb: nothing touched
+        }
+        if ctx_write(base, exe, label) {
+            return true;
+        }
+        ctx_remove(base);
+        false
+    } else {
+        if ctx_remove(base) {
+            return true;
+        }
+        ctx_write(base, exe, label);
+        false
+    }
+}
+
+fn this_exe() -> Option<String> {
+    std::env::current_exe().ok().map(|p| p.to_string_lossy().into_owned())
+}
+
+/// Checked in the View menu only when the menu runs this exe: after moving Grids, one click registers the new path.
+pub(crate) unsafe fn ctx_menu_on() -> bool {
+    this_exe().is_some_and(|e| ctx_on_at(CTX_BASE, &e))
+}
+
+/// Adds or removes the three verbs (in the UI language) and tells Explorer. False = failed, nothing half-done.
+pub(crate) unsafe fn set_ctx_menu(on: bool) -> bool {
+    let Some(exe) = this_exe() else { return false };
+    let ok = set_ctx_at(CTX_BASE, &exe, tr("Open in Grids", "Grids에서 열기"), on);
+    SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, None, None);
+    ok
+}
+
+// View menu click: flips what is really registered, with a note either way.
+pub(crate) unsafe fn toggle_ctx_menu() {
+    let on = !ctx_menu_on();
+    let ok = set_ctx_menu(on);
+    if !ok {
+        _ = MessageBeep(MB_ICONWARNING);
+    }
+    let text = match (ok, on) {
+        (true, true) => tr(
+            "\"Open in Grids\" added to Explorer's right-click menu (Windows 11: under Show more options)",
+            "탐색기 오른쪽 클릭 메뉴에 \"Grids에서 열기\"를 넣음 (Windows 11: '더 많은 옵션 표시' 안)",
+        ),
+        (true, false) => tr("\"Open in Grids\" removed from Explorer's right-click menu", "탐색기 오른쪽 클릭 메뉴에서 \"Grids에서 열기\"를 뺌"),
+        (false, true) => tr("Could not add \"Open in Grids\" to Explorer's menu", "탐색기 메뉴에 \"Grids에서 열기\"를 등록하지 못함"),
+        (false, false) => tr("Could not remove \"Open in Grids\" from Explorer's menu", "탐색기 메뉴에서 \"Grids에서 열기\"를 빼지 못함"),
+    };
+    app(|a| a.note = Some((text.into(), Instant::now() + Duration::from_secs(3))));
+    update_status();
+}
+
 // ---------- ⇄ menu hooks ----------
 
 // Adds "Which program is using this?" and, with WinMerge found, "Compare with WinMerge" to the ⇄ menu.
@@ -690,6 +838,70 @@ mod tests {
             [r"D:\Tools\WinMerge\WinMergeU.exe", r"c:\program files\winmerge\winmergeu.exe", r"C:\Program Files (x86)\WinMerge\WinMergeU.exe"]
         );
         assert!(winmerge_candidates(&[None, None], &[]).is_empty());
+    }
+
+    #[test]
+    fn explorer_menu_command() {
+        let exe = r"C:\Program Files\My Tools\grids.exe";
+        assert_eq!(ctx_command(exe), r#""C:\Program Files\My Tools\grids.exe" --folder "%V\.""#);
+        assert!(ctx_owned(&ctx_command(exe), exe));
+        assert!(ctx_owned(&format!("  {}  ", ctx_command(&exe.to_uppercase())), exe)); // case and stray spaces
+        assert!(!ctx_owned(&ctx_command(r"D:\old\grids.exe"), exe)); // moved exe: not checked, one click re-registers
+        assert!(!ctx_owned(r#""C:\Program Files\My Tools\grids.exe" "%V""#, exe));
+        // what Explorer passes after %V is filled in, split by Windows' own rules, then cleaned and resolved
+        let split = |cmd: &str| unsafe {
+            let mut n = 0;
+            let v = CommandLineToArgvW(&HSTRING::from(cmd), &mut n);
+            let out: Vec<String> = (0..n as usize).map(|k| (*v.add(k)).to_string().unwrap()).collect();
+            _ = windows::Win32::Foundation::LocalFree(Some(windows::Win32::Foundation::HLOCAL(v as _)));
+            out
+        };
+        let run = |v: &str| menu_args(split(&ctx_command(exe).replace("%V", v)).into_iter().skip(1).collect());
+        assert_eq!(run(r"D:\"), [FOLDER_FLAG, r"D:\"]);
+        assert_eq!(run(r"C:\Users\Public"), [FOLDER_FLAG, r"C:\Users\Public"]);
+        assert_eq!(run(r"\\srv\share\a b"), [FOLDER_FLAG, r"\\srv\share\a b"]);
+        assert_eq!(resolve(run(r"C:\Users\Public")[1].clone()), r"C:\Users\Public");
+        assert_eq!(resolve(run(r"C:\")[1].clone()), r"C:\");
+        // only folder mode is touched
+        assert_eq!(menu_args(vec![r"C:\x\.".into()]), [r"C:\x\."]);
+    }
+
+    #[test]
+    fn explorer_menu_registry_round_trip() {
+        // a scratch branch of HKCU, never the real Software\Classes
+        let (root, base) = (r"Software\GridsTest", r"Software\GridsTest\Classes");
+        let exe = r"C:\Tools Dir\grids.exe";
+        unsafe {
+            _ = RegDeleteTreeW(HKEY_CURRENT_USER, &HSTRING::from(root));
+            assert!(!ctx_on_at(base, exe));
+            assert!(set_ctx_at(base, exe, "Open in Grids", true));
+            assert!(ctx_on_at(base, exe) && !ctx_on_at(base, r"D:\other\grids.exe"));
+            for k in CTX_KEYS {
+                let key = format!(r"{base}\{k}");
+                assert_eq!(reg_text(&key, None).as_deref(), Some("Open in Grids"));
+                assert_eq!(reg_text(&key, Some("Icon")).as_deref(), Some(r#""C:\Tools Dir\grids.exe",0"#));
+                assert_eq!(reg_text(&format!(r"{key}\command"), None), Some(ctx_command(exe)));
+            }
+            // moved exe: the marked keys are rewritten in place
+            assert!(set_ctx_at(base, r"D:\new\grids.exe", "Grids에서 열기", true));
+            assert!(ctx_on_at(base, r"D:\new\grids.exe") && !ctx_on_at(base, exe));
+            assert!(set_ctx_at(base, exe, "x", false));
+            assert!(CTX_KEYS.iter().all(|k| !reg_has(&format!(r"{base}\{k}"))));
+            assert!(reg_has(&format!(r"{base}\Directory\shell"))); // only the Grids verbs go
+            // someone else's "Grids" verb (no mark): neither taken over nor deleted
+            let foreign = format!(r"{base}\{}", CTX_KEYS[2]);
+            assert!(reg_put(&foreign, None, "theirs"));
+            assert!(!set_ctx_at(base, exe, "Open in Grids", true));
+            assert!(!reg_has(&format!(r"{base}\{}", CTX_KEYS[0])));
+            assert!(set_ctx_at(base, exe, "x", false));
+            assert_eq!(reg_text(&foreign, None).as_deref(), Some("theirs"));
+            // same command but no mark: not "on" (off could not delete it either)
+            for k in CTX_KEYS {
+                assert!(reg_put(&format!(r"{base}\{k}\command"), None, &ctx_command(exe)));
+            }
+            assert!(!ctx_on_at(base, exe));
+            _ = RegDeleteTreeW(HKEY_CURRENT_USER, &HSTRING::from(root));
+        }
     }
 
     #[test]

@@ -124,7 +124,7 @@ fn quiet_critical_errors() {
 fn main() -> Result<()> {
     quiet_critical_errors();
     unsafe {
-        let args: Vec<String> = std::env::args().skip(1).map(resolve).collect();
+        let args: Vec<String> = menu_args(std::env::args().skip(1).collect()).into_iter().map(resolve).collect();
         // Single instance: hand the arguments to the running window and leave.
         if let Some(prev) = running_instance() {
             if !args.is_empty() {

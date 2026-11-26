@@ -303,6 +303,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                     });
                     dialog_jump::enable(on);
                 }
+                ID_CTXMENU => toggle_ctx_menu(),
                 ID_LANG => set_language(!KO.load(Ordering::Relaxed)),
                 ID_HELP => open_help(),
                 ID_ABOUT => about(h),
@@ -325,6 +326,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 check(ID_TABS, TABS_ON.load(Ordering::Relaxed));
                 check(ID_HOTKEY, hot);
                 check(ID_DLGJUMP, jump);
+                check(ID_CTXMENU, ctx_menu_on()); // read from the registry, not a setting
                 check(ID_UPDATES, app(|a| a.s.updates));
                 check(ID_LANG, KO.load(Ordering::Relaxed));
                 check(ID_STAR, starred());
@@ -720,6 +722,12 @@ pub(crate) unsafe fn set_language(ko: bool) {
         app(|a| a.view_menu = m);
         _ = DestroyMenu(old);
     }
+    // Explorer's menu item follows the new language; a failed rewrite is undone, so say it is gone
+    if ctx_menu_on() && !set_ctx_menu(true) {
+        _ = MessageBeep(MB_ICONWARNING);
+        let text = tr("Could not add \"Open in Grids\" to Explorer's menu", "탐색기 메뉴에 \"Grids에서 열기\"를 등록하지 못함");
+        app(|a| a.note = Some((text.into(), Instant::now() + Duration::from_secs(3))));
+    }
     for (id, _, hint) in toolbar_tips() {
         if let Ok(b) = GetDlgItem(Some(main), id) {
             tip_text(b, hint, TTM_UPDATETIPTEXTW);
@@ -747,6 +755,8 @@ pub(crate) unsafe fn make_menus() -> Result<HMENU> {
     item(view, MF_STRING, ID_HOTKEY, tr("Bring Grids to front from anywhere\tWin+Alt+E", "어디서나 Grids 불러오기\tWin+Alt+E"))?;
     let jump = tr("Jump to Grids folders from file dialogs\tCtrl+Alt+G", "파일 대화 상자에서 Grids 폴더로 이동\tCtrl+Alt+G");
     item(view, MF_STRING, ID_DLGJUMP, jump)?;
+    let ctx = tr("Add \"Open in Grids\" to Explorer's right-click menu", "탐색기 오른쪽 클릭 메뉴에 \"Grids에서 열기\" 추가");
+    item(view, MF_STRING, ID_CTXMENU, ctx)?;
     item(view, MF_STRING, ID_FOLLOW, tr("Follow Windows light/dark", "Windows 라이트·다크 따르기"))?;
     let colors = CreatePopupMenu()?;
     for (k, (name, _)) in LIGHT.accents.iter().enumerate() {
