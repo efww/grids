@@ -420,7 +420,10 @@ pub(crate) extern "system" fn pane_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             WM_LBUTTONDOWN => {
                 let (x, y) = ((lp.0 & 0xffff) as i16 as i32, (lp.0 >> 16 & 0xffff) as i16 as i32);
                 match pane_of(h) {
-                    Some(i) if on_kind_icon(x, y) => kind_menu(i),
+                    Some(i) if on_kind_icon(x, y) => {
+                        kind_menu(i);
+                        head_rehover(h); // the menu may close with the pointer elsewhere
+                    }
                     Some(i) => crumb_click(h, i, x, y),
                     None => {}
                 }
@@ -429,10 +432,15 @@ pub(crate) extern "system" fn pane_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 let (x, y) = ((lp.0 & 0xffff) as i16 as i32, (lp.0 >> 16 & 0xffff) as i16 as i32);
                 let k = pane_of(h).and_then(|i| crumb_at(h, i, x, y)).flatten().map(|(k, ..)| k);
                 crumb_hover(h, k);
+                head_hover(h, head_hot_of(h, x, y));
             }
+            // only this pane's: another pane's hot target is already that pane's
             WM_MOUSELEAVE => {
                 if app(|a| a.crumb_hot.is_some_and(|(w, _)| w == h)) {
                     crumb_hover(h, None);
+                }
+                if app(|a| a.head_hot.is_some_and(|(w, _)| w == h)) {
+                    head_hover(h, None);
                 }
             }
             WM_PAINT => paint_pane(h),

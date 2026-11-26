@@ -103,6 +103,9 @@ pub(crate) unsafe fn destroy_pane(i: usize) {
         if p.as_ref().is_some_and(|p| p.hwnd == a.focus_req) {
             a.focus_req = HWND::default();
         }
+        if a.head_hot.is_some_and(|(w, _)| p.as_ref().is_some_and(|p| p.hwnd == w)) {
+            a.head_hot = None;
+        }
         let queued = if a.drop_open.as_ref().is_some_and(|d| d.1 == i) { a.drop_open.take() } else { None };
         (p, queued)
     });
@@ -184,6 +187,7 @@ pub(crate) unsafe fn layout_pane(h: HWND) {
     move_all(&moves, Some((&eb, pg.view)));
     show_path_end(ctl(ID_EDIT), &disp);
     sync_addr(h);
+    head_rehover(h); // resized, or the tab strip shown / hidden: the tabs and the filter icon moved
 }
 
 pub(crate) unsafe fn relayout() {

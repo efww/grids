@@ -2255,6 +2255,75 @@ mod tests {
         }
     }
 
+    // The header's mouse shading names exactly what a click there hits: tab_hit in the strip (the × only
+    // on the current tab, nothing on the bare strip), the filter icon where on_kind_icon opens the menu.
+    #[test]
+    fn head_hover_targets() {
+        for dpi in [96, 144] {
+            let s = |v: i32| v * dpi / 96;
+            for width in [400, 1200] {
+                let mut pg = pane_geo(width + 4, s(300), dpi);
+                pg.tabs = RECT { left: s(2), top: s(30), right: width + 4 - s(2), bottom: s(30) + s(26) }; // tabs on
+                let kind = filter_icon_rect(pg.filt, s(24)).unwrap();
+                for n in [1, 2, 3, 12] {
+                    for cur in 0..n {
+                        for y in 0..pg.tabs.bottom + 2 {
+                            for x in 0..width + 4 {
+                                let want = if inside(kind, x, y) {
+                                    Some(HeadHot::Kind)
+                                } else {
+                                    match tab_hit(pg.tabs, n, cur, x, y, dpi) {
+                                        Some(TabHit::Tab(k)) => Some(HeadHot::Tab(k)),
+                                        Some(TabHit::Close(k)) => Some(HeadHot::Close(k)),
+                                        Some(TabHit::Plus) => Some(HeadHot::Plus),
+                                        Some(TabHit::Strip) | None => None,
+                                    }
+                                };
+                                let got = head_hot_at(&pg, n, cur, x, y, dpi);
+                                assert_eq!(got, want, "{dpi} {width} {n} {cur} ({x},{y})");
+                                if let Some(HeadHot::Close(k)) = got {
+                                    assert!(k == cur && n > 1);
+                                }
+                            }
+                        }
+                    }
+                }
+                // tabs off: a strip of no height shades nothing below the bar
+                let off = PaneGeo { tabs: RECT { bottom: pg.tabs.top, ..pg.tabs }, ..pane_geo(width + 4, s(300), dpi) };
+                let (tabs, _) = tab_rects(pg.tabs, 3, dpi);
+                assert_eq!(head_hot_at(&off, 3, 0, (tabs[1].left + tabs[1].right) / 2, pg.tabs.top + s(10), dpi), None);
+            }
+        }
+        // a pill too narrow for the icon: shaded only inside it
+        let mut pg = pane_geo(800, 300, 96);
+        pg.filt.right = pg.filt.left + 10;
+        assert_eq!(head_hot_at(&pg, 1, 0, pg.filt.left + 9, pg.filt.top + 5, 96), Some(HeadHot::Kind));
+        assert_eq!(head_hot_at(&pg, 1, 0, pg.filt.left + 10, pg.filt.top + 5, 96), None);
+    }
+
+    // The hover shades must show against what they cover, and keep the text on them readable, in both themes:
+    // another tab (on bg), the × (on card), '+' (on bg), the filter icon slot / the ring round the badge (on pill).
+    #[test]
+    fn head_hover_shades() {
+        for (theme, p) in [("light", &LIGHT), ("dark", &DARK)] {
+            for (name, under, t) in [
+                ("tab", p.bg, press_tint(false, false)),
+                ("×", p.card, press_tint(false, true)),
+                ("+", p.bg, press_tint(false, true)),
+                ("filter icon", p.pill, press_tint(false, false)),
+                ("badge ring", p.pill, press_tint(false, true)),
+            ] {
+                let shade = blend(under, p.text, t);
+                assert!(contrast(shade, under) >= 1.1, "{theme} {name}: shade {:.3}", contrast(shade, under));
+                assert!(contrast(p.text, shade) >= 4.5, "{theme} {name}: text {:.2}", contrast(p.text, shade));
+            }
+            // the badge keeps its colour: each selection colour's ink on it is what palette_contrast checks
+            for (name, c) in p.accents {
+                assert!(contrast(on_color(c), c) >= 4.3, "{theme} {name}");
+            }
+        }
+    }
+
     #[test]
     fn text_decoding() {
         assert_eq!(decode_text(b"\xEF\xBB\xBFhi"), "hi");

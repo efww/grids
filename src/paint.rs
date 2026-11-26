@@ -359,22 +359,77 @@ pub(crate) unsafe fn crumb_hover(h: HWND, k: Option<usize>) {
         _ = InvalidateRect(Some(w), Some(&addr_rect(w, dpi)), false);
     }
     if hot.is_some() && old.is_none_or(|(w, _)| w != h) {
-        let mut t = TRACKMOUSEEVENT { cbSize: size_of::<TRACKMOUSEEVENT>() as u32, dwFlags: TME_LEAVE, hwndTrack: h, dwHoverTime: 0 };
-        _ = TrackMouseEvent(&mut t);
+        track_leave(h);
+    }
+}
+
+// WM_MOUSELEAVE for whichever of the crumbs / the header targets is hot in h.
+unsafe fn track_leave(h: HWND) {
+    let mut t = TRACKMOUSEEVENT { cbSize: size_of::<TRACKMOUSEEVENT>() as u32, dwFlags: TME_LEAVE, hwndTrack: h, dwHoverTime: 0 };
+    _ = TrackMouseEvent(&mut t);
+}
+
+// What in pane window h's header is under a client point (tabs, ×, '+', filter icon).
+pub(crate) unsafe fn head_hot_of(h: HWND, x: i32, y: i32) -> Option<HeadHot> {
+    let i = app(|a| a.panes.iter().position(|p| p.as_ref().is_some_and(|p| p.hwnd == h)))?;
+    let (n, cur, dpi) = app(|a| (a.s.tab_list(i).len(), a.s.tab[i], a.dpi));
+    let mut rc = RECT::default();
+    _ = GetClientRect(h, &mut rc);
+    head_hot_at(&pane_geo(rc.right, rc.bottom, dpi), n, cur, x, y, dpi)
+}
+
+// Where a header target is painted in h: the whole tab strip (a tab lightening moves its neighbours' hairlines),
+// or the filter icon's slot.
+unsafe fn head_hot_rect(h: HWND, t: HeadHot, dpi: i32) -> RECT {
+    let mut rc = RECT::default();
+    _ = GetClientRect(h, &mut rc);
+    let pg = pane_geo(rc.right, rc.bottom, dpi);
+    match t {
+        HeadHot::Kind => RECT { right: pg.filt.left + 24 * dpi / 96, ..pg.filt }, // the icon can be wider than a narrow pill
+        _ => pg.tabs,
+    }
+}
+
+pub(crate) unsafe fn head_hover(h: HWND, t: Option<HeadHot>) {
+    let hot = t.map(|t| (h, t));
+    let (old, dpi) = app(|a| (std::mem::replace(&mut a.head_hot, hot), a.dpi));
+    if old == hot {
+        return;
+    }
+    for (w, t) in [old, hot].into_iter().flatten() {
+        let r = head_hot_rect(w, t, dpi);
+        if r.bottom > r.top && r.right > r.left {
+            _ = InvalidateRect(Some(w), Some(&r), false);
+        }
+    }
+    if hot.is_some() && old.is_none_or(|(w, _)| w != h) {
+        track_leave(h);
+    }
+}
+
+// After the tabs or the pane's size changed under a still pointer: shade what is under it now, but only while
+// the pointer is really on this pane window (not on another window, a child control or off it).
+pub(crate) unsafe fn head_rehover(h: HWND) {
+    let mut p = POINT::default();
+    let over = GetCursorPos(&mut p).is_ok() && WindowFromPoint(p) == h && ScreenToClient(h, &mut p).as_bool();
+    let t = if over { head_hot_of(h, p.x, p.y) } else { None };
+    if t.is_some() || app(|a| a.head_hot.is_some_and(|(w, _)| w == h)) {
+        head_hover(h, t);
     }
 }
 
 // One white plate per pane: a single accent border when active, flat fields in the top bar.
 pub(crate) unsafe fn paint_pane(h: HWND) {
-    let (active, i, dpi, icon_font, small_font, font, accent, hot, tint, folder, waiting) = app(|a| {
+    let (active, i, dpi, icon_font, small_font, font, accent, hot, hot_head, tint, folder, waiting) = app(|a| {
         let i = a.panes.iter().position(|p| p.as_ref().is_some_and(|p| p.hwnd == h));
         // a drop target-to-be looks active too
         let active = a.panes[a.s.active].as_ref().is_some_and(|p| p.hwnd == h) || a.drop_hover == h;
         let hot = a.crumb_hot.filter(|(w, _)| *w == h).map(|(_, k)| k);
+        let hot_head = a.head_hot.filter(|(w, _)| *w == h).map(|(_, t)| t);
         let tint = i.and_then(|i| tint_color(a.s.tints[i]));
         let folder = i.and_then(|i| a.panes[i].as_ref()).map_or(-1, |p| p.icon);
         let waiting = a.kids.as_ref().filter(|k| k.hwnd == h).map(|k| k.dir.clone());
-        (active, i, a.dpi, a.icon_font, a.small_font, a.font, a.s.accent_now(), hot, tint, folder, waiting)
+        (active, i, a.dpi, a.icon_font, a.small_font, a.font, a.s.accent_now(), hot, hot_head, tint, folder, waiting)
     });
     let tabs = i.filter(|_| tabs_on()).map(|i| app(|a| (a.s.tab_list(i), a.s.tab[i])));
     let ilist = match app(|a| a.ilist.clone()) {
@@ -450,17 +505,35 @@ pub(crate) unsafe fn paint_pane(h: HWND) {
             }
         }
         if let Some((list, cur)) = &tabs {
-            paint_tabs(dc, &pg, list, *cur, dpi, font, accent);
+            paint_tabs(dc, &pg, list, *cur, dpi, font, accent, hot_head);
         }
-        if filtered {
-            // filter applied: accent chip left of the edit (which starts at filt.left + s(24))
-            let chip =
-                RECT { left: pg.filt.left + s(3), top: pg.filt.top + s(3), right: pg.filt.left + s(21), bottom: pg.filt.bottom - s(3) };
-            fill(dc, chip, accent);
-            text(dc, chip, ICON_FILTER, icon_font, on_color(accent), DT_CENTER);
-        } else {
-            let icon = RECT { left: pg.filt.left + s(4), right: pg.filt.left + s(22), ..pg.filt };
-            text(dc, icon, ICON_SEARCH, icon_font, pal().sub, DT_CENTER);
+        // the icon opens the file-type menu: under the mouse its slot is shaded (inside the pill and its focus frame),
+        // a ring round the filter badge, whose own colour stays
+        let kind_hot = hot_head == Some(HeadHot::Kind);
+        // a narrow pane's filter field can be under s(24) wide: the shade, icon and badge all stay inside the icon slot
+        if let Some(slot) = filter_icon_rect(pg.filt, s(24)) {
+            if kind_hot {
+                let shade = blend(pal().pill, pal().text, press_tint(false, filtered));
+                fill(dc, RECT { left: slot.left + 1, top: slot.top + 1, right: slot.right, bottom: slot.bottom - 1 }, shade);
+            }
+            if filtered {
+                // filter applied: accent chip left of the edit (which starts at filt.left + s(24))
+                let chip = RECT {
+                    left: pg.filt.left + s(3),
+                    top: pg.filt.top + s(3),
+                    right: (pg.filt.left + s(21)).min(slot.right),
+                    bottom: pg.filt.bottom - s(3),
+                };
+                if chip.right > chip.left {
+                    fill(dc, chip, accent);
+                    text(dc, chip, ICON_FILTER, icon_font, on_color(accent), DT_CENTER);
+                }
+            } else {
+                let icon = RECT { left: pg.filt.left + s(4), right: (pg.filt.left + s(22)).min(slot.right), ..pg.filt };
+                if icon.right > icon.left {
+                    text(dc, icon, ICON_SEARCH, icon_font, if kind_hot { pal().text } else { pal().sub }, DT_CENTER);
+                }
+            }
         }
     });
 }

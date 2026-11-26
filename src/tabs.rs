@@ -38,11 +38,20 @@ unsafe fn tab_go(i: usize, change: impl FnOnce(&mut Session) -> Option<String>) 
         }
     }
     repaint_tabs(i);
+    rehover_pane(i);
 }
 
 pub(crate) unsafe fn new_tab(i: usize) {
     app(|a| a.s.add_tab(i));
     repaint_tabs(i);
+    rehover_pane(i);
+}
+
+// The tabs moved under a still pointer (picked, closed, added, by mouse, key or menu): shade what is there now.
+unsafe fn rehover_pane(i: usize) {
+    if let Some(h) = app(|a| a.panes.get(i)?.as_ref().map(|p| p.hwnd)) {
+        head_rehover(h);
+    }
 }
 
 pub(crate) unsafe fn pick_tab(i: usize, k: usize) {
@@ -141,6 +150,28 @@ pub(crate) fn tab_hit(strip: RECT, n: usize, cur: usize, x: i32, y: i32, dpi: i3
     }
 }
 
+// What the mouse shades in a pane's header: a tab, the current tab's ×, '+', or the filter pill's file-type icon.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum HeadHot {
+    Tab(usize),
+    Close(usize),
+    Plus,
+    Kind,
+}
+
+// Asks the clicks' own hit tests (tab_hit, filter_icon_rect), so what is shaded is what a click does there.
+pub(crate) fn head_hot_at(pg: &PaneGeo, n: usize, cur: usize, x: i32, y: i32, dpi: i32) -> Option<HeadHot> {
+    if filter_icon_rect(pg.filt, 24 * dpi / 96).is_some_and(|r| inside(r, x, y)) {
+        return Some(HeadHot::Kind);
+    }
+    match tab_hit(pg.tabs, n, cur, x, y, dpi)? {
+        TabHit::Tab(k) => Some(HeadHot::Tab(k)),
+        TabHit::Close(k) => Some(HeadHot::Close(k)),
+        TabHit::Plus => Some(HeadHot::Plus),
+        TabHit::Strip => None,
+    }
+}
+
 // Left click picks / closes / adds, middle click closes. A double click's second press never closes:
 // the first press already did its part (picking a tab puts a × under the pointer).
 pub(crate) fn tab_action(hit: TabHit, c: TabClick) -> TabAct {
@@ -173,13 +204,21 @@ pub(crate) unsafe fn tab_mouse(h: HWND, i: usize, x: i32, y: i32, click: TabClic
 
 // The strip under the header bar: the current tab raised on the list's colour with an accent edge on top,
 // the others as plain names; a × on the current one when there are several; '+' after the last.
-pub(crate) unsafe fn paint_tabs(dc: HDC, pg: &PaneGeo, tabs: &[String], cur: usize, dpi: i32, font: HFONT, accent: u32) {
+// Under the mouse (as browser tabs): another tab lightens, the × or '+' gets a shaded square.
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn paint_tabs(dc: HDC, pg: &PaneGeo, tabs: &[String], cur: usize, dpi: i32, font: HFONT, accent: u32, hot: Option<HeadHot>) {
     let s = |v: i32| v * dpi / 96;
     if pg.tabs.bottom <= pg.tabs.top {
         return;
     }
     fill(dc, pg.tabs, pal().bg);
     let (rects, plus) = tab_rects(pg.tabs, tabs.len(), dpi);
+    // a hot × / '+': a square centred on the glyph, shaded as a pressed header button
+    let square = |c: RECT, under: u32| {
+        let (d, x, y) = (s(16), (c.left + c.right) / 2 - s(8), (c.top + c.bottom) / 2 - s(8));
+        fill(dc, RECT { left: x, top: y, right: x + d, bottom: y + d }, blend(under, pal().text, press_tint(false, true)));
+    };
+    let lit = |k: usize| k != cur && hot == Some(HeadHot::Tab(k)); // hot may be stale (k >= n): then nothing matches
     for (k, (r, path)) in rects.iter().zip(tabs).enumerate() {
         let on = k == cur;
         let name = match place_label(path) {
@@ -190,16 +229,27 @@ pub(crate) unsafe fn paint_tabs(dc: HDC, pg: &PaneGeo, tabs: &[String], cur: usi
         if on {
             fill(dc, *r, pal().card);
             fill(dc, RECT { bottom: r.top + s(2), ..*r }, accent);
-        } else if k + 1 != cur && k + 1 < tabs.len() {
-            // hairline between two plain tabs
+        } else if lit(k) {
+            fill(dc, *r, blend(pal().bg, pal().text, press_tint(false, false)));
+        }
+        if !on && k + 1 != cur && k + 1 < tabs.len() && !lit(k) && !lit(k + 1) {
+            // hairline between two plain tabs (not against a lightened one)
             fill(dc, RECT { left: r.right - 1, top: r.top + s(5), right: r.right, bottom: r.bottom - s(5) }, pal().line);
         }
         let right = close.map_or(r.right - s(8), |c| c.left);
         let label = RECT { left: r.left + s(8), right, ..*r };
-        text(dc, label, &name, font, if on { pal().text } else { pal().sub }, DT_LEFT);
+        text(dc, label, &name, font, if on || lit(k) { pal().text } else { pal().sub }, DT_LEFT);
         if let Some(c) = close {
-            text(dc, c, "×", font, pal().sub, DT_CENTER);
+            let hot_x = hot == Some(HeadHot::Close(k));
+            if hot_x {
+                square(c, pal().card);
+            }
+            text(dc, c, "×", font, if hot_x { pal().text } else { pal().sub }, DT_CENTER);
         }
     }
-    text(dc, plus, "+", font, pal().sub, DT_CENTER);
+    let hot_plus = hot == Some(HeadHot::Plus);
+    if hot_plus {
+        square(plus, pal().bg);
+    }
+    text(dc, plus, "+", font, if hot_plus { pal().text } else { pal().sub }, DT_CENTER);
 }
