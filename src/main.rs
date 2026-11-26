@@ -2085,6 +2085,260 @@ mod tests {
         }
     }
 
+    // ---------- English / Korean UI text pairs ----------
+
+    // Every source file, compiled in: the test exe runs on the Windows runner without the source tree.
+    // A new module must be listed here too (ui_text_pairs_match checks this against main.rs's `mod` lines).
+    const SOURCES: [(&str, &str); 39] = [
+        ("main.rs", include_str!("main.rs")),
+        ("autostart.rs", include_str!("autostart.rs")),
+        ("dialog_jump.rs", include_str!("dialog_jump.rs")),
+        ("docparse.rs", include_str!("docparse.rs")),
+        ("draw.rs", include_str!("draw.rs")),
+        ("everything.rs", include_str!("everything.rs")),
+        ("favourites.rs", include_str!("favourites.rs")),
+        ("fonts.rs", include_str!("fonts.rs")),
+        ("geometry.rs", include_str!("geometry.rs")),
+        ("hashsum.rs", include_str!("hashsum.rs")),
+        ("hwpdoc.rs", include_str!("hwpdoc.rs")),
+        ("jumplist.rs", include_str!("jumplist.rs")),
+        ("keyboard.rs", include_str!("keyboard.rs")),
+        ("keys_window.rs", include_str!("keys_window.rs")),
+        ("layout_picker.rs", include_str!("layout_picker.rs")),
+        ("load_popup.rs", include_str!("load_popup.rs")),
+        ("nav.rs", include_str!("nav.rs")),
+        ("organize.rs", include_str!("organize.rs")),
+        ("paint.rs", include_str!("paint.rs")),
+        ("panes.rs", include_str!("panes.rs")),
+        ("paste.rs", include_str!("paste.rs")),
+        ("peek.rs", include_str!("peek.rs")),
+        ("preview.rs", include_str!("preview.rs")),
+        ("rename.rs", include_str!("rename.rs")),
+        ("rename_rules.rs", include_str!("rename_rules.rs")),
+        ("select_pattern.rs", include_str!("select_pattern.rs")),
+        ("session.rs", include_str!("session.rs")),
+        ("sessions_ui.rs", include_str!("sessions_ui.rs")),
+        ("shellx.rs", include_str!("shellx.rs")),
+        ("star.rs", include_str!("star.rs")),
+        ("state.rs", include_str!("state.rs")),
+        ("status.rs", include_str!("status.rs")),
+        ("tabs.rs", include_str!("tabs.rs")),
+        ("tour.rs", include_str!("tour.rs")),
+        ("tray.rs", include_str!("tray.rs")),
+        ("tree.rs", include_str!("tree.rs")),
+        ("ui_defs.rs", include_str!("ui_defs.rs")),
+        ("update.rs", include_str!("update.rs")),
+        ("window_ui.rs", include_str!("window_ui.rs")),
+    ];
+
+    fn hangul(c: char) -> bool {
+        ('\u{AC00}'..='\u{D7A3}').contains(&c) || ('\u{3131}'..='\u{318E}').contains(&c)
+    }
+
+    // The string literal at the start of s (s[0] is '"'), escapes decoded, and the code after it.
+    fn str_lit(s: &str) -> Option<(String, &str)> {
+        let (mut out, mut it) = (String::new(), s.char_indices().skip(1).peekable());
+        while let Some((i, c)) = it.next() {
+            match c {
+                '"' => return Some((out, s[i + 1..].trim_start())),
+                '\\' => match it.next()?.1 {
+                    'n' => out.push('\n'),
+                    't' => out.push('\t'),
+                    'u' => {
+                        let hex: String = it.by_ref().map(|(_, c)| c).take_while(|&c| c != '}').filter(|&c| c != '{').collect();
+                        out.push(char::from_u32(u32::from_str_radix(&hex, 16).ok()?)?);
+                    }
+                    '\n' | '\r' => while it.next_if(|(_, c)| c.is_whitespace()).is_some() {},
+                    c => out.push(c), // \" \\ \'
+                },
+                c => out.push(c),
+            }
+        }
+        None
+    }
+
+    // The (line, English, Korean) pairs of a file's app code, not its tests (which hold wrong pairs on
+    // purpose): tr("…", "…") with two plain literals, also across lines; and within one line, a literal
+    // without Hangul then, after a comma, one with (one("…", "…"), the ⇄ menu's ("…", "…") consts).
+    // A line that opens a string it doesn't close (KEYS_EN, a raw string) is left alone.
+    fn ui_pairs(src: &str) -> Vec<(usize, String, String)> {
+        let cut = src.match_indices("\n#[cfg(test)]").map(|(i, _)| i).find(|&i| src[i + 13..].trim_start().starts_with("mod "));
+        let code = &src[..cut.unwrap_or(src.len())];
+        let lit = |s: &str| s.strip_prefix('"').and_then(|_| str_lit(s)).map(|(t, rest)| (t, rest.len()));
+        let mut out = Vec::new();
+        for (at, _) in code.match_indices("tr(") {
+            if code[..at].ends_with(|c: char| c.is_alphanumeric() || c == '_') {
+                continue; // as_str(
+            }
+            let rest = code[at + 3..].trim_start();
+            let Some((en, n)) = lit(rest) else { continue };
+            let Some(rest) = rest[rest.len() - n..].strip_prefix(',').map(str::trim_start) else { continue };
+            let Some((ko, n)) = lit(rest) else { continue };
+            if rest[rest.len() - n..].trim_start_matches(',').trim_start().starts_with(')') {
+                out.push((code[..at].matches('\n').count() + 1, en, ko));
+            }
+        }
+        for (n, l) in code.lines().enumerate() {
+            let (b, mut i, mut lits) = (l.as_bytes(), 0, Vec::new());
+            let whole = loop {
+                match b.get(i) {
+                    None => break true,
+                    Some(b'/') if b.get(i + 1) == Some(&b'/') => break true, // a comment
+                    Some(b'\'') if b.get(i + 2) == Some(&b'\'') => i += 3, // '"'
+                    Some(b'\'') if b.get(i + 1) == Some(&b'\\') && b.get(i + 3) == Some(&b'\'') => i += 4,
+                    Some(b'r') if matches!(b.get(i + 1), Some(b'"' | b'#')) && !l[..i].ends_with(|c: char| c.is_alphanumeric() || c == '_') => {
+                        let close = format!("\"{}", "#".repeat(b[i + 1..].iter().take_while(|&&c| c == b'#').count()));
+                        match l.get(i + close.len() + 1..).and_then(|t| t.find(&close)) {
+                            Some(e) => i += close.len() + 1 + e + close.len(),
+                            None => break false,
+                        }
+                    }
+                    Some(b'"') => match str_lit(&l[i..]) {
+                        Some((t, rest)) => {
+                            lits.push((i, l.len() - rest.len(), t));
+                            i = l.len() - rest.len();
+                        }
+                        None => break false,
+                    },
+                    Some(_) => i += 1,
+                }
+            };
+            for w in lits.windows(2).filter(|_| whole) {
+                let ((_, end, en), (start, _, ko)) = (&w[0], &w[1]);
+                let pair = (n + 1, en.clone(), ko.clone());
+                if l[*end..*start].trim() == "," && !en.chars().any(hangul) && ko.chars().any(hangul) && !out.contains(&pair) {
+                    out.push(pair);
+                }
+            }
+        }
+        out
+    }
+
+    // Shortcut words in order: Ctrl/Alt/Shift/Win+… combos and lone F1–F12. Korean key names read as
+    // English (방향키 arrows, 휠 wheel), a range keeps its first key (Ctrl+1–9 and Ctrl+1~9 are Ctrl+1),
+    // and a word ends at a space, Hangul (Ctrl+V를) or ) , ; : and drops a sentence's closing '.'.
+    fn key_words(s: &str) -> Vec<String> {
+        let s = s.replace("방향키", "arrows").replace('휠', "wheel");
+        let (mut out, mut i) = (Vec::new(), 0);
+        while let Some(c) = s[i..].chars().next() {
+            let rest = &s[i..];
+            let start = !s[..i].ends_with(|c: char| c.is_ascii_alphanumeric());
+            let digits = rest.strip_prefix('F').map_or(0, |r| r.len() - r.trim_start_matches(|c: char| c.is_ascii_digit()).len());
+            let len = if start && ["Ctrl+", "Alt+", "Shift+", "Win+"].iter().any(|m| rest.starts_with(m)) {
+                rest.find(|c: char| c.is_whitespace() || hangul(c) || "),;:".contains(c)).unwrap_or(rest.len())
+            } else if start
+                && (1..=2).contains(&digits)
+                && (1..=12).contains(&rest[1..=digits].parse::<u32>().unwrap())
+                && !rest[1 + digits..].starts_with(|c: char| c.is_ascii_alphanumeric())
+            {
+                1 + digits
+            } else {
+                0
+            };
+            if len > 0 {
+                out.push(rest[..len].split(['–', '~', '…']).next().unwrap().trim_end_matches('.').to_string());
+                i += len;
+            } else {
+                i += c.len_utf8();
+            }
+        }
+        out
+    }
+
+    // Why an English / Korean pair disagrees, if it does: an empty side, other {name} placeholders, menu
+    // keys (after \t) or shortcut words, or a closing '…' on one side only (a Korean "(&O)" tail aside).
+    fn pair_diff(en: &str, ko: &str) -> Option<String> {
+        let holes = |s: &str| {
+            let mut v: Vec<String> = s.split('{').skip(1).filter_map(|t| t.split_once('}')).map(|(h, _)| h).filter(|h| h.chars().all(|c| c.is_ascii_lowercase() || c == '_')).map(String::from).collect();
+            v.sort();
+            v
+        };
+        let tail = |s: &str| s.split_once('\t').map(|(_, t)| t.to_string());
+        let keys = |s: &str| key_words(s).into_iter().collect::<std::collections::BTreeSet<_>>();
+        let dots = |s: &str| {
+            let h = s.split('\t').next().unwrap();
+            h.strip_suffix(')').and_then(|t| t.rfind("(&").map(|i| &t[..i])).unwrap_or(h).trim_end().ends_with('…')
+        };
+        if en.trim().is_empty() || ko.trim().is_empty() {
+            Some("an empty side".into())
+        } else if holes(en) != holes(ko) {
+            Some(format!("placeholders {:?} vs {:?}", holes(en), holes(ko)))
+        } else if tail(en) != tail(ko) {
+            Some(format!("menu keys {:?} vs {:?}", tail(en), tail(ko)))
+        } else if keys(en) != keys(ko) {
+            Some(format!("shortcuts {:?} vs {:?}", keys(en), keys(ko)))
+        } else if dots(en) != dots(ko) {
+            Some("'…' at the end on one side only".into())
+        } else {
+            None
+        }
+    }
+
+    // The keys a text advertises: its menu tail after \t, and the first key of a "(Ctrl+B …" hint, with
+    // "arrows" as the shortcut list's "→" row.
+    fn advertised(s: &str) -> Vec<String> {
+        let hints = s.split('(').skip(1).chain(s.split_once('\t').map(|(_, t)| t));
+        hints.filter_map(|h| key_words(h).into_iter().next().filter(|k| h.starts_with(k.as_str()))).map(|k| k.replace("arrows", "→")).collect()
+    }
+
+    // The two languages of each UI text must agree where a slip shows: the same {placeholders} (else "{n}"
+    // shows as is, or a count goes missing), menu key, shortcuts and closing '…'. And the key a menu item or
+    // tooltip advertises must be in the shortcut list (Ctrl+/). The compiler catches none of this.
+    #[test]
+    fn ui_text_pairs_match() {
+        for (en, ko) in [
+            ("Copied {n} files", "파일을 복사함"),
+            ("Open\tCtrl+O", "열기\tCtrl+P"),
+            ("Back  (Alt+←)", "뒤로  (Alt+→)"),
+            ("Choose a folder…", "폴더 고르기"),
+            ("Save", " "),
+        ] {
+            assert!(pair_diff(en, ko).is_some(), "{en:?} / {ko:?} should differ");
+        }
+        for (en, ko) in [
+            ("Swap  (Ctrl+Alt+Shift+arrows) · Ctrl+V.", "자리 바꾸기(&S)  (Ctrl+Alt+Shift+방향키) · Ctrl+V를"),
+            ("Panes: Ctrl+Tab, Ctrl+1–9. Help: F1.", "패널: Ctrl+Tab, Ctrl+1~9. 도움말: F1."),
+            ("Zoom: Ctrl+wheel", "확대: Ctrl+휠"),
+            ("Choose an&other folder…", "다른 폴더 고르기…(&O)"),
+            ("{m} of {n} into {name}", "{name}에 {n}개 중 {m}개"),
+        ] {
+            assert_eq!(pair_diff(en, ko), None, "{en:?} / {ko:?}");
+        }
+        assert_eq!(advertised("Favourites (Ctrl+B; open) · Help (online)\tF1"), ["Ctrl+B", "F1"]);
+        assert_eq!(advertised("&Swap places  (Ctrl+Alt+Shift+arrows)"), ["Ctrl+Alt+Shift+→"]);
+        let sample = r#"a(tr("Say \"hi\" {n}", "{n} \"안녕\""));
+let t = tr(
+    "Two",
+    "둘",
+);
+const M: (&str, &str) = ("Pick", "고르기"); // ("x", "엑스")
+let c = '"'; tr(name, "이름"); as_str("x", "y");
+#[cfg(test)]
+mod tests { tr("in", "안") }
+"#;
+        let got = ui_pairs(sample);
+        let got: Vec<(usize, &str, &str)> = got.iter().map(|(l, en, ko)| (*l, en.as_str(), ko.as_str())).collect();
+        assert_eq!(got, [(1, "Say \"hi\" {n}", "{n} \"안녕\""), (2, "Two", "둘"), (6, "Pick", "고르기")]);
+
+        let main = SOURCES[0].1;
+        let mods: Vec<&str> = main.lines().filter_map(|l| l.strip_prefix("mod ")?.strip_suffix(';')).collect();
+        assert!(mods.len() >= 30, "{} mod lines in main.rs", mods.len());
+        for m in mods {
+            assert!(SOURCES.iter().any(|(f, _)| f.strip_suffix(".rs") == Some(m)), "src/{m}.rs is missing from SOURCES");
+        }
+        let listed: std::collections::BTreeSet<String> = app_key_rows(KEYS_EN).iter().flatten().flat_map(|k| key_words(&k[k.find(':').unwrap() + 1..])).collect();
+        let (mut pairs, mut bad) = (0, Vec::new());
+        for (file, src) in SOURCES {
+            for (line, en, ko) in ui_pairs(src) {
+                pairs += 1;
+                let unlisted = advertised(&en).into_iter().filter(|k| !listed.contains(k)).map(|k| format!("{k} is not in the shortcut list (Ctrl+/)"));
+                bad.extend(pair_diff(&en, &ko).into_iter().chain(unlisted).map(|why| format!("src/{file}:{line}: {why}\n    en: {en:?}\n    ko: {ko:?}")));
+            }
+        }
+        assert!(pairs >= 250, "only {pairs} English / Korean pairs found: does ui_pairs still see tr(\"…\", \"…\")?");
+        assert!(bad.is_empty(), "{} English / Korean pairs disagree:\n{}", bad.len(), bad.join("\n"));
+    }
+
     #[test]
     fn file_kinds() {
         for (_, _, spec) in FILE_KINDS {
