@@ -717,10 +717,38 @@ mod tests {
         assert!(j.take(b).is_some() && j.take(b).is_none());
         // A's late WM_KIDS while B waits: not B's owner, so it leaves B alone
         let w = HWND(1 as _);
-        let ask = KidsAsk { id: b, hwnd: w, i: 0, path: r"C:\Users\Public".into(), gen: 0, dir: r"C:\".into(), next: None };
+        let ask = KidsAsk { id: b, hwnd: w, i: 0, path: r"C:\Users\Public".into(), gen: 0, dir: r"C:\".into(), next: None, step: 0 };
         assert!(!ask.owns(a, w) && ask.owns(b, w) && !ask.owns(b, HWND(2 as _)));
         j.cancel();
         assert!(!j.publish(b, Err(())) && j.dir.is_empty());
+    }
+
+    #[test]
+    fn sibling_steps() {
+        let v = |s: &[&str]| s.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+        let names = v(&["1", "2", "10", "b"]);
+        // Explorer's order ('2' before '10'), any case
+        assert_eq!(pick_sibling(&names, "2", 1, false), Sibling::Go(2));
+        assert_eq!(pick_sibling(&names, "10", -1, false), Sibling::Go(1));
+        assert_eq!(pick_sibling(&names, "B", -1, false), Sibling::Go(2));
+        // first / last
+        assert_eq!(pick_sibling(&names, "1", -1, false), Sibling::First);
+        assert_eq!(pick_sibling(&names, "b", 1, false), Sibling::Last);
+        // a hidden current folder (not listed) is placed among the rest
+        assert_eq!(pick_sibling(&names, "3", 1, false), Sibling::Go(2));
+        assert_eq!(pick_sibling(&names, "3", -1, false), Sibling::Go(1));
+        assert_eq!(pick_sibling(&names, "0", -1, false), Sibling::First);
+        // nothing else there
+        assert_eq!(pick_sibling(&[], "a", 1, false), Sibling::Last);
+        assert_eq!(pick_sibling(&[], "a", -1, false), Sibling::First);
+        // a list cut short: past its end is unknown, not the last
+        assert_eq!(pick_sibling(&names, "b", 1, true), Sibling::Unknown);
+        assert_eq!(pick_sibling(&names, "c", -1, true), Sibling::Unknown);
+        assert_eq!(pick_sibling(&names, "b", -1, true), Sibling::Go(2));
+        assert_eq!(sibling_of(r"C:\Users\Public"), Some((r"C:\Users".into(), "Public".into())));
+        assert_eq!(sibling_of(r"C:\Users"), Some((r"C:\".into(), "Users".into())));
+        assert_eq!(sibling_of(r"C:\"), None);
+        assert_eq!(sibling_of("::{20D04FE0-3AEA-1069-A2D8-08002B30309D}"), None);
     }
 
     #[test]

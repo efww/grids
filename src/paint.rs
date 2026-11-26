@@ -253,7 +253,7 @@ pub(crate) unsafe fn crumb_click(h: HWND, i: usize, x: i32, y: i32) {
             focus_view(i);
             let Some((h, path, dpi)) = app(|a| Some((a.panes[i].as_ref()?.hwnd, a.s.paths[i].clone(), a.dpi))) else { return };
             let id = want_kids(h, &dir, hidden());
-            app(|a| a.kids = Some(KidsAsk { id, hwnd: h, i, path, gen: gen(), dir, next }));
+            app(|a| a.kids = Some(KidsAsk { id, hwnd: h, i, path, gen: gen(), dir, next, step: 0 }));
             _ = InvalidateRect(Some(h), Some(&addr_rect(h, dpi)), false);
             return;
         }
@@ -277,6 +277,7 @@ pub(crate) struct KidsAsk {
     pub(crate) gen: usize,
     pub(crate) dir: String, // folder listed
     pub(crate) next: Option<String>,
+    pub(crate) step: i32, // 0: the '›' menu; +1 / -1: Alt+PgDn / Alt+PgUp, go to the next / previous folder of dir
 }
 
 impl KidsAsk {
@@ -399,6 +400,13 @@ pub(crate) unsafe fn kids_show(h: HWND, id: usize) {
     let addr = addr_rect(h, dpi);
     _ = InvalidateRect(Some(h), Some(&addr), false); // the waiting mark goes either way
     let same = app(|a| a.panes[k.i].as_ref().is_some_and(|p| p.hwnd == h) && a.s.paths[k.i] == k.path && !a.sizing);
+    // Alt+PgDn / Alt+PgUp: no menu, so no '›' needed (it may have folded into '…'), nor the address bar shut
+    if k.step != 0 {
+        if same && gen() == k.gen && GetForegroundWindow() == main {
+            sibling_go(&k, &list);
+        }
+        return;
+    }
     if !same || gen() != k.gen || GetForegroundWindow() != main || GetDlgItem(Some(h), ID_EDIT).is_ok_and(|e| IsWindowVisible(e).as_bool()) {
         return;
     }
@@ -438,6 +446,83 @@ pub(crate) unsafe fn kids_show(h: HWND, id: usize) {
         }
     }
     focus_view(k.i);
+}
+
+// The parent folder of a file system folder and its name there; None at a drive's or share's top and in shell places.
+pub(crate) fn sibling_of(path: &str) -> Option<(String, String)> {
+    if !is_fs(path) {
+        return None;
+    }
+    let p = std::path::Path::new(path);
+    Some((p.parent()?.to_str()?.to_string(), p.file_name()?.to_str()?.to_string()))
+}
+
+// Alt+PgDn / Alt+PgUp (as a photo viewer's next folder): the parent is listed by the '›' worker, the step
+// is taken when its WM_KIDS comes in (kids_show), if the pane is still where it was.
+pub(crate) unsafe fn sibling_step(i: usize, step: i32) {
+    let Some((h, path)) = app(|a| Some((a.panes[i].as_ref()?.hwnd, a.s.paths[i].clone()))) else { return };
+    let Some((dir, name)) = sibling_of(&path) else {
+        _ = MessageBeep(MB_ICONWARNING);
+        set_note(tr("This folder has no sibling folders", "이 폴더에는 같은 단계 폴더가 없음").into());
+        return;
+    };
+    kids_cancel();
+    let id = want_kids(h, &dir, hidden());
+    app(|a| a.kids = Some(KidsAsk { id, hwnd: h, i, path, gen: gen(), dir, next: Some(name), step }));
+}
+
+#[derive(Debug, PartialEq)]
+pub(crate) enum Sibling {
+    Go(usize),
+    First,
+    Last,
+    Unknown, // past a list cut short at KIDS_MAX
+}
+
+// The folder `step` away from `cur` in a parent's sorted list. A hidden `cur` (not listed) is placed by
+// Explorer's order; an exact (case-insensitive) match comes first, so names that compare equal aren't skipped.
+pub(crate) fn pick_sibling(names: &[String], cur: &str, step: i32, cut: bool) -> Sibling {
+    let low = cur.to_lowercase();
+    let (before, after) = match names.iter().position(|n| n.to_lowercase() == low) {
+        Some(p) => (p.checked_sub(1), p + 1),
+        None => {
+            let c = HSTRING::from(cur);
+            let q = names.iter().take_while(|n| unsafe { StrCmpLogicalW(&HSTRING::from(n.as_str()), &c) } < 0).count();
+            if cut && q == names.len() {
+                return Sibling::Unknown; // cur sorts somewhere past the cut
+            }
+            (q.checked_sub(1), q)
+        }
+    };
+    match (step > 0, before) {
+        (true, _) if after < names.len() => Sibling::Go(after),
+        (true, _) if cut => Sibling::Unknown,
+        (true, _) => Sibling::Last,
+        (false, Some(b)) => Sibling::Go(b),
+        (false, None) => Sibling::First,
+    }
+}
+
+unsafe fn sibling_go(k: &KidsAsk, list: &KidsList) {
+    let warn = |t: &str| {
+        _ = MessageBeep(MB_ICONWARNING);
+        set_note(t.to_string());
+    };
+    let Ok((names, cut)) = list else { return warn(tr("Can't read this folder list", "이 폴더 목록을 읽을 수 없음")) };
+    match pick_sibling(names, k.next.as_deref().unwrap_or_default(), k.step, *cut) {
+        Sibling::Go(n) => {
+            if !navigate(k.i, &format!("{}\\{}", k.dir.trim_end_matches('\\'), names[n])) {
+                return warn(tr("Can't open that folder", "그 폴더를 열 수 없음"));
+            }
+            let total = if *cut { format!("{}+", names.len()) } else { names.len().to_string() };
+            let dir = k.dir.trim_end_matches('\\');
+            let parent = dir.rsplit('\\').next().filter(|s| !s.is_empty()).unwrap_or(dir);
+            set_note(format!("{} {}/{total} · {parent}", tr("Folder", "폴더"), n + 1));
+        }
+        Sibling::First => warn(tr("First folder", "첫 폴더")),
+        Sibling::Last => warn(tr("Last folder", "마지막 폴더")),
+        Sibling::Unknown => warn(tr("Can't read this folder list", "이 폴더 목록을 읽을 수 없음")),
+    }
 }
 
 pub(crate) unsafe fn crumb_hover(h: HWND, k: Option<usize>) {
@@ -519,7 +604,7 @@ pub(crate) unsafe fn paint_pane(h: HWND) {
         let hot_head = a.head_hot.filter(|(w, _)| *w == h).map(|(_, t)| t);
         let tint = i.and_then(|i| tint_color(a.s.tints[i]));
         let folder = i.and_then(|i| a.panes[i].as_ref()).map_or(-1, |p| p.icon);
-        let waiting = a.kids.as_ref().filter(|k| k.hwnd == h).map(|k| k.dir.clone());
+        let waiting = a.kids.as_ref().filter(|k| k.hwnd == h && k.step == 0).map(|k| k.dir.clone());
         (active, i, a.dpi, a.icon_font, a.small_font, a.font, a.s.accent_now(), hot, hot_head, tint, folder, waiting)
     });
     let tabs = i.filter(|_| tabs_on()).map(|i| app(|a| (a.s.tab_list(i), a.s.tab[i])));

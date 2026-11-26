@@ -286,6 +286,7 @@ Ctrl+Alt+Shift+← / → / ↑ / ↓\tSwap the active pane with the one to the l
 Ctrl+Alt+← / → / ↑ / ↓\tMove the active pane's splitter that way (hold to keep going; the panes follow on release)\n\
 Alt+← / Alt+→\tBack / forward\n\
 Alt+↑\tParent folder\n\
+Alt+PgDn / Alt+PgUp\tNext / previous folder in the same parent folder (Explorer's order; the status line shows which one, e.g. Folder 4/12)\n\
 Alt+↓\tRecent folders (all panes, newest first)\n\
 Ctrl+L, Alt+D, F4\tAddress bar: also .. or a subfolder name, a file to open, or a command such as cmd, wt, powershell (runs in this pane's folder), or part of a recent or favourite folder's name\n\
 Ctrl+B\tFavourites list (↑/↓ to choose, Enter to open, Del to remove, Alt+↑/↓ or drag to reorder)\n\
@@ -341,6 +342,7 @@ Ctrl+Alt+Shift+← / → / ↑ / ↓\t지금 패널을 왼쪽·오른쪽·위·�
 Ctrl+Alt+← / → / ↑ / ↓\t지금 패널의 경계선을 그쪽으로 옮기기 (누르고 있으면 계속, 손을 떼면 패널이 맞춰짐)\n\
 Alt+← / Alt+→\t뒤로 / 앞으로\n\
 Alt+↑\t상위 폴더\n\
+Alt+PgDn / Alt+PgUp\t같은 상위 폴더 안의 다음 / 이전 폴더 (탐색기 순서, 상태줄에 '폴더 4/12'처럼 몇 번째인지 표시)\n\
 Alt+↓\t최근 폴더 (모든 패널, 최근 순)\n\
 Ctrl+L, Alt+D, F4\t주소창: .. 이나 하위 폴더 이름, 열 파일, cmd·wt·powershell 같은 명령도 가능(이 패널 폴더에서 실행), 다녀온 폴더·즐겨찾기 이름 일부\n\
 Ctrl+B\t즐겨찾기 목록 (↑/↓ 고르기, Enter 열기, Del 빼기, Alt+↑/↓ 또는 끌어서 순서 바꾸기)\n\

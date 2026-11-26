@@ -74,6 +74,7 @@ The exe is not code-signed, so Windows SmartScreen may warn the first time: choo
 | Ctrl+Alt+← / → / ↑ / ↓ | Move the active pane's splitter that way, as if dragged (hold to keep going; the panes follow on release; the last column / row moves its left / upper one). Some older Intel graphics drivers take Ctrl+Alt+arrows for screen rotation: turn their hotkeys off to use these |
 | Alt+← / Alt+→ | Back / forward |
 | Alt+↑ | Parent folder |
+| Alt+PgDn / Alt+PgUp | Next / previous folder in the same parent folder, in Explorer's order (the status line shows which one, e.g. "Folder 4/12"; a beep at the first / last) |
 | Alt+↓ | Recent folders (all panes, newest first; right-click ← / → too) |
 | Ctrl+L, Alt+D, F4 | Address bar: also `..` or a subfolder name, a file to open, or a command such as `cmd`, `wt`, `powershell` (runs in this pane's folder), or part of a recent or favourite folder's name |
 | Ctrl+F | Name filter |

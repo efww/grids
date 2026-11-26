@@ -127,6 +127,12 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
             key_used(TIP_UP);
             browse(a, SBSP_PARENT);
         }
+        // the next / previous folder in the same parent; held, it steps once (not into the boxes' own PgDn)
+        k @ (VK_NEXT | VK_PRIOR) if alt && !ctrl && !shift && !(addr || filt) => {
+            if m.lParam.0 & (1 << 30) == 0 {
+                sibling_step(a, if k == VK_NEXT { 1 } else { -1 });
+            }
+        }
         VK_L if ctrl => return focus_ctl(a, ID_EDIT),
         VK_D if alt => return focus_ctl(a, ID_EDIT),
         VK_F4 if !alt => return focus_ctl(a, ID_EDIT),
@@ -303,7 +309,11 @@ pub(crate) unsafe fn pre_translate(m: &MSG) -> bool {
             false
         }
         WM_KEYDOWN | WM_SYSKEYDOWN => {
-            kids_cancel();
+            // a held Alt+PgDn's repeats leave its folder list coming (a slow share would never get to answer)
+            let repeat = m.lParam.0 & (1 << 30) != 0;
+            if !(repeat && app(|a| a.kids.as_ref().is_some_and(|k| k.step != 0))) {
+                kids_cancel();
+            }
             // swallowed whole: no TranslateMessage, so no WM_CHAR either
             let (eat, next) = held_key(app(|a| a.held), m.wParam.0 as u16, m.lParam.0 & (1 << 30) != 0);
             app(|a| a.held = next);
