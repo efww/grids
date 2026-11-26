@@ -85,7 +85,7 @@ impl Default for Session {
 
 // ---------- shortcut tips (Key Promoter): a mouse action that has a key says so, a few times ----------
 
-pub(crate) const TIP_N: usize = 8;
+pub(crate) const TIP_N: usize = 9;
 pub(crate) const TIP_BACK: usize = 0;
 pub(crate) const TIP_FWD: usize = 1;
 pub(crate) const TIP_UP: usize = 2;
@@ -94,7 +94,8 @@ pub(crate) const TIP_EV: usize = 4;
 pub(crate) const TIP_ZOOM: usize = 5;
 pub(crate) const TIP_NEW_TAB: usize = 6;
 pub(crate) const TIP_CLOSE_TAB: usize = 7;
-pub(crate) const TIP_KEYS: [&str; TIP_N] = ["Alt+←", "Alt+→", "Alt+↑", "Ctrl+B", "Ctrl+Shift+F", "Ctrl+Shift+M", "Ctrl+T", "Ctrl+W"];
+pub(crate) const TIP_LOAD: usize = 8;
+pub(crate) const TIP_KEYS: [&str; TIP_N] = ["Alt+←", "Alt+→", "Alt+↑", "Ctrl+B", "Ctrl+Shift+F", "Ctrl+Shift+M", "Ctrl+T", "Ctrl+W", "Ctrl+O"];
 pub(crate) const TIP_MAX: u8 = 3; // shown this many times at most
 pub(crate) const TIP_LEARNED: u8 = 4; // the key itself was used: never again
 
@@ -990,7 +991,7 @@ mod tests {
             ev_sort: 13,
             updates: false,
             key_tips: false,
-            key_tips_seen: [4, 0, 1, 2, 3, 4, 0, 1],
+            key_tips_seen: [4, 0, 1, 2, 3, 4, 0, 1, 2],
         }
     }
 
@@ -1032,7 +1033,7 @@ mod tests {
             "update_check=0",
             "ev_cols=0.2500,0.5000,0.7500",
             "key_tips=0",
-            "key_tips_seen=40123401",
+            "key_tips_seen=401234012",
             "lang=ko",
             r"session=C:\Grids\sessions\일.grids",
             "order=15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0",
@@ -1181,15 +1182,16 @@ mod tests {
     #[test]
     fn key_tips_seen_reads_digit_by_digit() {
         let seen = |v: &str| Session::parse(&format!("key_tips_seen={v}\n")).key_tips_seen;
-        assert_eq!(seen("40123401"), [4, 0, 1, 2, 3, 4, 0, 1]);
-        assert_eq!(seen("44"), [4, 4, 0, 0, 0, 0, 0, 0]); // shorter (an older list): the rest 0
-        assert_eq!(seen("1234012340"), [1, 2, 3, 4, 0, 1, 2, 3]); // longer (a newer list): the rest dropped
-        assert_eq!(seen("9x-4 3"), [0, 0, 0, 4, 0, 3, 0, 0]); // only 0..=4 count, place by place
+        assert_eq!(seen("401234012"), [4, 0, 1, 2, 3, 4, 0, 1, 2]);
+        assert_eq!(seen("40123401"), [4, 0, 1, 2, 3, 4, 0, 1, 0]); // from before Ctrl+O's tip: kept, it starts at 0
+        assert_eq!(seen("44"), [4, 4, 0, 0, 0, 0, 0, 0, 0]); // shorter (an older list): the rest 0
+        assert_eq!(seen("1234012340"), [1, 2, 3, 4, 0, 1, 2, 3, 4]); // longer (a newer list): the rest dropped
+        assert_eq!(seen("9x-4 3"), [0, 0, 0, 4, 0, 3, 0, 0, 0]); // only 0..=4 count, place by place
         assert_eq!(seen(""), [0; TIP_N]);
         assert!(!Session::parse("key_tips=0\n").key_tips);
         assert!(Session::parse("key_tips=1\n").key_tips);
-        let s = Session { key_tips_seen: [0, 0, 0, 0, 0, 0, 0, 2], ..Session::default() };
-        assert!(s.to_ini().contains("key_tips_seen=00000002\n"));
+        let s = Session { key_tips_seen: [0, 0, 0, 0, 0, 0, 0, 2, 0], ..Session::default() };
+        assert!(s.to_ini().contains("key_tips_seen=000000020\n"));
         assert_eq!(Session::parse(&s.to_ini()), s);
     }
 
@@ -1242,7 +1244,7 @@ mod tests {
             ev_sort: 5,
             updates: true,
             key_tips: true,
-            key_tips_seen: [1, 1, 1, 1, 0, 0, 0, 0],
+            key_tips_seen: [1, 1, 1, 1, 0, 0, 0, 0, 0],
         };
         let snap = b.snapshot();
         for key in ["win=", "win_at=", "session=", "fav=", "recent=", "order=", "rename_preset=", "key_tips_seen=", "key_tips=0"] {

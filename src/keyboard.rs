@@ -35,6 +35,18 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
     if !keys.0.is_null() && (m.hwnd == keys || IsChild(keys, m.hwnd).as_bool()) {
         return keys_key(m, keys, ctrl, shift, alt);
     }
+    // the saved sessions popup: Ctrl+O closes it, every other key is its own (load_key); no Ctrl+W, Ctrl+1,
+    // Alt+← ... acting on the panes behind it. Its rename box never gets here (pre_translate takes it first).
+    let load = app(|a| a.load);
+    if !load.0.is_null() && m.hwnd == load {
+        if VIRTUAL_KEY(m.wParam.0 as u16) == VK_O && ctrl && !shift && !alt {
+            if m.lParam.0 & (1 << 30) == 0 {
+                toggle_load();
+            }
+            return true;
+        }
+        return false;
+    }
     // the getting started tour: Enter, ←/→, Tab, Esc and Ctrl+/ are its own; other keys stay with its buttons
     if let Some(used) = tour_key(m) {
         return used;
@@ -141,6 +153,13 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
         VK_F if ctrl => return focus_ctl(a, ID_FILTER),
         VK_H if ctrl => toggle_hidden(),
         VK_S if ctrl => save_current(),
+        // Ctrl+O: the saved sessions, picked from the keys (held, it opens once)
+        VK_O if ctrl && !shift && !alt => {
+            if m.lParam.0 & (1 << 30) == 0 {
+                key_used(TIP_LOAD);
+                toggle_load();
+            }
+        }
         VK_B if ctrl && !shift && !alt => {
             key_used(TIP_FAVS);
             open_favs();

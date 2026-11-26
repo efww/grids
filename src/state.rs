@@ -56,6 +56,8 @@ pub(crate) struct App {
     pub(crate) load_hot: Option<usize>, // card index, or LOAD_SAVE_AS / LOAD_FOLDER / LOAD_DEL + card
     pub(crate) load_edit: HWND,              // rename box on a card (made on first use, hidden when done)
     pub(crate) load_editing: Option<usize>, // card being renamed
+    pub(crate) load_keys: bool,             // the keyboard is choosing (Ctrl+O, or a key in it): pick kept, cards numbered
+    pub(crate) load_cursor: (i32, i32),     // pointer (screen) when last seen: a WM_MOUSEMOVE that didn't move keeps the pick
     pub(crate) fav_popup: HWND,
     pub(crate) fav_closed: Option<Instant>,
     pub(crate) fav_hot: Option<(usize, bool)>, // (row, on its ✕)
@@ -82,7 +84,7 @@ pub(crate) struct App {
     pub(crate) focus_req: HWND,     // pane to focus once its folder shows (set_layout gave it the active pane's place)
     pub(crate) note: Option<(String, Instant)>, // status line confirmation and when it goes (runtime only)
     pub(crate) lost: usize,                     // missing folders the shown note counts (gone_note)
-    pub(crate) tips_now: u8,                    // shortcut tips (bit = TIP_* action) already shown since Grids started (runtime only)
+    pub(crate) tips_now: u16,                   // shortcut tips (bit = TIP_* action) already shown since Grids started (runtime only)
     pub(crate) said: Option<Instant>,           // the note (by its end time) last handed to screen readers
     pub(crate) status_hwnd: HWND,               // the status line control (screen readers); null = the main window paints it
     pub(crate) note_hwnd: HWND,                 // the note's live region (zero size, nothing drawn); null = no announcements
@@ -160,6 +162,8 @@ thread_local! {
         load_hot: None,
         load_edit: HWND::default(),
         load_editing: None,
+        load_keys: false,
+        load_cursor: (0, 0),
         fav_popup: HWND::default(),
         fav_closed: None,
         fav_hot: None,

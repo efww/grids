@@ -373,7 +373,12 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             WM_COMMAND => match wp.0 & 0xffff {
                 id if id == ID_TB_LAYOUT as usize => open_grid(),
                 id if id == ID_TB_SAVE as usize => save_current(),
-                id if id == ID_TB_LOAD as usize => open_load(),
+                id if id == ID_TB_LOAD as usize => {
+                    open_load();
+                    if !app(|a| a.load).0.is_null() {
+                        mouse_tip(TIP_LOAD);
+                    }
+                }
                 // a tip only when the list did open (not when this click closed it)
                 id if id == ID_TB_FAV as usize => {
                     open_favs();
@@ -818,7 +823,7 @@ pub(crate) fn toolbar_tips() -> [(i32, &'static str, &'static str); 7] {
     [
         (ID_TB_LAYOUT, "", tr("Layout: click = even grid, drag = rows per column", "레이아웃: 클릭 = 균등, 끌기 = 열마다 칸 수")),
         (ID_TB_SAVE, tr("Save session", "세션 저장"), ""), // tooltip set by refresh_save_button
-        (ID_TB_LOAD, tr("Load", "불러오기"), tr("Load a session", "세션 불러오기")),
+        (ID_TB_LOAD, tr("Load", "불러오기"), tr("Load a session (Ctrl+O)", "세션 불러오기 (Ctrl+O)")),
         (ID_TB_VIEW, tr("View", "보기"), tr("View (Alt or F10): hidden files · extensions · colours · language · help", "보기 (Alt 또는 F10): 숨김 파일 · 확장명 · 선택 색 · 언어 · 도움말")),
         (ID_TB_FAV, tr("Favourites", "즐겨찾기"), tr("Favourite folders (Ctrl+B, then 1 … 9) · Ctrl+Shift+B: add / remove this folder", "즐겨찾기 폴더 (Ctrl+B, 1 … 9) · Ctrl+Shift+B: 지금 폴더 추가 / 빼기")),
         (ID_TB_THEME, tr("Theme", "테마"), theme_tip()),

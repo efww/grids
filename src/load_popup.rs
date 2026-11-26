@@ -110,8 +110,30 @@ pub(crate) unsafe fn draw_thumb(dc: HDC, r: RECT, s: &Session, font: HFONT, dpi:
     }
 }
 
+// The Load button: nothing picked, as before (the mouse picks).
 pub(crate) unsafe fn open_load() {
-    let (main, dpi, open, closed) = app(|a| (a.main, a.dpi, a.load, a.load_closed));
+    open_load_as(false);
+}
+
+// Ctrl+O: opens the popup with the session you're in picked (the first card if none; "+ Save as new" with no
+// cards), or closes it. The button's 300 ms guard is for a click that closed it: a key opens it again at once.
+pub(crate) unsafe fn toggle_load() {
+    let h = app(|a| a.load);
+    if !h.0.is_null() {
+        _ = DestroyWindow(h);
+        return;
+    }
+    app(|a| a.load_closed = None);
+    open_load_as(true);
+}
+
+// The card picked when Ctrl+O opens the popup.
+pub(crate) fn load_first_pick(cur: Option<usize>, n: usize) -> usize {
+    cur.filter(|&k| k < n).unwrap_or(if n > 0 { 0 } else { LOAD_SAVE_AS })
+}
+
+unsafe fn open_load_as(keys: bool) {
+    let (main, dpi, open, closed, file) = app(|a| (a.main, a.dpi, a.load, a.load_closed, a.s.file.clone()));
     // a click on the button first deactivates (closes) the popup; don't reopen it right away
     if !open.0.is_null() || closed.is_some_and(|t| t.elapsed().as_millis() < 300) {
         return;
@@ -122,7 +144,11 @@ pub(crate) unsafe fn open_load() {
     if let Ok(b) = GetDlgItem(Some(main), ID_TB_LOAD) {
         _ = GetWindowRect(b, &mut rc);
     }
-    app(|a| (a.cards, a.load_hot) = (cards, None));
+    let cur = cards.iter().position(|c| c.0.to_string_lossy() == file.as_str() || same_file(&c.0, &file));
+    let hot = keys.then(|| load_first_pick(cur, cards.len()));
+    let mut at = POINT::default();
+    _ = GetCursorPos(&mut at);
+    app(|a| (a.cards, a.load_hot, a.load_keys, a.load_cursor) = (cards, hot, keys, (at.x, at.y)));
     let style = WS_POPUP | WS_VISIBLE | WS_CLIPCHILDREN;
     let y = rc.bottom + 6 * dpi / 96;
     let Ok(h) = CreateWindowExW(WS_EX_TOOLWINDOW, w!("GridsLoad"), w!(""), style, rc.left, y, g.w, g.h, Some(main), None, None, None) else {
@@ -165,9 +191,12 @@ pub(crate) unsafe fn fit_load() {
     _ = InvalidateRect(Some(h), None, false);
 }
 
-unsafe fn reload_cards() {
+// Read again after a delete / rename. While the keyboard is choosing, `pick` says which card stays picked
+// (clamped to the cards there are now); for the mouse nothing is, as before.
+unsafe fn reload_cards(pick: impl FnOnce(&[(PathBuf, Session, String)]) -> Option<usize>) {
     let cards = session_cards();
-    app(|a| (a.cards, a.load_hot) = (cards, None));
+    let hot = app(|a| a.load_keys).then(|| pick(&cards)).flatten().map(|k| load_first_pick(Some(k.min(cards.len().saturating_sub(1))), cards.len()));
+    app(|a| (a.cards, a.load_hot) = (cards, hot));
     fit_load();
 }
 
@@ -250,12 +279,23 @@ pub(crate) unsafe fn delete_session(path: &Path) -> bool {
 // The confirmation may have deactivated (closed) the popup: then it opens again in the same place.
 unsafe fn delete_card(h: HWND, k: usize) {
     let Some(path) = app(|a| a.cards.get(k).map(|c| c.0.clone())) else { return };
+    let keys = app(|a| a.load_keys);
     delete_session(&path);
     if app(|a| a.load == h) {
-        reload_cards();
+        reload_cards(|_| Some(k)); // the next card moves up into its place
     } else {
         app(|a| a.load_closed = None);
-        open_load();
+        open_load_as(keys);
+        if keys {
+            let h = app(|a| {
+                let n = a.cards.len();
+                a.load_hot = Some(load_first_pick(Some(k.min(n.saturating_sub(1))), n));
+                a.load
+            });
+            if !h.0.is_null() {
+                _ = InvalidateRect(Some(h), None, false);
+            }
+        }
     }
 }
 
@@ -277,7 +317,13 @@ unsafe fn start_rename(h: HWND, k: usize) {
 // Esc, a click or focus leaving: the box goes, nothing renamed. Taken first, so the EN_KILLFOCUS this causes
 // does nothing. Some = was renaming.
 pub(crate) unsafe fn end_rename() -> Option<usize> {
-    let (h, edit, k) = app(|a| (a.load, a.load_edit, a.load_editing.take()));
+    let (h, edit, k) = app(|a| {
+        let k = a.load_editing.take();
+        if a.load_keys && k.is_some() {
+            a.load_hot = k; // F2 then Esc: the card stays picked
+        }
+        (a.load, a.load_edit, k)
+    });
     if k.is_some() {
         if GetFocus() == edit {
             _ = SetFocus(Some(h));
@@ -306,13 +352,13 @@ pub(crate) unsafe fn commit_rename() {
     if relinked {
         refresh_save_button();
     }
-    reload_cards();
+    reload_cards(|cards| cards.iter().position(|c| c.0 == new)); // renamed: it may have moved
 }
 
 pub(crate) unsafe fn paint_load(h: HWND) {
-    let (cards, hot, cur, dpi, font, small, icon_font, accent, editing) = app(|a| {
+    let (cards, hot, cur, dpi, font, small, icon_font, accent, editing, keys) = app(|a| {
         let cards: Vec<_> = a.cards.iter().map(|(p, s, t)| (p.clone(), s.clone(), t.clone())).collect();
-        (cards, a.load_hot, a.s.file.clone(), a.dpi, a.font, a.small_font, a.icon_font, a.s.accent_now(), a.load_editing)
+        (cards, a.load_hot, a.s.file.clone(), a.dpi, a.font, a.small_font, a.icon_font, a.s.accent_now(), a.load_editing, a.load_keys)
     });
     let g = load_geo(cards.len(), dpi);
     let s = |v: i32| v * dpi / 96;
@@ -336,7 +382,12 @@ pub(crate) unsafe fn paint_load(h: HWND) {
                 fill(dc, *del, pal().card);
                 text(dc, *del, "\u{E711}", icon_font, if hot == Some(LOAD_DEL + k) { pal().text } else { pal().sub }, DT_CENTER);
             }
-            let name_r = load_name(card, thumb, dpi);
+            let mut name_r = load_name(card, thumb, dpi);
+            // choosing with the keys: each card's number (1 … 9 opens it), as the favourites list numbers its rows
+            if keys && editing != Some(k) {
+                text(dc, RECT { right: name_r.left + s(14), ..name_r }, &(k + 1).to_string(), font, accent, DT_LEFT);
+                name_r.left += s(14);
+            }
             if editing == Some(k) {
                 fill(dc, name_r, pal().pill);
                 frame(dc, name_r, 1, accent);
@@ -348,8 +399,16 @@ pub(crate) unsafe fn paint_load(h: HWND) {
             text(dc, line(thumb.bottom + s(22), s(16)), &meta, small, pal().sub, DT_LEFT);
         }
         fill(dc, RECT { left: s(12), top: g.save_as.top - 1, right: rc.right - s(12), bottom: g.save_as.top }, pal().line);
+        // picked (mouse or keys): on a pill like a card's, so a key's pick shows as clearly as the cards' does
+        // (around its words, the words where they always are)
         let link = |r: RECT, label: &str, k: usize, align| {
-            text(dc, r, label, font, if hot == Some(k) { pal().text } else { accent }, align);
+            let on = hot == Some(k);
+            if on {
+                let w = text_w(dc, label, font);
+                let (l, rt) = if align == DT_RIGHT { (r.right - w, r.right) } else { (r.left, r.left + w) };
+                fill(dc, RECT { left: l - s(6), top: r.top + s(3), right: rt + s(6), bottom: r.bottom - s(3) }, pal().pill);
+            }
+            text(dc, r, label, font, if on { pal().text } else { accent }, align);
         };
         link(g.save_as, tr("+ Save as new", "+ 새 이름으로 저장"), LOAD_SAVE_AS, DT_LEFT);
         link(g.folder, tr("Open sessions folder", "세션 폴더 열기"), LOAD_FOLDER, DT_RIGHT);
@@ -371,6 +430,119 @@ pub(crate) fn load_hit(g: &LoadGeo, x: i32, y: i32) -> Option<usize> {
     g.cards.iter().position(|(c, _, _)| inside(c))
 }
 
+// The pick after an arrow / Home / End, over load_geo's three columns: ←/→ go card to card (across rows),
+// ↑/↓ a row, and below the last row are the two links ("+ Save as new" under the first two columns, "Open
+// sessions folder" under the third); ↑ from a link goes back to the last row. None = not a key that moves.
+pub(crate) fn load_step(cur: Option<usize>, n: usize, vk: VIRTUAL_KEY) -> Option<usize> {
+    if !matches!(vk, VK_LEFT | VK_RIGHT | VK_UP | VK_DOWN | VK_HOME | VK_END) {
+        return None;
+    }
+    let first = load_first_pick(None, n);
+    let last_row = n.saturating_sub(1) / 3;
+    let Some(k) = cur else { return Some(if vk == VK_END && n > 0 { n - 1 } else { first }) };
+    Some(match (vk, k) {
+        (VK_HOME, _) => first,
+        (VK_END, _) => n.checked_sub(1).unwrap_or(LOAD_FOLDER),
+        (VK_RIGHT, LOAD_SAVE_AS | LOAD_FOLDER) => LOAD_FOLDER,
+        (VK_LEFT, LOAD_SAVE_AS | LOAD_FOLDER) => LOAD_SAVE_AS,
+        (VK_UP, LOAD_SAVE_AS) if n > 0 => last_row * 3,
+        (VK_UP, LOAD_FOLDER) if n > 0 => (last_row * 3 + 2).min(n - 1),
+        (_, LOAD_SAVE_AS | LOAD_FOLDER) => k,
+        (_, k) if k >= n => first, // a card that's gone
+        (VK_LEFT, k) => k.saturating_sub(1),
+        (VK_RIGHT, k) => (k + 1).min(n - 1),
+        (VK_UP, k) => k.checked_sub(3).unwrap_or(k),
+        (VK_DOWN, k) if k / 3 < last_row => (k + 3).min(n - 1),
+        (_, k) => if k % 3 == 2 { LOAD_FOLDER } else { LOAD_SAVE_AS },
+    })
+}
+
+// A card, its ✕ or a link chosen: a click, Enter or the card's number.
+unsafe fn activate(h: HWND, k: usize) {
+    if k >= LOAD_DEL {
+        delete_card(h, k - LOAD_DEL);
+        return;
+    }
+    let file = app(|a| a.cards.get(k).map(|c| c.0.clone()));
+    _ = DestroyWindow(h);
+    match k {
+        LOAD_SAVE_AS => _ = save_session_as(),
+        LOAD_FOLDER => {
+            let d = sessions_dir();
+            _ = std::fs::create_dir_all(&d);
+            navigate(app(|a| a.s.active), &d.to_string_lossy());
+        }
+        _ => {
+            if let Some(f) = file {
+                load_session_file(&f);
+            }
+        }
+    }
+}
+
+// The popup's keys (its rename box's never come here: pre_translate takes them). Esc closes; arrows, Home / End
+// pick; Enter opens the pick, 1 … 9 that card; F2 renames, Del deletes (the shell's confirmation as for ✕).
+// Esc, Enter, the digits and Del act once per press: auto-repeats (bit 30) are dropped, and a key that opened a
+// session is held (app.held) until let go, so its repeats can't reach the pane that has the focus next. With
+// Ctrl or Alt down none of them acts (a 1 typed with Ctrl+O's Ctrl still down). false = not the popup's key.
+unsafe fn load_key(h: HWND, vk: VIRTUAL_KEY, repeat: bool) -> bool {
+    if vk == VK_ESCAPE {
+        if !repeat {
+            _ = DestroyWindow(h);
+        }
+        return true;
+    }
+    let down = |k: VIRTUAL_KEY| GetKeyState(k.0 as i32) < 0;
+    if down(VK_CONTROL) || down(VK_MENU) {
+        return false;
+    }
+    let (n, hot) = app(|a| (a.cards.len(), a.load_hot));
+    let cur = hot.map(|k| if k >= LOAD_DEL { k - LOAD_DEL } else { k }); // a ✕ the mouse left lit: its card
+    let card = cur.filter(|&k| k < n);
+    let digit = match vk.0 {
+        d @ 0x31..=0x39 => Some((d - 0x31) as usize),         // 1 … 9
+        d @ 0x61..=0x69 => Some((d - VK_NUMPAD1.0) as usize), // the number pad's
+        _ => None,
+    };
+    if digit.is_none() && !matches!(vk, VK_RETURN | VK_F2 | VK_DELETE) && load_step(cur, n, vk).is_none() {
+        return false;
+    }
+    // the keys are choosing from here on: picks are kept and the cards numbered
+    if !app(|a| std::mem::replace(&mut a.load_keys, true)) {
+        _ = InvalidateRect(Some(h), None, false);
+    }
+    if let Some(k) = digit {
+        if !repeat && k < n {
+            app(|a| a.held = Some(vk.0));
+            activate(h, k);
+        }
+        return true;
+    }
+    match vk {
+        VK_RETURN => {
+            if let (false, Some(k)) = (repeat, cur) {
+                app(|a| a.held = Some(VK_RETURN.0));
+                activate(h, k);
+            }
+        }
+        VK_F2 => {
+            if let (false, Some(k)) = (repeat, card) {
+                start_rename(h, k);
+            }
+        }
+        VK_DELETE => {
+            if let (false, Some(k)) = (repeat, card) {
+                delete_card(h, k);
+            }
+        }
+        _ => {
+            app(|a| a.load_hot = load_step(cur, n, vk));
+            _ = InvalidateRect(Some(h), None, false);
+        }
+    }
+    true
+}
+
 pub(crate) extern "system" fn load_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     unsafe {
         let g = app(|a| load_geo(a.cards.len(), a.dpi));
@@ -378,6 +550,14 @@ pub(crate) extern "system" fn load_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             WM_PAINT => paint_load(h),
             WM_ERASEBKGND => return LRESULT(1),
             WM_MOUSEMOVE => {
+                // one comes when the popup opens under the pointer, and after it resizes: only a real move
+                // takes the pick from the keys (a mouse-opened popup still follows the pointer as before)
+                let mut at = POINT::default();
+                _ = GetCursorPos(&mut at);
+                let (still, keys) = app(|a| (std::mem::replace(&mut a.load_cursor, (at.x, at.y)) == (at.x, at.y), a.load_keys));
+                if still && keys {
+                    return LRESULT(0);
+                }
                 let (x, y) = xy(lp);
                 let hot = load_hit(&g, x, y);
                 if app(|a| std::mem::replace(&mut a.load_hot, hot)) != hot {
@@ -390,25 +570,8 @@ pub(crate) extern "system" fn load_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                     return LRESULT(0);
                 }
                 let (x, y) = xy(lp);
-                let Some(k) = load_hit(&g, x, y) else { return LRESULT(0) };
-                if k >= LOAD_DEL {
-                    delete_card(h, k - LOAD_DEL);
-                    return LRESULT(0);
-                }
-                let file = app(|a| a.cards.get(k).map(|c| c.0.clone()));
-                _ = DestroyWindow(h);
-                match k {
-                    LOAD_SAVE_AS => _ = save_session_as(),
-                    LOAD_FOLDER => {
-                        let d = sessions_dir();
-                        _ = std::fs::create_dir_all(&d);
-                        navigate(app(|a| a.s.active), &d.to_string_lossy());
-                    }
-                    _ => {
-                        if let Some(f) = file {
-                            load_session_file(&f);
-                        }
-                    }
+                if let Some(k) = load_hit(&g, x, y) {
+                    activate(h, k);
                 }
             }
             WM_RBUTTONUP => {
@@ -436,7 +599,7 @@ pub(crate) extern "system" fn load_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             }
             WM_CTLCOLOREDIT => return edit_colors(wp),
             WM_COMMAND if ((wp.0 >> 16) & 0xffff) as u32 == EN_KILLFOCUS => _ = end_rename(),
-            WM_KEYDOWN if wp.0 == VK_ESCAPE.0 as usize => _ = DestroyWindow(h),
+            WM_KEYDOWN if load_key(h, VIRTUAL_KEY(wp.0 as u16), lp.0 & (1 << 30) != 0) => {}
             WM_ACTIVATE if (wp.0 & 0xffff) as u32 == WA_INACTIVE => _ = PostMessageW(Some(h), WM_CLOSE, WPARAM(0), LPARAM(0)),
             WM_DESTROY => app(|a| {
                 (a.load, a.load_closed) = (HWND::default(), Some(Instant::now()));

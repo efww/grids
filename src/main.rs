@@ -2851,6 +2851,42 @@ mod tests { tr("in", "안") }
         }
     }
 
+    // Ctrl+O's pick moves over the cards as load_geo lays them out (three to a row), then down to the links.
+    #[test]
+    fn session_card_keys() {
+        let (s, f) = (LOAD_SAVE_AS, LOAD_FOLDER);
+        // 7 cards: rows 0 1 2 / 3 4 5 / 6
+        let step = |cur: Option<usize>, vk| load_step(cur, 7, vk);
+        assert_eq!(step(Some(2), VK_RIGHT), Some(3)); // on into the next row
+        assert_eq!(step(Some(3), VK_LEFT), Some(2));
+        assert_eq!(step(Some(0), VK_LEFT), Some(0));
+        assert_eq!(step(Some(6), VK_RIGHT), Some(6));
+        assert_eq!(step(Some(1), VK_DOWN), Some(4));
+        assert_eq!(step(Some(5), VK_DOWN), Some(6)); // nothing right below: the last card
+        assert_eq!(step(Some(6), VK_DOWN), Some(s)); // under the last row: the links
+        assert_eq!(step(Some(4), VK_UP), Some(1));
+        assert_eq!(step(Some(1), VK_UP), Some(1));
+        assert_eq!(step(Some(s), VK_RIGHT), Some(f));
+        assert_eq!(step(Some(f), VK_LEFT), Some(s));
+        assert_eq!(step(Some(s), VK_UP), Some(6));
+        assert_eq!(step(Some(f), VK_UP), Some(6));
+        assert_eq!(step(Some(f), VK_DOWN), Some(f));
+        assert_eq!((step(Some(4), VK_HOME), step(Some(4), VK_END)), (Some(0), Some(6)));
+        assert_eq!((step(None, VK_DOWN), step(None, VK_END)), (Some(0), Some(6))); // nothing picked yet
+        assert_eq!(step(Some(8), VK_LEFT), Some(0)); // a card that's gone
+        assert_eq!(step(Some(1), VK_F2), None); // not a key that moves
+        // 3 cards: the third column's ↓ is the folder link, and back
+        assert_eq!(load_step(Some(2), 3, VK_DOWN), Some(f));
+        assert_eq!(load_step(Some(1), 3, VK_DOWN), Some(s));
+        assert_eq!(load_step(Some(f), 3, VK_UP), Some(2));
+        // no cards: only the links
+        assert_eq!(load_step(None, 0, VK_DOWN), Some(s));
+        assert_eq!(load_step(Some(s), 0, VK_UP), Some(s));
+        assert_eq!(load_step(Some(s), 0, VK_RIGHT), Some(f));
+        // opened with Ctrl+O: the session you're in, else the first card, else "+ Save as new"
+        assert_eq!((load_first_pick(Some(4), 7), load_first_pick(None, 7), load_first_pick(Some(9), 7), load_first_pick(None, 0)), (4, 0, 0, s));
+    }
+
     #[test]
     fn session_card_preview() {
         let within = |a: &RECT, b: &RECT| a.left >= b.left && a.top >= b.top && a.right <= b.right && a.bottom <= b.bottom;

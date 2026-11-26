@@ -303,6 +303,7 @@ Alt+↓\tRecent folders (all panes, newest first)\n\
 Ctrl+L, Alt+D, F4\tAddress bar: also .. or a subfolder name, a file to open, or a command such as cmd, wt, powershell (runs in this pane's folder), or part of a recent or favourite folder's name\n\
 Ctrl+B\tFavourites list (↑/↓ or Home/End to choose, Enter to open, 1 … 9 opens the numbered row at once, Del to remove, Alt+↑/↓ or drag to reorder)\n\
 Ctrl+Shift+B\tAdd the active pane's folder to favourites, or remove it if it is one (as ☆+ in its header)\n\
+Ctrl+O\tSaved sessions, the one you're in picked (arrow keys or Home/End to choose, Enter to switch, 1 … 9 opens the numbered card at once, F2 to rename, Del to delete, Esc or Ctrl+O to close)\n\
 Ctrl+/\tKeyboard shortcuts (this list; Ctrl+F or Tab: find box, in English or Korean words)\n\
 Ctrl+Shift+M\tMaximize / restore the active pane (or double-click its header)\n\
 Ctrl+Shift+E\tHide / show the folder tree (its width is kept)\n\
@@ -343,7 +344,7 @@ Address bar: click a folder in the path to go there; click a › to list the fol
 Layout button: click for an even grid, press and drag for rows per column (arrow keys + Enter work too)\n\
 ⇄ button: open the selected folder (or the current one) in another pane, with this pane's columns; or copy / move the selected files (up to 10,000) to another pane's folder, a favourite or recent folder, or any folder you choose; which program is using the selected files; what takes up space in this folder (Ctrl+Shift+U); Compare with WinMerge (2 selected items, or this folder with another pane's) when WinMerge is installed\n\
 Save (Ctrl+S): overwrite the current session file; green dot = unsaved layout changes (not folder moves)\n\
-Load: pick a saved session by its layout preview\n\
+Load (Ctrl+O): pick a saved session by its layout preview\n\
 Drive buttons (C: D: …): open that drive in the active pane; its drive is underlined\n\
 Double-click a splitter: split evenly\n\
 Update button (blue, top right): a newer Grids is out; click to restart into it (settings, folders and sessions stay)\n\
@@ -364,6 +365,7 @@ Alt+↓\t최근 폴더 (모든 패널, 최근 순)\n\
 Ctrl+L, Alt+D, F4\t주소창: .. 이나 하위 폴더 이름, 열 파일, cmd·wt·powershell 같은 명령도 가능(이 패널 폴더에서 실행), 다녀온 폴더·즐겨찾기 이름 일부\n\
 Ctrl+B\t즐겨찾기 목록 (↑/↓·Home/End 고르기, Enter 열기, 1 … 9는 번호가 붙은 줄 바로 열기, Del 빼기, Alt+↑/↓ 또는 끌어서 순서 바꾸기)\n\
 Ctrl+Shift+B\t선택한 패널의 폴더를 즐겨찾기에 추가, 이미 있으면 빼기 (머리줄 ☆+와 같음)\n\
+Ctrl+O\t저장한 세션 (지금 세션이 골라진 채 열림, 방향키·Home/End 고르기, Enter 바꾸기, 1 … 9는 번호가 붙은 카드 바로 열기, F2 이름 바꾸기, Del 삭제, Esc 또는 Ctrl+O 닫기)\n\
 Ctrl+/\t단축키 목록 (이 창, Ctrl+F 또는 Tab: 찾기 칸, 영어·한국어 낱말 모두)\n\
 Ctrl+Shift+M\t선택한 패널 크게 보기 / 복원 (머리줄 더블클릭도 가능)\n\
 Ctrl+Shift+E\t폴더 트리 숨기기 / 보이기 (폭은 그대로 유지)\n\
@@ -404,7 +406,7 @@ F2, Del, Ctrl+C/X/V, F5\t탐색기와 동일\n\n\
 레이아웃 버튼: 클릭 = 균등 배치, 누른 채 끌기 = 열마다 칸 수 (방향키+Enter도 가능)\n\
 ⇄ 버튼: 선택한 폴더(없으면 현재 폴더)를 다른 패널에서 열기, 열 순서·폭·정렬도 함께. 또는 선택한 파일을 다른 패널 폴더·즐겨찾기·최근 폴더·직접 고른 폴더로 복사·이동 (최대 10,000개). 선택한 파일을 쓰고 있는 프로그램 확인. 이 폴더 용량 분석 (Ctrl+Shift+U). WinMerge가 있으면 WinMerge로 비교 (선택한 2개, 또는 이 폴더와 다른 패널 폴더)\n\
 저장 (Ctrl+S): 지금 세션 파일에 바로 덮어쓰기, 초록 점 = 저장 안 된 배치 변경(폴더 이동은 제외)\n\
-불러오기: 저장한 세션을 배치 미리보기로 보고 한 번 클릭\n\
+불러오기 (Ctrl+O): 저장한 세션을 배치 미리보기로 보고 한 번 클릭\n\
 드라이브 버튼 (C: D: …): 지금 패널에서 그 드라이브 열기, 지금 패널의 드라이브에 밑줄\n\
 스플리터 더블클릭: 균등 분할\n\
 업데이트 버튼 (파란색, 오른쪽 위): 새 Grids가 나옴, 누르면 재시작해 업데이트 (설정·폴더·세션 유지)\n\
