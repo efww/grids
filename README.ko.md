@@ -6,7 +6,7 @@ Windows용 빠르고 가벼운 다중 패널 파일 관리자입니다. 한 창�
 
 [![Grids 데모](docs/demo.ko.gif)](docs/demo.ko.mp4)
 
-▶ [소리 있는 전체 소개 영상 보기](docs/demo.ko.mp4) (35초)
+▶ [소리 있는 전체 소개 영상 보기](docs/demo.ko.mp4) (73초)
 
 ![Grids 라이트 테마](docs/screenshot-light.png)
 
