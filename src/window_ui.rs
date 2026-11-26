@@ -34,6 +34,10 @@ pub(crate) unsafe fn gap_hover(h: HWND, d: Option<Hit>) {
 
 pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     unsafe {
+        // a drive's shell menu is open: its submenus are filled and drawn by the shell
+        if let Some(r) = drive_menu_msg(msg, wp, lp) {
+            return r;
+        }
         match msg {
             // While the user drags the window edge, lay the panes out once at the end (same cost reason as splitters).
             WM_SIZE => {
@@ -272,14 +276,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                     }
                 }
                 id if id == ID_TB_VIEW as usize => popup_menu(app(|a| a.view_menu), ID_TB_VIEW),
-                id if (ID_DRIVE as usize..ID_DRIVE as usize + 26).contains(&id) => {
-                    let i = app(|a| a.s.active);
-                    if navigate(i, &format!("{}:\\", (b'A' + (id - ID_DRIVE as usize) as u8) as char)) {
-                        focus_view(i);
-                    } else {
-                        _ = MessageBeep(MB_ICONWARNING); // no medium, or gone since
-                    }
-                }
+                id if (ID_DRIVE as usize..ID_DRIVE as usize + 26).contains(&id) => open_drive(b'A' + (id - ID_DRIVE as usize) as u8),
                 ID_TREE => toggle_tree(),
                 ID_HIDDEN => toggle_hidden(),
                 ID_EXT => toggle_extensions(),
@@ -345,6 +342,22 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 for (k, (_, c)) in theme_pal(dark).accents.iter().enumerate() {
                     check(ID_ACCENT + k, *c == accent);
                 }
+            }
+            // right-click (or Shift+F10 / the menu key) on a drive button: that drive's shell menu
+            WM_CONTEXTMENU => {
+                let Some((c, b)) = app(|a| a.drives.iter().find(|d| d.2 .0 as usize == wp.0).map(|d| (d.0, d.2))) else {
+                    return DefWindowProcW(h, msg, wp, lp);
+                };
+                // where now: the button may be gone (WM_DRIVES) by the time the menu closes
+                let at = match xy(lp) {
+                    (-1, -1) => {
+                        let mut rc = RECT::default();
+                        _ = GetWindowRect(b, &mut rc);
+                        POINT { x: rc.left, y: rc.bottom }
+                    }
+                    (x, y) => POINT { x, y },
+                };
+                drive_menu(c, at);
             }
             WM_COPYDATA => {
                 let cd = &*(lp.0 as *const CopyData);
@@ -676,7 +689,99 @@ pub(crate) fn drive_tip(c: u8, kind: u32) -> String {
         5 => tr("CD/DVD drive", "CD/DVD 드라이브"),
         _ => tr("Drive", "드라이브"),
     };
-    format!("{name} ({}:) — {}", c as char, tr("open in the active pane", "지금 패널에서 열기"))
+    format!(
+        "{name} ({}:) — {}",
+        c as char,
+        tr("open in the active pane · Right-click: drive menu (Eject, Properties)", "지금 패널에서 열기 · 오른쪽 클릭: 드라이브 메뉴(꺼내기·속성)")
+    )
+}
+
+// Left click, and Open / Explore in the drive menu: the drive in the active pane.
+pub(crate) unsafe fn open_drive(c: u8) {
+    let i = app(|a| a.s.active);
+    if navigate(i, &format!("{}:\\", c as char)) {
+        focus_view(i);
+    } else {
+        _ = MessageBeep(MB_ICONWARNING); // no medium, or gone since
+    }
+}
+
+thread_local! {
+    // the drive menu's shell handler while that menu is open, for drive_menu_msg; kept out of App (its RefCell is
+    // not held across the menu's modal loop)
+    static DRIVE_CM: RefCell<(Option<IContextMenu3>, Option<IContextMenu2>)> = const { RefCell::new((None, None)) };
+}
+
+// Hands the menu messages main_proc gets while a drive menu is open to its shell handler ("Share with", "Send to"
+// and the like fill their submenus on opening). Only the menu's own: buttons' WM_DRAWITEM (wp = their id) still
+// draw as buttons. None: not for the menu, main_proc goes on as before.
+unsafe fn drive_menu_msg(msg: u32, wp: WPARAM, lp: LPARAM) -> Option<LRESULT> {
+    if !matches!(msg, WM_INITMENUPOPUP | WM_MENUCHAR) && !(matches!(msg, WM_DRAWITEM | WM_MEASUREITEM) && wp.0 == 0) {
+        return None;
+    }
+    let (cm3, cm2) = DRIVE_CM.with(|c| c.borrow().clone());
+    if cm3.is_none() && cm2.is_none() {
+        return None; // no drive menu open: the view menu's checks, buttons
+    }
+    let mut r = LRESULT(0);
+    let done = match (&cm3, &cm2) {
+        (Some(c), _) => c.HandleMenuMsg2(msg, wp, lp, Some(&mut r)).is_ok(),
+        (None, Some(c)) if msg != WM_MENUCHAR => {
+            r = LRESULT(matches!(msg, WM_DRAWITEM | WM_MEASUREITEM) as isize);
+            c.HandleMenuMsg(msg, wp, lp).is_ok()
+        }
+        _ => false,
+    };
+    match msg {
+        WM_MENUCHAR => done.then_some(r), // not taken: DefWindowProcW
+        _ => Some(if done { r } else { LRESULT(0) }), // never the view menu's checks or a button's drawing
+    }
+}
+
+// Explorer's "This PC" menu of a drive (Eject, Properties, Format, Disconnect, …) at a screen point. Open / Explore
+// open it in the active pane instead of an Explorer window. Only on a right-click: making the item and filling the
+// menu can wait on a dead share, as in Explorer.
+pub(crate) unsafe fn drive_menu(c: u8, at: POINT) {
+    let main = app(|a| a.main);
+    let root = format!("{}:\\", c as char);
+    let cm = SHCreateItemFromParsingName::<_, _, IShellItem>(&HSTRING::from(&root), None).and_then(|item| item.BindToHandler::<_, IContextMenu>(None, &BHID_SFUIObject));
+    let Ok(cm) = cm else {
+        _ = MessageBeep(MB_ICONWARNING); // gone since
+        return;
+    };
+    let Ok(menu) = CreatePopupMenu() else { return };
+    // CMF_NORMAL only: Rename would need a view to rename in
+    if cm.QueryContextMenu(menu, 0, 1, 0x7fff, CMF_NORMAL).is_err() {
+        _ = DestroyMenu(menu);
+        _ = MessageBeep(MB_ICONWARNING);
+        return;
+    }
+    DRIVE_CM.with(|s| *s.borrow_mut() = (cm.cast().ok(), cm.cast().ok()));
+    // TPM_RETURNCMD: the shell's ids 1..0x7fff must never come as WM_COMMAND (drive buttons, view menu ids)
+    let pick = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_LEFTALIGN | TPM_TOPALIGN, at.x, at.y, None, main, None).0;
+    DRIVE_CM.with(|s| *s.borrow_mut() = (None, None));
+    if pick > 0 {
+        let id = pick as usize - 1;
+        let mut verb = [0u16; 64];
+        let open = cm.GetCommandString(id, GCS_VERBW, None, PSTR(verb.as_mut_ptr() as *mut u8), verb.len() as u32).is_ok() && {
+            let n = verb.iter().position(|&w| w == 0).unwrap_or(verb.len());
+            let v = String::from_utf16_lossy(&verb[..n]);
+            v.eq_ignore_ascii_case("open") || v.eq_ignore_ascii_case("explore")
+        };
+        if open {
+            open_drive(c);
+        } else {
+            let ci = CMINVOKECOMMANDINFO {
+                cbSize: size_of::<CMINVOKECOMMANDINFO>() as u32,
+                hwnd: main,
+                lpVerb: PCSTR(id as *const u8),
+                nShow: SW_SHOWNORMAL.0,
+                ..Default::default()
+            };
+            _ = cm.InvokeCommand(&ci); // refused (in use, cancelled): the shell already said so
+        }
+    }
+    _ = DestroyMenu(menu);
 }
 
 // The stock icon of a drive kind (GetDriveTypeW); unknown kinds look like a local disk, as in Explorer.
