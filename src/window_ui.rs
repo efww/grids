@@ -283,6 +283,13 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             // a folder was renamed or removed somewhere: only queued (shell_change), looked at by TIMER_SHELL
             WM_SHELL_CHANGE => shell_change(h, wp, lp),
             WM_TIMER if wp.0 == TIMER_SHELL => shell_tick(h),
+            // the Recycle Bin changed: counted again once the changes stop for 500 ms
+            WM_BIN_CHANGE => bin_change(wp, lp),
+            WM_TIMER if wp.0 == TIMER_BIN => {
+                _ = KillTimer(Some(h), TIMER_BIN);
+                bin_count();
+            }
+            WM_BIN_COUNT => bin_counted(),
             WM_UPDATE => update_msg(h, wp.0),
             WM_STAR => star_msg(wp.0 != 0),
             WM_HASH => hash_msg(h, wp.0, lp.0 != 0),
@@ -291,6 +298,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             WM_USAGE => usage_msg(),
             // mid-drag or mid-resize, end_drag / WM_EXITSIZEMOVE pick it up instead
             WM_DRIVES => {
+                bin_count(); // also when Grids comes to the front (WM_ACTIVATEAPP posts this)
                 if !app(|a| a.drag.is_some() || a.sizing) && refresh_drives() {
                     relayout();
                     redraw_all();
@@ -421,6 +429,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 }
                 id if id == ID_TB_VIEW as usize => popup_menu(app(|a| a.view_menu), ID_TB_VIEW),
                 id if (ID_DRIVE as usize..ID_DRIVE as usize + 26).contains(&id) => open_drive(b'A' + (id - ID_DRIVE as usize) as u8),
+                id if id == ID_BIN as usize => open_bin(),
                 ID_TREE => toggle_tree(),
                 ID_TREE_QUICK => toggle_tree_quick(),
                 ID_HIDDEN => toggle_hidden(),
@@ -497,9 +506,12 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                     check(ID_ACCENT + k, !sys && *c == accent);
                 }
             }
-            // right-click (or Shift+F10 / the menu key) on a drive button: that drive's shell menu
+            // right-click (or Shift+F10 / the menu key) on a drive button: that drive's shell menu; on the Recycle
+            // Bin button: the bin's
             WM_CONTEXTMENU => {
-                let Some((c, b)) = app(|a| a.drives.iter().find(|d| d.2 .0 as usize == wp.0).map(|d| (d.0, d.2))) else {
+                let bin = GetDlgItem(Some(h), ID_BIN).ok().filter(|b| b.0 as usize == wp.0);
+                let drive = app(|a| a.drives.iter().find(|d| d.2 .0 as usize == wp.0).map(|d| (d.0, d.2)));
+                let Some(b) = bin.or(drive.map(|d| d.1)) else {
                     return DefWindowProcW(h, msg, wp, lp);
                 };
                 // where now: the button may be gone (WM_DRIVES) by the time the menu closes
@@ -511,7 +523,10 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                     }
                     (x, y) => POINT { x, y },
                 };
-                drive_menu(c, at);
+                match drive {
+                    Some((c, _)) => drive_menu(c, at),
+                    None => bin_menu(at),
+                }
             }
             WM_COPYDATA => {
                 let cd = &*(lp.0 as *const CopyData);
@@ -931,9 +946,14 @@ unsafe fn drive_menu_msg(msg: u32, wp: WPARAM, lp: LPARAM) -> Option<LRESULT> {
 // open it in the active pane instead of an Explorer window. Only on a right-click: making the item and filling the
 // menu can wait on a dead share, as in Explorer.
 pub(crate) unsafe fn drive_menu(c: u8, at: POINT) {
+    shell_menu(&format!("{}:\\", c as char), at, || open_drive(c));
+}
+
+// The shell's own menu of the item with parsing name `parse` at a screen point; Open / Explore run `open` instead
+// (the item in the active pane).
+unsafe fn shell_menu(parse: &str, at: POINT, on_open: impl FnOnce()) {
     let main = app(|a| a.main);
-    let root = format!("{}:\\", c as char);
-    let cm = SHCreateItemFromParsingName::<_, _, IShellItem>(&HSTRING::from(&root), None).and_then(|item| item.BindToHandler::<_, IContextMenu>(None, &BHID_SFUIObject));
+    let cm = SHCreateItemFromParsingName::<_, _, IShellItem>(&HSTRING::from(parse), None).and_then(|item| item.BindToHandler::<_, IContextMenu>(None, &BHID_SFUIObject));
     let Ok(cm) = cm else {
         _ = MessageBeep(MB_ICONWARNING); // gone since
         return;
@@ -958,7 +978,7 @@ pub(crate) unsafe fn drive_menu(c: u8, at: POINT) {
             v.eq_ignore_ascii_case("open") || v.eq_ignore_ascii_case("explore")
         };
         if open {
-            open_drive(c);
+            on_open();
         } else {
             let ci = CMINVOKECOMMANDINFO {
                 cbSize: size_of::<CMINVOKECOMMANDINFO>() as u32,
@@ -971,6 +991,154 @@ pub(crate) unsafe fn drive_menu(c: u8, at: POINT) {
         }
     }
     _ = DestroyMenu(menu);
+}
+
+// ---------- the Recycle Bin button ----------
+// After the drive buttons, like the bin on Total Commander's and XYplorer's toolbars: a click opens the bin in the
+// active pane, a right-click gives Explorer's bin menu (Empty Recycle Bin, Properties). Its icon is the desktop's,
+// empty or full. Counted by a worker thread (SHQueryRecycleBinW may spin up a sleeping disk), one at a time; only
+// at startup, when Grids comes back to the front, on WM_DRIVES, after the bin's menu, and 500 ms after the shell
+// says the bin changed. Never on a schedule.
+
+// System image list indexes of the empty and the full bin (i32::MIN: not asked yet, -1: failed).
+static BIN_ICONS: [std::sync::atomic::AtomicI32; 2] = [const { std::sync::atomic::AtomicI32::new(i32::MIN) }; 2];
+
+pub(crate) const WM_BIN_COUNT: u32 = WM_APP + 59; // from the worker: its count is in BIN_JOB.got
+
+struct BinJob {
+    gen: usize,                            // bumped by every request; a count of an older one is dropped
+    busy: bool,                            // the worker runs
+    again: bool,                           // asked meanwhile: it counts once more before it stops
+    got: Option<(usize, Option<(u64, u64)>)>, // (gen, (items, bytes)); None inside: the shell couldn't say
+}
+
+static BIN_JOB: Mutex<BinJob> = Mutex::new(BinJob { gen: 0, busy: false, again: false, got: None });
+
+fn bin_job() -> std::sync::MutexGuard<'static, BinJob> {
+    BIN_JOB.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+thread_local! {
+    // what the button shows: None = not counted yet, Some(None) = unknown, Some(Some((items, bytes)))
+    static BIN_SEEN: Cell<Option<Option<(u64, u64)>>> = const { Cell::new(None) };
+}
+
+// The button's tooltip: what is in the bin (nothing said when the count failed) and what a right-click does.
+pub(crate) fn bin_tip(ko: bool, seen: Option<(u64, u64)>) -> String {
+    let (name, menu) = if ko { ("휴지통", "오른쪽 클릭: 비우기·속성") } else { ("Recycle Bin", "Right-click: Empty, Properties") };
+    match seen {
+        None => format!("{name} · {menu}"),
+        Some((0, _)) => format!("{name} — {} · {menu}", if ko { "비어 있음" } else { "empty" }),
+        Some((n, b)) if ko => format!("{name} — 항목 {n}개 · {} · {menu}", human(b)),
+        Some((1, b)) => format!("{name} — 1 item · {} · {menu}", human(b)),
+        Some((n, b)) => format!("{name} — {n} items · {} · {menu}", human(b)),
+    }
+}
+
+fn bin_name() -> &'static str {
+    tr("Recycle Bin", "휴지통")
+}
+
+// Once, at startup with the other toolbar buttons; laid out by relayout after the drive buttons.
+pub(crate) unsafe fn make_bin(main: HWND) {
+    cache_stock_icon(&BIN_ICONS[0], SIID_RECYCLER);
+    cache_stock_icon(&BIN_ICONS[1], SIID_RECYCLERFULL);
+    let name = HSTRING::from(bin_name()); // also the accessible name
+    let h = child(main, w!("BUTTON"), PCWSTR(name.as_ptr()), BS_OWNERDRAW as u32, WINDOW_EX_STYLE(0), ID_BIN, HFONT::default());
+    add_tip(h, &bin_tip(KO.load(Ordering::Relaxed), None));
+    bin_count();
+}
+
+// The icon to draw: the full bin only when it is known to hold something; -1 when the shell gave none.
+pub(crate) fn bin_icon() -> i32 {
+    let full = BIN_SEEN.with(|s| matches!(s.get(), Some(Some((n, _))) if n > 0));
+    BIN_ICONS[full as usize].load(Ordering::Relaxed).max(-1)
+}
+
+// Asks the worker for a fresh count; started if it isn't running, else it counts once more when done.
+pub(crate) unsafe fn bin_count() {
+    let main = app(|a| a.main).0 as usize;
+    {
+        let mut j = bin_job();
+        j.gen = j.gen.wrapping_add(1);
+        if j.busy {
+            j.again = true;
+            return;
+        }
+        j.busy = true;
+    }
+    if std::thread::Builder::new().spawn(move || bin_worker(main)).is_err() {
+        bin_job().busy = false;
+    }
+}
+
+fn bin_worker(main: usize) {
+    unsafe {
+        let com = CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok();
+        loop {
+            let gen = bin_job().gen;
+            let mut info = SHQUERYRBINFO { cbSize: size_of::<SHQUERYRBINFO>() as u32, ..Default::default() };
+            let got = SHQueryRecycleBinW(PCWSTR::null(), &mut info).ok().map(|_| (info.i64NumItems.max(0) as u64, info.i64Size.max(0) as u64));
+            bin_job().got = Some((gen, got));
+            _ = PostMessageW(Some(HWND(main as _)), WM_BIN_COUNT, WPARAM(gen), LPARAM(0));
+            let mut j = bin_job();
+            if !std::mem::take(&mut j.again) {
+                j.busy = false;
+                break;
+            }
+        }
+        if com {
+            CoUninitialize();
+        }
+    }
+}
+
+// WM_BIN_COUNT: the worker's count, if it answers the latest request; the button and tooltip change only on a change.
+pub(crate) unsafe fn bin_counted() {
+    let got = {
+        let mut j = bin_job();
+        let gen = j.gen;
+        match j.got.take() {
+            Some((g, got)) if g == gen => got,
+            _ => return,
+        }
+    };
+    if BIN_SEEN.with(|s| s.replace(Some(got))) == Some(got) {
+        return;
+    }
+    if let Ok(b) = GetDlgItem(Some(app(|a| a.main)), ID_BIN) {
+        tip_text(b, &bin_tip(KO.load(Ordering::Relaxed), got), TTM_UPDATETIPTEXTW);
+        _ = InvalidateRect(Some(b), None, false);
+    }
+}
+
+// The bin changed (notified by the shell, or a command from its menu may still be running): count once things settle.
+pub(crate) unsafe fn bin_soon() {
+    SetTimer(Some(app(|a| a.main)), TIMER_BIN, 500, None);
+}
+
+// Left click: the bin in the active pane.
+pub(crate) unsafe fn open_bin() {
+    let i = app(|a| a.s.active);
+    if navigate(i, RECYCLE_BIN) {
+        focus_view(i);
+    } else {
+        _ = MessageBeep(MB_ICONWARNING);
+    }
+}
+
+// Right-click, Shift+F10 or the menu key: Explorer's bin menu (Empty Recycle Bin asks first, by the shell itself).
+pub(crate) unsafe fn bin_menu(at: POINT) {
+    shell_menu(RECYCLE_BIN, at, || open_bin());
+    bin_soon(); // an emptying may end after InvokeCommand returns
+}
+
+// After a language switch: the accessible name and the tooltip.
+unsafe fn bin_relabel(main: HWND) {
+    if let Ok(b) = GetDlgItem(Some(main), ID_BIN) {
+        _ = SetWindowTextW(b, &HSTRING::from(bin_name()));
+        tip_text(b, &bin_tip(KO.load(Ordering::Relaxed), BIN_SEEN.with(|s| s.get()).flatten()), TTM_UPDATETIPTEXTW);
+    }
 }
 
 // The stock icon of a drive kind (GetDriveTypeW); unknown kinds look like a local disk, as in Explorer.
@@ -1102,6 +1270,7 @@ pub(crate) unsafe fn set_language(ko: bool) {
     for (c, kind, h) in app(|a| a.drives.clone()) {
         tip_text(h, &drive_tip(c, kind), TTM_UPDATETIPTEXTW);
     }
+    bin_relabel(main);
     refresh_save_button();
     update_tip();
     app(|a| a.status_key.clear());

@@ -22,6 +22,9 @@ pub(crate) const ID_TB_UPDATE: i32 = 208; // blue "Update", shown when a newer r
 pub(crate) const ID_STATUS: i32 = 209; // the status line: an owner-drawn static, so screen readers find it
 pub(crate) const ID_STATUS_NOTE: i32 = 210; // the note alone, a polite live region: what screen readers read out by themselves
 pub(crate) const ID_DRIVE: i32 = 1500; // + 0..25: drive buttons A: … Z:
+pub(crate) const ID_BIN: i32 = 1530; // the Recycle Bin button after the drive buttons
+pub(crate) const TIMER_BIN: usize = 1530; // on main: the Recycle Bin is counted again after a short pause
+pub(crate) const RECYCLE_BIN: &str = "::{645FF040-5081-101B-9F08-00AA002F954E}";
 // menu ids
 pub(crate) const ID_HIDDEN: usize = 1100;
 pub(crate) const ID_KEYS: usize = 1101;
@@ -338,6 +341,7 @@ pub(crate) fn glyph(id: i32) -> &'static str {
         ID_TB_LOAD => "\u{E838}",
         ID_TB_FAV => "\u{E734}",
         ID_TB_EV => ICON_SEARCH,
+        ID_BIN => "\u{E74D}", // a bin, only when the shell's own icon isn't there
         ID_TB_THEME if DARK_ON.load(Ordering::Relaxed) => "\u{E706}", // sun: back to light
         ID_TB_THEME => "\u{E708}",                                     // moon: go dark
         _ => "\u{E890}",

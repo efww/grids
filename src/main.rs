@@ -376,6 +376,7 @@ fn main() -> Result<()> {
         for (id, label, hint) in toolbar_tips() {
             add_tip(child(main, w!("BUTTON"), PCWSTR(HSTRING::from(label).as_ptr()), BS_OWNERDRAW as u32, WINDOW_EX_STYLE(0), id, HFONT::default()), hint);
         }
+        make_bin(main); // after the drive buttons; made once here, never by refresh_drives
         create_status(main);
         if let Ok((t, th)) = create_tree(main) {
             app(|a| (a.tree, a.tree_hwnd) = (Some(t), th));
@@ -455,6 +456,7 @@ fn main() -> Result<()> {
         }
         SetTimer(Some(main), TIMER_STATUS, TICK_FAST, None); // a minimized start slows it on its first tick
         watch_folders(main); // folders renamed / removed elsewhere (shell_change)
+        watch_bin(main); // the Recycle Bin button's icon follows the bin (bin_change)
         // taken by another app: the menu shows it off, s.hotkey stays on so the next start tries again
         if app(|a| a.s.hotkey) {
             let on = set_hotkey(main, true);
@@ -561,6 +563,7 @@ mod tests {
             .map(|id| id as usize)
             .to_vec();
         main.extend((0..26).map(|d| ID_DRIVE as usize + d));
+        main.push(ID_BIN as usize);
         main.extend(VIEW_TOP.iter().chain(&VIEW_END).map(|v| v.0));
         main.push(ID_LANG);
         main.extend((0..LIGHT.accents.len()).map(|k| ID_ACCENT + k));
@@ -569,7 +572,7 @@ mod tests {
         // the view menu's copies of toolbar buttons send those buttons' commands, already counted once above
         assert!(VIEW_BUTTONS.iter().all(|v| main.iter().filter(|&&id| id == v.0).count() == 1));
         // (c) timers, per window: SetTimer with a number already running replaces that timer
-        distinct("main timers", &[TIMER_STATUS, TIMER_REVEAL, TIMER_FOCUS, dialog_jump::TIMER_DLG_RETRY, dialog_jump::TIMER_DLG_RESTORE, TIMER_SHELL, TIMER_EV_SELECT]);
+        distinct("main timers", &[TIMER_STATUS, TIMER_REVEAL, TIMER_FOCUS, dialog_jump::TIMER_DLG_RETRY, dialog_jump::TIMER_DLG_RESTORE, TIMER_SHELL, TIMER_EV_SELECT, TIMER_BIN]);
         distinct("pane timers", &[TIMER_FILTER, TIMER_SETTLE, TIMER_SPIN]);
     }
 
@@ -1485,6 +1488,14 @@ mod tests {
         let keeps = [None, Some(f), Some(f | s), Some(0)].map(filter_keeps_unnamed);
         assert_eq!(keeps, [true, true, false, false]);
         assert_eq!((human(10), human(1536), human(5 << 30)), ("10 B".into(), "1.5 KB".into(), "5.0 GB".into()));
+        // the Recycle Bin button's tooltip: a failed count says nothing about the contents (never "empty")
+        assert_eq!(bin_tip(false, None), "Recycle Bin · Right-click: Empty, Properties");
+        assert_eq!(bin_tip(true, None), "휴지통 · 오른쪽 클릭: 비우기·속성");
+        assert_eq!(bin_tip(false, Some((0, 0))), "Recycle Bin — empty · Right-click: Empty, Properties");
+        assert_eq!(bin_tip(true, Some((0, 0))), "휴지통 — 비어 있음 · 오른쪽 클릭: 비우기·속성");
+        assert_eq!(bin_tip(false, Some((1, 10))), "Recycle Bin — 1 item · 10 B · Right-click: Empty, Properties");
+        assert_eq!(bin_tip(false, Some((12, 5 << 30))), "Recycle Bin — 12 items · 5.0 GB · Right-click: Empty, Properties");
+        assert_eq!(bin_tip(true, Some((12, 1536))), "휴지통 — 항목 12개 · 1.5 KB · 오른쪽 클릭: 비우기·속성");
 
         // pane top bar: number, back, fwd, up, address, ⇄, filter left to right, nothing overlapping, inside the plate
         for (w, dpi) in [(800, 96), (260, 96), (1200, 144)] {

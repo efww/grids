@@ -241,10 +241,36 @@ pub(crate) unsafe fn watch_folders(h: HWND) {
 }
 
 pub(crate) unsafe fn unwatch_folders() {
-    let id = SHELL_REG.swap(0, Ordering::Relaxed);
-    if id != 0 {
-        _ = SHChangeNotifyDeregister(id);
+    for reg in [&SHELL_REG, &BIN_REG] {
+        let id = reg.swap(0, Ordering::Relaxed);
+        if id != 0 {
+            _ = SHChangeNotifyDeregister(id);
+        }
     }
+}
+
+// The Recycle Bin's own changes (not its subfolders): the toolbar's bin button counts again 500 ms after the last
+// one (bin_soon), so a big delete is counted once. Only a hint: activation and WM_DRIVES count it too.
+pub(crate) const WM_BIN_CHANGE: u32 = WM_APP + 60; // wParam = notification handle, lParam = process id (SHCNRF_NewDelivery)
+static BIN_REG: AtomicU32 = AtomicU32::new(0);
+
+pub(crate) unsafe fn watch_bin(h: HWND) {
+    let Ok(pidl) = SHGetKnownFolderIDList(&FOLDERID_RecycleBinFolder, KF_FLAG_DEFAULT.0 as u32, None) else { return };
+    let e = SHChangeNotifyEntry { pidl, fRecursive: false.into() };
+    let ev = (SHCNE_CREATE.0 | SHCNE_DELETE.0 | SHCNE_UPDATEDIR.0 | SHCNE_UPDATEITEM.0 | SHCNE_UPDATEIMAGE.0) as i32;
+    BIN_REG.store(SHChangeNotifyRegister(h, SHCNRF_ShellLevel | SHCNRF_NewDelivery, ev, WM_BIN_CHANGE, 1, &e), Ordering::Relaxed);
+    // the ID list is kept for the life of the process (one, a few bytes): nothing to free while registered
+}
+
+// WM_BIN_CHANGE: the notification's shared memory is let go; what changed doesn't matter, the bin is counted again.
+pub(crate) unsafe fn bin_change(wp: WPARAM, lp: LPARAM) {
+    let mut pp: *mut *mut ITEMIDLIST = std::ptr::null_mut();
+    let mut ev = 0i32;
+    let lock = SHChangeNotification_Lock(HANDLE(wp.0 as _), lp.0 as u32, Some(&mut pp), Some(&mut ev));
+    if !lock.is_invalid() {
+        _ = SHChangeNotification_Unlock(lock);
+    }
+    bin_soon();
 }
 
 // WM_SHELL_CHANGE: the two ID lists become paths (copied while locked), and a change that concerns a pane, a tab,

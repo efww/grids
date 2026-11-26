@@ -171,6 +171,19 @@ unsafe fn draw_button_face(d: &DRAWITEMSTRUCT) {
         }
         return text(dc, rc, &label, font, ink, DT_CENTER);
     }
+    if id == ID_BIN {
+        // the desktop's bin, empty or full, centred; a glyph bin when the shell gave no icon
+        let ix = bin_icon();
+        if let Some(il) = (ix >= 0).then(|| small_ilist()).flatten() {
+            if let Ok(hi) = il.GetIcon(ix, ILD_NORMAL.0) {
+                let (x, y) = (rc.left + (rc.right - rc.left - s(16)) / 2, rc.top + (rc.bottom - rc.top - s(16)) / 2);
+                _ = DrawIconEx(dc, x, y, hi, s(16), s(16), 0, None, DI_NORMAL);
+                _ = DestroyIcon(hi);
+                return;
+            }
+        }
+        return text(dc, rc, glyph(id), icon_font, fg, DT_CENTER);
+    }
     // icon only, names live in the tooltips; save turns green with a dot while the layout differs
     if id == ID_TB_FAV {
         return draw_star(dc, rc, fg, Star::Outline, dpi);
