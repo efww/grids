@@ -86,8 +86,10 @@ SCHEMA = [
               "제어반(UCP) → 룸 직결", "체크리스트 패키지 Typical로 생긴 행. 직결이면 패키지·시스템마다 멀티 1가닥"),
          _sel("pkg_route", "패키지(벤더 경계) 안 계기", ["패키지마다 Skid JB", "일반 필드 JB에 포함"],
               "패키지마다 Skid JB", "도면에 그려진 경계 안 계기. 인덱스 결정사항 16번 ★ (경계 안 = Skid)"),
-         _sel("mcc_mode", "MCC 신호 (모터 IO)", ["MCC→룸 멀티페어 집합", "모터당 1가닥 멀티코어"],
-              "MCC→룸 멀티페어 집합", "MCC 신호는 필드 JB를 거치지 않고 MCC에서 룸으로 바로 갑니다"),
+         _sel("mcc_from", "MCC 신호 출발점", ["IRP (인터포징 릴레이 판넬)", "MCC 직접"], "IRP (인터포징 릴레이 판넬)",
+              "MCC↔IRP는 전기실 안 배선(전기 범위)이라 집계하지 않고, IRP → DCS/ESD 캐비닛 케이블만 셉니다"),
+         _sel("mcc_mode", "MCC 신호 케이블", ["멀티페어 집합", "모터당 1가닥 멀티코어"],
+              "멀티페어 집합", "MCC 신호는 필드 JB를 거치지 않고 전기실에서 룸으로 바로 갑니다"),
          _sel("mcc_sq", "MCC 케이블 굵기 (SQ)", SQ, "1.25"),
      ]},
     {"id": "len", "title": "길이 가정 (PLOT PLAN 전)",
@@ -95,7 +97,7 @@ SCHEMA = [
      "items": [
          _num("len_field", "계기 → JB", 30, "m", "분기 케이블 평균 길이"),
          _num("len_trunk", "JB → 룸 (기본)", 200, "m", "랙을 타는 간선. 유닛별 값이 있으면 그 값"),
-         _num("len_mcc", "MCC → 룸", 50, "m"),
+         _num("len_mcc", "전기실(IRP/MCC) → 룸", 50, "m", "PLOT PLAN이 들어오면 전기실과 룸 위치로 계산"),
          _num("len_margin", "길이 여유율", 0.1, "", "단말·처짐·우회", 0.05),
          _num("len_round", "길이 올림 단위", 5, "m"),
          _txt("room_DCS", "DCS 도착 룸", "CCR"),
@@ -111,7 +113,8 @@ DEFAULTS = {k: v["default"] for k, v in ITEMS.items()}
 def load(pdir: Path) -> dict:
     f = Path(pdir) / "cable.json"
     s = json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
-    return {"values": {**DEFAULTS, **{k: v for k, v in (s.get("values") or {}).items() if k in ITEMS}},
+    ok = lambda k, v: k in ITEMS and (ITEMS[k]["type"] != "select" or v in ITEMS[k]["options"])   # renamed options -> default
+    return {"values": {**DEFAULTS, **{k: v for k, v in (s.get("values") or {}).items() if ok(k, v)}},
             "trunk": dict(s.get("trunk") or {}), "preset": s.get("preset", "")}
 
 
@@ -162,7 +165,8 @@ def load_preset(home: Path, name: str, s: dict):
     if not f.exists():
         raise ValueError("프리셋을 찾지 못했습니다")
     vals = json.loads(f.read_text(encoding="utf-8")).get("values") or {}
-    s["values"] = {**DEFAULTS, **{k: v for k, v in vals.items() if k in ITEMS}}
+    s["values"] = {**DEFAULTS, **{k: v for k, v in vals.items()
+                                  if k in ITEMS and (ITEMS[k]["type"] != "select" or v in ITEMS[k]["options"])}}
     s["preset"] = name
     return s
 
@@ -352,7 +356,8 @@ def build(rows, s: dict, area_map: dict | None = None):
 
     # ---------------- MCC signals straight to the room
     if mcc:
-        if v["mcc_mode"].startswith("MCC"):
+        src = "IRP" if v["mcc_from"].startswith("IRP") else "MCC"
+        if v["mcc_mode"].startswith("멀티"):
             by = {}
             for r, cls in mcc:
                 sys_ = r.system if v["seg_system"] == "분리" else "MIX"
@@ -363,12 +368,13 @@ def build(rows, s: dict, area_map: dict | None = None):
                     ch = members[i:i + cap]
                     size = _std(int(math.ceil(len(ch) * (1 + spare) - 1e-9)))
                     spec = _spec(f"{size}P", v["mcc_sq"], v["multi_shield_D"])
-                    cables.append({"no": uniq(f"MC-MCC-{SYS_LETTER.get(sys_, 'M')}{cls}-{k:02d}"), "kind": "MCC",
-                                   "frm": "MCC", "frm_type": "MCC", "to": room(sys_) if sys_ != "MIX" else room("DCS"),
+                    cables.append({"no": uniq(f"MC-{src}-{SYS_LETTER.get(sys_, 'M')}{cls}-{k:02d}"), "kind": "MCC",
+                                   "frm": src, "frm_type": src, "to": room(sys_) if sys_ != "MIX" else room("DCS"),
                                    "to_type": "룸", "spec": spec, "io": CLS_NAME[cls], "system": sys_, "is": "Non-IS",
                                    "length": _round_len(float(v["len_mcc"]), v), "area": "MCC", "dwg": "",
                                    "coord": "", "unit": "", "pairs_used": len(ch),
-                                   "basis": f"모터 신호 {len(ch)}점 · 스페어 {spare:.0%} · MCC→룸 {v['len_mcc']}m 가정"})
+                                   "basis": f"모터 신호 {len(ch)}점 · 스페어 {spare:.0%} · {src}→룸 {v['len_mcc']}m 가정"
+                                            + (" · MCC↔IRP는 전기 범위 (미집계)" if src == "IRP" else "")})
         else:
             by = {}
             for r, cls in mcc:
@@ -376,8 +382,8 @@ def build(rows, s: dict, area_map: dict | None = None):
             for (motor, sys_), members in sorted(by.items()):
                 cores = _cores(int(math.ceil(2 * len(members) * (1 + spare) - 1e-9)))
                 spec = _spec(f"{cores}C", v["mcc_sq"], "비차폐")
-                cables.append({"no": uniq(f"CC-{motor}-{SYS_LETTER.get(sys_, 'M')}"), "kind": "MCC", "frm": "MCC",
-                               "frm_type": "MCC", "to": room(sys_), "to_type": "룸", "spec": spec,
+                cables.append({"no": uniq(f"CC-{motor}-{SYS_LETTER.get(sys_, 'M')}"), "kind": "MCC", "frm": src,
+                               "frm_type": src, "to": room(sys_), "to_type": "룸", "spec": spec,
                                "io": "/".join(sorted({r.io for r in members})), "system": sys_, "is": "Non-IS",
                                "length": _round_len(float(v["len_mcc"]), v), "area": "MCC", "dwg": "", "coord": "",
                                "unit": members[0].unit, "pairs_used": len(members),
