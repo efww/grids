@@ -255,15 +255,22 @@ pub(crate) unsafe fn try_paste(a: usize) -> bool {
         }
     }
     let has = |f: PCWSTR| IsClipboardFormatAvailable(RegisterClipboardFormatW(f)).is_ok();
-    let pic = picture_only(
-        !srcs.is_empty(),
-        has(w!("Shell IDList Array")),
-        has(w!("FileGroupDescriptorW")) || has(w!("FileGroupDescriptor")),
-        IsClipboardFormatAvailable(CF_UNICODETEXT.0 as u32).is_ok(),
-    )
-    .then(|| clip_picture())
-    .flatten();
+    let (idlist, fgd) = (has(w!("Shell IDList Array")), has(w!("FileGroupDescriptorW")) || has(w!("FileGroupDescriptor")));
+    let has_text = IsClipboardFormatAvailable(CF_UNICODETEXT.0 as u32).is_ok();
+    let text = text_only(!srcs.is_empty(), idlist, fgd, has_text, clip_private()).then(|| clip_text()).flatten();
+    let pic = (text.is_none() && picture_only(!srcs.is_empty(), idlist, fgd, has_text)).then(|| clip_picture()).flatten();
     _ = CloseClipboard();
+    match text {
+        Some(Ok(t)) if !t.trim().is_empty() => {
+            save_text(a, &dst, &t);
+            return true;
+        }
+        Some(Err(e)) => {
+            text_failed(&e);
+            return true;
+        }
+        _ => {}
+    }
     if let Some(pic) = pic {
         return start_picture(pic, dst);
     }
@@ -277,6 +284,106 @@ pub(crate) unsafe fn try_paste(a: usize) -> bool {
 // Only a bare picture: files, virtual files (Outlook attachments) and text (Office copies) stay with the shell.
 pub(crate) fn picture_only(has_hdrop_items: bool, has_idlist: bool, has_fgd: bool, has_text: bool) -> bool {
     !(has_hdrop_items || has_idlist || has_fgd || has_text)
+}
+
+// ---------- copied text pasted as a .txt file ----------
+
+// Text alone (a picture beside it, as Office copies carry, doesn't count): files and virtual files stay with
+// the shell, and so does text a password manager marked to be kept out of clipboard monitors and history.
+pub(crate) fn text_only(has_hdrop_items: bool, has_idlist: bool, has_fgd: bool, has_text: bool, private: bool) -> bool {
+    has_text && !(has_hdrop_items || has_idlist || has_fgd || private)
+}
+
+// "ExcludeClipboardContentFromMonitorProcessing" present, or "CanIncludeInClipboardHistory" set to 0. Clipboard open.
+unsafe fn clip_private() -> bool {
+    if IsClipboardFormatAvailable(RegisterClipboardFormatW(w!("ExcludeClipboardContentFromMonitorProcessing"))).is_ok() {
+        return true;
+    }
+    let Ok(h) = GetClipboardData(RegisterClipboardFormatW(w!("CanIncludeInClipboardHistory"))) else { return false };
+    let h = HGLOBAL(h.0);
+    let p = GlobalLock(h) as *const u32;
+    if p.is_null() {
+        return false;
+    }
+    let no = GlobalSize(h) >= 4 && p.read_unaligned() == 0;
+    _ = GlobalUnlock(h);
+    no
+}
+
+pub(crate) const TEXT_MAX: usize = 64 << 20;
+
+// CF_UNICODETEXT up to its first NUL (GlobalSize rounds up, so what follows it is padding). Clipboard open.
+// None = unreadable; Err = too big to save.
+unsafe fn clip_text() -> Option<std::result::Result<String, String>> {
+    let h = HGLOBAL(GetClipboardData(CF_UNICODETEXT.0 as u32).ok()?.0);
+    let size = GlobalSize(h);
+    if size > TEXT_MAX {
+        return Some(Err(format!("{} MB > {} MB", size >> 20, TEXT_MAX >> 20)));
+    }
+    let p = GlobalLock(h) as *const u16;
+    if p.is_null() {
+        return None;
+    }
+    let all = std::slice::from_raw_parts(p, size / 2);
+    let n = all.iter().position(|&c| c == 0).unwrap_or(all.len());
+    let text = String::from_utf16_lossy(&all[..n]);
+    _ = GlobalUnlock(h);
+    Some(Ok(text))
+}
+
+// Characters Windows refuses in a file name.
+const NOT_IN_NAMES: &str = "\\/:*?\"<>|";
+
+// The file's name: the first non-blank line, characters Windows refuses turned to spaces, runs of spaces made
+// one, cut to 40 characters, no '.' or ' ' at the end. Blank or a reserved device name (CON, COM1, … also before
+// a '.') gives "Clipboard text 2026-11-26 153012". Then " (k)" from the second try on, and ".txt".
+pub(crate) fn text_name(ko: bool, text: &str, t: &SYSTEMTIME, k: u32) -> String {
+    let line = text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
+    let mut stem = String::new();
+    let mut len = 0;
+    for c in line.chars() {
+        if len == 40 {
+            break;
+        }
+        let space = c.is_whitespace() || c.is_control() || NOT_IN_NAMES.contains(c);
+        if space && (stem.is_empty() || stem.ends_with(' ')) {
+            continue;
+        }
+        stem.push(if space { ' ' } else { c });
+        len += 1;
+    }
+    let stem = stem.trim_end_matches(['.', ' ']);
+    let device = stem.split('.').next().unwrap_or("").trim_end().to_ascii_uppercase();
+    let numbered = |p: &str| device.len() == 4 && device.starts_with(p) && matches!(device.as_bytes()[3], b'1'..=b'9');
+    let reserved = ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"].contains(&device.as_str()) || numbered("COM") || numbered("LPT");
+    let stem = if stem.is_empty() || reserved {
+        let head = if ko { "클립보드 텍스트" } else { "Clipboard text" };
+        format!("{head} {:04}-{:02}-{:02} {:02}{:02}{:02}", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond)
+    } else {
+        stem.to_string()
+    };
+    let n = if k >= 2 { format!(" ({k})") } else { String::new() };
+    format!("{stem}{n}.txt")
+}
+
+// As Shift+F7: a new file (UTF-8, line breaks as copied, never over an existing one), listed, selected and in rename.
+unsafe fn save_text(a: usize, dst: &str, text: &str) {
+    let (ko, now) = (KO.load(Ordering::Relaxed), GetLocalTime());
+    match save_unique(Path::new(dst), |k| text_name(ko, text, &now, k), text.as_bytes()) {
+        Ok(name) => {
+            let full = Path::new(dst).join(name).to_string_lossy().into_owned();
+            let wide = HSTRING::from(full.as_str());
+            SHChangeNotify(SHCNE_CREATE, SHCNF_PATHW, Some(wide.as_ptr() as _), None);
+            rename_soon((a, full, 40, None));
+        }
+        Err(e) => text_failed(&e.to_string()),
+    }
+}
+
+unsafe fn text_failed(why: &str) {
+    _ = MessageBeep(MB_ICONWARNING);
+    let what = tr("Couldn't save the clipboard text: ", "클립보드 글을 저장하지 못했습니다: ");
+    MessageBoxW(Some(app(|x| x.main)), &HSTRING::from(format!("{what}{why}")), w!("Grids"), MB_ICONWARNING);
 }
 
 pub(crate) enum Pic {

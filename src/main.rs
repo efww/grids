@@ -1259,6 +1259,33 @@ mod tests {
         assert_eq!(image_name(false, &t, 1), "Clipboard image 2026-10-21 153002.png");
         assert_eq!(image_name(true, &t, 2), "클립보드 이미지 2026-10-21 153002 (2).png");
 
+        // text_only(hdrop items, idlist, fgd, text, private): text alone, a picture beside it doesn't count
+        assert!(text_only(false, false, false, true, false));
+        assert!(!text_only(false, false, false, false, false));
+        for k in 0..4 {
+            assert!(!text_only(k == 0, k == 1, k == 2, true, k == 3));
+        }
+
+        let name = |text: &str, k: u32| text_name(false, text, &t, k);
+        assert_eq!(name("Hello world\r\nsecond line", 1), "Hello world.txt");
+        assert_eq!(name("\r\n  \n\t  Meeting notes  \nrest", 1), "Meeting notes.txt");
+        assert_eq!(name("a/b\\c:d*e?f\"g<h>i|j", 1), "a b c d e f g h i j.txt");
+        assert_eq!(name("tab\there   and  \u{1}ctl", 1), "tab here and ctl.txt");
+        assert_eq!(name("Ends with dots...", 1), "Ends with dots.txt");
+        assert_eq!(name(&"x".repeat(50), 1), format!("{}.txt", "x".repeat(40)));
+        assert_eq!(name(&format!("{}. {}", "y".repeat(38), "z".repeat(9)), 1), format!("{}.txt", "y".repeat(38))); // cut at 40, then ". " goes
+        assert_eq!(name(&"가".repeat(45), 1), format!("{}.txt", "가".repeat(40)));
+        assert_eq!(name("Hello", 3), "Hello (3).txt");
+        for dev in ["CON", "con", "Nul", "aux.cert", "com1", "LPT9.txt", "con .x", "CONOUT$"] {
+            assert_eq!(name(dev, 1), "Clipboard text 2026-10-21 153002.txt", "{dev}");
+        }
+        for ok in ["COM0", "COM10", "Console", "conx"] {
+            assert_eq!(name(ok, 1), format!("{ok}.txt"));
+        }
+        assert_eq!(name("  \r\n ... \n", 2), "Clipboard text 2026-10-21 153002 (2).txt");
+        assert_eq!(name("???", 1), "Clipboard text 2026-10-21 153002.txt");
+        assert_eq!(text_name(true, "", &t, 1), "클립보드 텍스트 2026-10-21 153002.txt");
+
         let dir = tree("picture", &[("a.png".into(), 3)]);
         let name = |k: u32| if k == 1 { "a.png".to_string() } else { format!("a ({k}).png") };
         assert_eq!(save_unique(&dir, name, b"new").unwrap(), "a (2).png");

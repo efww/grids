@@ -94,7 +94,7 @@ The exe is not code-signed, so Windows SmartScreen may warn the first time: choo
 | Ctrl+PgDn / Ctrl+PgUp | Next / previous tab |
 | Alt+1 … Alt+9 | Go to tab 1–8 of the active pane; Alt+9: its last tab |
 | Ctrl+Shift+PgDn / Ctrl+Shift+PgUp | Move the current tab right / left (also on a tab's right-click menu) |
-| Ctrl+V | With a copied picture (screenshot, browser image): save it here as a PNG file |
+| Ctrl+V | With a copied picture (screenshot, browser image): save it here as a PNG file; with copied text: save it as a text file named after its first line, ready to rename |
 | Ctrl+S | Save the current session |
 | Ctrl+B | Favourites list (↑/↓ or Home/End, Enter to open, 1 … 9 opens the numbered row at once, Del to remove, Alt+↑/↓ or drag to reorder); screen readers are given the list's name and the row picked ("Documents, C:\Users\…\Documents, 2/5") |
 | Ctrl+Shift+B | Add the active pane's folder to favourites, or remove it if it is one (as ☆+ in its header); the status bar says which |

@@ -38,7 +38,7 @@ pub(crate) fn fresh_name(base: &str, taken: impl Fn(&str) -> bool) -> String {
 
 // file the view should select and rename once it lists it: (pane, full path, ticks left, folder and view
 // the pane must still show with the focus in its list, else the rename is dropped: set for Ctrl+F7 only)
-type NewFile = (usize, String, u8, Option<(String, usize)>);
+pub(crate) type NewFile = (usize, String, u8, Option<(String, usize)>);
 thread_local! {
     static NEW_FILE: RefCell<Option<NewFile>> = const { RefCell::new(None) };
 }
@@ -59,7 +59,7 @@ pub(crate) unsafe fn new_text_file(i: usize) {
 }
 
 // the view lists it a moment later: poll on a thread timer (no window of ours needed)
-unsafe fn rename_soon(f: NewFile) {
+pub(crate) unsafe fn rename_soon(f: NewFile) {
     NEW_FILE.with(|n| *n.borrow_mut() = Some(f));
     SetTimer(None, 0, 50, Some(new_file_tick));
 }
