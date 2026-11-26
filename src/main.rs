@@ -609,6 +609,24 @@ mod tests {
     }
 
     #[test]
+    fn fav_speech_names() {
+        // the whole list: count and keys, or the empty list's note exactly as drawn
+        assert_eq!(fav_list_speech(5, false), "Favourites, 5 folders · ↑/↓ to pick, Enter opens, Del removes");
+        assert_eq!(fav_list_speech(1, false), "Favourites, 1 folder · ↑/↓ to pick, Enter opens, Del removes");
+        assert_eq!(fav_list_speech(5, true), "즐겨찾기, 5개 · ↑/↓로 고르기, Enter 열기, Del 빼기");
+        assert_eq!((fav_list_speech(0, false).as_str(), fav_list_speech(0, true).as_str()), FAV_EMPTY);
+        // one row: folder name, whole path, place in the list; a shell place by its name, not "::{GUID}"
+        let docs = "C:\\Users\\me\\Documents";
+        assert_eq!(fav_speech(docs, 1, 5, false), "Documents, C:\\Users\\me\\Documents, 2/5");
+        assert_eq!(fav_speech(docs, 1, 5, true), "Documents, C:\\Users\\me\\Documents, 2/5");
+        assert_eq!(fav_speech("D:\\", 0, 1, false), "D:, D:\\, 1/1");
+        let bin = "::{645FF040-5081-101B-9F08-00AA002F954E}";
+        assert_eq!((fav_speech(bin, 0, 1, false), fav_speech(bin, 0, 1, true)), ("Recycle Bin, 1/1".into(), "휴지통, 1/1".into()));
+        let pc = "::{20D04FE0-3AEA-1069-A2D8-08002B30309D}";
+        assert_eq!(fav_speech(pc, 0, 3, false), format!("{}, 1/3", short_name(pc)));
+    }
+
+    #[test]
     fn fav_reorder() {
         let v = |s: &[&str]| s.iter().map(|x| x.to_string()).collect::<Vec<_>>();
         // gaps are 0..=n; a row's own two gaps leave it in place
@@ -1265,6 +1283,14 @@ mod tests {
         assert_eq!(drag_heights(drag_heights(vec![1], 0, 1), 2, 1), vec![1, 3]); // left 1, then right column down to row 3
         assert_eq!(drag_heights(vec![2, 2, 2], 1, 0), vec![2]); // moving back left drops columns
         assert_eq!((layout_label(&[2, 2]), layout_label(&[1, 3])), ("2 × 2".into(), "1 | 3".into()));
+        // the picker's label and what a screen reader hears: the same words, then the pane count
+        assert_eq!((grid_label(&[2, 2, 2], false), grid_label(&[2, 2, 2], true)), ("2 × 3".into(), "2행 × 3열".into()));
+        assert_eq!((grid_label(&[2, 1], false), grid_label(&[2, 1], true)), ("Per column  2 | 1".into(), "열마다  2 | 1".into()));
+        assert_eq!((grid_speech(&[2, 2, 2], false), grid_speech(&[2, 2, 2], true)), ("2 × 3, 6 panes".into(), "2행 × 3열, 패널 6개".into()));
+        assert_eq!((grid_speech(&[1], false), grid_speech(&[1], true)), ("1 × 1, 1 pane".into(), "1행 × 1열, 패널 1개".into()));
+        assert_eq!(grid_intro(&[2, 1], false), "Layout, now Per column  2 | 1, 3 panes · arrow keys pick, Enter applies");
+        assert_eq!(grid_intro(&[2, 2], true), "레이아웃, 지금 2행 × 2열, 패널 4개 · 방향키로 고르고 Enter로 적용");
+        assert_eq!(grid_label(&[], false), "");
 
         // green dot: layout, ratios and view modes count; folders and unknown (0) baseline views don't
         let base = s.clone();

@@ -14,7 +14,7 @@ Every pane is a real Windows Explorer view, so right-click menus, drag and drop,
 
 ## Features
 
-- **Free layouts**: up to 4 columns, each with its own number of panes (1 to 4). Click the layout button for an even grid, or press and drag across it to set each column; six presets for common setups. Adding or removing cells keeps every remaining pane in its place, and a pane whose cell comes back returns there.
+- **Free layouts**: up to 4 columns, each with its own number of panes (1 to 4). Click the layout button for an even grid, or press and drag across it to set each column; six presets for common setups. With the keyboard, arrow keys pick an even grid and Enter applies it; screen readers are given the layout picked ("2 × 3, 6 panes"). Adding or removing cells keeps every remaining pane in its place, and a pane whose cell comes back returns there.
 - **Resizable everything**: drag any boundary between panes or the sidebar (hovering one marks it with a line in the selection colour); double-click a boundary to even it out.
 - **Folder tree** that follows the active pane and keeps the current folder's name in view, even in deep folders.
 - **Per-pane toolbar**: address bar (led by the folder's icon, as in Explorer), back / forward / up, name filter (`*.pdf;*.txt` or any part of a name; click its icon or press Alt+↓ in it to pick a file type: pictures, videos, music, documents, archives, programs, or the selected file's type; an empty filter shows "Filter names  Ctrl+F"), open the selected folder in another pane (its columns come along, so you can set one pane up and copy it around) or copy / move the selected files to another pane's folder (up to 10,000; the same submenus also list up to 12 favourite folders and 8 recent folders and end with "Choose another folder…", Windows' folder picker, so files go there without opening it in a pane; the status line says where they're going, and Windows' progress window and Ctrl+Z undo work as usual), swap places with another pane (nothing is reopened: folder, history, selection, filter and columns move along; the save button's dot shows the new arrangement until you save or swap back), favourite toggle; drag a folder onto a pane's top bar to open it there. Screen readers name the fields by pane ("Pane 2 address", "Pane 2 name filter").
@@ -96,7 +96,7 @@ The exe is not code-signed, so Windows SmartScreen may warn the first time: choo
 | Ctrl+Shift+PgDn / Ctrl+Shift+PgUp | Move the current tab right / left (also on a tab's right-click menu) |
 | Ctrl+V | With a copied picture (screenshot, browser image): save it here as a PNG file |
 | Ctrl+S | Save the current session |
-| Ctrl+B | Favourites list (↑/↓, Enter to open, Del to remove, Alt+↑/↓ or drag to reorder) |
+| Ctrl+B | Favourites list (↑/↓, Enter to open, Del to remove, Alt+↑/↓ or drag to reorder); screen readers are given the list's name and the row picked ("Documents, C:\Users\…\Documents, 2/5") |
 | Ctrl+/ | Keyboard shortcuts (this list): ↑/↓, PgUp/PgDn, Home/End step through it a row at a time, and screen readers read each row's keys and description. Its find box (Ctrl+F or Tab) keeps only the rows with every word typed, in English or Korean; ↓ / Enter goes to the first match. Esc empties the box, then closes |
 | F1 | Help (opens this README on GitHub, in the UI language) |
 | Ctrl+Shift+M | Maximize / restore the active pane (or double-click its header) |

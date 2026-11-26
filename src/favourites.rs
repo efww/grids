@@ -120,6 +120,37 @@ pub(crate) fn fav_step(vk: VIRTUAL_KEY, ctrl: bool, alt: bool, shift: bool) -> O
     }
 }
 
+pub(crate) const FAV_EMPTY: (&str, &str) = ("No favourites yet · add one with ☆+ in a pane header", "즐겨찾기가 없습니다 · 패널 머리줄의 ☆+로 추가");
+
+// What a screen reader hears for the whole list: the count and the keys, or the empty list's note as drawn.
+pub(crate) fn fav_list_speech(n: usize, ko: bool) -> String {
+    match (n, ko) {
+        (0, ko) => if ko { FAV_EMPTY.1 } else { FAV_EMPTY.0 }.to_string(),
+        (n, true) => format!("즐겨찾기, {n}개 · ↑/↓로 고르기, Enter 열기, Del 빼기"),
+        (1, false) => "Favourites, 1 folder · ↑/↓ to pick, Enter opens, Del removes".to_string(),
+        (n, false) => format!("Favourites, {n} folders · ↑/↓ to pick, Enter opens, Del removes"),
+    }
+}
+
+// The row k of n the keys are on: "Documents, C:\Users\me\Documents, 2/5"; a shell place by its name alone.
+pub(crate) fn fav_speech(path: &str, k: usize, n: usize, ko: bool) -> String {
+    match shell_place(path, ko) {
+        Some(place) => format!("{place}, {}/{n}", k + 1),
+        // another "::{GUID}" place (This PC): its short name alone, the GUID isn't read out
+        None if path.starts_with("::") => format!("{}, {}/{n}", short_name(path), k + 1),
+        None => format!("{}, {path}, {}/{n}", short_name(path), k + 1),
+    }
+}
+
+// The popup's name follows the highlighted row (Enter / Del's target), else the whole list; said out loud only
+// when the keys moved it, the mouse's highlight just keeps it right.
+unsafe fn fav_tell(h: HWND, say: bool) {
+    let (row, n) = app(|a| (a.fav_hot.and_then(|(k, _)| Some((k, a.s.favs.get(k)?.clone()))), a.s.favs.len()));
+    let ko = KO.load(Ordering::Relaxed);
+    let name = row.map_or_else(|| fav_list_speech(n, ko), |(k, p)| fav_speech(&p, k, n, ko));
+    a11y_say(h, &name, say);
+}
+
 pub(crate) unsafe fn open_favs() {
     let (main, dpi, open, closed, n) = app(|a| (a.main, a.dpi, a.fav_popup, a.fav_closed, a.s.favs.len()));
     // a click on the button first deactivates (closes) the popup; don't reopen it right away
@@ -151,12 +182,15 @@ pub(crate) unsafe fn open_favs() {
         (a.fav_hot, a.fav_prev, a.fav_top, a.fav_wheel) = (None, prev, 0, 0);
         (a.fav_max_h, a.fav_above) = (max_h, up.then_some(y + g.h));
     });
-    let style = WS_POPUP | WS_VISIBLE;
-    let Ok(h) = CreateWindowExW(WS_EX_TOOLWINDOW, w!("GridsFav"), w!(""), style, x, y, g.w, g.h, Some(main), None, None, None) else {
+    // hidden until a screen reader has its role and name, so the first thing it reads is the list
+    let Ok(h) = CreateWindowExW(WS_EX_TOOLWINDOW, w!("GridsFav"), w!(""), WS_POPUP, x, y, g.w, g.h, Some(main), None, None, None) else {
         return;
     };
     let square = DWMWCP_DONOTROUND;
     _ = DwmSetWindowAttribute(h, DWMWA_WINDOW_CORNER_PREFERENCE, &square as *const _ as _, 4);
+    a11y_role(h, ROLE_SYSTEM_LIST);
+    a11y_name(h, Some(&fav_list_speech(n, KO.load(Ordering::Relaxed))));
+    _ = ShowWindow(h, SW_SHOW);
     app(|a| a.fav_popup = h);
 }
 
@@ -171,7 +205,7 @@ pub(crate) unsafe fn paint_favs(h: HWND) {
         fill(dc, rc, pal().card);
         frame(dc, rc, 1, pal().line);
         if favs.is_empty() {
-            text(dc, rc, tr("No favourites yet · add one with ☆+ in a pane header", "즐겨찾기가 없습니다 · 패널 머리줄의 ☆+로 추가"), font, pal().sub, DT_CENTER);
+            text(dc, rc, tr2(FAV_EMPTY), font, pal().sub, DT_CENTER);
         }
         if let Some(bar) = g.bar {
             fill(dc, bar, pal().line);
@@ -239,6 +273,7 @@ pub(crate) extern "system" fn fav_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                 if let Some((k, on_x)) = fav_hit(&g, x, y) {
                     app(|a| (a.fav_hot, a.fav_press) = (Some((k, on_x)), Some(FavPress { from: k, on_x, x0: x, y0: y, live: false, slot: None })));
                     SetCapture(h);
+                    fav_tell(h, false);
                 }
             }
             WM_MOUSEMOVE => {
@@ -257,6 +292,7 @@ pub(crate) extern "system" fn fav_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                 let hot = fav_hit(&g, x, y);
                 if app(|a| std::mem::replace(&mut a.fav_hot, hot)) != hot {
                     _ = InvalidateRect(Some(h), None, false);
+                    fav_tell(h, false);
                 }
             }
             WM_CAPTURECHANGED => cancel(),
@@ -286,6 +322,7 @@ pub(crate) extern "system" fn fav_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                     let shown = |k: usize| k >= g.first && k < g.first + g.rows.len();
                     let hot = if inside(pt.x, pt.y) { fav_hit(&g, pt.x, pt.y) } else { app(|a| a.fav_hot).filter(|&(k, _)| shown(k)) };
                     app(|a| a.fav_hot = hot);
+                    fav_tell(h, false);
                 }
                 _ = InvalidateRect(Some(h), None, false);
             }
@@ -296,6 +333,7 @@ pub(crate) extern "system" fn fav_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                     let slot = if step == Some(-1) { k.checked_sub(1) } else { Some(k + 2) };
                     if let Some(to) = slot.and_then(|s| app(|a| move_fav(&mut a.s.favs, k, s))) {
                         moved(Some(to));
+                        fav_tell(h, true);
                     }
                 }
             }
@@ -319,6 +357,7 @@ pub(crate) extern "system" fn fav_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                     _ = SetWindowPos(h, None, wr.left, y, g.w, g.h, SWP_NOZORDER | SWP_NOACTIVATE);
                     _ = InvalidateRect(Some(h), None, false);
                     repaint_fav_buttons();
+                    fav_tell(h, keys); // the row that took its place, or the empty list's note
                 };
                 let open = |k: usize| {
                     let (i, path) = app(|a| (a.s.active, a.s.favs[k].clone()));
@@ -335,7 +374,10 @@ pub(crate) extern "system" fn fav_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                     }
                     let (x, y) = xy(lp);
                     match fav_release(p, inside(x, y), fav_hit(&g, x, y), fav_slot(&g, y)) {
-                        Release::Move(from, slot) => moved(app(|a| move_fav(&mut a.s.favs, from, slot))),
+                        Release::Move(from, slot) => {
+                            moved(app(|a| move_fav(&mut a.s.favs, from, slot)));
+                            fav_tell(h, false);
+                        }
                         Release::Open(k) => open(k),
                         Release::Remove(k) => remove(k, false),
                         Release::None => _ = InvalidateRect(Some(h), None, false),
@@ -361,6 +403,7 @@ pub(crate) extern "system" fn fav_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                         let next = if k == VK_DOWN { cur.map_or(0, |k| (k + 1) % n) } else { cur.map_or(n - 1, |k| (k + n - 1) % n) };
                         app(|a| (a.fav_hot, a.fav_top) = (Some((next, false)), fav_scroll_to(g.first, next, g.rows.len(), n)));
                         _ = InvalidateRect(Some(h), None, false);
+                        fav_tell(h, true);
                     }
                     VK_RETURN => if let Some(k) = cur { open(k) },
                     VK_DELETE => if let Some(k) = cur { remove(k, true) },
@@ -371,7 +414,10 @@ pub(crate) extern "system" fn fav_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                 app(|a| a.fav_press = None);
                 _ = PostMessageW(Some(h), WM_CLOSE, WPARAM(0), LPARAM(0));
             }
-            WM_DESTROY => app(|a| (a.fav_popup, a.fav_closed) = (HWND::default(), Some(Instant::now()))),
+            WM_DESTROY => {
+                a11y_clear(h);
+                app(|a| (a.fav_popup, a.fav_closed) = (HWND::default(), Some(Instant::now())));
+            }
             _ => return DefWindowProcW(h, msg, wp, lp),
         }
         LRESULT(0)

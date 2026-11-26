@@ -66,6 +66,27 @@ pub(crate) unsafe fn a11y_name(h: HWND, name: Option<&str>) {
     };
 }
 
+// The role a screen reader gives a drawn popup (the ★ list is a list).
+pub(crate) unsafe fn a11y_role(h: HWND, role: u32) {
+    let Ok(acc) = CoCreateInstance::<_, IAccPropServices>(&CLSID_AccPropServices, None, CLSCTX_INPROC_SERVER) else { return };
+    _ = acc.SetHwndProp(h, OBJID_CLIENT.0 as u32, CHILDID_SELF, PROPID_ACC_ROLE, &VARIANT::from(role as i32));
+}
+
+// A new name, said out loud: the focus stays where it is, so a changed name alone is not read.
+// Like a11y_name, never inside app(): the reader may call straight back in.
+pub(crate) unsafe fn a11y_say(h: HWND, name: &str, say: bool) {
+    a11y_name(h, Some(name));
+    if say {
+        NotifyWinEvent(EVENT_OBJECT_NAMECHANGE, h, OBJID_CLIENT.0, CHILDID_SELF as i32);
+    }
+}
+
+// Name and role off before a popup goes, so a reused HWND value doesn't inherit them.
+pub(crate) unsafe fn a11y_clear(h: HWND) {
+    let Ok(acc) = CoCreateInstance::<_, IAccPropServices>(&CLSID_AccPropServices, None, CLSCTX_INPROC_SERVER) else { return };
+    _ = acc.ClearHwndProps(h, OBJID_CLIENT.0 as u32, CHILDID_SELF, &[PROPID_ACC_NAME, PROPID_ACC_ROLE]);
+}
+
 // filter_hint_proc's ref data: the shortcut window's find box (0: a pane's name filter)
 pub(crate) const HINT_KEYS: usize = 1;
 
