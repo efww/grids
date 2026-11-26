@@ -78,6 +78,7 @@ mod everything;
 mod update;
 mod star;
 mod hashsum;
+mod organize;
 mod jumplist;
 mod autostart;
 
@@ -113,6 +114,7 @@ use everything::*;
 use update::*;
 use star::*;
 use hashsum::*;
+use organize::*;
 use jumplist::*;
 use autostart::*;
 

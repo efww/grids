@@ -707,8 +707,8 @@ pub(crate) unsafe fn toggle_ctx_menu() {
 
 // Adds "Which program is using this?" and, with WinMerge found, "Compare with WinMerge" to the ⇄ menu.
 // others: (pane, menu label, folder it showed). Returns the WinMerge exe for shell_pick.
-// all_files: the selection is up to HASH_MAX items, none of them a folder (checksum menu item).
-pub(crate) unsafe fn shell_menu(menu: HMENU, src: usize, picked: &std::result::Result<Vec<String>, Pick>, all_files: bool, others: &[(usize, HSTRING, String)]) -> Option<String> {
+// no_dirs: none of the selected items is a folder (checksum, up to HASH_MAX, and date folders).
+pub(crate) unsafe fn shell_menu(menu: HMENU, src: usize, picked: &std::result::Result<Vec<String>, Pick>, no_dirs: bool, others: &[(usize, HSTRING, String)]) -> Option<String> {
     _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
     let flags = if picked.is_ok() { MF_STRING } else { MF_STRING | MF_GRAYED };
     _ = AppendMenuW(menu, flags, ID_INUSE, &HSTRING::from(tr("Which program is using this?", "어떤 프로그램이 쓰고 있나요?")));
@@ -716,13 +716,14 @@ pub(crate) unsafe fn shell_menu(menu: HMENU, src: usize, picked: &std::result::R
     let (flags, label) = match hash_busy() {
         Some(pct) => (MF_STRING, tr("Stop the checksum ({p}%)", "체크섬 계산 중지 ({p}%)").replace("{p}", &pct.to_string())),
         None => {
-            let ok = all_files && picked.as_ref().is_ok_and(|p| p.len() <= HASH_MAX);
+            let ok = no_dirs && picked.as_ref().is_ok_and(|p| p.len() <= HASH_MAX);
             (if ok { MF_STRING } else { MF_STRING | MF_GRAYED },tr("Checksum (SHA-256) of the selected files", "선택한 파일의 체크섬(SHA-256)").to_string())
         }
     };
     _ = AppendMenuW(menu, flags, ID_HASH, &HSTRING::from(label));
     // before the WinMerge lookup: it ends this function early on a PC without WinMerge
     let here = app(|a| a.s.paths[src].clone());
+    org_menu(menu, org_ok(picked, no_dirs, &here));
     let label = match picked {
         Ok(p) if group_ok(p, &here) => {
             let t = tr("Move {n} selected items into a new folder  (Ctrl+F7)", "선택한 {n}개를 새 폴더로 묶기  (Ctrl+F7)");
@@ -752,7 +753,7 @@ pub(crate) unsafe fn shell_menu(menu: HMENU, src: usize, picked: &std::result::R
 }
 
 pub(crate) fn is_shell_pick(p: usize) -> bool {
-    p == ID_INUSE || p == ID_WM_PAIR || p == ID_HASH || p == ID_GROUP || (ID_WM_PANE..ID_WM_PANE + MAXP).contains(&p)
+    p == ID_INUSE || p == ID_WM_PAIR || p == ID_HASH || p == ID_GROUP || is_org_pick(p) || (ID_WM_PANE..ID_WM_PANE + MAXP).contains(&p)
 }
 
 pub(crate) unsafe fn shell_pick(h: HWND, src: usize, p: usize, picked: std::result::Result<Vec<String>, Pick>, exe: Option<String>, others: &[(usize, HSTRING, String)]) {
@@ -761,6 +762,7 @@ pub(crate) unsafe fn shell_pick(h: HWND, src: usize, p: usize, picked: std::resu
         (ID_HASH, picked, _) => hash_pick(h, picked),
         // the selection the menu counted, checked again against the folder the pane shows now
         (ID_GROUP, picked, _) => group_into_folder(src, picked),
+        (p, picked, _) if is_org_pick(p) => organize(src, p - ID_ORG, picked),
         (ID_WM_PAIR, Ok(two), Some(exe)) if two.len() == 2 => run_winmerge(&exe, &two[0], &two[1]),
         (p, _, Some(exe)) if p >= ID_WM_PANE => {
             // only the folder the menu showed for that pane

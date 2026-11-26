@@ -292,7 +292,7 @@ unsafe fn layout(h: HWND) {
 
 // ---------- opening: the active pane's selection, or every file in its folder ----------
 
-fn local_date(ft: u64) -> [u16; 6] {
+pub(crate) fn local_date(ft: u64) -> [u16; 6] {
     let ft = FILETIME { dwLowDateTime: ft as u32, dwHighDateTime: (ft >> 32) as u32 };
     let (mut utc, mut st) = (SYSTEMTIME::default(), SYSTEMTIME::default());
     unsafe {
