@@ -3537,6 +3537,45 @@ mod tests { tr("in", "안") }
         assert_eq!(s.tab[0], 1);
     }
 
+    // Ctrl+Enter / Ctrl+Shift+Enter: folders as tabs right after the current one
+    #[test]
+    fn tabs_open_from_list() {
+        let v = |x: &[&str]| x.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        // one tab (none saved, a stale tab number): it stays current and keeps its folder
+        let mut s = Session::default();
+        (s.paths[0], s.tab[0]) = ("a".into(), 5);
+        assert_eq!(s.open_tabs(0, &v(&["p", "q"]), false), None);
+        assert_eq!((s.tabs[0].clone(), s.tab[0], s.paths[0].as_str()), (v(&["a", "p", "q"]), 0, "a"));
+        // a middle tab: in order after it; its stale entry takes the folder on display
+        s.tabs[0] = v(&["x", "old", "z"]);
+        (s.tab[0], s.paths[0]) = (1, "y".into());
+        assert_eq!(s.open_tabs(0, &v(&["p", "q"]), false), None);
+        assert_eq!((s.tabs[0].clone(), s.tab[0]), (v(&["x", "y", "p", "q", "z"]), 1));
+        // the last tab, switching: the first new one is current and browsed to; the display waits for on_nav
+        s.tabs[0] = v(&["x", "y"]);
+        s.tab[0] = 1;
+        assert_eq!(s.open_tabs(0, &v(&["p"]), true).as_deref(), Some("p"));
+        assert_eq!((s.tabs[0].clone(), s.tab[0], s.paths[0].as_str()), (v(&["x", "y", "p"]), 2, "y"));
+        // nothing to open: nothing changes
+        assert_eq!(s.open_tabs(0, &[], true), None);
+        assert_eq!((s.tabs[0].len(), s.tab[0]), (3, 2));
+        // at most OPEN_TABS_MAX at a time
+        let mut s = Session::default();
+        s.paths[0] = "a".into();
+        let many: Vec<String> = (0..20).map(|k| format!("d{k}")).collect();
+        s.open_tabs(0, &many, false);
+        assert_eq!(s.tab_list(0).len(), 1 + OPEN_TABS_MAX);
+        assert_eq!(s.tabs[0][1..], many[..OPEN_TABS_MAX]);
+        // a path a tab can't keep
+        assert!(tab_path_ok(r"C:\Users\Public") && tab_path_ok("::{20D04FE0-3AEA-1069-A2D8-08002B30309D}"));
+        for bad in ["", r"C:\a|b", "C:\\a\nb", "C:\\a\rb"] {
+            assert!(!tab_path_ok(bad), "{bad:?}");
+        }
+        assert_eq!(opened_tabs_note(1, false), "Opened 1 tab · Ctrl+PgDn to go there");
+        assert_eq!(opened_tabs_note(3, false), "Opened 3 tabs · Ctrl+PgDn to go there");
+        assert_eq!(opened_tabs_note(3, true), "탭 3개를 열었습니다 · Ctrl+PgDn으로 이동");
+    }
+
     #[test]
     fn tabs_move() {
         // one tab: nothing to move, nothing indexed

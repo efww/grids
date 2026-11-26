@@ -427,6 +427,19 @@ impl Session {
         (self.tabs[i], self.tab[i]) = (t, k);
     }
 
+    /// Ctrl+Enter / Ctrl+Shift+Enter in a file list: `paths` as new tabs right after the current one, in order
+    /// (at most OPEN_TABS_MAX). `switch`: the first new one becomes current, its folder to browse to; otherwise
+    /// the current tab and the folder on display stay (None). Nothing to open: nothing changes.
+    pub(crate) fn open_tabs(&mut self, i: usize, paths: &[String], switch: bool) -> Option<String> {
+        let paths = &paths[..paths.len().min(OPEN_TABS_MAX)];
+        let first = paths.first()?.clone();
+        let mut t = self.tab_list(i);
+        let cur = self.tab[i].min(t.len() - 1);
+        t.splice(cur + 1..cur + 1, paths.iter().cloned());
+        (self.tabs[i], self.tab[i]) = (t, if switch { cur + 1 } else { cur });
+        switch.then_some(first)
+    }
+
     /// Ctrl+K / the tab menu's Duplicate: a copy of tab k right after it, made current. The folder to browse to,
     /// None when k was the current one (same folder) or there is no such tab.
     pub(crate) fn dup_tab(&mut self, i: usize, k: usize) -> Option<String> {
@@ -835,6 +848,15 @@ pub(crate) fn filter_spec(text: &str) -> String {
     let parts = text.split(';').map(str::trim).filter(|t| !t.is_empty());
     let parts = parts.map(|t| if t.contains(['*', '?']) { t.to_string() } else { format!("*{t}*") });
     parts.collect::<Vec<_>>().join(";")
+}
+
+/// Most tabs one Ctrl+Enter opens: tabs have no least width, so many more at once would leave them threads.
+pub(crate) const OPEN_TABS_MAX: usize = 8;
+
+/// A path a tab can keep: tabs are saved as "b{i}=current|path|path", so a '|' would split it into false tabs
+/// and a line break would drop the pane's whole tab line.
+pub(crate) fn tab_path_ok(p: &str) -> bool {
+    !p.is_empty() && !p.contains(['|', '\r', '\n'])
 }
 
 /// A folder you browse, not a ZIP/CAB/7z (Windows reports those as FOLDER|STREAM): those match by name like files.

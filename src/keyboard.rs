@@ -283,6 +283,22 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
             spin_refresh(a);
         }
         _ if addr || filt => return false,
+        // Ctrl+Enter: the chosen folders as tabs behind this one, Ctrl+Shift+Enter: the focused folder in a new tab,
+        // gone to (a browser's Ctrl+click / Ctrl+Shift+click). Files, no folder or tabs off: the view's own Enter.
+        // Held, it opens once: the Enter still down doesn't open an item in the list that comes.
+        VK_RETURN if ctrl && !alt && tabs_on() && list() => {
+            let paths = if repeat { Vec::new() } else { tab_targets(a, shift) };
+            if paths.is_empty() {
+                return shell();
+            }
+            app(|x| x.held = Some(VK_RETURN.0));
+            if shift {
+                tab_said(a, false, || open_in_tabs(a, &paths, true));
+            } else {
+                open_in_tabs(a, &paths, false);
+                set_note(opened_tabs_note(paths.len().min(OPEN_TABS_MAX), KO.load(Ordering::Relaxed)));
+            }
+        }
         // Insert: flip the focused item's selection and step down, as in Total Commander; held, it auto-repeats
         // (Ctrl+Insert / Shift+Insert stay Explorer's copy / paste)
         VK_INSERT if !ctrl && !shift && !alt && list() => mark_and_next(a),

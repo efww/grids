@@ -113,6 +113,51 @@ pub(crate) unsafe fn new_tab(i: usize) {
     rehover_pane(i);
 }
 
+// Ctrl+Enter / Ctrl+Shift+Enter in a file list (as a browser's Ctrl+click on links): folders as new tabs after
+// the current one. `switch`: the first one opens now (undone when it can't be); otherwise they wait behind.
+// True when a browse was started.
+pub(crate) unsafe fn open_in_tabs(i: usize, paths: &[String], switch: bool) -> bool {
+    if switch {
+        return tab_go(i, |s| s.open_tabs(i, paths, true));
+    }
+    app(|a| a.s.open_tabs(i, paths, false));
+    repaint_tabs(i);
+    rehover_pane(i);
+    false
+}
+
+// How far into the selection Ctrl+Enter looks for folders: tens of thousands of selected files would otherwise
+// each be asked whether they are a folder.
+const TAB_SCAN_MAX: u32 = 2000;
+
+// The folders Ctrl+Enter opens as tabs: the selected ones when the focused item is among them, else the focused
+// one (`one`: the focused one only). Real folders (no ZIPs) with a path a tab can keep, in view order, at most
+// OPEN_TABS_MAX: the selection is read only that far, and no further than its first TAB_SCAN_MAX items.
+pub(crate) unsafe fn tab_targets(i: usize, one: bool) -> Vec<String> {
+    let Some(fv) = view_of::<IFolderView2>(i) else { return Vec::new() };
+    let Some(focus) = fv.GetFocusedItem().ok().filter(|&k| k >= 0) else { return Vec::new() };
+    let folder = |it: &IShellItem| {
+        let attr = it.GetAttributes(SFGAO_FLAGS(SFGAO_FOLDER.0 | SFGAO_STREAM.0)).unwrap_or_default().0;
+        real_folder(attr).then(|| it.GetDisplayName(SIGDN_DESKTOPABSOLUTEPARSING).ok().map(|p| pwstr(p))).flatten().filter(|p| tab_path_ok(p))
+    };
+    if one || is_selected(&fv, focus) != Some(true) {
+        return fv.GetItem::<IShellItem>(focus).ok().and_then(|it| folder(&it)).into_iter().collect();
+    }
+    let sel = fv.Items::<IShellItemArray>(_SVGIO(SVGIO_SELECTION.0 | SVGIO_FLAG_VIEWORDER.0)).or_else(|_| fv.GetSelection(false));
+    let Ok(arr) = sel else { return Vec::new() };
+    let n = arr.GetCount().unwrap_or(0).min(TAB_SCAN_MAX);
+    (0..n).filter_map(|k| folder(&arr.GetItemAt(k).ok()?)).take(OPEN_TABS_MAX).collect()
+}
+
+// "Opened 3 tabs · Ctrl+PgDn to go there": what Ctrl+Enter did, in the status line (read out as any note).
+pub(crate) fn opened_tabs_note(n: usize, ko: bool) -> String {
+    match (ko, n) {
+        (true, n) => format!("탭 {n}개를 열었습니다 · Ctrl+PgDn으로 이동"),
+        (false, 1) => "Opened 1 tab · Ctrl+PgDn to go there".into(),
+        (false, n) => format!("Opened {n} tabs · Ctrl+PgDn to go there"),
+    }
+}
+
 // The tabs moved under a still pointer (picked, closed, added, by mouse, key or menu): shade what is there now.
 unsafe fn rehover_pane(i: usize) {
     if let Some(h) = app(|a| a.panes.get(i)?.as_ref().map(|p| p.hwnd)) {

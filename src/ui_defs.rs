@@ -389,6 +389,7 @@ Alt+↓ in the filter\tFile types: pictures, videos, documents ... (or click the
 Ctrl+Shift+F\tSearch the whole PC with Everything, while it runs (or the orange magnifier): ↑/↓ choose, Enter shows the item in the active pane, Ctrl+Enter opens a folder, Alt+O only under this folder\n\
 Ctrl+T / Ctrl+W\tNew tab (same folder) / close tab, with tabs on (View menu)\n\
 Ctrl+K\tDuplicate the current tab\n\
+Ctrl+Enter / Ctrl+Shift+Enter\tIn the file list, with tabs on: open the selected folders (or the focused one) as new tabs after this one / open the focused folder in a new tab and go there\n\
 Ctrl+PgDn / Ctrl+PgUp\tNext / previous tab\n\
 Alt+1 … Alt+9\tGo to tab 1–8 of the active pane; Alt+9: its last tab\n\
 Ctrl+Shift+PgDn / Ctrl+Shift+PgUp\tMove the current tab right / left (also on a tab's right-click menu)\n\
@@ -452,6 +453,7 @@ Ctrl+F\t필터 (*.pdf;*.txt 또는 이름 일부, 폴더는 항상 표시)\n\
 Ctrl+Shift+F\tEverything으로 PC 전체 검색, Everything이 실행 중일 때 (주황 돋보기도 가능): ↑/↓ 고르기, Enter는 지금 패널에서 그 항목 보기, Ctrl+Enter는 폴더 열기, Alt+O는 이 폴더 아래에서만\n\
 Ctrl+T / Ctrl+W\t새 탭(같은 폴더) / 탭 닫기, 탭을 켰을 때 (보기 메뉴)\n\
 Ctrl+K\t지금 탭 복제\n\
+Ctrl+Enter / Ctrl+Shift+Enter\t파일 목록에서, 탭을 켰을 때: 선택한 폴더(또는 포커스한 폴더)를 지금 탭 뒤에 새 탭으로 열기 / 포커스한 폴더를 새 탭으로 열고 바로 그 탭으로\n\
 Ctrl+PgDn / Ctrl+PgUp\t다음 / 이전 탭\n\
 Alt+1 … Alt+9\t지금 패널의 1~8번째 탭으로 이동, Alt+9는 마지막 탭\n\
 Ctrl+Shift+PgDn / Ctrl+Shift+PgUp\t지금 탭을 오른쪽 / 왼쪽으로 옮기기 (탭 오른쪽 클릭 메뉴에도 있음)\n\

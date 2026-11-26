@@ -283,7 +283,7 @@ pub(crate) fn ins_flags(cur_sel: bool, next_sel: bool) -> (u32, u32) {
     ((flip | SVSI_FOCUSED.0) as u32, (keep | SVSI_FOCUSED.0 | SVSI_ENSUREVISIBLE.0) as u32)
 }
 
-unsafe fn is_selected(fv: &IFolderView2, k: i32) -> Option<bool> {
+pub(crate) unsafe fn is_selected(fv: &IFolderView2, k: i32) -> Option<bool> {
     let pidl = fv.Item(k).ok()?;
     let state = fv.GetSelectionState(pidl);
     CoTaskMemFree(Some(pidl as _));
