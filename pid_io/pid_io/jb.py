@@ -94,8 +94,10 @@ def sizes(v):
 
 def capacity(v):
     """most field cables one JB can take (largest size, the stricter spare)."""
-    need = 1 + max(float(v["jb_spare"]), float(v["term_spare"]))
-    return max(1, int(math.floor(sizes(v)[-1] / need + 1e-9)))
+    cap = int(math.floor(sizes(v)[-1] / (1 + float(v["term_spare"])) + 1e-9))
+    top_m = sizes(v)[-1] if v["multi_sizing"].startswith("JB") else min(sizes(v)[-1], _ints(v.get("multi_std"), [80])[-1])
+    cap = min(cap, int(math.floor(top_m / (1 + float(v["jb_spare"])) + 1e-9)))
+    return max(1, cap)
 
 
 def size_for(n, v):

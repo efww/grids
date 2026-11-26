@@ -190,7 +190,7 @@ def _spec(form: str, sq: str, shield: str) -> str:
 
 def _round_len(m: float, v: dict) -> int:
     step = max(1, int(v["len_round"] or 1))
-    return int(math.ceil(m * (1 + float(v["len_margin"])) / step - 1e-9) * step)
+    return max(step, int(math.ceil(m * (1 + float(v["len_margin"])) / step - 1e-9) * step))   # no 0 m cable
 
 
 def _std(need: int) -> int:
@@ -557,10 +557,13 @@ def build(rows, s: dict, area_map: dict | None = None, layout=None):
                                "basis": f"{motor} 신호 {len(members)}점 × 2심 · 스페어 {spare:.0%} · {mhow}"})
 
     # ---------------- comm ports: home run (one per port when redundant, else one per package / MCC)
+    share = {}                                       # single: one cable per package carries all its port rows
     if not v["comm_redund"].startswith("이중"):
         one = {}
         for r in comm:
-            one.setdefault((r.vendor_pkg or r.equip or ("MCC" if r.location == "MCC" else r.tag), r.system), r)
+            k = (r.vendor_pkg or r.equip or ("MCC" if r.location == "MCC" else r.tag), r.system)
+            one.setdefault(k, r)
+            share.setdefault(id(one[k]), []).append(r.tag)
         comm = list(one.values())
     for r in comm:
         src = r.vendor_pkg or r.equip or ("MCC" if r.location == "MCC" else r.tag)
@@ -576,7 +579,7 @@ def build(rows, s: dict, area_map: dict | None = None, layout=None):
                        "frm_type": "MCC" if r.location == "MCC" else "패키지", "to": room(r.system if r.system in SYS_LETTER else "DCS"),
                        "to_type": "룸", "spec": v["FO_spec"] if fo else v["COMM_spec"], "io": r.io, "system": r.system, "is": "Non-IS",
                        "length": _round_len(tl, v), "area": area, "dwg": r.dwg, "coord": r.coord, "unit": r.unit,
-                       "tags": [r.tag],
+                       "tags": share.get(id(r), [r.tag]),
                        "basis": f"{'패키지 PLC 통신 (광)' if fo else '통신 포트 직결'} · {v['comm_redund'].split(' ')[0]} · {how}"})
 
     order = {"분기": 0, "멀티": 0, "패키지": 1, "MCC": 2, "통신": 3}   # JB branches stay next to their multi
