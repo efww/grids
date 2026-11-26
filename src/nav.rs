@@ -1756,15 +1756,142 @@ pub(crate) unsafe fn drop_items(d: &Ref<IDataObject>) -> Option<IShellItemArray>
     (arr.GetCount().unwrap_or(0) > 0).then_some(arr)
 }
 
+// A folder's own shell drop target (what Explorer's folder icon takes drops with): copy / move / link by
+// Explorer's rules (same drive moves, Ctrl copies, Shift moves, Alt links, a right-button drag asks), with the
+// shell's conflict dialog, progress and Ctrl+Z; the Recycle Bin's deletes. None: the place takes no drops.
+pub(crate) unsafe fn folder_drop_target(place: &str) -> Option<IDropTarget> {
+    let item: IShellItem = if place == RECYCLE_BIN {
+        SHGetKnownFolderItem(&FOLDERID_RecycleBinFolder, KF_FLAG_DEFAULT, None).ok()?
+    } else {
+        SHCreateItemFromParsingName(&HSTRING::from(place), None).ok()?
+    };
+    item.BindToHandler(None, &BHID_SFUIObject).ok()
+}
+
+// A drag passed on to one folder's shell drop target at a time. Its target is made once on entering that folder
+// (a lost share can take seconds), left before another is entered, and let go on leave or drop.
+// Never called inside app(): the shell's dialogs run messages that come back into Grids.
+#[derive(Default)]
+pub(crate) struct Relay {
+    data: RefCell<Option<IDataObject>>,                // DragOver brings none: kept from DragEnter for the next folder
+    allowed: Cell<DROPEFFECT>,                         // what the source allows, as it came (not drop_pick's)
+    to: RefCell<Option<(String, Option<IDropTarget>)>>, // the folder over, and its target (None: takes no drops)
+    keys: Cell<MODIFIERKEYS_FLAGS>, // keys at the last DragEnter / DragOver: the drop's own have lost the mouse button
+    eff: Cell<DROPEFFECT>,          // what the folder's target said at the last DragEnter / DragOver
+}
+
+impl Relay {
+    pub(crate) fn begin(&self, d: &Ref<IDataObject>, allowed: DROPEFFECT) {
+        *self.data.borrow_mut() = d.cloned();
+        self.allowed.set(allowed);
+    }
+    // Over `place` now: the effect its target gives (NONE when it has none or says no).
+    pub(crate) unsafe fn over(&self, place: &str, keys: MODIFIERKEYS_FLAGS, pt: &POINTL) -> DROPEFFECT {
+        self.keys.set(keys);
+        let mut eff = self.allowed.get();
+        let same = self.to.borrow().as_ref().is_some_and(|(p, _)| p == place);
+        if same {
+            let t = self.to.borrow().as_ref().and_then(|(_, t)| t.clone());
+            if !t.is_some_and(|t| t.DragOver(keys, *pt, &mut eff).is_ok()) {
+                eff = DROPEFFECT_NONE;
+            }
+            self.eff.set(eff);
+            return eff;
+        }
+        self.leave();
+        let t = folder_drop_target(place);
+        let data = self.data.borrow().clone();
+        let entered = match (&t, &data) {
+            (Some(t), Some(d)) => t.DragEnter(d, keys, *pt, &mut eff).is_ok(),
+            _ => false,
+        };
+        *self.to.borrow_mut() = Some((place.to_string(), t.filter(|_| entered)));
+        let eff = if entered { eff } else { DROPEFFECT_NONE };
+        self.eff.set(eff);
+        eff
+    }
+    // About to drop on `place`: the same folder keeps what its target said last (no DragOver with the drop's keys,
+    // which have lost the mouse button and would turn a right-drag's menu off); another is entered with the last keys.
+    pub(crate) unsafe fn settle(&self, place: &str, pt: &POINTL) -> DROPEFFECT {
+        if self.to.borrow().as_ref().is_some_and(|(p, _)| p == place) {
+            return self.eff.get();
+        }
+        self.over(place, self.keys.get(), pt)
+    }
+    // Off the folder (to another, or out of the drag): its target hears so.
+    pub(crate) unsafe fn leave(&self) {
+        if let Some((_, Some(t))) = self.to.take() {
+            _ = t.DragLeave();
+        }
+    }
+    // Dropped: the folder's target does the copy / move / delete itself (its dialogs may run here).
+    pub(crate) unsafe fn drop_on(&self, d: &Ref<IDataObject>, keys: MODIFIERKEYS_FLAGS, pt: &POINTL) -> DROPEFFECT {
+        let to = self.to.take();
+        self.data.take();
+        let mut eff = self.allowed.get();
+        match (to, d.as_ref()) {
+            (Some((_, Some(t))), Some(d)) if t.Drop(d, keys, *pt, &mut eff).is_ok() => eff,
+            _ => DROPEFFECT_NONE,
+        }
+    }
+    pub(crate) unsafe fn end(&self) {
+        self.leave();
+        self.data.take();
+    }
+}
+
 #[implement(IDropTarget)]
 pub(crate) struct PaneDrop {
     pub(crate) slot: Arc<AtomicUsize>,
     pub(crate) hwnd: HWND,
     pub(crate) ok: Cell<bool>, // the data being dragged holds shell items
     pub(crate) helper: Option<IDropTargetHelper>,
+    pub(crate) relay: Relay,    // over another tab: passed on to that tab's folder
+    pub(crate) lit: Cell<bool>, // a tab lightened for the drop (head_hover)
 }
 
 impl PaneDrop {
+    // Where screen point pt is in the header: another tab's folder, a tab that takes no drops, or (#36) open.
+    unsafe fn at(&self, pt: &POINTL) -> DropAt {
+        let mut p = POINT { x: pt.x, y: pt.y };
+        let mut rc = RECT::default();
+        if !ScreenToClient(self.hwnd, &mut p).as_bool() || GetClientRect(self.hwnd, &mut rc).is_err() {
+            return DropAt::Open;
+        }
+        let i = self.slot.load(Ordering::SeqCst);
+        let (list, cur, dpi) = app(|a| (a.s.tab_list(i), a.s.tab[i], a.dpi));
+        let hit = tab_hit(pane_geo(rc.right, rc.bottom, dpi).tabs, list.len(), cur, p.x, p.y, dpi);
+        drop_at(hit, cur, &list)
+    }
+    // Shades tab k as the mouse does (None: off again).
+    unsafe fn light(&self, k: Option<usize>) {
+        if k.is_some() || self.lit.get() {
+            self.lit.set(k.is_some());
+            head_hover(self.hwnd, k.map(HeadHot::Tab));
+        }
+    }
+    // The effect over pt: into another tab's folder by the shell's rules, else the header's own open (#36).
+    unsafe fn route(&self, keys: MODIFIERKEYS_FLAGS, pt: &POINTL, effect: *mut DROPEFFECT) {
+        self.relay.keys.set(keys); // also off the tabs: a drop that lands on one enters it with these
+        match self.at(pt) {
+            DropAt::Into(k, path) if self.ok.get() => {
+                self.hover(false);
+                *effect = self.relay.over(&path, keys, pt);
+                self.light((*effect != DROPEFFECT_NONE).then_some(k)); // a folder that says no isn't lit
+            }
+            DropAt::Into(..) | DropAt::Refuse => {
+                self.relay.leave();
+                self.hover(false);
+                self.light(None);
+                *effect = DROPEFFECT_NONE;
+            }
+            DropAt::Open => {
+                self.relay.leave();
+                self.light(None);
+                self.pick(effect);
+            }
+        }
+    }
     // sets the effect this drop would get, and tints the header only while it isn't NONE
     pub(crate) unsafe fn pick(&self, effect: *mut DROPEFFECT) {
         *effect = if self.ok.get() { drop_pick(*effect) } else { DROPEFFECT_NONE };
@@ -1800,19 +1927,20 @@ impl PaneDrop {
 }
 
 impl IDropTarget_Impl for PaneDrop_Impl {
-    fn DragEnter(&self, d: Ref<IDataObject>, _: MODIFIERKEYS_FLAGS, pt: &POINTL, effect: *mut DROPEFFECT) -> Result<()> {
+    fn DragEnter(&self, d: Ref<IDataObject>, keys: MODIFIERKEYS_FLAGS, pt: &POINTL, effect: *mut DROPEFFECT) -> Result<()> {
         unsafe {
             self.ok.set(drop_items(&d).is_some());
-            self.pick(effect);
+            self.relay.begin(&d, *effect);
+            self.route(keys, pt, effect);
             if let Some(hp) = &self.helper {
                 _ = hp.DragEnter(self.hwnd, d.as_ref(), &POINT { x: pt.x, y: pt.y }, *effect);
             }
         }
         Ok(())
     }
-    fn DragOver(&self, _: MODIFIERKEYS_FLAGS, pt: &POINTL, effect: *mut DROPEFFECT) -> Result<()> {
+    fn DragOver(&self, keys: MODIFIERKEYS_FLAGS, pt: &POINTL, effect: *mut DROPEFFECT) -> Result<()> {
         unsafe {
-            self.pick(effect);
+            self.route(keys, pt, effect);
             if let Some(hp) = &self.helper {
                 _ = hp.DragOver(&POINT { x: pt.x, y: pt.y }, *effect);
             }
@@ -1821,6 +1949,8 @@ impl IDropTarget_Impl for PaneDrop_Impl {
     }
     fn DragLeave(&self) -> Result<()> {
         unsafe {
+            self.relay.end();
+            self.light(None);
             self.hover(false);
             if let Some(hp) = &self.helper {
                 _ = hp.DragLeave();
@@ -1828,18 +1958,117 @@ impl IDropTarget_Impl for PaneDrop_Impl {
         }
         Ok(())
     }
-    fn Drop(&self, d: Ref<IDataObject>, _: MODIFIERKEYS_FLAGS, pt: &POINTL, effect: *mut DROPEFFECT) -> Result<()> {
+    fn Drop(&self, d: Ref<IDataObject>, keys: MODIFIERKEYS_FLAGS, pt: &POINTL, effect: *mut DROPEFFECT) -> Result<()> {
         unsafe {
             let allowed = *effect;
             *effect = DROPEFFECT_NONE;
             self.hover(false);
-            let eff = drop_pick(allowed);
-            if eff != DROPEFFECT_NONE && self.queue(&d) {
-                *effect = eff;
+            self.light(None); // off before the shell's dialogs, if any
+            let image_off = |eff: DROPEFFECT| {
+                if let Some(hp) = &self.helper {
+                    _ = hp.Drop(d.as_ref(), &POINT { x: pt.x, y: pt.y }, eff);
+                }
+            };
+            match self.at(pt) {
+                // into another tab's folder: the shell copies / moves; this pane stays where it is (no queue)
+                DropAt::Into(_, path) if self.ok.get() => {
+                    let eff = self.relay.settle(&path, pt);
+                    image_off(eff); // the drag image goes before a conflict or confirm dialog can come up
+                    if eff != DROPEFFECT_NONE {
+                        *effect = self.relay.drop_on(&d, keys, pt);
+                    }
+                    self.relay.end();
+                    return Ok(());
+                }
+                DropAt::Into(..) | DropAt::Refuse => {}
+                DropAt::Open => {
+                    self.relay.end();
+                    let eff = drop_pick(allowed);
+                    if eff != DROPEFFECT_NONE && self.queue(&d) {
+                        *effect = eff;
+                    }
+                }
             }
+            self.relay.end();
+            image_off(*effect);
+        }
+        Ok(())
+    }
+}
+
+// Pressed look of the toolbar button something is being dragged over (drive or Recycle Bin), 0: none.
+pub(crate) static DROP_BTN: AtomicUsize = AtomicUsize::new(0);
+
+unsafe fn press_drop_btn(h: HWND, on: bool) {
+    let v = h.0 as usize;
+    let was = if on { DROP_BTN.swap(v, Ordering::Relaxed) } else { DROP_BTN.compare_exchange(v, 0, Ordering::Relaxed, Ordering::Relaxed).unwrap_or(0) };
+    if (was == v) != on {
+        _ = InvalidateRect(Some(h), None, false);
+    }
+}
+
+// A drive button ("X:\") or the Recycle Bin button (RECYCLE_BIN): files dropped on it go there as onto that
+// folder in Explorer. Registered when the button is made, revoked before it is destroyed.
+#[implement(IDropTarget)]
+pub(crate) struct ButtonDrop {
+    pub(crate) hwnd: HWND,
+    pub(crate) place: String,
+    pub(crate) relay: Relay,
+    pub(crate) helper: Option<IDropTargetHelper>,
+}
+
+pub(crate) unsafe fn button_drop(h: HWND, place: String) {
+    let helper = CoCreateInstance(&CLSID_DragDropHelper, None, CLSCTX_INPROC_SERVER).ok(); // drag image over the button
+    let dt: IDropTarget = ButtonDrop { hwnd: h, place, relay: Relay::default(), helper }.into();
+    _ = RegisterDragDrop(h, &dt);
+}
+
+impl ButtonDrop {
+    unsafe fn over(&self, keys: MODIFIERKEYS_FLAGS, pt: &POINTL, effect: *mut DROPEFFECT) {
+        *effect = self.relay.over(&self.place, keys, pt);
+        press_drop_btn(self.hwnd, *effect != DROPEFFECT_NONE);
+    }
+}
+
+impl IDropTarget_Impl for ButtonDrop_Impl {
+    fn DragEnter(&self, d: Ref<IDataObject>, keys: MODIFIERKEYS_FLAGS, pt: &POINTL, effect: *mut DROPEFFECT) -> Result<()> {
+        unsafe {
+            self.relay.begin(&d, *effect);
+            self.over(keys, pt, effect);
             if let Some(hp) = &self.helper {
-                _ = hp.Drop(d.as_ref(), &POINT { x: pt.x, y: pt.y }, *effect);
+                _ = hp.DragEnter(self.hwnd, d.as_ref(), &POINT { x: pt.x, y: pt.y }, *effect);
             }
+        }
+        Ok(())
+    }
+    fn DragOver(&self, keys: MODIFIERKEYS_FLAGS, pt: &POINTL, effect: *mut DROPEFFECT) -> Result<()> {
+        unsafe {
+            self.over(keys, pt, effect);
+            if let Some(hp) = &self.helper {
+                _ = hp.DragOver(&POINT { x: pt.x, y: pt.y }, *effect);
+            }
+        }
+        Ok(())
+    }
+    fn DragLeave(&self) -> Result<()> {
+        unsafe {
+            self.relay.end();
+            press_drop_btn(self.hwnd, false);
+            if let Some(hp) = &self.helper {
+                _ = hp.DragLeave();
+            }
+        }
+        Ok(())
+    }
+    fn Drop(&self, d: Ref<IDataObject>, keys: MODIFIERKEYS_FLAGS, pt: &POINTL, effect: *mut DROPEFFECT) -> Result<()> {
+        unsafe {
+            let eff = self.relay.settle(&self.place, pt);
+            press_drop_btn(self.hwnd, false);
+            if let Some(hp) = &self.helper {
+                _ = hp.Drop(d.as_ref(), &POINT { x: pt.x, y: pt.y }, eff); // before the shell's dialogs, if any
+            }
+            *effect = if eff != DROPEFFECT_NONE { self.relay.drop_on(&d, keys, pt) } else { DROPEFFECT_NONE };
+            self.relay.end();
         }
         Ok(())
     }

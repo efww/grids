@@ -284,6 +284,34 @@ pub(crate) fn tab_hit(strip: RECT, n: usize, cur: usize, x: i32, y: i32, dpi: i3
     }
 }
 
+// Where something dropped on a pane's header goes (#36 and tabs).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum DropAt {
+    // another tab, of a folder on disk or a share: into that folder, as onto the folder in Explorer
+    Into(usize, String),
+    // another tab of a shell place (This PC, a library, the Recycle Bin …): nothing, rather than opening here
+    Refuse,
+    // the current tab, '+', the strip's empty end, the fields and buttons, tabs off: opened in this pane (#36)
+    Open,
+}
+
+// A folder path that files can be copied into: "X:\…" or "\\server\share…" (not "::{GUID}" shell places).
+pub(crate) fn disk_folder(p: &str) -> bool {
+    matches!(p.as_bytes(), [c, b':', b'\\', ..] if c.is_ascii_alphabetic()) || (p.starts_with(r"\\") && !p.starts_with(r"\\?"))
+}
+
+// `hit`: tab_hit at the drop point (None outside the strip, so always with tabs off); `tabs`: tab_list.
+pub(crate) fn drop_at(hit: Option<TabHit>, cur: usize, tabs: &[String]) -> DropAt {
+    match hit {
+        Some(TabHit::Tab(k) | TabHit::Close(k)) if k != cur => match tabs.get(k) {
+            Some(p) if disk_folder(p) => DropAt::Into(k, p.clone()),
+            Some(_) => DropAt::Refuse,
+            None => DropAt::Open,
+        },
+        _ => DropAt::Open,
+    }
+}
+
 // What the mouse shades in a pane's header: a tab, the current tab's ×, '+', or the filter pill's file-type icon.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum HeadHot {

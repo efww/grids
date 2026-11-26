@@ -113,7 +113,8 @@ unsafe fn draw_button_face(d: &DRAWITEMSTRUCT) {
     let parent = GetParent(d.hwndItem).unwrap_or_default();
     let on_main = parent == main;
     let (dc, rc, id) = (d.hDC, d.rcItem, d.CtlID as i32);
-    let pressed = d.itemState.0 & ODS_SELECTED.0 != 0;
+    // files dragged over a drive / Recycle Bin button press it, as a click would
+    let pressed = d.itemState.0 & ODS_SELECTED.0 != 0 || DROP_BTN.load(Ordering::Relaxed) == d.hwndItem.0 as usize;
     let hot = hover == d.hwndItem || tour_target() == d.hwndItem;
     let (bg, ink) = if on_main { (pal().bg, pal().text) } else { header_colors(parent) };
     let tinted = bg != pal().bg && bg != pal().card;

@@ -1493,13 +1493,15 @@ mod tests {
         assert_eq!(keeps, [true, true, false, false]);
         assert_eq!((human(10), human(1536), human(5 << 30)), ("10 B".into(), "1.5 KB".into(), "5.0 GB".into()));
         // the Recycle Bin button's tooltip: a failed count says nothing about the contents (never "empty")
-        assert_eq!(bin_tip(false, None), "Recycle Bin · Right-click: Empty, Properties");
-        assert_eq!(bin_tip(true, None), "휴지통 · 오른쪽 클릭: 비우기·속성");
-        assert_eq!(bin_tip(false, Some((0, 0))), "Recycle Bin — empty · Right-click: Empty, Properties");
-        assert_eq!(bin_tip(true, Some((0, 0))), "휴지통 — 비어 있음 · 오른쪽 클릭: 비우기·속성");
-        assert_eq!(bin_tip(false, Some((1, 10))), "Recycle Bin — 1 item · 10 B · Right-click: Empty, Properties");
-        assert_eq!(bin_tip(false, Some((12, 5 << 30))), "Recycle Bin — 12 items · 5.0 GB · Right-click: Empty, Properties");
-        assert_eq!(bin_tip(true, Some((12, 1536))), "휴지통 — 항목 12개 · 1.5 KB · 오른쪽 클릭: 비우기·속성");
+        // (and says files dropped on it are deleted to it)
+        let (en, ko) = ("Drop files here to delete them (Shift: for good) · Right-click: Empty, Properties", "파일을 끌어다 놓으면 휴지통으로(Shift: 영구 삭제) · 오른쪽 클릭: 비우기·속성");
+        assert_eq!(bin_tip(false, None), format!("Recycle Bin · {en}"));
+        assert_eq!(bin_tip(true, None), format!("휴지통 · {ko}"));
+        assert_eq!(bin_tip(false, Some((0, 0))), format!("Recycle Bin — empty · {en}"));
+        assert_eq!(bin_tip(true, Some((0, 0))), format!("휴지통 — 비어 있음 · {ko}"));
+        assert_eq!(bin_tip(false, Some((1, 10))), format!("Recycle Bin — 1 item · 10 B · {en}"));
+        assert_eq!(bin_tip(false, Some((12, 5 << 30))), format!("Recycle Bin — 12 items · 5.0 GB · {en}"));
+        assert_eq!(bin_tip(true, Some((12, 1536))), format!("휴지통 — 항목 12개 · 1.5 KB · {ko}"));
 
         // pane top bar: number, back, fwd, up, address, ⇄, filter left to right, nothing overlapping, inside the plate
         for (w, dpi) in [(800, 96), (260, 96), (1200, 144)] {
@@ -3808,6 +3810,40 @@ mod tests { tr("in", "안") }
         for (hit, click, want) in table {
             assert_eq!(tab_action(hit, click), want, "{hit:?} {click:?}");
         }
+    }
+
+    // Files dropped on a pane's header: another tab of a folder on disk takes them (the shell copies / moves),
+    // a shell place's tab refuses, everything else keeps #36 (open the folder in this pane).
+    #[test]
+    fn header_drop_places() {
+        use TabHit::*;
+        let tabs: Vec<String> = [r"C:\a", r"D:\b", r"\\nas\share\c", THIS_PC, RECYCLE_BIN, r"::{031E4825-7B94-4DC3-B131-E946B44C8DD5}\Documents.library-ms"]
+            .map(String::from)
+            .to_vec();
+        let into = |k: usize| DropAt::Into(k, tabs[k].clone());
+        for cur in 0..tabs.len() {
+            for k in 0..tabs.len() {
+                let want = match k {
+                    _ if k == cur => DropAt::Open, // the current tab: #36 as before
+                    0..=2 => into(k),
+                    _ => DropAt::Refuse, // This PC, the Recycle Bin, a library: no folder on disk
+                };
+                assert_eq!(drop_at(Some(Tab(k)), cur, &tabs), want, "{cur} {k}");
+                assert_eq!(drop_at(Some(Close(k)), cur, &tabs), want, "{cur} {k}");
+            }
+            // '+', the strip's empty end, outside the strip (fields, buttons) or tabs off: #36
+            for hit in [Some(Plus), Some(Strip), None] {
+                assert_eq!(drop_at(hit, cur, &tabs), DropAt::Open, "{cur} {hit:?}");
+            }
+        }
+        // a stale hit past the list: nothing goes anywhere new
+        assert_eq!(drop_at(Some(Tab(9)), 0, &tabs), DropAt::Open);
+        // one tab (or tabs off: the list is the pane's folder alone)
+        assert_eq!(drop_at(Some(Tab(0)), 0, &tabs[..1]), DropAt::Open);
+        let disk = [r"C:\", r"c:\x", r"\\server\share", r"\\server"].map(disk_folder);
+        assert_eq!(disk, [true; 4]);
+        let not = ["", "C:", r"C:x", THIS_PC, r"\\?\C:\x", "shell:Downloads", r"1:\x"].map(disk_folder);
+        assert_eq!(not, [false; 7]);
     }
 
     // The header's mouse shading names exactly what a click there hits: tab_hit in the strip (the × only

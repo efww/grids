@@ -43,7 +43,7 @@ pub(crate) unsafe fn create_pane(i: usize) -> Result<Pane> {
     let ev: IExplorerBrowserEvents = Events(slot.clone()).into();
     let cookie = eb.Advise(&ev)?;
     let helper = CoCreateInstance(&CLSID_DragDropHelper, None, CLSCTX_INPROC_SERVER).ok(); // drag image over the bar
-    let dt: IDropTarget = PaneDrop { slot: slot.clone(), hwnd: h, ok: Cell::new(false), helper }.into();
+    let dt: IDropTarget = PaneDrop { slot: slot.clone(), hwnd: h, ok: Cell::new(false), helper, relay: Relay::default(), lit: Cell::new(false) }.into();
     _ = RegisterDragDrop(h, &dt);
     let pending = Some(app(|a| a.s.cols[i].clone())); // the session's, for the first folder
     Ok(Pane { hwnd: h, eb, cookie, disp: String::new(), pending, settle: None, recover: None, follow: None, unplugged: None, icon: -1, ticket: 0, slot, spin: None })

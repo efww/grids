@@ -576,6 +576,10 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 for i in 0..MAXP {
                     destroy_pane(i);
                 }
+                // the drive and Recycle Bin buttons' drop targets, before the buttons go with this window
+                for b in app(|a| a.drives.iter().map(|d| d.2).collect::<Vec<_>>()).into_iter().chain(GetDlgItem(Some(h), ID_BIN).ok()) {
+                    _ = RevokeDragDrop(b);
+                }
                 app(|a| (a.tree, a.quick_root) = (None, None));
                 tray_remove(h, false); // before the loop ends: no icon left behind
                 PostQuitMessage(0);
@@ -899,7 +903,10 @@ pub(crate) fn drive_tip(c: u8, kind: u32) -> String {
     format!(
         "{name} ({}:) — {}",
         c as char,
-        tr("open in the active pane · Right-click: drive menu (Eject, Properties)", "지금 패널에서 열기 · 오른쪽 클릭: 드라이브 메뉴(꺼내기·속성)")
+        tr(
+            "open in the active pane · Drop files: copy / move · Right-click: drive menu (Eject, Properties)",
+            "지금 패널에서 열기 · 끌어 놓기: 복사·이동 · 오른쪽 클릭: 드라이브 메뉴(꺼내기·속성)"
+        )
     )
 }
 
@@ -1028,7 +1035,11 @@ thread_local! {
 
 // The button's tooltip: what is in the bin (nothing said when the count failed) and what a right-click does.
 pub(crate) fn bin_tip(ko: bool, seen: Option<(u64, u64)>) -> String {
-    let (name, menu) = if ko { ("휴지통", "오른쪽 클릭: 비우기·속성") } else { ("Recycle Bin", "Right-click: Empty, Properties") };
+    let (name, menu) = if ko {
+        ("휴지통", "파일을 끌어다 놓으면 휴지통으로(Shift: 영구 삭제) · 오른쪽 클릭: 비우기·속성")
+    } else {
+        ("Recycle Bin", "Drop files here to delete them (Shift: for good) · Right-click: Empty, Properties")
+    };
     match seen {
         None => format!("{name} · {menu}"),
         Some((0, _)) => format!("{name} — {} · {menu}", if ko { "비어 있음" } else { "empty" }),
@@ -1049,6 +1060,7 @@ pub(crate) unsafe fn make_bin(main: HWND) {
     let name = HSTRING::from(bin_name()); // also the accessible name
     let h = child(main, w!("BUTTON"), PCWSTR(name.as_ptr()), BS_OWNERDRAW as u32, WINDOW_EX_STYLE(0), ID_BIN, HFONT::default());
     add_tip(h, &bin_tip(KO.load(Ordering::Relaxed), None));
+    button_drop(h, RECYCLE_BIN.into()); // files dropped on it are deleted to the bin; WM_BIN_CHANGE recounts
     bin_count();
 }
 
@@ -1218,6 +1230,8 @@ pub(crate) unsafe fn refresh_drives() -> bool {
             set_hover(HWND::default());
         }
         tip_text(h, "", TTM_DELTOOLW);
+        _ = RevokeDragDrop(h);
+        _ = DROP_BTN.compare_exchange(h.0 as usize, 0, Ordering::Relaxed, Ordering::Relaxed);
         _ = DestroyWindow(h);
     }
     for c in added {
@@ -1229,6 +1243,7 @@ pub(crate) unsafe fn refresh_drives() -> bool {
         let name = HSTRING::from(format!("{}:", c as char)); // also the accessible name
         let h = child(main, w!("BUTTON"), PCWSTR(name.as_ptr()), BS_OWNERDRAW as u32, WINDOW_EX_STYLE(0), ID_DRIVE + (c - b'A') as i32, HFONT::default());
         add_tip(h, &drive_tip(c, kind));
+        button_drop(h, format!("{}:\\", c as char)); // files dropped on it go to that drive, as in Explorer
         app(|a| {
             a.drives.push((c, kind, h));
             a.drives.sort_by_key(|d| d.0);

@@ -415,11 +415,11 @@ Layout button: click for an even grid, press and drag for rows per column (arrow
 ⇄ button: open the selected folder (or the current one) in another pane, with this pane's columns; or copy / move the selected files (up to 10,000) to another pane's folder, a favourite or recent folder, or any folder you choose; swap places with another pane; which program is using the selected files; SHA-256 checksum of the selected files; sort the selected files into date folders; move the selected items into a new folder (Ctrl+F7); make dated backup copies of the selected items (Shift+F5); remove empty folders in this folder; what takes up space in this folder (Ctrl+Shift+U); copy the file list (name, date modified, type, size, full path) as a table for Excel; Compare with WinMerge (2 selected items, or this folder with another pane's) when WinMerge is installed\n\
 Save (Ctrl+S): overwrite the current session file; green dot = unsaved layout changes (not folder moves)\n\
 Load (Ctrl+O): pick a saved session by its layout preview; point at a card for its ✕ to delete it, or right-click it to rename or delete\n\
-Drive buttons (C, D …): open that drive in the active pane; its drive is underlined; right-click: the drive menu as in Explorer (Eject, Properties …)\n\
+Drive buttons (C, D …): open that drive in the active pane; its drive is underlined; right-click: the drive menu as in Explorer (Eject, Properties …); drop files on one to copy / move them there as in Explorer (same drive moves; Ctrl copies, Shift moves), or on the Recycle Bin button to delete them (Shift: for good)\n\
 Double-click a splitter: split evenly\n\
 Update button (blue, top right): a newer Grids is out; click to restart into it (settings, folders and sessions stay)\n\
 Pane header: right-click for a colour label (saved with the session); double-click to maximize / restore the pane; drop a folder on it to open it there (a file: its folder)\n\
-Tabs: click to switch, × or middle-click to close, + or double-click the empty strip for a new tab, right-click to duplicate, move left / right or close\n\
+Tabs: click to switch, × or middle-click to close, + or double-click the empty strip for a new tab, right-click to duplicate, move left / right or close; drop files on another tab to copy / move them into its folder as in Explorer (Ctrl copies, Shift moves)\n\
 Arguments: grids.exe C:\\a D:\\b ... or grids.exe work.grids\n\
 If Grids is already running, they open in that window.";
 
@@ -480,10 +480,10 @@ F2, Del, Ctrl+C/X/V, F5\t탐색기와 동일\n\n\
 ⇄ 버튼: 선택한 폴더(없으면 현재 폴더)를 다른 패널에서 열기, 열 순서·폭·정렬도 함께. 또는 선택한 파일을 다른 패널 폴더·즐겨찾기·최근 폴더·직접 고른 폴더로 복사·이동 (최대 10,000개). 다른 패널과 자리 바꾸기. 선택한 파일을 쓰고 있는 프로그램 확인. 선택한 파일의 체크섬(SHA-256). 선택한 파일을 날짜별 폴더로 정리. 선택한 항목을 새 폴더로 묶기 (Ctrl+F7). 선택한 항목의 날짜 붙인 사본 만들기 (Shift+F5). 이 폴더 안의 빈 폴더 지우기. 이 폴더 용량 분석 (Ctrl+Shift+U). 파일 목록(이름·수정한 날짜·유형·크기·전체 경로)을 엑셀용 표로 복사. WinMerge가 있으면 WinMerge로 비교 (선택한 2개, 또는 이 폴더와 다른 패널 폴더)\n\
 저장 (Ctrl+S): 지금 세션 파일에 바로 덮어쓰기, 초록 점 = 저장 안 된 배치 변경(폴더 이동은 제외)\n\
 불러오기 (Ctrl+O): 저장한 세션을 배치 미리보기로 보고 한 번 클릭, 카드에 마우스를 올리면 ✕로 삭제, 오른쪽 클릭으로 이름 바꾸기·삭제\n\
-드라이브 버튼 (C, D …): 지금 패널에서 그 드라이브 열기, 지금 패널의 드라이브에 밑줄, 오른쪽 클릭: 탐색기와 같은 드라이브 메뉴(꺼내기·속성 …)\n\
+드라이브 버튼 (C, D …): 지금 패널에서 그 드라이브 열기, 지금 패널의 드라이브에 밑줄, 오른쪽 클릭: 탐색기와 같은 드라이브 메뉴(꺼내기·속성 …), 파일을 끌어다 놓으면 탐색기처럼 그 드라이브로 복사·이동(같은 드라이브는 이동, Ctrl 복사·Shift 이동), 휴지통 버튼에 놓으면 휴지통으로(Shift: 영구 삭제)\n\
 스플리터 더블클릭: 균등 분할\n\
 업데이트 버튼 (파란색, 오른쪽 위): 새 Grids가 나옴, 누르면 재시작해 업데이트 (설정·폴더·세션 유지)\n\
 패널 머리줄: 오른쪽 클릭 = 패널 색 라벨 (세션에 저장), 더블클릭 = 크게 보기 / 복원, 폴더를 끌어다 놓으면 그 패널에서 열기 (파일은 그 파일이 든 폴더)\n\
-탭: 클릭 = 전환, × 또는 가운데 클릭 = 닫기, + 또는 탭 줄 빈 곳 더블클릭 = 새 탭, 오른쪽 클릭 = 복제·왼쪽/오른쪽으로 옮기기·닫기\n\
+탭: 클릭 = 전환, × 또는 가운데 클릭 = 닫기, + 또는 탭 줄 빈 곳 더블클릭 = 새 탭, 오른쪽 클릭 = 복제·왼쪽/오른쪽으로 옮기기·닫기, 파일을 다른 탭에 끌어다 놓으면 탐색기처럼 그 탭 폴더로 복사·이동(Ctrl 복사·Shift 이동)\n\
 실행 인자: grids.exe C:\\a D:\\b ... 또는 grids.exe 작업.grids\n\
 이미 실행 중이면 그 창에서 엽니다.";
