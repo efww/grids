@@ -173,9 +173,12 @@ def build(res, layout, s, dec=None):
     by_rid = {}
     for i, c in enumerate(trunk):
         by_rid.setdefault(rid_of(c), []).append(i)
+    # inside a rack every cable rides the one tray on its top tier: snap to the rack centre line
+    rk_m = [(r[0] * m, r[1] * m, r[2] * m, r[3] * m) for r in racks]
+    snap = lambda nodes: _snap(nodes, rk_m)
     edges = {}                                      # (node, node) -> [set(cable idx), kind]
     for rid, idx in by_rid.items():
-        nodes = _grid_nodes(routes[rid]["poly"], m)
+        nodes = snap(_grid_nodes(routes[rid]["poly"], m))
         for a, b in zip(nodes, nodes[1:]):
             k = (a, b) if a <= b else (b, a)
             e = edges.get(k)
@@ -215,12 +218,19 @@ def build(res, layout, s, dec=None):
                 else:
                     chain.insert(0, far)
         segs.append((chain, edges[k]))
+    seg_of = {}                                      # edge -> index into segs
+    for i, (chain, _) in enumerate(segs):
+        for a, b in zip(chain, chain[1:]):
+            seg_of[(a, b) if a <= b else (b, a)] = i
     room = layout.room
     rn = (room[0] * m, room[1] * m) if room else (0, 0)
-    segs.sort(key=lambda sg: abs((sg[0][0][0] + sg[0][-1][0]) / 2 - rn[0]) + abs((sg[0][0][1] + sg[0][-1][1]) / 2 - rn[1]))
+    order = sorted(range(len(segs)), key=lambda i: abs((segs[i][0][0][0] + segs[i][0][-1][0]) / 2 - rn[0])
+                   + abs((segs[i][0][0][1] + segs[i][0][-1][1]) / 2 - rn[1]))
     num = Counter()
     used_over = set()
-    for chain, (cset, kind) in segs:
+    seg_out = {}
+    for i in order:
+        chain, (cset, kind) = segs[i]
         a, b = chain[0], chain[-1]
         if b < a:
             a, b = b, a
@@ -256,9 +266,75 @@ def build(res, layout, s, dec=None):
                                      "area": round(a_), "width": w, "tiers": n, "auto": list(auto), "user": bool(o),
                                      "fill": round(fill(a_, w, n, v), 3)})
         out["segments"].append(seg)
+        seg_out[i] = seg
+    # each trunk cable: the trays / UG it runs in, in order from its start (JB, panel) to the room
+    out["by_cable"] = {}
+    for rid, idx in by_rid.items():
+        nodes = snap(_grid_nodes(routes[rid]["poly"], m))
+        walk = []
+        for a, b in zip(nodes, nodes[1:]):
+            i = seg_of.get((a, b) if a <= b else (b, a))
+            if i is None:
+                continue
+            if walk and walk[-1][0] == i:
+                walk[-1][1] += 1
+            else:
+                walk.append([i, 1])
+        for ci in idx:
+            c = trunk[ci]
+            cls = tray_class(c, v)
+            legs = []
+            for i, run in walk:
+                sg = seg_out[i]
+                if sg["kind"] == "UG":
+                    legs.append({"no": sg["no"], "kind": "UG", "size": "UG 트렌치", "m": run})
+                else:
+                    tr = next((x for x in sg["trays"] if x["cls"] == cls), None)
+                    if tr:
+                        legs.append({"no": tr["no"], "kind": "사다리", "size": f"{tr['width']}×{int(v['tray_height'])}"
+                                     + (f"×{tr['tiers']}단" if tr["tiers"] > 1 else ""), "m": run})
+            out["by_cable"][c["no"]] = {"cable": c["no"], "kind": c["kind"], "frm": c["frm"], "to": c["to"],
+                                        "spec": c["spec"], "od": round(od(c["spec"], v), 1), "cls": cls,
+                                        "ladder_m": sum(x["m"] for x in legs if x["kind"] == "사다리"),
+                                        "ug_m": sum(x["m"] for x in legs if x["kind"] == "UG"), "legs": legs}
     out["lost_overrides"] = len(set(over) - used_over)
     out["summary"] = _summary(out, v)
     return out
+
+
+def _snap(nodes, racks):
+    """grid nodes inside a rack move onto the rack's centre line (across the rack), then the path is
+    made continuous again with unit steps (x first)."""
+    if not racks or not nodes:
+        return nodes
+    out = []
+    for x, y in nodes:
+        for x0, y0, x1, y1 in racks:
+            if x0 <= x <= x1 and y0 <= y <= y1:
+                if (x1 - x0) >= (y1 - y0):
+                    y = round((y0 + y1) / 2)
+                else:
+                    x = round((x0 + x1) / 2)
+                break
+        if not out or out[-1] != (x, y):
+            out.append((x, y))
+    full = [out[0]]
+    for q in out[1:]:
+        x, y = full[-1]
+        while (x, y) != q:
+            if x != q[0]:
+                x += 1 if q[0] > x else -1
+            else:
+                y += 1 if q[1] > y else -1
+            full.append((x, y))
+    # drop immediate back-and-forth (A, B, A) left by the snap
+    clean = []
+    for p in full:
+        if len(clean) >= 2 and clean[-2] == p:
+            clean.pop()
+            continue
+        clean.append(p)
+    return clean
 
 
 def _grid_nodes(poly, m):
@@ -334,6 +410,14 @@ def write_sheets(wb, t, v, sheet):
           rows, [14, 16, 10, 8, 6, 8, 8, 12, 7, 22, 6, 30, 80])
     for r in wb["Tray_Segments"].iter_rows(min_row=2, min_col=9, max_col=9):
         r[0].number_format = "0%"
+    cr = []
+    for c in t.get("by_cable", {}).values():
+        route = " → ".join(f"{x['no']} ({x['size']}) {x['m']}m" for x in c["legs"])
+        cr.append([c["cable"], c["kind"], c["frm"], c["to"], c["spec"], c["od"], c["cls"], c["ladder_m"], c["ug_m"],
+                   len(c["legs"]), route])
+    sheet(wb.create_sheet("Cable_Tray_Route"), ["Cable No", "구분", "From", "To", "Cable Spec", "외경 (mm)", "트레이 구분",
+                                                "사다리 (m)", "UG (m)", "구간 수", "트레이 경로 (출발 → 룸)"],
+          cr, [22, 7, 18, 8, 26, 9, 9, 9, 8, 7, 120])
     sheet(wb.create_sheet("Perforated_Tray"), ["PT No", "케이블", "From (JB)", "To (계기)", "폭 (mm)", "길이 (m)"],
           [[p["no"], p["cable"], p["frm"], p["to"], p["width"], p["length"]] for p in t["pt"]], [14, 22, 18, 18, 8, 9])
     sheet(wb.create_sheet("Tray_Checklist"), ["No", "구분", "항목", "적용값", "기본값", "", "설명"],

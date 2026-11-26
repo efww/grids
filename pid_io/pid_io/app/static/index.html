@@ -1297,8 +1297,12 @@ function trayOverlay(d) {
   const hits = t.segments.map(s => { const [a,b] = s.poly;
     return `<line x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}" stroke="transparent" stroke-width="${9*k}" data-seg="${s.id}" style="cursor:pointer"><title>${esc(s.no)} · ${s.length}m · 케이블 ${s.cables.length}${s.trays.map(x=>` · ${x.cls} ${x.width}${x.tiers>1?"×"+x.tiers+"단":""} ${Math.round(x.fill*100)}%`).join("")}</title></line>`; }).join("");
   const mark = room ? `<circle cx="${room[0]}" cy="${room[1]}" r="${11*k}" fill="none" stroke="#2c7fc0" stroke-width="${3*k}"/><text x="${room[0]+14*k}" y="${room[1]+5*k}" font-size="${15*k}" font-weight="700" fill="#2c7fc0">제어실</text>` : "";
+  const mpt = d.plot.m_per_pt || .155;
+  const labels = t.segments.filter(s => s.kind !== "UG" && s.length >= 10).map(s => { const [a,b] = s.poly, vert = Math.abs(a[0]-b[0]) < Math.abs(a[1]-b[1]);
+    const x = (a[0]+b[0])/2 + (vert ? 6*k : 0), y = (a[1]+b[1])/2 - (vert ? 0 : 5*k), tr = s.trays[0];
+    return `<text x="${x}" y="${y}" font-size="${7.5*k}" fill="#0b3d91" font-weight="700" ${vert?`transform="rotate(90 ${x} ${y})"`:""} style="pointer-events:none;paint-order:stroke" stroke="#fff" stroke-width="${2.2*k}">${esc(s.no)} ${tr.width}${tr.tiers>1?"×"+tr.tiers:""}</text>`; }).join("");
   const jbs = ((d.plot.geo||{}).stations||[]).map(x => `<rect x="${x.x-3.5*k}" y="${x.y-3.5*k}" width="${7*k}" height="${7*k}" fill="#f08a24" opacity=".85"><title>JB ${esc(x.jbs.join(", "))}</title></rect>`).join("");
-  return `<svg viewBox="0 0 ${W} ${H}" style="position:absolute;inset:0;width:100%;height:100%" id="trsvg">${racks}${segs}${jbs}${mark}${hits}</svg>`;
+  return `<svg viewBox="0 0 ${W} ${H}" style="position:absolute;inset:0;width:100%;height:100%" id="trsvg">${racks}${segs}${jbs}${mark}${labels}${hits}</svg>`;
 }
 function traySegCard(d) {
   const t = d.tray, V = d.values, s = t.segments.find(x => x.id === TM.sel), ws = (String(V.tray_widths).match(/\d+/g)||["300","600","900"]).map(Number).sort((a,b)=>a-b);
@@ -1340,9 +1344,13 @@ function trayTable(d) {
   if (TM.view === "seg") body = `<table class="nw"><tr><th>Tray No</th><th>종류</th><th>구분</th><th>폭</th><th>단</th><th style="text-align:right">m</th><th style="text-align:right">케이블</th><th style="text-align:right">mm²</th><th style="text-align:right">Fill</th></tr>
     ${t.segments.flatMap(s => s.kind==="UG" ? [`<tr data-segrow="${s.id}" style="cursor:pointer"><td class="mono">${esc(s.no)}</td><td>UG</td><td></td><td></td><td></td><td style="text-align:right">${s.length}</td><td style="text-align:right">${s.cables.length}</td><td style="text-align:right">${fmt(s.area)}</td><td></td></tr>`]
       : s.trays.map(x => `<tr data-segrow="${s.id}" style="cursor:pointer;${x.fill>lim+1e-9?"background:#fde8ea":""}"><td class="mono">${esc(x.no)}</td><td>${s.kind==="랙"?"사다리":"사다리 AG"}</td><td>${esc(x.cls)}</td><td>${x.width}</td><td>${x.tiers}</td><td style="text-align:right">${s.length}</td><td style="text-align:right">${x.count}</td><td style="text-align:right">${fmt(x.area)}</td><td style="text-align:right">${Math.round(x.fill*100)}%${x.user?" ✎":""}</td></tr>`)).join("")}</table>`;
+  if (TM.view === "cab") body = `<p class="xnote">트레이는 태그가 아니라 멀티 케이블 단위로 맞춥니다 (인덱스 태그 → Multi Cable Number → 이 표). 출발(JB·제어반) → 룸 순서.</p>
+    <table class="nw"><tr><th>Cable No</th><th>구분</th><th>From</th><th>Spec</th><th style="text-align:right">OD</th><th style="text-align:right">사다리 m</th><th style="text-align:right">UG m</th><th>트레이 경로</th></tr>
+    ${Object.values(t.by_cable||{}).map(c=>`<tr><td class="mono"><b>${esc(c.cable)}</b></td><td>${esc(c.kind)}</td><td class="mono">${esc(c.frm)}</td><td class="mono" style="font-size:12px">${esc(c.spec)}</td><td style="text-align:right">${c.od}</td><td style="text-align:right">${c.ladder_m}</td><td style="text-align:right">${c.ug_m}</td>
+      <td style="font-size:11.5px">${c.legs.map(x=>`<span style="white-space:nowrap;color:${x.kind==="UG"?"#8a6d00":"#0b3d91"}">${esc(x.no)} <span style="color:var(--sub)">${esc(x.size)} ${x.m}m</span></span>`).join(" → ")}</td></tr>`).join("")}</table>`;
   if (TM.view === "pt") body = `<table class="nw"><tr><th>PT No</th><th>케이블</th><th>From (JB)</th><th>To (계기)</th><th>폭</th><th style="text-align:right">m</th></tr>
     ${t.pt.slice(0,400).map(p=>`<tr><td class="mono">${esc(p.no)}</td><td class="mono">${esc(p.cable)}</td><td class="mono">${esc(p.frm)}</td><td class="mono">${esc(p.to)}</td><td>${p.width}</td><td style="text-align:right">${p.length}</td></tr>`).join("")}</table>`;
-  return `<div class="panel" style="margin-top:16px"><div class="tabs" style="margin-bottom:10px">${vt("seg",`트레이 · UG 구간 (${t.segments.length})`)}${vt("pt",`Perforated (${t.pt.length})`)}</div>${body}</div>`;
+  return `<div class="panel" style="margin-top:16px"><div class="tabs" style="margin-bottom:10px">${vt("seg",`트레이 · UG 구간 (${t.segments.length})`)}${vt("cab",`케이블별 트레이 (${Object.keys(t.by_cable||{}).length})`)}${vt("pt",`Perforated (${t.pt.length})`)}</div>${body}</div>`;
 }
 async function renderTray(m) {
   const t = S.tok;
@@ -1358,7 +1366,7 @@ async function renderTray(m) {
     : `<div style="display:flex;gap:16px;align-items:flex-start;margin-top:12px">
       <div style="width:330px;flex:none"><div class="panel" style="padding:0">${traySegCard(d)}</div>
         <div class="legend" style="margin-top:10px"><span><i style="background:#5fb4ea"></i>300</span><span><i style="background:#2c7fc0"></i>600</span><span><i style="background:#0b3d91"></i>900</span><span><i style="background:#e0002a"></i>Fill 초과 / 선택</span><span><i style="background:#8a6d00"></i>UG (점선)</span><span><i style="background:#f08a24"></i>JB</span></div>
-        <p class="xnote">굵기 = 폭 × 단 수. 같은 케이블이 지나가는 직선 구간이 한 트레이입니다. 경로가 갈라지는 곳에서 트레이가 나뉘고 폭이 줄어듭니다.${d.tray.lost_overrides?` · 경로가 바뀌어 적용 못 한 크기 변경 ${d.tray.lost_overrides}건`:""}</p></div>
+        <p class="xnote"><b>사다리 트레이 = 파이프랙 최상단 EL ${esc(V.rack_el)} m</b> (STEP 6 '경로 · 높이'). 트레이 경로 = STEP 6·7 케이블 경로 그대로 (따로 만들지 않음).<br>굵기 = 폭 × 단 수. 같은 케이블이 지나가는 직선 구간이 한 트레이입니다. 경로가 갈라지는 곳에서 트레이가 나뉘고 폭이 줄어듭니다.${d.tray.lost_overrides?` · 경로가 바뀌어 적용 못 한 크기 변경 ${d.tray.lost_overrides}건`:""}</p></div>
       <div class="viewer" style="flex:1;height:calc(100vh - 260px)"><div style="position:relative;width:100%;max-width:${Math.round(d.plot.size[0]*50/72)*2}px" id="trwrap"><img src="/api/${P("plot_png")}?v=${encodeURIComponent(d.plot.file)}" style="width:100%;display:block">${trayOverlay(d)}</div></div></div>`;
   else if (TM.tab === NT+1) body = `<p class="xnote" style="margin-top:10px">트레이 설계 가정 체크리스트입니다. 엑셀 Tray_Checklist 시트에도 들어갑니다.</p>
     <table class="mini"><tr><th>No</th><th>구분</th><th>항목</th><th>적용값</th><th>기본값</th><th>설명</th></tr>

@@ -139,13 +139,25 @@ def check_res(where, rows, s, res, layout=None):
         for s_ in t["segments"]:
             for c in s_["cables"]:
                 seglen[c] = seglen.get(c, 0) + s_["length"]
+        for no, bc in (t.get("by_cable") or {}).items():
+            if bc["ladder_m"] + bc["ug_m"] != seglen.get(no, 0):
+                fail(where, f"{no} 케이블별 트레이 m {bc['ladder_m']}+{bc['ug_m']} != 구간 합 {seglen.get(no, 0)}")
+                break
+        if set(t.get("by_cable") or {}) != on:
+            fail(where, "케이블별 트레이 표와 구간의 케이블이 다름")
         rl = {r["rid"]: r for r in res["geo"]["routes"]}
         for c in cables:
             rid = TR.rid_of(c)
             if rid in rl and c["no"] in seglen:
                 poly = rl[rid]["poly"]
                 h = sum(abs(b[0] - a[0]) + abs(b[1] - a[1]) for a, b in zip(poly, poly[1:])) * layout.m_per_pt
-                if abs(seglen[c["no"]] - h) > max(3, 0.05 * h):
+                bc = (t.get("by_cable") or {}).get(c["no"]) or {"legs": []}
+                runs = sum(1 for i, x in enumerate(bc["legs"]) if x["kind"] == "사다리"
+                           and (i == 0 or bc["legs"][i - 1]["kind"] != "사다리"))
+                # snapping to the rack centre line adds up to half a rack width on the way in and out
+                hw = float(v["rack_width"]) / 2 + 1
+                # (rack crossings can zig-zag between two centre lines: allow up to +12 %)
+                if not (h - 8 <= seglen[c["no"]] <= max(h * 1.12, h + 3 + 2 * hw * max(1, runs) * 1.5)):
                     fail(where, f"{c['no']} 트레이 구간 길이 {seglen[c['no']]} m != 경로 {h:.0f} m")
                     break
     # plot: slots, stations
