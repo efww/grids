@@ -304,6 +304,7 @@ class Layout:
         self.racks_auto = [r + [i in off] for i, r in enumerate(plot.get("racks") or [])]
         self.racks_user = [p for p in (dec.get("racks_add") or []) if len(p) >= 2]
         self._router = {}
+        self.route_edit = {k: v for k, v in (dec.get("routes_edit") or {}).items() if len(v) >= 2}
         self.room_src = "사용자 지정" if dec.get("room") else ("도면 글자" if self.room else "")
         self.irp_src = "사용자 지정" if dec.get("irp") else ("도면 글자" if self.irp else "")
 
@@ -381,6 +382,33 @@ class Layout:
                                      self.plot.get("obstacles") or [], self.room, pref if use_racks else 1.0)
             self._router[key] = _ROUTERS[k]
         return self._router[key]
+
+    def measure(self, poly, width_m=6.0, use_racks=True):
+        """A route drawn by hand: walk it every 0.5 m and split rack / off-rack metres like the router does."""
+        racks = self.rack_rects(width_m) if use_racks else []
+        on = lambda x, y: any(r[0] <= x <= r[2] and r[1] <= y <= r[3] for r in racks)
+        g = rk = 0.0
+        changes = 0
+        prev = None
+        first = None
+        step = 0.5 / self.m_per_pt
+        for (x0, y0), (x1, y1) in zip(poly, poly[1:]):
+            seg = ((x1 - x0) ** 2 + (y1 - y0) ** 2) ** 0.5
+            n = max(1, int(seg / step))
+            for i in range(n):
+                x, y = x0 + (x1 - x0) * (i + 0.5) / n, y0 + (y1 - y0) * (i + 0.5) / n
+                k = on(x, y)
+                if first is None:
+                    first = k
+                if prev is not None and k != prev:
+                    changes += 1
+                prev = k
+                if k:
+                    rk += seg / n * self.m_per_pt
+                else:
+                    g += seg / n * self.m_per_pt
+        return {"ground": g, "rack": rk, "changes": changes, "first_rack": bool(first), "last_rack": bool(prev),
+                "poly": [[round(x, 1), round(y, 1)] for x, y in poly]}
 
     def dist(self, a, b):
         """Manhattan distance in m (cables run along orthogonal routes)."""

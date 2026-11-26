@@ -285,6 +285,7 @@ class _Geo:
     def __init__(self, layout, v):
         self.L, self.v = layout, v
         self.cache = {}
+        self.seen = set()
         self.geo = {"inst": {}, "jbs": [], "pkgs": {}, "routes": [], "room": layout.room, "irp": layout.irp,
                     "unlocated": 0, "guessed": 0}
 
@@ -312,12 +313,17 @@ class _Geo:
             lvl = float(v["sup_el"])
         return abs(start - lvl) + abs(lvl - end)
 
-    def run(self, p, start_el, end_el, kind):
-        """Routed run to the control room: -> (metres incl. height, basis text)."""
+    def run(self, p, start_el, end_el, kind, rid=""):
+        """Routed run to the control room: -> (metres incl. height, basis text).
+        rid names the route (JB / package / IRP / comm tag) so a hand-edited polyline can replace it."""
         v = self.v
         mode = v["main_route"]
         use_r = mode.startswith("랙")
-        r = self.L.router(float(v["rack_pref"]), float(v["rack_width"]), use_r).route(p)
+        edited = rid in self.L.route_edit
+        if edited:
+            r = self.L.measure(self.L.route_edit[rid], float(v["rack_width"]), use_r)
+        else:
+            r = self.L.router(float(v["rack_pref"]), float(v["rack_width"]), use_r).route(p)
         if not r:
             hh, zz = self.h(p, self.L.room), self.zf(start_el, end_el)
             return hh + zz, f"PLOT 직각 {hh:.0f}m (경로 못 찾음) + 높이 {zz:.1f}m"
@@ -330,10 +336,17 @@ class _Geo:
         last = rl if (use_r and r["last_rack"]) else gl
         z = abs(start_el - first) + (r["changes"] * abs(rl - gl) if use_r else 0) + abs(last - end_el)
         horiz = r["ground"] + r["rack"]
-        self.geo["routes"].append({"poly": r["poly"], "kind": kind})
+        if rid not in self.seen:
+            self.seen.add(rid)
+            self.geo["routes"].append({"rid": rid, "poly": r["poly"], "kind": kind, "len": round(horiz + z),
+                                       "rack": round(r["rack"]), "edited": edited, "cables": 0})
+        for x in self.geo["routes"]:
+            if x["rid"] == rid:
+                x["cables"] += 1
         lvl = "UG" if gl < 0 else "AG 서포트"
-        return horiz + z, (f"PLOT 경로 {horiz:.0f}m (랙 {r['rack']:.0f} · {lvl} {r['ground']:.0f}) + 높이 {z:.1f}m"
-                           if use_r else f"PLOT 경로 {horiz:.0f}m ({mode}) + 높이 {z:.1f}m")
+        tag = "사용자 수정 경로" if edited else "PLOT 경로"
+        return horiz + z, (f"{tag} {horiz:.0f}m (랙 {r['rack']:.0f} · {lvl} {r['ground']:.0f}) + 높이 {z:.1f}m"
+                           if use_r else f"{tag} {horiz:.0f}m ({mode}) + 높이 {z:.1f}m")
 
     def zb(self):
         v = self.v
@@ -420,7 +433,7 @@ def build(rows, s: dict, area_map: dict | None = None, layout=None):
             if G:
                 p = _centre([G.loc(r)[0] for r in ch])
                 if p:
-                    tl, how = G.run(p, float(v["jb_el"]), float(v["room_el"]), "pkg")
+                    tl, how = G.run(p, float(v["jb_el"]), float(v["room_el"]), "pkg", f"PKG {area}")
                     how += f" ({G.loc(ch[0])[1]})"
                     G.geo["pkgs"][area] = [round(p[0], 1), round(p[1], 1)]
             sl = SYS_LETTER.get(sys_, "M")
@@ -457,7 +470,7 @@ def build(rows, s: dict, area_map: dict | None = None, layout=None):
             how = f"JB→룸 {tl:g}m 가정" + (" (유닛별 값)" if area in trunk else "")
             pj = _centre([G.loc(r)[0] for r in ch]) if G else None
             if pj:
-                tl, how = G.run(pj, float(v["jb_el"]), float(v["room_el"]), "jb")
+                tl, how = G.run(pj, float(v["jb_el"]), float(v["room_el"]), "jb", jb)
                 how += f" (JB = 계기 {len(ch)}개 중심)"
                 G.geo["jbs"].append([jb, round(pj[0], 1), round(pj[1], 1), sys_])
             jbs.append({"no": jb, "kind": "패키지 Skid" if route == "pkg" else "필드", "area": area, "system": sys_,
@@ -492,7 +505,7 @@ def build(rows, s: dict, area_map: dict | None = None, layout=None):
         src = "IRP" if v["mcc_from"].startswith("IRP") else "MCC"
         mlen, mhow = float(v["len_mcc"]), f"{src}→룸 {v['len_mcc']}m 가정"
         if G and G.L.irp:
-            mlen, mhow = G.run(G.L.irp, float(v["room_el"]), float(v["room_el"]), "irp")
+            mlen, mhow = G.run(G.L.irp, float(v["room_el"]), float(v["room_el"]), "irp", src)
             mhow += f" ({src} 위치: {G.L.irp_src})"
         if v["mcc_mode"].startswith("멀티"):
             by = {}
@@ -535,7 +548,7 @@ def build(rows, s: dict, area_map: dict | None = None, layout=None):
         if G:
             p = G.L.irp if r.location == "MCC" else G.loc(r)[0]
             if p:
-                tl, how = G.run(p, float(v["jb_el"]), float(v["room_el"]), "comm")
+                tl, how = G.run(p, float(v["jb_el"]), float(v["room_el"]), "comm", f"COMM {src}")
         cables.append({"no": uniq(f"CB-{r.tag}"), "kind": "통신", "frm": src,
                        "frm_type": "MCC" if r.location == "MCC" else "패키지", "to": room(r.system if r.system in SYS_LETTER else "DCS"),
                        "to_type": "룸", "spec": v["COMM_spec"], "io": r.io, "system": r.system, "is": "Non-IS",
@@ -545,7 +558,8 @@ def build(rows, s: dict, area_map: dict | None = None, layout=None):
     order = {"분기": 0, "멀티": 0, "패키지": 1, "MCC": 2, "통신": 3}   # JB branches stay next to their multi
     cables.sort(key=lambda c: order[c["kind"]])
     res = {"cables": cables, "jbs": jbs, "skipped": skipped, "summary": summarize(cables, jbs, skipped)}
-    res["summary"]["by_plot"] = sum(1 for c in cables if "PLOT" in c["basis"])
+    res["summary"]["by_plot"] = sum(1 for c in cables if "PLOT" in c["basis"] or "사용자 수정 경로" in c["basis"])
+    res["summary"]["edited_routes"] = len(layout.route_edit) if (G and layout is not None) else 0
     res["geo"] = G.geo if G else None
     return res
 

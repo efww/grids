@@ -764,6 +764,10 @@ def plot_update(name: str, b: dict):
             dd[k] = [float(b[k][0]), float(b[k][1])]
     if b.get("scale_n"):                            # paper scale 1:N
         dd["m_per_pt"] = float(b["scale_n"]) * 25.4 / 72 / 1000
+    if b.get("route_edit"):                          # {rid, poly}: a route dragged on the plot
+        dd.setdefault("routes_edit", {})[b["route_edit"]["rid"]] = [[float(x), float(y)] for x, y in b["route_edit"]["poly"]]
+    if b.get("route_reset"):
+        (dd.get("routes_edit") or {}).pop(b["route_reset"], None)
     if b.get("rack_add"):                            # polyline drawn on the plot, pt
         dd.setdefault("racks_add", []).append([[float(x), float(y)] for x, y in b["rack_add"]])
     if b.get("rack_del") is not None:

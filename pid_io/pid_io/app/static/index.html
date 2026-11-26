@@ -932,7 +932,7 @@ function ckTables(d) {
   return `<div class="panel" style="margin-top:16px"><div class="tabs" style="margin-bottom:10px">${vt("spec","사양별 물량")}${vt("jb",`JB 리스트 (${d.jbs.length})`)}${vt("cab",`케이블 스케줄 (${d.cables_total})`)}</div>${body}</div>`;
 }
 /* ---- PLOT PLAN tab (inside step 6) */
-const PL = {pick:null, pts:[]};
+const PL = {pick:null, pts:[], sel:null, edit:null, drag:null};
 function plotOverlay(pp) {
   const [W,H] = pp.size, g = pp.geo || {}, k = Math.max(W,H)/700;
   const room = (pp.questions.find(q=>q.id==="room")||{}).pos, irp = (pp.questions.find(q=>q.id==="irp")||{}).pos;
@@ -941,13 +941,18 @@ function plotOverlay(pp) {
     ? `<rect x="${r[0]}" y="${r[1]}" width="${r[2]-r[0]}" height="${r[3]-r[1]}" fill="none" stroke="#888" stroke-width="${1.2*k}" stroke-dasharray="${4*k} ${3*k}"><title>꺼진 랙 #${i+1}</title></rect>`
     : `<rect x="${r[0]}" y="${r[1]}" width="${r[2]-r[0]}" height="${r[3]-r[1]}" fill="#2c7fc0" opacity=".22"><title>랙 #${i+1}</title></rect>`).join("");
   const urk = (pp.racks_user||[]).map(pl => `<polyline points="${pl.map(q=>q.join(",")).join(" ")}" fill="none" stroke="#2c7fc0" stroke-width="${6*k}" opacity=".45" stroke-linejoin="round"/>`).join("");
-  const routes = (g.routes||[]).map(r => `<polyline points="${r.poly.map(q=>q.join(",")).join(" ")}" fill="none" stroke="${RC[r.kind]||"#999"}" stroke-width="${(r.kind==="jb"?1.6:1.1)*k}" opacity=".7"/>`).join("");
+  const pts = a => a.map(q=>q.join(",")).join(" ");
+  const routes = (g.routes||[]).filter(r => r.rid !== PL.sel).map(r => `<polyline points="${pts(r.poly)}" fill="none" stroke="${RC[r.kind]||"#999"}" stroke-width="${(r.kind==="jb"?1.6:1.1)*k}" opacity=".7" ${r.edited?`stroke-dasharray="${6*k} ${2*k}"`:""}/>`).join("");
+  const hits = PL.pick ? "" : (g.routes||[]).map(r => `<polyline points="${pts(r.poly)}" fill="none" stroke="transparent" stroke-width="${9*k}" data-rid="${esc(r.rid)}" style="cursor:pointer"><title>${esc(r.rid)} · ${r.cables}가닥 · ${r.len}m</title></polyline>`).join("");
+  const sel = PL.sel && PL.edit ? `<polyline id="plselline" points="${pts(PL.edit)}" fill="none" stroke="#e0002a" stroke-width="${3*k}" stroke-linejoin="round"/>
+    <polyline points="${pts(PL.edit)}" fill="none" stroke="transparent" stroke-width="${10*k}" id="plselhit" style="cursor:copy"><title>더블클릭: 점 추가</title></polyline>
+    ${PL.edit.map((q,i) => `<circle cx="${q[0]}" cy="${q[1]}" r="${(i===0||i===PL.edit.length-1?4:6)*k}" fill="${i===0||i===PL.edit.length-1?"#e0002a":"#fff"}" stroke="#e0002a" stroke-width="${2*k}" ${i===0||i===PL.edit.length-1?"":`data-vi="${i}" style="cursor:move"`}><title>${i===0?"출발점":i===PL.edit.length-1?"제어실":"끌어서 이동 · 더블클릭: 점 삭제"}</title></circle>`).join("")}` : "";
   const inst = Object.values(g.inst||{}).map(p => `<circle cx="${p[0]}" cy="${p[1]}" r="${2.2*k}" fill="${p[2].startsWith("추정")?"#9aa":"#15ad60"}"/>`).join("");
   const jbs = (g.jbs||[]).map(j => `<rect x="${j[1]-4*k}" y="${j[2]-4*k}" width="${8*k}" height="${8*k}" fill="#f08a24" stroke="#fff" stroke-width="${.8*k}"><title>${esc(j[0])}</title></rect>`).join("");
   const pk = Object.entries(g.pkgs||{}).map(([n,p]) => `<rect x="${p[0]-3.5*k}" y="${p[1]-3.5*k}" width="${7*k}" height="${7*k}" fill="#d1335d"><title>${esc(n)}</title></rect>`).join("");
   const mark = (p,c,lab) => p ? `<circle cx="${p[0]}" cy="${p[1]}" r="${11*k}" fill="none" stroke="${c}" stroke-width="${3*k}"/><text x="${p[0]+14*k}" y="${p[1]+5*k}" font-size="${15*k}" font-weight="700" fill="${c}">${lab}</text>` : "";
   const draft = PL.pts && PL.pts.length ? `<polyline points="${PL.pts.map(q=>q.join(",")).join(" ")}" fill="none" stroke="#e00" stroke-width="${3*k}" stroke-dasharray="${5*k} ${3*k}"/>${PL.pts.map(q=>`<circle cx="${q[0]}" cy="${q[1]}" r="${3.5*k}" fill="#e00"/>`).join("")}` : "";
-  return `<svg viewBox="0 0 ${W} ${H}" style="position:absolute;inset:0;width:100%;height:100%" id="plsvg">${racks}${urk}${routes}${inst}${pk}${jbs}${mark(room,"#2c7fc0","제어실")}${mark(irp,"#7e66cb","IRP")}${draft}</svg>`;
+  return `<svg viewBox="0 0 ${W} ${H}" style="position:absolute;inset:0;width:100%;height:100%" id="plsvg">${racks}${urk}${routes}${inst}${pk}${jbs}${mark(room,"#2c7fc0","제어실")}${mark(irp,"#7e66cb","IRP")}${draft}${hits}${sel}</svg>`;
 }
 function plotTab(d) {
   const pp = d.plot;
@@ -969,9 +974,15 @@ function plotTab(d) {
           + ((pp.racks_user||[]).length ? `<div style="width:100%;font-size:12px;margin-top:4px">${pp.racks_user.map((r,i)=>`<span class="chip b" style="margin:2px">그린 랙 ${i+1} (${r.length}점) <a data-rkdel="${i}" style="cursor:pointer">✕</a></span>`).join("")}</div>` : "")
         : `<button class="btn sm line" data-plpick="${q.id}">${PL.pick===q.id?"도면을 누르세요…":"도면에서 위치 지정"}</button>`}</div></div>`).join("");
   const s = d.summary;
+  const sr = PL.sel ? ((pp.geo||{}).routes||[]).find(r => r.rid === PL.sel) : null;
+  const selCard = sr ? `<div class="ritem on" style="cursor:default">
+      <div class="a"><b>선택한 경로: ${esc(sr.rid)}</b>${sr.edited?`<span class="chip b">수정됨</span>`:`<span class="chip">자동</span>`}</div>
+      <div class="b">케이블 ${sr.cables}가닥 · 가닥당 ${fmt(sr.len)}m (랙 ${fmt(sr.rack)}m, 높이 포함)<br>흰 점을 끌어 옮기고, 빨간 선을 더블클릭하면 점 추가, 흰 점을 더블클릭하면 삭제. 놓으면 바로 케이블 스케줄에 반영됩니다.</div>
+      <div style="display:flex;gap:6px;margin-top:8px">${sr.edited?`<button class="btn sm line" id="plrreset">자동 경로로 되돌리기</button>`:""}<button class="btn sm line" id="plrclose">선택 해제</button></div></div>`
+    : `<div class="ritem" style="cursor:default;background:#f7faf8"><div class="b">경로 선을 누르면 꺾이는 점을 끌어서 경로를 고칠 수 있습니다.</div></div>`;
   return files + `<div style="display:flex;gap:16px;align-items:flex-start">
     <div style="width:330px;flex:none">
-      <div class="panel" style="padding:0">${qs}
+      <div class="panel" style="padding:0">${selCard}${qs}
         <div class="ritem" style="cursor:default"><div class="a"><b>계기 위치</b></div><div class="b">장비 태그 위치 ${fmt(pp.located["장비"])} · 추정 ${fmt(pp.located["추정"])} (시트 장비 중심·반복 배치) · 미정 ${fmt(pp.unlocated)}<br>PLOT 장비 글자 ${fmt(pp.equipment)}개</div></div>
         <div class="ritem" style="cursor:default"><div class="a"><b>PLOT 길이 적용</b></div><div class="b">${fmt(s.by_plot||0)} / ${fmt(s.cables)}가닥${d.values.plot_use!=="사용"?" · 지금은 '가정 길이만' 설정":""}</div></div>
       </div>
@@ -995,6 +1006,30 @@ function bindPlot(m, upd) {
   const ru = $("#plrkundo"); if (ru) ru.onclick = () => { (PL.pts||[]).pop(); renderCable(m); };
   const rc = $("#plrkcancel"); if (rc) rc.onclick = () => { PL.pick = null; PL.pts = []; renderCable(m); };
   const sb = $("#plscaleb"); if (sb) sb.onclick = () => { const n = +$("#plscale").value; if (!n) return toast("축척 1:N의 N을 입력하세요", true); plotPost({scale_n:n}, m); };
+  const svg = $("#plsvg"), toPt = e => { const r = $("#plwrap").getBoundingClientRect(), [W,H] = CK.data.plot.size;
+    return [Math.round((e.clientX - r.left) / r.width * W * 10) / 10, Math.round((e.clientY - r.top) / r.height * H * 10) / 10]; };
+  const saveRoute = () => plotPost({route_edit: {rid: PL.sel, poly: PL.edit}}, m);
+  if (svg) {
+    svg.querySelectorAll("[data-rid]").forEach(el => el.onclick = e => { e.stopPropagation();
+      const r = CK.data.plot.geo.routes.find(x => x.rid === el.dataset.rid); PL.sel = r.rid; PL.edit = r.poly.map(q => q.slice()); renderCable(m); });
+    svg.querySelectorAll("[data-vi]").forEach(h => {
+      h.onmousedown = e => { e.preventDefault(); e.stopPropagation(); PL.drag = +h.dataset.vi; };
+      h.ondblclick = e => { e.stopPropagation(); PL.edit.splice(+h.dataset.vi, 1); saveRoute(); };
+    });
+    const sh = $("#plselhit"); if (sh) sh.ondblclick = e => { e.stopPropagation(); const p = toPt(e);
+      let best = 1, bd = Infinity;
+      for (let i = 1; i < PL.edit.length; i++) { const a = PL.edit[i-1], b = PL.edit[i];
+        const L2 = (b[0]-a[0])**2 + (b[1]-a[1])**2 || 1, u = Math.max(0, Math.min(1, ((p[0]-a[0])*(b[0]-a[0]) + (p[1]-a[1])*(b[1]-a[1])) / L2));
+        const dd = (a[0]+u*(b[0]-a[0])-p[0])**2 + (a[1]+u*(b[1]-a[1])-p[1])**2; if (dd < bd) { bd = dd; best = i; } }
+      PL.edit.splice(best, 0, p); saveRoute(); };
+    svg.onmousemove = e => { if (PL.drag == null) return; const p = toPt(e); PL.edit[PL.drag] = p;
+      const ln = $("#plselline"), hd = svg.querySelector(`[data-vi="${PL.drag}"]`);
+      if (ln) ln.setAttribute("points", PL.edit.map(q=>q.join(",")).join(" ")); if (hd) { hd.setAttribute("cx", p[0]); hd.setAttribute("cy", p[1]); } };
+    svg.onmouseup = svg.onmouseleave = () => { if (PL.drag == null) return; PL.drag = null; saveRoute(); };
+  }
+  const rr = $("#plrreset"); if (rr) rr.onclick = () => { const rid = PL.sel; PL.edit = null; plotPost({route_reset: rid}, m).then(() => {
+    const r = (CK.data.plot.geo.routes||[]).find(x => x.rid === rid); if (r) { PL.edit = r.poly.map(q=>q.slice()); renderCable(m); } }); };
+  const rx = $("#plrclose"); if (rx) rx.onclick = () => { PL.sel = null; PL.edit = null; renderCable(m); };
   const w = $("#plwrap"); if (w) w.onclick = e => {
     if (!PL.pick || !CK.data.plot) return;
     const r = w.getBoundingClientRect(), [W,H] = CK.data.plot.size;
@@ -1005,7 +1040,10 @@ function bindPlot(m, upd) {
     const k = PL.pick; PL.pick = null; plotPost({[k]: [x, y]}, m); };
 }
 async function plotPost(body, m) {
-  try { CK.data = await post(P("plot"), body); CK.data._p = S.project; if (S.screen==="cable") renderCable(m); } catch(e) { toast(e.message, true); }
+  try { CK.data = await post(P("plot"), body); CK.data._p = S.project;
+    if (PL.sel) { const r = ((CK.data.plot||{}).geo||{}).routes ? CK.data.plot.geo.routes.find(x => x.rid === PL.sel) : null;
+      if (r) PL.edit = r.poly.map(q=>q.slice()); else { PL.sel = null; PL.edit = null; } }
+    if (S.screen==="cable") renderCable(m); } catch(e) { toast(e.message, true); }
 }
 
 async function renderCable(m) {
