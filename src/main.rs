@@ -474,6 +474,7 @@ fn main() -> Result<()> {
         }
         refresh_jump_list(true); // taskbar / Start jump list: sessions, favourites, recent folders
         start.release(); // panes are up: the next start finds this window and hands it its folders
+        register_restart(); // a Windows update reboot opens it again, quietly (--startup)
 
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
@@ -493,6 +494,7 @@ fn main() -> Result<()> {
                 }
             }
         }
+        unregister_restart(); // closed by the user: not to come back after a reboot
         // The window is gone; copies still running finish first. Waiting keeps COM calls and messages
         // moving, in case a shell extension calls back into this apartment.
         for job in JOBS.take() {

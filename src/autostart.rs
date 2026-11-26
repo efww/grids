@@ -1,4 +1,5 @@
 use crate::*;
+use windows::Win32::System::Recovery::{RegisterApplicationRestart, UnregisterApplicationRestart, REGISTER_APPLICATION_RESTART_FLAGS, RESTART_NO_CRASH, RESTART_NO_HANG};
 use windows::Win32::System::Registry::{RegDeleteKeyValueW, RegGetValueW, RegSetKeyValueW, HKEY_CURRENT_USER, REG_SZ, RRF_RT_REG_BINARY, RRF_RT_REG_SZ};
 
 // ---------- View > Start with Windows (minimized) ----------
@@ -93,6 +94,29 @@ pub(crate) unsafe fn toggle_autostart() {
     let text = if on { tr("Could not add to startup", "시작 프로그램 등록 실패") } else { tr("Could not remove from startup", "시작 프로그램 해제 실패") };
     app(|a| a.note = Some((text.into(), Instant::now() + Duration::from_secs(3))));
     update_status();
+}
+
+// ---------- Windows' app restart (update reboot, "restartable apps" sign-in option) ----------
+// Windows keeps the exe path itself and adds these arguments: the same quiet start as the Run value.
+
+pub(crate) fn restart_args() -> &'static str {
+    STARTUP_FLAG
+}
+
+/// Only after a reboot or an update: never after a crash or a hang, so no restart loop.
+pub(crate) fn restart_flags() -> REGISTER_APPLICATION_RESTART_FLAGS {
+    RESTART_NO_CRASH | RESTART_NO_HANG
+}
+
+/// The instance that owns the window, once it is up. A failure only means no restart: nothing to say.
+pub(crate) unsafe fn register_restart() {
+    _ = RegisterApplicationRestart(&HSTRING::from(restart_args()), restart_flags());
+}
+
+/// The window is closed: a reboot while copies still finish (or the renamed old exe after an update)
+/// must not bring Grids back.
+pub(crate) unsafe fn unregister_restart() {
+    _ = UnregisterApplicationRestart();
 }
 
 /// Placed and laid out: still minimized, wait for the first restore; shown some other way, wake now.
@@ -194,6 +218,13 @@ mod tests {
         let mut later = v(&[r"C:\a", "--startup"]);
         assert!(!take_startup_flag(&mut later));
         assert_eq!(later.len(), 2);
+    }
+
+    #[test]
+    fn restart_is_the_quiet_start() {
+        let mut args = vec![restart_args().to_string()];
+        assert!(take_startup_flag(&mut args) && args.is_empty());
+        assert!(restart_flags().contains(RESTART_NO_CRASH) && restart_flags().contains(RESTART_NO_HANG));
     }
 
     #[test]

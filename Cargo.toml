@@ -31,6 +31,7 @@ features = [
     "Win32_System_LibraryLoader",
     "Win32_System_Memory",
     "Win32_System_Ole",
+    "Win32_System_Recovery",
     "Win32_System_Registry",
     "Win32_System_RestartManager",
     "Win32_System_Shutdown",
