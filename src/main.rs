@@ -1632,6 +1632,86 @@ mod tests {
         assert!(ko[1].last().unwrap().desc.ends_with("이미 실행 중이면 그 창에서 엽니다."));
     }
 
+    // One row's keycaps as "context:key", context "" (anywhere), "filter" or "preview", so that losing
+    // the filter's Alt+↓ or the preview's F2 / Del shows even while the plain one is still listed.
+    // Keys break at ", " and " / " as key_rows does; a bare arrow keeps the modifiers before it
+    // ("Alt+Shift+← / →" is Alt+Shift+→) so the two pane-arrow rows stay apart.
+    fn doc_caps(ctx: &str, keys: &str) -> Vec<String> {
+        let keys = keys.replace("Ctrl+C / X / V", "Ctrl+C/X/V").replace('휠', "wheel");
+        let mut caps: Vec<String> = Vec::new();
+        for k in keys.split(", ").flat_map(|p| p.split(" / ")) {
+            let k = match caps.last() {
+                Some(prev) if ["←", "→", "↑", "↓"].contains(&k) => format!("{}{k}", &prev[..prev.rfind('+').map_or(0, |i| i + 1)]),
+                _ => k.to_string(),
+            };
+            caps.push(k);
+        }
+        caps.into_iter().map(|k| format!("{ctx}:{k}")).collect()
+    }
+
+    // The in-app list (KEYS_EN / KEYS_KO): the keyboard section, plus the Save button's line in the
+    // mouse & buttons section, "Save (Ctrl+S)" / "저장 (Ctrl+S)", which the READMEs list as a key.
+    fn app_key_rows(text: &str) -> Vec<Vec<String>> {
+        let [kb, mouse] = key_rows(text);
+        let mut rows: Vec<Vec<String>> = kb
+            .iter()
+            .map(|r| {
+                let k = r.keys.join(" / ");
+                let ctx = if r.desc.starts_with("In the preview:") || r.desc.starts_with("미리보기에서:") {
+                    "preview"
+                } else if k.contains(" in the filter") || k.contains("필터 칸에서 ") {
+                    "filter"
+                } else {
+                    ""
+                };
+                doc_caps(ctx, &k.replace(" in the filter", "").replace("필터 칸에서 ", ""))
+            })
+            .collect();
+        rows.extend(mouse.iter().filter_map(|r| r.keys[0].split_once(" (Ctrl+")).map(|(_, k)| doc_caps("", &format!("Ctrl+{}", k.trim_end_matches(')')))));
+        rows
+    }
+
+    // The first column of the table under `heading`, "(preview)" / "(in the filter)" tails as the context.
+    fn readme_key_rows(md: &str, heading: &str) -> Vec<Vec<String>> {
+        let table = md.split_once(heading).unwrap_or_else(|| panic!("no {heading:?} heading")).1;
+        let tails = [(" (in the filter)", "filter"), (" (필터 칸에서)", "filter"), (" (preview)", "preview"), (" (미리보기)", "preview")];
+        let rows = table.lines().skip_while(|l| !l.starts_with('|')).skip(2).take_while(|l| l.starts_with('|'));
+        rows.map(|l| {
+            let k = l[1..].split(" | ").next().unwrap().trim();
+            let (k, ctx) = tails.iter().find_map(|(tail, ctx)| k.strip_suffix(tail).map(|k| (k, *ctx))).unwrap_or((k, ""));
+            doc_caps(ctx, k)
+        })
+        .collect()
+    }
+
+    // The keys in the app's shortcut window (English and Korean) and in the README.md / README.ko.md
+    // tables must agree, so a new shortcut can't ship missing from one of the four.
+    #[test]
+    fn shortcut_docs_match() {
+        let same_rows = |what: &str, a: &[Vec<String>], b: &[Vec<String>]| {
+            if let Some(i) = (0..a.len().max(b.len())).find(|&i| a.get(i) != b.get(i)) {
+                panic!("{what}: row {} differs: {:?} vs {:?}", i + 1, a.get(i), b.get(i));
+            }
+        };
+        let (en, ko) = (app_key_rows(KEYS_EN), app_key_rows(KEYS_KO));
+        let md = readme_key_rows(include_str!("../README.md"), "\n## Keyboard shortcuts\n");
+        let md_ko = readme_key_rows(include_str!("../README.ko.md"), "\n## 단축키\n");
+        assert!(en.len() >= 40 && md.len() >= 40, "{} app rows, {} README rows", en.len(), md.len());
+        same_rows("KEYS_EN vs KEYS_KO", &en, &ko);
+        same_rows("README.md vs README.ko.md", &md, &md_ko);
+        let set = |rows: &[Vec<String>]| rows.iter().flatten().cloned().collect::<std::collections::BTreeSet<_>>();
+        let (app, doc) = (set(&en), set(&md));
+        let only_app: Vec<_> = app.difference(&doc).collect();
+        let only_doc: Vec<_> = doc.difference(&app).collect();
+        assert!(
+            only_app.is_empty() && only_doc.is_empty(),
+            "in the app's shortcut list but not the README tables: {only_app:?}; in the README tables but not the app's list: {only_doc:?}"
+        );
+        for k in [":F1", ":Ctrl+S", "filter:Alt+↓", "preview:F2", "preview:Del", ":Ctrl+Alt+Shift+→", ":Ctrl+C/X/V"] {
+            assert!(app.contains(k), "{k}");
+        }
+    }
+
     #[test]
     fn file_kinds() {
         for (_, _, spec) in FILE_KINDS {

@@ -87,6 +87,7 @@ The exe is not code-signed, so Windows SmartScreen may warn the first time: choo
 | Ctrl+S | Save the current session |
 | Ctrl+B | Favourites list (↑/↓, Enter to open, Del to remove, Alt+↑/↓ or drag to reorder) |
 | Ctrl+/ | Keyboard shortcuts (this list): ↑/↓, PgUp/PgDn, Home/End step through it a row at a time, and screen readers read each row's keys and description; Esc closes |
+| F1 | Help (opens this README on GitHub, in the UI language) |
 | Ctrl+Shift+M | Maximize / restore the active pane (or double-click its header) |
 | Ctrl+Shift+E | Hide / show the folder tree (also View menu → Folder tree; its width is kept) |
 | Ctrl+Shift+O | Open the folders of open Explorer windows and tabs in panes, from the active pane on (also View menu; panes already showing one of them stay put) |
