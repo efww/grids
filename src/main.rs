@@ -3787,11 +3787,25 @@ mod tests { tr("in", "안") }
 
     #[test]
     fn csv_parsing() {
-        let rows = csv_rows("a,\"b,c\",\"d \"\"q\"\"\"\r\n1,2\n", ',', 100);
+        let (rows, more) = csv_rows("a,\"b,c\",\"d \"\"q\"\"\"\r\n1,2\n", ',', 100);
         assert_eq!(rows, vec![vec!["a", "b,c", "d \"q\""], vec!["1", "2"]]);
-        assert_eq!(csv_rows("x\n\"multi\nline\",y", ',', 100)[1], vec!["multi\nline", "y"]);
-        assert_eq!(csv_rows("1\n2\n3\n", ',', 2).len(), 2);
+        assert!(!more);
+        assert_eq!(csv_rows("x\n\"multi\nline\",y", ',', 100).0[1], vec!["multi\nline", "y"]);
+        let (rows, more) = csv_rows("1\n2\n3\n", ',', 2);
+        assert!(rows.len() == 2 && more);
         assert_eq!((csv_sep("a;b;c\n"), csv_sep("a,b;c\n")), (';', ','));
+    }
+
+    // Whether rows were left out at the limit: 1999, 2000 and 2001 rows, with and without the last line break.
+    #[test]
+    fn csv_limit_says_when_rows_left_out() {
+        let lines = |n: usize, end: &str| (1..=n).map(|i| i.to_string()).collect::<Vec<_>>().join("\n") + end;
+        for (n, end, cut) in [(1999, "\n", false), (2000, "\n", false), (2000, "\r\n\r\n", false), (2000, "", false), (2001, "\n", true), (2001, "", true)] {
+            let (rows, more) = csv_rows(&lines(n, end), ',', 2000);
+            assert_eq!((rows.len(), more), (n.min(2000), cut), "{n} rows ending {end:?}");
+        }
+        // a quoted line break after the limit is still a row left out
+        assert!(csv_rows("a\nb\n\"x\ny\"", ',', 2).1);
     }
 
     // A ZIP made by hand: one stored entry, one deflated, a Korean name without the UTF-8 flag.
@@ -3861,8 +3875,47 @@ mod tests { tr("in", "안") }
         let ss = xlsx_strings("<sst><si><t>이름</t></si><si><r><t>A</t></r><r><t>B</t></r></si></sst>");
         assert_eq!(ss, vec!["이름", "AB"]);
         let sheet = r#"<row r="1"><c r="A1" t="s"><v>0</v></c><c r="C1" t="s"><v>1</v></c></row><row r="2"><c r="A2"><v>0.30000000000000004</v></c><c r="B2" t="inlineStr"><is><t>x</t></is></c></row>"#;
-        assert_eq!(xlsx_rows(sheet, &ss, 100, 100), vec![vec!["이름", "", "AB"], vec!["0.3", "x"]]);
-        assert_eq!(xlsx_rows(sheet, &ss, 1, 2), vec![vec!["이름"]]); // limits
+        let (all, more) = xlsx_rows(sheet, &ss, 100, 100);
+        assert!(all == vec![vec!["이름", "", "AB"], vec!["0.3", "x"]] && !more);
+        let (front, more) = xlsx_rows(sheet, &ss, 1, 2);
+        assert!(front == vec![vec!["이름"]] && more); // limits, with values past them
+        assert!(xlsx_rows(sheet, &ss, 2, 2).1); // C1 (third column) has a value
+        assert!(xlsx_rows(sheet, &ss, 1, 3).1); // the inline string in row 2
+    }
+
+    // Values past the row or column limit say "more"; cells only formatted out there do not.
+    #[test]
+    fn xlsx_limit_says_when_cells_left_out() {
+        let rows = |n: usize| (1..=n).map(|r| format!(r#"<row r="{r}"><c r="A{r}"><v>{r}</v></c></row>"#)).collect::<String>();
+        for (n, cut) in [(1999, false), (2000, false), (2001, true)] {
+            let (r, more) = xlsx_rows(&rows(n), &[], 2000, 60);
+            assert_eq!((r.len(), more), (n.min(2000), cut), "{n} rows");
+        }
+        let formatted = rows(2000) + r#"<row r="3000"><c r="A3000" s="1"/><c r="B3000" s="2"></c></row>"#;
+        assert!(!xlsx_rows(&formatted, &[], 2000, 60).1);
+        let wide = |col: &str, cell: &str| format!(r#"<row r="1"><c r="A1"><v>1</v></c><c r="{col}1"{cell}</row>"#);
+        assert!(xlsx_rows(&wide("BI", "><v>61</v></c>"), &[], 2000, 60).1); // column 61
+        assert!(!xlsx_rows(&wide("BH", "><v>60</v></c>"), &[], 2000, 60).1); // column 60 is shown
+        assert!(xlsx_rows(&wide("BI", r#" t="inlineStr"><is><t>x</t></is></c>"#), &[], 2000, 60).1);
+        assert!(!xlsx_rows(&wide("BI", r#" s="3"/>"#), &[], 2000, 60).1);
+    }
+
+    // The preview's header and notes say when only the front of a file is shown.
+    #[test]
+    fn preview_cut_words() {
+        assert_eq!(pages_label(50, 312, true), "312쪽 · 앞 50쪽만 미리보기");
+        assert_eq!(pages_label(50, 312, false), "312 pages · first 50 previewed");
+        assert_eq!((pages_label(12, 12, true), pages_label(50, 50, false)), ("12쪽".into(), "50 pages".into()));
+        assert_eq!(pages_note(50, 312, true), "앞 50쪽까지만 미리보기 (전체 312쪽)");
+        assert_eq!(pages_note(50, 312, false), "Only the first 50 pages are previewed (312 in all)");
+        assert_eq!((lines_label(120, false, true), lines_label(120, false, false)), ("120줄".into(), "120 lines".into()));
+        assert_eq!((lines_label(8000, true, true), lines_label(8000, true, false)), ("8000+줄".into(), "8000+ lines".into()));
+        assert_eq!(lines_label(TEXT_LINES, false, true), "40000줄");
+        assert_eq!(lines_label(60000, false, true), "60000줄 · 앞 40000줄만");
+        assert_eq!(lines_label(60000, true, false), "60000+ lines · first 40000 shown");
+        assert_eq!((lines_note(true), lines_note(false)), ("… 앞 40000줄만 표시".into(), "… only the first 40000 lines are shown".into()));
+        assert_eq!((rows_label(2000, true, true), rows_label(2000, true, false)), ("2000+행".into(), "2000+ rows".into()));
+        assert_eq!((rows_label(1999, false, true), rows_label(1999, false, false)), ("1999행".into(), "1999 rows".into()));
     }
 
     #[test]
@@ -3898,7 +3951,7 @@ mod tests { tr("in", "안") }
         assert_eq!((find_ci("ab</ScRiPt", "</script"), find_ci("ab", "</script"), find_ci("가</a", "</a")), (Some(2), None, Some(3)));
         let ss = vec!["A".repeat(16 << 20)];
         let sheet = (1..=2000).map(|r| format!(r#"<c r="A{r}" t="s"><v>0</v></c>"#)).collect::<String>();
-        let rows = xlsx_rows(&sheet, &ss, 2000, 60); // was 2000 copies of 16 MB
+        let (rows, _) = xlsx_rows(&sheet, &ss, 2000, 60); // was 2000 copies of 16 MB
         assert!(rows.len() == 2000 && rows.iter().all(|r| r[0].len() == CELL_MAX));
         assert!(t0.elapsed() < Duration::from_secs(20), "{:?}", t0.elapsed());
     }
@@ -3933,7 +3986,7 @@ mod tests { tr("in", "안") }
     fn peek_fail_card() {
         let req = |p: &str| Some(PeekReq { path: p.into(), w: 10, h: 10, hwnd: 0, plain: false, fetch: false });
         let card = || Peeked { body: Body::Card { icon: None, rows: Vec::new() }, icon: -1, meta: Vec::new(), cloud: false };
-        let pages = || Peeked { body: Body::Pages { pages: Vec::new(), total: 3 }, icon: -1, meta: Vec::new(), cloud: false };
+        let pages = || Peeked { body: Body::Pages { pages: Vec::new(), total: 3, all: 3 }, icon: -1, meta: Vec::new(), cloud: false };
         let mut j = PeekJob { gen: 0, req: None, done: None, zoom: None, zseq: 0, sharp: Vec::new() };
         j.want(req("a"));
         let a = j.gen;

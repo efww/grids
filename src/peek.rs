@@ -186,7 +186,8 @@ unsafe fn peek_item(gen: usize, req: &PeekReq) {
         crate::hwpdoc::log(format!("F3 content {tc}ms meta {}ms", t.elapsed().as_millis() - tc));
     }
     let more = match &body {
-        Body::Pages { pages, total } if (pages.len() as u32) < *total => Some(*total),
+        // only up to total (at most PDF_MAX), never all of a long document
+        Body::Pages { pages, total, .. } if (pages.len() as u32) < *total => Some(*total),
         _ => None,
     };
     let tell = || _ = PostMessageW(Some(HWND(req.hwnd as _)), WM_PEEK_DONE, WPARAM(gen), LPARAM(0));
@@ -304,7 +305,7 @@ pub(crate) struct PeekView {
     pub(crate) max_y: i32, // how far it can scroll down, from the last paint; 0 = it all fits
     pub(crate) edge_at: Option<Instant>, // the wheel reached the top / bottom then
     pub(crate) wheel: i32, // wheel delta toward the next file step (120 a notch)
-    pub(crate) layout: Option<(usize, i32, Vec<Line>, i32)>, // (gen, width, lines, total height)
+    pub(crate) layout: Option<(usize, i32, Vec<Line>, i32, bool)>, // (gen, width, lines, total height, more lines than TEXT_LINES)
     pub(crate) fonts: Option<(i32, [HFONT; 4])>,              // (dpi, [mono, bold, h1, h2])
     pub(crate) hosted: Option<usize>, // generation a preview handler is showing
     pub(crate) host_win: Option<HWND>, // the picture area's child window the handler draws in
@@ -1014,8 +1015,8 @@ fn style_font(st: Style, font: HFONT, f: &[HFONT; 4]) -> HFONT {
 }
 
 // Heights of every line at this width, measured once per item and width; painting then draws only what shows.
-unsafe fn layout(dc: HDC, gen: usize, width: i32, text: &str, kind: TextKind, font: HFONT, f: &[HFONT; 4], dpi: i32) -> i32 {
-    if let Some(total) = view(|v| v.layout.as_ref().filter(|(g, w, ..)| *g == gen && *w == width).map(|l| l.3)) {
+unsafe fn layout(dc: HDC, gen: usize, width: i32, text: &str, kind: TextKind, font: HFONT, f: &[HFONT; 4], dpi: i32) -> (i32, bool) {
+    if let Some(total) = view(|v| v.layout.as_ref().filter(|(g, w, ..)| *g == gen && *w == width).map(|l| (l.3, l.4))) {
         return total;
     }
     let src: Vec<(String, Style)> = match kind {
@@ -1025,8 +1026,9 @@ unsafe fn layout(dc: HDC, gen: usize, width: i32, text: &str, kind: TextKind, fo
         TextKind::Document => text.lines().map(|l| (l.to_string(), Style::Plain)).collect(),
     };
     let mut y = 0;
-    let mut lines = Vec::with_capacity(src.len().min(40_000));
-    let mut source = src.into_iter().take(40_000).enumerate().peekable();
+    let capped = src.len() > TEXT_LINES;
+    let mut lines = Vec::with_capacity(src.len().min(TEXT_LINES));
+    let mut source = src.into_iter().take(TEXT_LINES).enumerate().peekable();
     while let Some((no, (t, st))) = source.next() {
         if kind == TextKind::Document && t.starts_with("| ") {
             let mut rows = Vec::new();
@@ -1077,8 +1079,8 @@ unsafe fn layout(dc: HDC, gen: usize, width: i32, text: &str, kind: TextKind, fo
         lines.push(Line { text: t, style: st, y, h, no: no + 1, table: None });
         y += h + if matches!(st, Style::H1 | Style::H2) { dpi / 24 } else { 0 };
     }
-    view(|v| v.layout = Some((gen, width, lines, y)));
-    y
+    view(|v| v.layout = Some((gen, width, lines, y, capped)));
+    (y, capped)
 }
 
 // ---------- painting ----------
@@ -1194,11 +1196,12 @@ unsafe fn paint_text(dc: HDC, area: RECT, gen: usize, text: &str, kind: TextKind
         ((p.w as f32 * k) as i32, (p.h as f32 * k) as i32)
     });
     let offset = pic_size.map_or(0, |(_, h)| h + s(20));
-    let total = offset + layout(dc, gen, width, text, kind, font, &f, dpi) + if cut { s(28) } else { 0 };
+    let (height, capped) = layout(dc, gen, width, text, kind, font, &f, dpi);
+    let total = offset + height + if cut || capped { s(28) } else { 0 };
     clamp_scroll(total, area.bottom - area.top);
     if kind == TextKind::Document {
         view(|v| {
-            let full = v.layout.as_ref().map(|(_, _, lines, _)| {
+            let full = v.layout.as_ref().map(|(_, _, lines, ..)| {
                 lines.iter().filter_map(|l| l.table.as_ref())
                     .map(|(_, widths)| widths.iter().sum::<i32>()).max().unwrap_or(0)
             }).unwrap_or(0);
@@ -1214,7 +1217,7 @@ unsafe fn paint_text(dc: HDC, area: RECT, gen: usize, text: &str, kind: TextKind
         }
         let sy = sy - offset;
         view(|v| {
-            let Some((_, _, lines, _)) = v.layout.as_ref() else { return };
+            let Some((_, _, lines, ..)) = v.layout.as_ref() else { return };
             let first = lines.partition_point(|l| l.y + l.h < sy);
             for l in lines[first..].iter().take_while(|l| l.y - sy < area.bottom - area.top) {
                 let top = area.top + l.y - sy;
@@ -1256,10 +1259,12 @@ unsafe fn paint_text(dc: HDC, area: RECT, gen: usize, text: &str, kind: TextKind
                 text_flags(dc, r, &l.text, fnt, ink, flags);
             }
         });
-        if cut {
+        if cut || capped {
             let y = area.top + total - offset - s(24) - sy;
             let r = RECT { left: area.left, top: y, right: area.right, bottom: y + s(24) };
-            text_flags(dc, r, tr("… only the first 512 KB is shown", "… 앞부분 512 KB만 표시"), font, pal().sub, DT_SINGLELINE);
+            // the line limit is where the text stops on screen, so it is the one said when both apply
+            let note = if capped { lines_note(KO.load(Ordering::Relaxed)) } else { tr("… only the first 512 KB is shown", "… 앞부분 512 KB만 표시").to_string() };
+            text_flags(dc, r, &note, font, pal().sub, DT_SINGLELINE);
         }
     });
 }
@@ -1313,7 +1318,7 @@ unsafe fn paint_table(dc: HDC, area: RECT, rows: &[Vec<String>], cut: bool, font
         if cut {
             let top = area.top + rows.len() as i32 * rh - sy;
             let r = RECT { left: area.left + s(6), top, right: area.right, bottom: top + rh };
-            text(dc, r, tr("… more rows not shown", "… 이후 행은 생략"), font, pal().sub, DT_LEFT);
+            text(dc, r, tr("… more rows or columns not shown", "… 이후 행·열은 생략"), font, pal().sub, DT_LEFT);
         }
     });
 }
@@ -1437,11 +1442,13 @@ unsafe fn paint_pic(dc: HDC, st: RECT, p: &Pix, sharp: Option<&Pix>, k: f32) -> 
 }
 
 // PDF pages one under another, each its own sheet of paper on the stage.
-unsafe fn paint_pages(dc: HDC, area: RECT, pages: &[Pix], sharp: &[(u32, Pix)], total: u32, font: HFONT, dpi: i32, k: f32) -> Option<Sharp> {
+// total: pages to draw (at most PDF_MAX); all: pages in the document, said under the last one when more.
+unsafe fn paint_pages(dc: HDC, area: RECT, pages: &[Pix], sharp: &[(u32, Pix)], total: u32, all: u32, font: HFONT, dpi: i32, k: f32) -> Option<Sharp> {
     let s = |v: i32| v * dpi / 96;
     let aw = area.right - area.left;
     let gap = (s(16) as f32 * k) as i32;
-    let more = (pages.len() as u32) < total;
+    // still rendering, or every page drawn of a document longer than that
+    let more = (pages.len() as u32) < total || all > total;
     let size = |p: &Pix| {
         let w = p.w.min(aw);
         ((w as f32 * k) as i32, ((p.h * w / p.w.max(1)) as f32 * k) as i32)
@@ -1467,7 +1474,11 @@ unsafe fn paint_pages(dc: HDC, area: RECT, pages: &[Pix], sharp: &[(u32, Pix)], 
         }
         if more {
             let r = RECT { left: area.left, top: y, right: area.right, bottom: y + s(32) };
-            let t = format!("{} {} / {}", tr("Rendering pages…", "페이지 그리는 중…"), pages.len(), total);
+            let t = if (pages.len() as u32) < total {
+                format!("{} {} / {}", tr("Rendering pages…", "페이지 그리는 중…"), pages.len(), total)
+            } else {
+                pages_note(total, all, KO.load(Ordering::Relaxed))
+            };
             text(dc, r, &t, font, pal().sub, DT_CENTER);
         }
     });
@@ -1529,8 +1540,8 @@ pub(crate) unsafe fn paint_peek(h: HWND) {
         match j.done.as_ref().map(|p| &p.body) {
             // zoomed in, the sharper pictures stand in for the fitted ones
             Some(Body::Pic(p)) => want = paint_pic(dc, g.stage, p, j.sharp.first().filter(|_| steps > 0).map(|x| &x.1), k),
-            Some(Body::Pages { pages, total }) => {
-                want = paint_pages(dc, g.stage, pages, if steps > 0 { &j.sharp } else { &[] }, *total, font, dpi, k);
+            Some(Body::Pages { pages, total, all }) => {
+                want = paint_pages(dc, g.stage, pages, if steps > 0 { &j.sharp } else { &[] }, *total, *all, font, dpi, k);
             }
             Some(Body::Text { text: t, kind, cut }) => {
                 plate();

@@ -23,7 +23,8 @@ pub(crate) enum TextKind {
 pub(crate) enum Body {
     Pic(Pix),
     Document { pic: Option<Pix>, text: String, cut: bool },
-    Pages { pages: Vec<Pix>, total: u32 }, // PDF pages as pictures, the rest added while they render
+    // PDF pages as pictures, the rest added while they render: total to draw (at most PDF_MAX), all in the document
+    Pages { pages: Vec<Pix>, total: u32, all: u32 },
     Text { text: String, kind: TextKind, cut: bool },
     Table { rows: Vec<Vec<String>>, cut: bool },
     List { head: String, rows: Vec<(String, String)> }, // folder or archive contents: name, size
@@ -300,7 +301,8 @@ pub(crate) unsafe fn content_of(req: &PeekReq, online: Option<&WIN32_FIND_DATAW>
         "csv" | "tsv" => read_head(path, TEXT_MAX).filter(|(b, _)| looks_text(b)).map(|(b, cut)| {
             let text = decode_text(&b);
             let sep = if e == "tsv" { '\t' } else { csv_sep(&text) };
-            Body::Table { rows: csv_rows(&text, sep, 2000), cut }
+            let (rows, more) = csv_rows(&text, sep, 2000);
+            Body::Table { rows, cut: cut || more }
         }),
         "md" | "markdown" | "mdown" | "mkd" => text_body(path, TextKind::Markdown),
         e if PLAIN.contains(&e) => text_body(path, TextKind::Plain),
@@ -481,16 +483,16 @@ unsafe fn pdf_doc_page(doc: &PdfDocument, i: u32, w: i32, h: i32) -> Option<Pix>
 // The first page now; peek_worker renders the others after it is on screen (pdf_rest).
 unsafe fn pdf_first(path: &str, req: &PeekReq) -> Option<Body> {
     let doc = pdf_load(path).ok()?;
-    let total = doc.PageCount().ok()?.min(PDF_MAX);
+    let all = doc.PageCount().ok()?;
     let first = pdf_doc_page(&doc, 0, req.w, req.h)?;
-    Some(Body::Pages { pages: vec![first], total })
+    Some(Body::Pages { pages: vec![first], total: all.min(PDF_MAX), all })
 }
 
 // HWP/HWPX drawn page by page (hwpdoc.rs); the embedded preview picture and body text when that fails.
 unsafe fn hwp_pages(path: &str, req: &PeekReq) -> Option<Body> {
-    let total = crate::hwpdoc::page_count(path)?;
+    let (total, all) = crate::hwpdoc::page_count(path)?;
     let first = pdf_page(&Paged::Hwp(path.to_string()), 0, req.w, req.h)?;
-    Some(Body::Pages { pages: vec![first], total })
+    Some(Body::Pages { pages: vec![first], total, all })
 }
 
 // ---------- the header line: icon, type and what matters for this kind of file ----------
@@ -536,9 +538,9 @@ pub(crate) unsafe fn meta(path: &str, body: &Body, online: Option<&WIN32_FIND_DA
             }
         }
         Body::Pic(_) => out.extend(ps.as_ref().and_then(|ps| prop(ps, &PKEY_Image_Dimensions)).map(|d| d.replace(" x ", " × "))),
-        Body::Pages { total, .. } => out.push(if ko { format!("{total}쪽") } else { format!("{total} pages") }),
-        Body::Text { text, .. } => out.push(if ko { format!("{}줄", text.lines().count()) } else { format!("{} lines", text.lines().count()) }),
-        Body::Table { rows, .. } => out.push(if ko { format!("{}행", rows.len()) } else { format!("{} rows", rows.len()) }),
+        Body::Pages { total, all, .. } => out.push(pages_label(*total, *all, ko)),
+        Body::Text { text, cut, .. } => out.push(lines_label(text.lines().count(), *cut, ko)),
+        Body::Table { rows, cut } => out.push(rows_label(rows.len(), *cut, ko)),
         Body::List { head, .. } => out.push(head.clone()),
         _ => {}
     }
@@ -549,6 +551,45 @@ pub(crate) unsafe fn meta(path: &str, body: &Body, online: Option<&WIN32_FIND_DA
         out.extend(when(m.modified()));
     }
     (fi.iIcon, out)
+}
+
+/// Lines the text preview lays out (peek::layout); the header says when a file has more.
+pub(crate) const TEXT_LINES: usize = 40_000;
+
+// The header's size words, saying so when the preview shows only the front of the file.
+pub(crate) fn pages_label(total: u32, all: u32, ko: bool) -> String {
+    match (all > total, ko) {
+        (true, true) => format!("{all}쪽 · 앞 {total}쪽만 미리보기"),
+        (true, false) => format!("{all} pages · first {total} previewed"),
+        (false, true) => format!("{total}쪽"),
+        (false, false) => format!("{total} pages"),
+    }
+}
+
+/// cut: only the front of the file was read, so there are more lines than counted.
+pub(crate) fn lines_label(n: usize, cut: bool, ko: bool) -> String {
+    let plus = if cut { "+" } else { "" };
+    match (n > TEXT_LINES, ko) {
+        (true, true) => format!("{n}{plus}줄 · 앞 {TEXT_LINES}줄만"),
+        (true, false) => format!("{n}{plus} lines · first {TEXT_LINES} shown"),
+        (false, true) => format!("{n}{plus}줄"),
+        (false, false) => format!("{n}{plus} lines"),
+    }
+}
+
+/// Under the last page drawn of a document with more pages than the preview draws.
+pub(crate) fn pages_note(total: u32, all: u32, ko: bool) -> String {
+    if ko { format!("앞 {total}쪽까지만 미리보기 (전체 {all}쪽)") } else { format!("Only the first {total} pages are previewed ({all} in all)") }
+}
+
+/// Under the last line of a text longer than TEXT_LINES lines.
+pub(crate) fn lines_note(ko: bool) -> String {
+    if ko { format!("… 앞 {TEXT_LINES}줄만 표시") } else { format!("… only the first {TEXT_LINES} lines are shown") }
+}
+
+pub(crate) fn rows_label(n: usize, cut: bool, ko: bool) -> String {
+    let plus = if cut { "+" } else { "" };
+    if ko { format!("{n}{plus}행") } else { format!("{n}{plus} rows") }
 }
 
 // ---------- lists ----------
@@ -610,8 +651,8 @@ fn office_text(path: &str, ext: &str) -> Option<Body> {
                 let first = es.iter().find(|e| e.name.starts_with("xl/worksheets/sheet") && e.name.ends_with(".xml"))?.name.clone();
                 part(&first)
             })?;
-            let rows = xlsx_rows(&sheet, &strings, 2000, 60);
-            return Some(Body::Table { rows, cut: false });
+            let (rows, cut) = xlsx_rows(&sheet, &strings, 2000, 60);
+            return Some(Body::Table { rows, cut });
         }
         "pptx" | "pptm" | "ppsx" | "potx" => {
             let mut slides: Vec<(usize, String)> = es

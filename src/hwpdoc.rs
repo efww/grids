@@ -202,10 +202,10 @@ fn with_core<T>(path: &str, k: u64, f: impl FnOnce(&rhwp::DocumentCore) -> Optio
     })
 }
 
-/// How many pages the preview offers (at most PDF_MAX); None when rhwp cannot read the file.
-pub(crate) fn page_count(path: &str) -> Option<u32> {
+/// (pages the preview offers, at most PDF_MAX; pages in the document); None when rhwp cannot read the file.
+pub(crate) fn page_count(path: &str) -> Option<(u32, u32)> {
     let k = key(path)?;
-    guarded(|| with_core(path, k, |c| Some(c.page_count().min(PDF_MAX))).filter(|&n| n > 0))
+    guarded(|| with_core(path, k, |c| Some(c.page_count())).map(|n| (n.min(PDF_MAX), n)).filter(|&(n, _)| n > 0))
 }
 
 /// Page i (0-based) as a one-page PDF, made once per version of the file.
@@ -314,7 +314,7 @@ mod tests {
             }
             let f = f.to_string_lossy().into_owned();
             let t = std::time::Instant::now();
-            let n = page_count(&f);
+            let n = page_count(&f).map(|(n, _)| n);
             let pages = pdf_open(&f).ok().and_then(|doc| unsafe { pdf_page(&doc, 0, 600, 850) });
             let t1 = t.elapsed().as_millis();
             let last = n.and_then(|n| page_pdf(&f, n - 1)).is_some();

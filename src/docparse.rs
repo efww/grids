@@ -58,8 +58,9 @@ pub(crate) fn looks_text(b: &[u8]) -> bool {
     !head.contains(&0) && ctl * 50 <= head.len()
 }
 
-/// CSV / TSV rows: quoted fields may hold the separator, "" and line breaks. At most `max` rows.
-pub(crate) fn csv_rows(text: &str, sep: char, max: usize) -> Vec<Vec<String>> {
+/// CSV / TSV rows: quoted fields may hold the separator, "" and line breaks. At most `max` rows,
+/// and whether rows were left out after them.
+pub(crate) fn csv_rows(text: &str, sep: char, max: usize) -> (Vec<Vec<String>>, bool) {
     let mut rows = Vec::new();
     let (mut row, mut cell, mut quoted) = (Vec::new(), String::new(), false);
     let mut it = text.chars().peekable();
@@ -77,7 +78,8 @@ pub(crate) fn csv_rows(text: &str, sep: char, max: usize) -> Vec<Vec<String>> {
                 row.push(std::mem::take(&mut cell));
                 rows.push(std::mem::take(&mut row));
                 if rows.len() >= max {
-                    return rows;
+                    // only line breaks after the last row kept: nothing was left out
+                    return (rows, it.any(|c| c != '\r' && c != '\n'));
                 }
             }
             c => cell.push(c),
@@ -87,7 +89,7 @@ pub(crate) fn csv_rows(text: &str, sep: char, max: usize) -> Vec<Vec<String>> {
         row.push(cell);
         rows.push(row);
     }
-    rows
+    (rows, false)
 }
 
 /// ',' unless the first line has none and has ';' (European Excel).
@@ -406,16 +408,19 @@ pub(crate) fn xlsx_strings(xml: &str) -> Vec<String> {
 }
 
 /// A worksheet as rows of cell text, at most `max_r` x `max_c`; shared strings looked up, inline strings read.
-pub(crate) fn xlsx_rows(sheet: &str, strings: &[String], max_r: usize, max_c: usize) -> Vec<Vec<String>> {
+/// Also whether a cell with a value lies outside those limits (one only formatted is no loss).
+pub(crate) fn xlsx_rows(sheet: &str, strings: &[String], max_r: usize, max_c: usize) -> (Vec<Vec<String>>, bool) {
     let mut rows: Vec<Vec<String>> = Vec::new();
+    let mut more = false;
     for c in sheet.split("<c ").skip(1) {
         let Some(end) = c.find('>') else { continue };
         let tag = format!(" {}", &c[..end]);
         let Some((col, row)) = attr(&tag, "r").and_then(cell_ref) else { continue };
+        let body = c.split("</c>").next().unwrap_or("");
         if row >= max_r || col >= max_c {
+            more = more || (!c[..end].ends_with('/') && (body.contains("<v>") || body.contains("<is>")));
             continue;
         }
-        let body = c.split("</c>").next().unwrap_or("");
         let v = body.split("<v>").nth(1).and_then(|v| v.split("</v>").next()).map(unescape);
         let text = match attr(&tag, "t") {
             // a cell shows a line at most: one huge shared string used by every cell must not be copied whole each time
@@ -439,7 +444,7 @@ pub(crate) fn xlsx_rows(sheet: &str, strings: &[String], max_r: usize, max_c: us
         }
         r[col] = text;
     }
-    rows
+    (rows, more)
 }
 
 /// "0.30000000000000004" -> "0.3": Excel stores doubles; show them the way it would, roughly.
