@@ -39,6 +39,8 @@ pub(crate) struct App {
     pub(crate) place_hold: Option<[i32; 5]>, // where Windows left the window when that setup appeared (remember_place)
     pub(crate) place_settle: Option<Instant>, // until then the hold follows the window: Windows may move it in steps
     pub(crate) saved_ini: String, // grids.ini text last written
+    pub(crate) queued_ini: String, // grids.ini text last handed to the writer (cleared when a write fails)
+    pub(crate) ini_seq: u64, // its number: only that write's result counts
     pub(crate) save_after: Option<Instant>, // a failed write: autosave waits until then
     pub(crate) status: StatusLine,
     pub(crate) status_key: String,
@@ -147,6 +149,8 @@ thread_local! {
         place_hold: None,
         place_settle: None,
         saved_ini: String::new(),
+        queued_ini: String::new(),
+        ini_seq: 0,
         save_after: None,
         status: StatusLine::default(),
         status_key: String::new(),

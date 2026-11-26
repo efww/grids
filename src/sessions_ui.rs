@@ -50,35 +50,175 @@ pub(crate) unsafe fn monitor_sig() -> Option<String> {
     (ok && !rects.is_empty()).then(|| mon_sig(&rects))
 }
 
-// On failure the old grids.ini stays and autosave tries again in 5 seconds.
-unsafe fn store_ini(ini: String) {
-    let ok = write_ini(&ini_path(), &ini).is_ok();
-    app(|a| {
-        if ok {
-            (a.saved_ini, a.save_after) = (ini, None);
-        } else {
-            a.save_after = Some(Instant::now() + Duration::from_secs(5));
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner()) // a panicked writer must not stop the last save
+}
+
+// grids.ini written off the window's thread (as VS Code and browsers keep settings): next to the exe it may be
+// on a USB stick, a network share or a disk a virus scanner holds, and a write there froze the window on every
+// folder change. Autosave hands in the newest text and goes on; one worker writes, skipping texts already
+// overtaken. Closing and Windows ending still write right there (write_now).
+pub(crate) struct IniWriter {
+    path: PathBuf,
+    q: Mutex<IniQ>,
+    cv: Condvar,
+    io: Mutex<()>, // held for every write (worker and last save): one grids.ini.tmp at a time, no older text last
+}
+
+#[derive(Default)]
+struct IniQ {
+    seq: u64,                    // number of the newest text handed in (or written by write_now)
+    next: Option<(u64, String)>, // waiting for the worker; a newer text replaces it unwritten
+    written: u64,                // newest number written or given up on: older ones are skipped
+    done: Option<(u64, bool)>,   // the worker's last finished write (number, worked), for autosave
+    on_disk: Option<String>,     // text of the last write that worked
+    started: bool,               // the worker thread runs
+    closed: bool,                // Grids closes / Windows ends: nothing more is handed in
+}
+
+impl IniWriter {
+    pub(crate) fn new(path: PathBuf) -> Self {
+        IniWriter { path, q: Mutex::new(IniQ::default()), cv: Condvar::new(), io: Mutex::new(()) }
+    }
+
+    // Hand in `text` (replacing one still waiting); its number, or None once closed.
+    pub(crate) fn push(&self, text: String) -> Option<u64> {
+        let mut q = lock(&self.q);
+        if q.closed {
+            return None;
         }
+        q.seq += 1;
+        q.next = Some((q.seq, text));
+        self.cv.notify_one();
+        Some(q.seq)
+    }
+
+    // The worker's last finished write, once.
+    pub(crate) fn take_done(&self) -> Option<(u64, bool)> {
+        lock(&self.q).done.take()
+    }
+
+    fn wait_job(&self) -> (u64, String) {
+        let mut q = lock(&self.q);
+        loop {
+            if let Some(job) = q.next.take() {
+                return job;
+            }
+            q = self.cv.wait(q).unwrap_or_else(|e| e.into_inner());
+        }
+    }
+
+    fn write_job(&self, n: u64, text: String) {
+        let _io = lock(&self.io);
+        if lock(&self.q).written >= n {
+            return; // the last save wrote a newer text meanwhile
+        }
+        let ok = write_ini(&self.path, &text).is_ok();
+        let mut q = lock(&self.q);
+        (q.written, q.done) = (n, Some((n, ok)));
+        if ok {
+            q.on_disk = Some(text);
+        }
+    }
+
+    // The worker thread, started with the first text; false when Windows gives no thread.
+    fn start(&'static self) -> bool {
+        let mut q = lock(&self.q);
+        if !q.started {
+            let spawned = std::thread::Builder::new().name("grids-ini".into()).spawn(move || loop {
+                let (n, text) = self.wait_job();
+                self.write_job(n, text);
+            });
+            q.started = spawned.is_ok();
+        }
+        q.started
+    }
+
+    // The last save: waits for a write under way, drops what waits and writes `text` here. Unless the worker
+    // write it waited for just put this very text there: a stuck share is not waited for twice (otherwise it
+    // always writes, as before: grids.ini may have been removed or changed outside meanwhile).
+    // `close`: no more pushes once it is written; after a failure autosave still tries again in 5 seconds.
+    pub(crate) fn write_now(&self, text: &str, close: bool) -> std::io::Result<()> {
+        let before = lock(&self.q).written;
+        let _io = lock(&self.io);
+        let mut q = lock(&self.q);
+        let just = q.written > before && q.done == Some((q.written, true)) && q.on_disk.as_deref() == Some(text);
+        q.seq += 1;
+        (q.next, q.written, q.done) = (None, q.seq, None);
+        if just {
+            q.closed |= close;
+            return Ok(());
+        }
+        drop(q);
+        let r = write_ini(&self.path, text);
+        if r.is_ok() {
+            let mut q = lock(&self.q);
+            q.on_disk = Some(text.to_owned());
+            q.closed |= close;
+        }
+        r
+    }
+}
+
+fn ini_writer() -> &'static IniWriter {
+    static W: OnceLock<IniWriter> = OnceLock::new();
+    W.get_or_init(|| IniWriter::new(ini_path()))
+}
+
+// What a write did: kept, or on failure the old grids.ini stays and autosave tries again in 5 seconds.
+unsafe fn ini_result(ini: Option<String>, ok: bool) {
+    app(|a| {
+        if let Some(ini) = ini {
+            a.queued_ini = ini;
+        }
+        note_write(&mut a.queued_ini, &mut a.saved_ini, ok);
+        a.save_after = (!ok).then(|| Instant::now() + Duration::from_secs(5));
     });
 }
 
+// Written: that text is saved. Failed: forgotten as handed in, so autosave hands it in again after its 5 seconds.
+fn note_write(queued: &mut String, saved: &mut String, ok: bool) {
+    if ok {
+        saved.clone_from(queued);
+    } else {
+        queued.clear();
+    }
+}
+
+// Closing / Windows ending: written here, before the process goes, also while the worker is busy or stuck.
+// Autosave hands in nothing more after it (after WM_ENDSESSION the window and its timer still live).
 pub(crate) unsafe fn save_session() {
     for i in 0..app(|a| a.s.panes()) {
         save_view(i);
     }
-    store_ini(ini_now());
+    let ini = ini_now();
+    let ok = ini_writer().write_now(&ini, true).is_ok();
+    ini_result(Some(ini), ok);
 }
 
 // Runs right after check_dirty (which saved the views): writes grids.ini whenever its text changes, so a restart,
 // sign-out or crash loses nothing. Not mid-drag or mid-resize.
 pub(crate) unsafe fn autosave() {
+    let w = ini_writer();
+    if let Some((n, ok)) = w.take_done() {
+        if app(|a| a.ini_seq == n) {
+            ini_result(None, ok); // an older text's result: the newer one reports itself
+        }
+    }
     let now = Instant::now();
     if app(|a| a.drag.is_some() || a.sizing || a.save_after.is_some_and(|t| t > now)) {
         return;
     }
     let ini = ini_now();
-    if app(|a| a.saved_ini != ini) {
-        store_ini(ini);
+    if app(|a| a.queued_ini != ini) {
+        if w.start() {
+            if let Some(n) = w.push(ini.clone()) {
+                app(|a| (a.queued_ini, a.ini_seq) = (ini, n));
+            }
+        } else {
+            let ok = w.write_now(&ini, false).is_ok(); // no thread: as before, here
+            ini_result(Some(ini), ok);
+        }
     }
     refresh_jump_list(false); // favourites, recent folders or the language changed: the jump list follows
 }
@@ -421,6 +561,93 @@ pub(crate) fn tick_plan(iconic: bool, active: bool, tick_no: u32, slow: bool) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ini_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("grids-iniw-{name}-{}", std::process::id()));
+        _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn only_the_newest_waiting_text_is_written() {
+        let dir = ini_dir("newest");
+        let w = IniWriter::new(dir.join("grids.ini"));
+        let ns: Vec<u64> = ["a=1\n", "a=2\n", "a=3\n"].iter().map(|t| w.push(t.to_string()).unwrap()).collect();
+        assert!(ns.windows(2).all(|p| p[0] < p[1])); // numbers only go up
+        let (n, text) = w.wait_job();
+        assert_eq!((n, text.as_str()), (ns[2], "a=3\n"));
+        assert!(lock(&w.q).next.is_none()); // the two older ones are gone, never written
+        w.write_job(n, text);
+        assert_eq!(w.take_done(), Some((n, true)));
+        assert_eq!(w.take_done(), None);
+        assert_eq!(std::fs::read_to_string(dir.join("grids.ini")).unwrap(), "a=3\n");
+        assert!(w.push("a=4\n".into()).unwrap() > n);
+        _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn last_save_drops_waiting_and_beats_an_older_write() {
+        let dir = ini_dir("last");
+        let ini = dir.join("grids.ini");
+        let w = IniWriter::new(ini.clone());
+        let n = w.push("old=1\n".into()).unwrap();
+        let job = w.wait_job(); // the worker took it but has not written yet
+        w.push("mid=1\n".into()).unwrap(); // still waiting when Grids closes
+        w.write_now("last=1\n", true).unwrap();
+        let (gone, seq) = {
+            let q = lock(&w.q);
+            (q.next.is_none(), q.seq)
+        };
+        assert!(gone && seq > n);
+        w.write_job(job.0, job.1); // finishes late: skipped, the closing text stays
+        assert_eq!(std::fs::read_to_string(&ini).unwrap(), "last=1\n");
+        assert_eq!(w.take_done(), None);
+        assert_eq!(w.push("after=1\n".into()), None); // closed: nothing more handed in
+        // the same text again with no worker write waited for: written anyway (grids.ini was removed outside)
+        std::fs::remove_file(&ini).unwrap();
+        w.write_now("last=1\n", true).unwrap();
+        assert_eq!(std::fs::read_to_string(&ini).unwrap(), "last=1\n");
+        _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_failed_write_is_handed_in_again() {
+        let dir = ini_dir("fail");
+        let ini = dir.join("grids.ini");
+        std::fs::create_dir(&ini).unwrap(); // cannot be replaced
+        let w = IniWriter::new(ini.clone());
+        let n = w.push("a=1\n".into()).unwrap();
+        let (m, text) = w.wait_job();
+        w.write_job(m, text);
+        assert_eq!(w.take_done(), Some((n, false)));
+        assert!(w.write_now("a=1\n", true).is_err());
+        assert!(w.push("a=1\n".into()).is_some()); // a failed last save does not close: autosave tries again
+        let (mut queued, mut saved) = ("a=1\n".to_string(), "a=0\n".to_string());
+        note_write(&mut queued, &mut saved, false);
+        assert!(queued != "a=1\n" && saved == "a=0\n"); // autosave's `queued_ini != ini` hands it in again
+        queued = "a=1\n".into();
+        note_write(&mut queued, &mut saved, true);
+        assert_eq!((queued.as_str(), saved.as_str()), ("a=1\n", "a=1\n"));
+        assert!(!dir.join("grids.ini.tmp").exists());
+        _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn hundred_quick_texts_then_close_leave_the_last() {
+        let dir = ini_dir("hundred");
+        let ini = dir.join("grids.ini");
+        let w: &'static IniWriter = Box::leak(Box::new(IniWriter::new(ini.clone())));
+        assert!(w.start() && w.start()); // one worker, started once
+        for k in 0..100 {
+            w.push(format!("k={k}\n")).unwrap();
+        }
+        w.write_now("k=final\n", true).unwrap();
+        std::thread::sleep(Duration::from_millis(50)); // a late worker write would land here
+        assert_eq!(std::fs::read_to_string(&ini).unwrap(), "k=final\n");
+        assert!(!dir.join("grids.ini.tmp").exists());
+        _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn in_front_every_tick_does_everything() {
