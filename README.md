@@ -6,7 +6,7 @@ A fast, lightweight multi-pane file manager for Windows. Up to 16 Explorer panes
 
 [![Grids in motion](docs/demo.gif)](docs/demo.mp4)
 
-▶ [Watch the full launch video with sound](docs/demo.mp4) (35 s)
+▶ [Watch the full launch video with sound](docs/demo.mp4) (73 s)
 
 ![Grids, light theme](docs/screenshot-light.png)
 
