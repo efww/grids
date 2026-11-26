@@ -443,9 +443,9 @@ mod tests {
         assert_eq!(f, v(&["a", "b", "c"]));
 
         // drop gap: rows whose middle is above y
-        let g = fav_geo(3, 96);
+        let g = fav_geo(3, 0, i32::MAX, 96);
         let r = |k: usize| g.rows[k].0;
-        assert_eq!((fav_slot(&g, r(0).top - 1), fav_slot(&g, r(2).bottom + 5), fav_slot(&fav_geo(0, 96), 50)), (0, 3, 0));
+        assert_eq!((fav_slot(&g, r(0).top - 1), fav_slot(&g, r(2).bottom + 5), fav_slot(&fav_geo(0, 0, i32::MAX, 96), 50)), (0, 3, 0));
         for k in 0..3 {
             assert_eq!((fav_slot(&g, r(k).top + 2), fav_slot(&g, r(k).bottom - 2)), (k, k + 1));
         }
@@ -460,6 +460,33 @@ mod tests {
         assert_eq!(fav_release(p(1, false, false, None), true, Some((1, false)), 1), Release::Open(1));
         assert_eq!(fav_release(p(1, false, false, None), true, Some((2, false)), 2), Release::None);
         assert_eq!(fav_release(p(1, false, false, None), true, Some((1, true)), 1), Release::None);
+
+        // a list taller than the room: only whole rows that fit, a thumb in the right margin, every index in the whole list
+        let g = fav_geo(30, 10, 300, 96);
+        let r = |k: usize| g.rows[k].0;
+        assert!(g.h <= 300);
+        assert_eq!((g.rows.len(), g.first, g.n), (7, 10, 30));
+        let bar = g.bar.unwrap();
+        assert!(bar.left >= r(0).right && bar.right < g.w && bar.top >= r(0).top && bar.bottom <= r(6).bottom);
+        assert_eq!((fav_hit(&g, 20, r(0).top + 1), fav_hit(&g, r(0).right - 1, r(0).top + 1)), (Some((10, false)), Some((10, true))));
+        assert_eq!((fav_slot(&g, r(0).top - 1), fav_slot(&g, r(0).bottom - 2), fav_slot(&g, r(6).bottom + 5)), (10, 11, 17));
+        let y = r(6).bottom - 2;
+        assert_eq!(fav_release(p(12, false, true, Some(0)), true, fav_hit(&g, 20, y), fav_slot(&g, y)), Release::Move(12, 17));
+        assert_eq!(fav_release(p(16, false, false, None), true, fav_hit(&g, 20, y), fav_slot(&g, y)), Release::Open(16));
+        // the thumb runs from the top to the bottom; a top past the end leaves no row empty; always one row
+        let (t0, tn) = (fav_geo(30, 0, 300, 96), fav_geo(30, 99, 300, 96));
+        assert_eq!((t0.bar.unwrap().top, tn.first, tn.bar.unwrap().bottom), (t0.rows[0].0.top, 23, tn.rows[6].0.bottom));
+        assert_eq!((fav_geo(30, 0, 0, 96).rows.len(), fav_geo(30, 0, 0, 96).h), (1, fav_geo(1, 0, i32::MAX, 96).h));
+        assert_eq!(fav_geo(29, 23, 300, 96).first, 22); // Del of the last row pulls the view back
+
+        // scroll the least to show k
+        assert_eq!((fav_scroll_to(0, 6, 7, 30), fav_scroll_to(0, 7, 7, 30), fav_scroll_to(10, 3, 7, 30)), (0, 1, 3));
+        assert_eq!((fav_scroll_to(10, 29, 7, 30), fav_scroll_to(23, 0, 7, 30), fav_scroll_to(5, 2, 7, 4)), (23, 0, 0));
+        assert_eq!(fav_scroll_to(23, 28, 7, 29), 22);
+
+        // below ★ unless it doesn't fit there, below is under three rows and above is roomier
+        assert_eq!((fav_room(200, 500, 900, 132), fav_room(1000, 400, 900, 132)), ((500, false), (400, false)));
+        assert_eq!((fav_room(1000, 100, 900, 132), fav_room(1000, 100, 50, 132)), ((900, true), (100, false)));
 
         // only plain Alt+↑/↓
         assert_eq!((fav_step(VK_UP, false, true, false), fav_step(VK_DOWN, false, true, false)), (Some(-1), Some(1)));
@@ -1859,11 +1886,14 @@ mod tests {
         for dpi in [96, 144] {
             let s32 = 32 * dpi / 96;
             for n in [0, 1, 5] {
-                let g = fav_geo(n, dpi);
-                assert_eq!(g.rows.len(), n);
+                let g = fav_geo(n, 0, i32::MAX, dpi);
+                assert_eq!((g.rows.len(), g.first, g.n, g.bar), (n, 0, n, None));
                 if n == 0 {
-                    assert_eq!(g.h, fav_geo(1, dpi).h); // room for the "no favourites" line
+                    assert_eq!(g.h, fav_geo(1, 0, i32::MAX, dpi).h); // room for the "no favourites" line
                 }
+                // a limit the list fits in changes nothing
+                let fit = fav_geo(n, 0, g.h, dpi);
+                assert_eq!((fit.h, fit.rows.len(), fit.bar), (g.h, n, None));
                 assert_eq!((fav_hit(&g, 0, 0), fav_hit(&g, g.w - 1, g.h / 2), fav_hit(&g, g.w / 2, g.h - 1)), (None, None, None));
                 for (k, (row, x)) in g.rows.iter().enumerate() {
                     assert!(row.left > 0 && row.right < g.w && row.top > 0 && row.bottom < g.h);

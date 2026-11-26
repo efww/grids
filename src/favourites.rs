@@ -25,19 +25,47 @@ pub(crate) unsafe fn toggle_fav(i: usize) {
 pub(crate) struct FavGeo {
     pub(crate) w: i32,
     pub(crate) h: i32,
-    pub(crate) rows: Vec<(RECT, RECT)>, // (row, remove ✕)
+    pub(crate) rows: Vec<(RECT, RECT)>, // (row, remove ✕) of the rows on screen
+    pub(crate) first: usize,            // favourite in rows[0]
+    pub(crate) n: usize,                // all favourites
+    pub(crate) bar: Option<RECT>,       // scroll thumb in the right margin, only when some rows are hidden
 }
 
-pub(crate) fn fav_geo(n: usize, dpi: i32) -> FavGeo {
+// At most max_h tall (at least one row); rows[j] is favourite first + j, first = top kept so no row is left empty.
+pub(crate) fn fav_geo(n: usize, top: usize, max_h: i32, dpi: i32) -> FavGeo {
     let s = |v: i32| v * dpi / 96;
     let (pad, rh, w) = (s(6), s(40), s(380));
-    let rows = (0..n as i32)
+    let vis = if n == 0 { 0 } else { (((max_h - 2 * pad) / rh).max(1) as usize).min(n) };
+    let first = top.min(n - vis);
+    let rows = (0..vis as i32)
         .map(|k| {
             let row = RECT { left: pad, top: pad + k * rh, right: w - pad, bottom: pad + (k + 1) * rh };
             (row, RECT { left: row.right - s(32), ..row })
         })
         .collect();
-    FavGeo { w, h: 2 * pad + n.max(1) as i32 * rh, rows }
+    let h = 2 * pad + vis.max(1) as i32 * rh;
+    let bar = (vis < n).then(|| {
+        let (t, b) = (pad, h - pad);
+        let th = ((b - t) * vis as i32 / n as i32).max(s(16));
+        let y = t + (b - t - th) * first as i32 / (n - vis) as i32;
+        RECT { left: w - s(5), top: y, right: w - s(2), bottom: y + th }
+    });
+    FavGeo { w, h, rows, first, n, bar }
+}
+
+pub(crate) fn fav_geo_now() -> FavGeo {
+    app(|a| fav_geo(a.s.favs.len(), a.fav_top, a.fav_max_h, a.dpi))
+}
+
+// The top that brings favourite k into view, moving as little as possible.
+pub(crate) fn fav_scroll_to(top: usize, k: usize, vis: usize, n: usize) -> usize {
+    let t = if k < top { k } else if k >= top + vis { k + 1 - vis.min(k + 1) } else { top };
+    t.min(n.saturating_sub(vis))
+}
+
+// (height limit, opens above ★): below unless the list doesn't fit there, below holds fewer than three rows and above is roomier.
+pub(crate) fn fav_room(full_h: i32, below: i32, above: i32, three_h: i32) -> (i32, bool) {
+    if full_h > below && below < three_h && above > below { (above, true) } else { (below, false) }
 }
 
 // A mouse press on a row: a drag once it passes the system threshold (never from ✕)
@@ -59,9 +87,9 @@ pub(crate) enum Release {
     Remove(usize),
 }
 
-// The gap a drop at y lands in: the rows whose middle is above y (0..=n).
+// The gap a drop at y lands in: the rows whose middle is above y, counted in the whole list (0..=n).
 pub(crate) fn fav_slot(g: &FavGeo, y: i32) -> usize {
-    g.rows.iter().filter(|(r, _)| (r.top + r.bottom) / 2 < y).count()
+    g.first + g.rows.iter().filter(|(r, _)| (r.top + r.bottom) / 2 < y).count()
 }
 
 // Moves v[from] into gap `slot` (0..=len); the new index, or None when either is out of range.
@@ -98,16 +126,33 @@ pub(crate) unsafe fn open_favs() {
     if !open.0.is_null() || closed.is_some_and(|t| t.elapsed().as_millis() < 300) {
         return;
     }
-    let g = fav_geo(n, dpi);
     let mut rc = RECT::default();
     if let Ok(b) = GetDlgItem(Some(main), ID_TB_FAV) {
         _ = GetWindowRect(b, &mut rc);
     }
+    // fit the work area: below ★ as before, above it when below is cramped, scrolling when even that is short
+    // (the ★ button's monitor, not the window's: a window spanning two screens may have ★ on the smaller share)
+    let mut mi = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
+    let mon = if rc.right > rc.left { MonitorFromRect(&rc, MONITOR_DEFAULTTONEAREST) } else { MonitorFromWindow(main, MONITOR_DEFAULTTONEAREST) };
+    let work = if GetMonitorInfoW(mon, &mut mi).as_bool() && mi.rcWork.bottom > mi.rcWork.top {
+        mi.rcWork
+    } else {
+        RECT { left: rc.left, top: i32::MIN / 4, right: i32::MAX / 4, bottom: i32::MAX / 4 } // no monitor info: no limit
+    };
+    let gap = 6 * dpi / 96;
+    let (below, above) = (work.bottom - (rc.bottom + gap), rc.top - gap - work.top);
+    let (max_h, up) = fav_room(fav_geo(n, 0, i32::MAX, dpi).h, below, above, fav_geo(3, 0, i32::MAX, dpi).h);
+    let g = fav_geo(n, 0, max_h, dpi);
+    let y = if up { rc.top - gap - g.h } else { rc.bottom + gap };
+    let y = y.min(work.bottom - g.h).max(work.top);
+    let x = rc.left.min(work.right - g.w).max(work.left);
     let prev = GetFocus();
-    app(|a| (a.fav_hot, a.fav_prev) = (None, prev));
+    app(|a| {
+        (a.fav_hot, a.fav_prev, a.fav_top, a.fav_wheel) = (None, prev, 0, 0);
+        (a.fav_max_h, a.fav_above) = (max_h, up.then_some(y + g.h));
+    });
     let style = WS_POPUP | WS_VISIBLE;
-    let y = rc.bottom + 6 * dpi / 96;
-    let Ok(h) = CreateWindowExW(WS_EX_TOOLWINDOW, w!("GridsFav"), w!(""), style, rc.left, y, g.w, g.h, Some(main), None, None, None) else {
+    let Ok(h) = CreateWindowExW(WS_EX_TOOLWINDOW, w!("GridsFav"), w!(""), style, x, y, g.w, g.h, Some(main), None, None, None) else {
         return;
     };
     let square = DWMWCP_DONOTROUND;
@@ -120,7 +165,7 @@ pub(crate) unsafe fn paint_favs(h: HWND) {
         app(|a| (a.s.favs.clone(), a.fav_hot, a.fav_press, a.s.accent_now(), a.dpi, a.font, a.small_font, a.icon_font));
     // dragging: the dragged row stays lit whatever the keys did
     let hot = press.filter(|p| p.live).map_or(hot, |p| Some((p.from, false)));
-    let g = fav_geo(favs.len(), dpi);
+    let g = fav_geo_now();
     let s = |v: i32| v * dpi / 96;
     buffered(h, |dc, rc| {
         fill(dc, rc, pal().card);
@@ -128,7 +173,11 @@ pub(crate) unsafe fn paint_favs(h: HWND) {
         if favs.is_empty() {
             text(dc, rc, tr("No favourites yet · add one with ☆+ in a pane header", "즐겨찾기가 없습니다 · 패널 머리줄의 ☆+로 추가"), font, pal().sub, DT_CENTER);
         }
-        for (k, (f, (row, remove))) in favs.iter().zip(&g.rows).enumerate() {
+        if let Some(bar) = g.bar {
+            fill(dc, bar, pal().line);
+        }
+        for (j, (f, (row, remove))) in favs.iter().skip(g.first).zip(&g.rows).enumerate() {
+            let k = g.first + j;
             if hot.is_some_and(|(i, _)| i == k) {
                 fill(dc, *row, pal().pill);
                 let x_on = hot == Some((k, true));
@@ -142,9 +191,11 @@ pub(crate) unsafe fn paint_favs(h: HWND) {
         }
         // where the drop lands; none in its own place or outside the list (a cancel)
         if let Some((from, Some(slot))) = press.filter(|p| p.live).map(|p| (p.from, p.slot)) {
-            if slot != from && slot != from + 1 && !g.rows.is_empty() {
-                let (row, _) = g.rows[slot.min(g.rows.len() - 1)];
-                let y = if slot < g.rows.len() { row.top } else { row.bottom };
+            let vis = g.rows.len();
+            if slot != from && slot != from + 1 && vis > 0 && slot >= g.first && slot <= g.first + vis {
+                let j = slot - g.first; // the gap on screen
+                let (row, _) = g.rows[j.min(vis - 1)];
+                let y = if j < vis { row.top } else { row.bottom };
                 fill(dc, RECT { top: y - s(1), bottom: y - s(1) + s(2), ..row }, accent);
             }
         }
@@ -153,12 +204,12 @@ pub(crate) unsafe fn paint_favs(h: HWND) {
 
 pub(crate) fn fav_hit(g: &FavGeo, x: i32, y: i32) -> Option<(usize, bool)> {
     let inside = |r: &RECT| x >= r.left && x < r.right && y >= r.top && y < r.bottom;
-    g.rows.iter().position(|(row, _)| inside(row)).map(|k| (k, inside(&g.rows[k].1)))
+    g.rows.iter().position(|(row, _)| inside(row)).map(|j| (g.first + j, inside(&g.rows[j].1)))
 }
 
 pub(crate) extern "system" fn fav_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     unsafe {
-        let g = app(|a| fav_geo(a.s.favs.len(), a.dpi));
+        let g = fav_geo_now();
         let down = |k: VIRTUAL_KEY| GetKeyState(k.0 as i32) < 0;
         let step = if msg == WM_SYSKEYDOWN { fav_step(VIRTUAL_KEY(wp.0 as u16), down(VK_CONTROL), down(VK_MENU), down(VK_SHIFT)) } else { None };
         // under capture x / y can be negative or past the edge
@@ -176,7 +227,7 @@ pub(crate) extern "system" fn fav_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM
         };
         let moved = |to: Option<usize>| {
             if let Some(to) = to {
-                app(|a| a.fav_hot = Some((to, false)));
+                app(|a| (a.fav_hot, a.fav_top) = (Some((to, false)), fav_scroll_to(g.first, to, g.rows.len(), g.n)));
             }
             _ = InvalidateRect(Some(h), None, false);
         };
@@ -209,6 +260,35 @@ pub(crate) extern "system" fn fav_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                 }
             }
             WM_CAPTURECHANGED => cancel(),
+            WM_MOUSEWHEEL => {
+                let press = app(|a| a.fav_press);
+                if g.rows.len() >= g.n || press.is_some_and(|p| !p.live) {
+                    return LRESULT(0); // nothing hidden, or a click still on its row
+                }
+                let notches = app(|a| {
+                    a.fav_wheel += (wp.0 >> 16) as i16 as i32;
+                    let d = a.fav_wheel / 120;
+                    a.fav_wheel -= d * 120;
+                    d
+                });
+                let top = (g.first as i32 - notches * 3).clamp(0, (g.n - g.rows.len()) as i32) as usize;
+                app(|a| a.fav_top = top);
+                let g = fav_geo_now();
+                let mut pt = POINT::default();
+                _ = GetCursorPos(&mut pt);
+                _ = ScreenToClient(h, &mut pt);
+                if let Some(mut p) = press {
+                    // dragging: the dragged favourite stays, the drop gap follows the rows under the cursor
+                    p.slot = inside(pt.x, pt.y).then(|| fav_slot(&g, pt.y));
+                    app(|a| a.fav_press = Some(p));
+                } else {
+                    // a highlight scrolled out of view is no target for Enter / Del
+                    let shown = |k: usize| k >= g.first && k < g.first + g.rows.len();
+                    let hot = if inside(pt.x, pt.y) { fav_hit(&g, pt.x, pt.y) } else { app(|a| a.fav_hot).filter(|&(k, _)| shown(k)) };
+                    app(|a| a.fav_hot = hot);
+                }
+                _ = InvalidateRect(Some(h), None, false);
+            }
             WM_SYSKEYDOWN if step.is_some() => {
                 let (cur, pressing) = app(|a| (a.fav_hot.map(|(k, _)| k), a.fav_press.is_some()));
                 if let (Some(k), false) = (cur, pressing) {
@@ -221,13 +301,22 @@ pub(crate) extern "system" fn fav_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             }
             WM_LBUTTONUP | WM_KEYDOWN => {
                 // ✕ / Del: drop it and shrink the list in place
-                let remove = |k: usize| {
-                    app(|a| {
+                // Del keeps a highlight on the row that took its place, scrolled into view; ✕ leaves it to the mouse
+                let remove = |k: usize, keys: bool| {
+                    let n = app(|a| {
                         a.s.favs.remove(k);
-                        a.fav_hot = None;
+                        a.s.favs.len()
                     });
-                    let g = app(|a| fav_geo(a.s.favs.len(), a.dpi));
-                    _ = SetWindowPos(h, None, 0, 0, g.w, g.h, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+                    let g0 = fav_geo_now(); // first already pulled back so no row is left empty
+                    let hot = (keys && n > 0).then(|| k.min(n - 1));
+                    let top = hot.map_or(g0.first, |k| fav_scroll_to(g0.first, k, g0.rows.len(), n));
+                    app(|a| (a.fav_hot, a.fav_top) = (hot.map(|k| (k, false)), top));
+                    let g = fav_geo_now();
+                    let mut wr = RECT::default();
+                    _ = GetWindowRect(h, &mut wr);
+                    // opened above ★: shrink toward the top so the bottom stays by the button
+                    let y = app(|a| a.fav_above).map_or(wr.top, |b| b - g.h);
+                    _ = SetWindowPos(h, None, wr.left, y, g.w, g.h, SWP_NOZORDER | SWP_NOACTIVATE);
                     _ = InvalidateRect(Some(h), None, false);
                     repaint_fav_buttons();
                 };
@@ -248,7 +337,7 @@ pub(crate) extern "system" fn fav_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                     match fav_release(p, inside(x, y), fav_hit(&g, x, y), fav_slot(&g, y)) {
                         Release::Move(from, slot) => moved(app(|a| move_fav(&mut a.s.favs, from, slot))),
                         Release::Open(k) => open(k),
-                        Release::Remove(k) => remove(k),
+                        Release::Remove(k) => remove(k, false),
                         Release::None => _ = InvalidateRect(Some(h), None, false),
                     }
                     return LRESULT(0);
@@ -270,14 +359,11 @@ pub(crate) extern "system" fn fav_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                     _ if n == 0 || pressing => {}
                     k @ (VK_DOWN | VK_UP) => {
                         let next = if k == VK_DOWN { cur.map_or(0, |k| (k + 1) % n) } else { cur.map_or(n - 1, |k| (k + n - 1) % n) };
-                        app(|a| a.fav_hot = Some((next, false)));
+                        app(|a| (a.fav_hot, a.fav_top) = (Some((next, false)), fav_scroll_to(g.first, next, g.rows.len(), n)));
                         _ = InvalidateRect(Some(h), None, false);
                     }
                     VK_RETURN => if let Some(k) = cur { open(k) },
-                    VK_DELETE => if let Some(k) = cur {
-                        remove(k);
-                        app(|a| a.fav_hot = if n > 1 { Some((k.min(n - 2), false)) } else { None });
-                    },
+                    VK_DELETE => if let Some(k) = cur { remove(k, true) },
                     _ => {}
                 }
             }

@@ -52,6 +52,10 @@ pub(crate) struct App {
     pub(crate) fav_hot: Option<(usize, bool)>, // (row, on its ✕)
     pub(crate) fav_prev: HWND,                 // focus before the popup opened; Esc goes back there
     pub(crate) fav_press: Option<FavPress>,    // mouse press / drag in the list
+    pub(crate) fav_top: usize,                 // first favourite shown when the list is taller than the screen
+    pub(crate) fav_max_h: i32,                 // the popup's height limit (room on screen)
+    pub(crate) fav_above: Option<i32>,         // opened above ★: its bottom edge stays here (screen y)
+    pub(crate) fav_wheel: i32,                 // wheel delta short of a notch
     pub(crate) keys_popup: HWND, // keyboard shortcuts window while open
     pub(crate) keys_prev: HWND,  // focus before it opened; Esc / ✕ / Ctrl+/ go back there
     pub(crate) cards: Vec<(PathBuf, Session, String)>,
@@ -135,6 +139,10 @@ thread_local! {
         fav_hot: None,
         fav_prev: HWND::default(),
         fav_press: None,
+        fav_top: 0,
+        fav_max_h: i32::MAX,
+        fav_above: None,
+        fav_wheel: 0,
         keys_popup: HWND::default(),
         keys_prev: HWND::default(),
         cards: Vec::new(),
