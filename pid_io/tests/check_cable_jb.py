@@ -241,6 +241,7 @@ def main(name):
                 if bad <= 3:
                     fail("인덱스", f"{x[3]} 열 값 {x[33:38]} != 케이블 결과 {want}")
         print(f"인덱스: {n}행 검사, 불일치 {bad}")
+        f.unlink(missing_ok=True)                    # the check's own export is not a deliverable
         if n != len([r for r in rows if r.kind != 'function' and r.origin != '스페어']):
             fail("인덱스", f"인덱스 행 수 {n} != 계산 행 수")
     except Exception as e:
