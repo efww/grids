@@ -58,6 +58,8 @@ SCHEMA = [
                + _io_items("RTD", "1T", "1.25", "OS (전체 차폐)", ["1T", "2P"])
                + [_sel("comm_pkg", "패키지 PLC 통신 케이블", ["광케이블 (Fiber Optic)", "RS-485 동선"],
                        "광케이블 (Fiber Optic)", "벤더PLC+통신 / 혼합 패키지의 통신 포트 → DCS. 포트(이중화 A/B)마다 1가닥"),
+                  _sel("comm_redund", "통신 이중화", ["이중화 (포트마다 1가닥)", "단일 (패키지당 1가닥)"],
+                       "이중화 (포트마다 1가닥)", "이중화면 A/B 포트마다 1가닥, 단일이면 패키지(유닛)마다 1가닥", on="이중화 (포트마다 1가닥)"),
                   _txt("FO_spec", "광케이블 사양", "FO 12C SM Armoured", "코어 수·모드·외장"),
                   _txt("COMM_spec", "RS-485 통신 케이블 사양", "RS-485 1P x 0.75SQ IS-OS",
                        "패키지를 동선으로 할 때, 그리고 MCC 통신 포트")])},
@@ -542,7 +544,12 @@ def build(rows, s: dict, area_map: dict | None = None, layout=None):
                                "unit": members[0].unit, "pairs_used": len(members),
                                "basis": f"{motor} 신호 {len(members)}점 × 2심 · 스페어 {spare:.0%} · {mhow}"})
 
-    # ---------------- comm ports: home run
+    # ---------------- comm ports: home run (one per port when redundant, else one per package / MCC)
+    if not v["comm_redund"].startswith("이중"):
+        one = {}
+        for r in comm:
+            one.setdefault((r.vendor_pkg or r.equip or ("MCC" if r.location == "MCC" else r.tag), r.system), r)
+        comm = list(one.values())
     for r in comm:
         src = r.vendor_pkg or r.equip or ("MCC" if r.location == "MCC" else r.tag)
         area = r.unit or "00"
@@ -557,7 +564,7 @@ def build(rows, s: dict, area_map: dict | None = None, layout=None):
                        "frm_type": "MCC" if r.location == "MCC" else "패키지", "to": room(r.system if r.system in SYS_LETTER else "DCS"),
                        "to_type": "룸", "spec": v["FO_spec"] if fo else v["COMM_spec"], "io": r.io, "system": r.system, "is": "Non-IS",
                        "length": _round_len(tl, v), "area": area, "dwg": r.dwg, "coord": r.coord, "unit": r.unit,
-                       "basis": f"{'패키지 PLC 통신 (광)' if fo else '통신 포트 직결'} · {how}"})
+                       "basis": f"{'패키지 PLC 통신 (광)' if fo else '통신 포트 직결'} · {v['comm_redund'].split(' ')[0]} · {how}"})
 
     order = {"분기": 0, "멀티": 0, "패키지": 1, "MCC": 2, "통신": 3}   # JB branches stay next to their multi
     cables.sort(key=lambda c: order[c["kind"]])
