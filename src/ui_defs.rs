@@ -296,6 +296,7 @@ Ctrl+PgDn / Ctrl+PgUp\tNext / previous tab\n\
 Ctrl+F3 / Ctrl+F5 / Ctrl+F6\tSort by name / date modified / size (again: reverse; the pane keeps it)\n\
 F7\tNew folder\n\
 Shift+F7\tNew text file (named, selected and ready to rename)\n\
+Ctrl+F7\tMove the selected items into a new folder named after them, ready to rename (Ctrl+Z moves them back)\n\
 F6 / Shift+F6\tMove between file list, address bar, filter and folder tree\n\
 Enter / Esc\tApply / cancel the address or filter\n\
 Ctrl+H\tShow hidden files\n\
@@ -348,6 +349,7 @@ Ctrl+PgDn / Ctrl+PgUp\t다음 / 이전 탭\n\
 Ctrl+F3 / Ctrl+F5 / Ctrl+F6\t이름 / 수정한 날짜 / 크기순 정렬 (다시 누르면 반대 순서, 패널이 기억)\n\
 F7\t새 폴더\n\
 Shift+F7\t새 텍스트 파일 (이름 짓기 바로 시작)\n\
+Ctrl+F7\t선택한 항목을 공통 이름의 새 폴더로 묶고 이름 짓기 바로 시작 (Ctrl+Z로 이동 되돌리기)\n\
 F6 / Shift+F6\t파일 목록·주소창·필터·폴더 트리 사이 이동\n\
 Enter / Esc\t주소창·필터 적용 / 취소\n\
 Ctrl+H\t숨김 파일 표시\n\

@@ -199,6 +199,11 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
                 new_text_file(a);
             }
         }
+        VK_F7 if ctrl && !shift && !alt && list() => {
+            if m.lParam.0 & (1 << 30) == 0 {
+                group_key(a);
+            }
+        }
         VK_V if ctrl && !shift && !alt && list() => {
             if !paste_key(m.lParam.0 & (1 << 30) != 0, || try_paste(a)) {
                 return shell();

@@ -308,7 +308,7 @@ unsafe fn to_png(bmp: &[u8]) -> Result<Vec<u8>> {
     Ok(png)
 }
 
-fn keep_job(job: std::thread::JoinHandle<()>) {
+pub(crate) fn keep_job(job: std::thread::JoinHandle<()>) {
     JOBS.with_borrow_mut(|j| {
         j.retain(|j| !j.is_finished());
         j.push(job);
@@ -339,6 +339,11 @@ pub(crate) unsafe fn start_copy(srcs: Vec<String>, dst: String, rename: bool, mv
 
 // No owner window: the progress and conflict dialogs belong to the worker thread.
 pub(crate) unsafe fn run_copy(srcs: &[String], dst: &str, rename: bool, mv: bool) -> Result<()> {
+    run_op(srcs, dst, rename, mv).map(|_| ())
+}
+
+// run_copy, handing back the operation so the caller can ask whether anything was skipped or cancelled.
+pub(crate) unsafe fn run_op(srcs: &[String], dst: &str, rename: bool, mv: bool) -> Result<IFileOperation> {
     let op: IFileOperation = CoCreateInstance(&FileOperation, None, CLSCTX_ALL)?;
     let flags = FOF_ALLOWUNDO | FOF_NOCONFIRMMKDIR | FOFX_ADDUNDORECORD;
     op.SetOperationFlags(if rename { flags | FOF_RENAMEONCOLLISION } else { flags })?;
@@ -351,5 +356,6 @@ pub(crate) unsafe fn run_copy(srcs: &[String], dst: &str, rename: bool, mv: bool
             op.CopyItem(&item, &to, PCWSTR::null(), None)?;
         }
     }
-    op.PerformOperations()
+    op.PerformOperations()?;
+    Ok(op)
 }

@@ -34,9 +34,11 @@ pub(crate) fn fresh_name(base: &str, taken: impl Fn(&str) -> bool) -> String {
     std::iter::once(base.to_string()).chain((2..10_000).map(|n| format!("{stem} ({n}){ext}"))).find(|n| !taken(n)).unwrap_or_default()
 }
 
-// file the view should select and rename once it lists it: (pane, full path, ticks left)
+// file the view should select and rename once it lists it: (pane, full path, ticks left, folder and view
+// the pane must still show with the focus in its list, else the rename is dropped: set for Ctrl+F7 only)
+type NewFile = (usize, String, u8, Option<(String, usize)>);
 thread_local! {
-    static NEW_FILE: RefCell<Option<(usize, String, u8)>> = const { RefCell::new(None) };
+    static NEW_FILE: RefCell<Option<NewFile>> = const { RefCell::new(None) };
 }
 
 // Shift+F7: an empty text file in the active pane's folder, selected and in rename, as F7 does for folders.
@@ -51,21 +53,211 @@ pub(crate) unsafe fn new_text_file(i: usize) {
     }
     let wide = HSTRING::from(full.as_str());
     SHChangeNotify(SHCNE_CREATE, SHCNF_PATHW, Some(wide.as_ptr() as _), None);
-    NEW_FILE.with(|n| *n.borrow_mut() = Some((i, full, 40)));
-    // the view lists it a moment later: poll on a thread timer (no window of ours needed)
+    rename_soon((i, full, 40, None));
+}
+
+// the view lists it a moment later: poll on a thread timer (no window of ours needed)
+unsafe fn rename_soon(f: NewFile) {
+    NEW_FILE.with(|n| *n.borrow_mut() = Some(f));
     SetTimer(None, 0, 50, Some(new_file_tick));
 }
 
 unsafe extern "system" fn new_file_tick(_: HWND, _: u32, id: usize, _: u32) {
-    let Some((i, full, left)) = NEW_FILE.with(|n| n.borrow().clone()) else {
+    let Some((i, full, left, guard)) = NEW_FILE.with(|n| n.borrow().clone()) else {
         _ = KillTimer(None, id);
         return;
     };
-    if select_rename(i, &full) || left == 0 {
+    let gone = guard.as_ref().is_some_and(|(dir, view)| !rename_ok(i, dir) || view_id(i) != *view);
+    if gone || select_rename(i, &full) || left == 0 {
         NEW_FILE.with(|n| *n.borrow_mut() = None);
         _ = KillTimer(None, id);
     } else {
-        NEW_FILE.with(|n| *n.borrow_mut() = Some((i, full, left - 1)));
+        NEW_FILE.with(|n| *n.borrow_mut() = Some((i, full, left - 1, guard)));
+    }
+}
+
+// ---------- Ctrl+F7: the selected items into a new folder ----------
+
+// The new folder's name: one item gives its name without the extension; several give the start of the
+// name they all share, once trailing ' ', '-', '_', '.' and '(' are cut, if 3 characters or more are left.
+// Otherwise `fallback`.
+pub(crate) fn group_base(names: &[&str], fallback: &str) -> String {
+    let cut = |s: &str| s.trim_end_matches([' ', '-', '_', '.', '(']).to_string();
+    let base = match names {
+        [] => String::new(),
+        [one] => cut(match one.rsplit_once('.') {
+            Some((stem, _)) if !stem.is_empty() => stem,
+            _ => one,
+        }),
+        [first, rest @ ..] => {
+            let n = rest.iter().map(|r| first.chars().zip(r.chars()).take_while(|(a, b)| a == b).count()).min().unwrap_or(0);
+            Some(cut(&first.chars().take(n).collect::<String>())).filter(|b| b.chars().count() >= 3).unwrap_or_default()
+        }
+    };
+    if base.trim().is_empty() { fallback.to_string() } else { base }
+}
+
+// "Name", then "Name (2)", "Name (3)" … A folder: the number goes at the end, not before a '.'.
+pub(crate) fn group_name(base: &str, k: u32) -> String {
+    if k < 2 { base.to_string() } else { format!("{base} ({k})") }
+}
+
+// Only a whole selection that sits right in the pane's own (file system) folder.
+pub(crate) fn group_ok(srcs: &[String], dir: &str) -> bool {
+    is_fs(dir) && paste_mode(srcs, dir) == Some(true)
+}
+
+pub(crate) const ID_GROUP: usize = 1133;
+
+// a finished grouping, for the UI thread (WM_GROUPED)
+struct Grouped {
+    pane: usize,
+    dir: String,
+    new: String,
+    n: usize,
+    view: usize, // the pane's view when it started: another one (navigated away and back) gets no rename
+}
+
+static GROUPED: Mutex<Vec<Grouped>> = Mutex::new(Vec::new());
+
+// a grouping is under way: a second Ctrl+F7 or ⇄ click meanwhile only beeps (it would race the first one
+// for the same items into a "Name (2)")
+static GROUPING: AtomicBool = AtomicBool::new(false);
+
+struct GroupingDone;
+impl Drop for GroupingDone {
+    fn drop(&mut self) {
+        GROUPING.store(false, Ordering::SeqCst);
+    }
+}
+
+fn base_of(p: &str) -> &str {
+    p.trim_end_matches('\\').rsplit('\\').next().unwrap_or(p)
+}
+
+fn same_dir(a: &str, b: &str) -> bool {
+    a.trim_end_matches('\\').eq_ignore_ascii_case(b.trim_end_matches('\\'))
+}
+
+unsafe fn view_id(i: usize) -> usize {
+    view_of::<IShellView>(i).map_or(0, |v| v.as_raw() as usize)
+}
+
+// The pane still shows `dir` and nothing else is being typed into: no focus in this thread (another
+// program, or the move's own progress window, is in front), the focus in that pane's file list, or on
+// one of its top bar buttons (the ⇄ button keeps it after its menu).
+unsafe fn rename_ok(i: usize, dir: &str) -> bool {
+    let pane = app(|a| a.panes.get(i)?.as_ref().filter(|_| i < a.s.panes() && same_dir(&a.s.paths[i], dir)).map(|p| p.hwnd));
+    let (Some(pane), Some(sv)) = (pane, view_of::<IShellView>(i)) else { return false };
+    let f = GetFocus();
+    if f.0.is_null() || in_view_list(sv.GetWindow().unwrap_or_default(), f) {
+        return true;
+    }
+    let mut c = [0u16; 16];
+    let n = GetClassNameW(f, &mut c) as usize;
+    IsChild(pane, f).as_bool() && String::from_utf16_lossy(&c[..n]).eq_ignore_ascii_case("Button")
+}
+
+// Ctrl+F7 in a file list: the pane's whole selection, as the ⇄ menu counts it.
+pub(crate) unsafe fn group_key(i: usize) {
+    let arr = view_of::<IFolderView2>(i).and_then(|fv| fv.GetSelection(false).ok());
+    let count = arr.as_ref().and_then(|a| a.GetCount().ok()).unwrap_or(0);
+    let picked = collect_all(count, |k| unsafe { arr.as_ref()?.GetItemAt(k).ok()?.GetDisplayName(SIGDN_FILESYSPATH).ok().map(|p| pwstr(p)) });
+    group_into_folder(i, picked);
+}
+
+// Makes the folder and moves the items on a worker thread (one undoable shell move, never replacing
+// anything); the rename starts only after every item is in. Ctrl+F7 and the ⇄ menu both end up here.
+pub(crate) unsafe fn group_into_folder(i: usize, picked: std::result::Result<Vec<String>, Pick>) {
+    let (dir, main) = app(|a| (a.s.paths[i].clone(), a.main.0 as usize));
+    let Some(srcs) = picked.ok().filter(|s| group_ok(s, &dir)) else {
+        _ = MessageBeep(MB_ICONWARNING);
+        return;
+    };
+    if GROUPING.swap(true, Ordering::SeqCst) {
+        _ = MessageBeep(MB_ICONWARNING);
+        return;
+    }
+    let done = GroupingDone; // released when the worker ends, or right away if it can't start
+    let names: Vec<&str> = srcs.iter().map(|s| base_of(s)).collect();
+    let base = group_base(&names, tr("New folder", "새 폴더"));
+    let view = view_id(i);
+    let busy = Busy::new();
+    let job = std::thread::Builder::new().spawn(move || {
+        let _busy = busy;
+        let _done = done;
+        let com = CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok();
+        if let Some(new) = group_work(&srcs, &dir, &base) {
+            GROUPED.lock().unwrap_or_else(|e| e.into_inner()).push(Grouped { pane: i, dir, new, n: srcs.len(), view });
+            _ = PostMessageW(Some(HWND(main as _)), WM_GROUPED, WPARAM(0), LPARAM(0));
+        }
+        if com {
+            CoUninitialize();
+        }
+    });
+    match job {
+        Ok(job) => keep_job(job),
+        Err(_) => _ = MessageBeep(MB_ICONWARNING),
+    }
+}
+
+// Worker thread. The new folder's path once every item is in it; None after a failure or a cancel, with
+// the folder removed again if it is still empty, and said where things are if only some got moved.
+unsafe fn group_work(srcs: &[String], dir: &str, base: &str) -> Option<String> {
+    let warn = |text: String| _ = MessageBoxW(None, &HSTRING::from(text), w!("Grids"), MB_ICONWARNING);
+    let mut new = None;
+    for k in 1..=999 {
+        let p = Path::new(dir).join(group_name(base, k));
+        match std::fs::create_dir(&p) {
+            Ok(()) => {
+                new = Some(p.to_string_lossy().into_owned());
+                break;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => {
+                warn(format!("{}{e}", tr("Couldn't make the new folder: ", "새 폴더를 만들지 못했습니다: ")));
+                return None;
+            }
+        }
+    }
+    let Some(new) = new else {
+        _ = MessageBeep(MB_ICONWARNING);
+        return None;
+    };
+    let wide = HSTRING::from(new.as_str());
+    SHChangeNotify(SHCNE_MKDIR, SHCNF_PATHW, Some(wide.as_ptr() as _), None);
+    // FOF_RENAMEONCOLLISION: whatever turns up in the new folder meanwhile is never replaced or merged
+    let op = run_op(srcs, &new, true, true);
+    let aborted = op.as_ref().map_or(true, |op| op.GetAnyOperationsAborted().map_or(true, |b| b.as_bool()));
+    // what actually sits in the new folder now (made empty just above), not just what left the old one
+    let moved = std::fs::read_dir(&new).map_or(0, |d| d.count()).min(srcs.len());
+    let left = srcs.iter().any(|s| std::fs::symlink_metadata(s).is_ok());
+    if !aborted && !left && moved == srcs.len() {
+        return Some(new);
+    }
+    if let Err(e) = &op {
+        if e.code() != COPYENGINE_E_USER_CANCELLED && e.code() != ERROR_CANCELLED.to_hresult() {
+            warn(format!("{}{}", tr("Moving failed: ", "이동하지 못했습니다: "), e.message()));
+        }
+    }
+    // remove_dir only takes an empty folder: anything that did get moved stays put
+    if std::fs::remove_dir(&new).is_err() && moved > 0 {
+        let text = tr("{m} of {n} items were moved into\n{new}\n\nThe rest are still in\n{dir}", "{n}개 중 {m}개만 아래 폴더로 옮겨졌습니다.\n{new}\n\n나머지는 그대로 있습니다.\n{dir}");
+        warn(text.replace("{m}", &moved.to_string()).replace("{n}", &srcs.len().to_string()).replace("{new}", &new).replace("{dir}", dir));
+    }
+    None
+}
+
+// WM_GROUPED on the main window: says so on the status line, then selects the new folder and opens its
+// rename, as F7 does, only while that pane still shows the same view of that folder and nothing else
+// has the keyboard.
+pub(crate) unsafe fn grouped_msg() {
+    let done: Vec<Grouped> = std::mem::take(&mut *GROUPED.lock().unwrap_or_else(|e| e.into_inner()));
+    let Some(g) = done.into_iter().last() else { return };
+    let note = tr("Moved {n} items into “{name}”", "{n}개를 ‘{name}’ 폴더로 묶음");
+    set_note(note.replace("{n}", &g.n.to_string()).replace("{name}", base_of(&g.new)));
+    if rename_ok(g.pane, &g.dir) && view_id(g.pane) == g.view {
+        rename_soon((g.pane, g.new, 40, Some((g.dir, g.view))));
     }
 }
 
@@ -381,6 +573,16 @@ pub(crate) unsafe fn shell_menu(menu: HMENU, src: usize, picked: &std::result::R
         }
     };
     _ = AppendMenuW(menu, flags, ID_HASH, &HSTRING::from(label));
+    // before the WinMerge lookup: it ends this function early on a PC without WinMerge
+    let here = app(|a| a.s.paths[src].clone());
+    let label = match picked {
+        Ok(p) if group_ok(p, &here) => {
+            let t = tr("Move {n} selected items into a new folder  (Ctrl+F7)", "선택한 {n}개를 새 폴더로 묶기  (Ctrl+F7)");
+            (MF_STRING, t.replace("{n}", &p.len().to_string()))
+        }
+        _ => (MF_STRING | MF_GRAYED, tr("Move the selected items into a new folder  (Ctrl+F7)", "선택한 항목을 새 폴더로 묶기  (Ctrl+F7)").to_string()),
+    };
+    _ = AppendMenuW(menu, label.0, ID_GROUP, &HSTRING::from(label.1));
     let exe = winmerge_exe()?;
     match picked {
         Ok(two) if two.len() == 2 => {
@@ -402,13 +604,15 @@ pub(crate) unsafe fn shell_menu(menu: HMENU, src: usize, picked: &std::result::R
 }
 
 pub(crate) fn is_shell_pick(p: usize) -> bool {
-    p == ID_INUSE || p == ID_WM_PAIR || p == ID_HASH || (ID_WM_PANE..ID_WM_PANE + MAXP).contains(&p)
+    p == ID_INUSE || p == ID_WM_PAIR || p == ID_HASH || p == ID_GROUP || (ID_WM_PANE..ID_WM_PANE + MAXP).contains(&p)
 }
 
 pub(crate) unsafe fn shell_pick(h: HWND, src: usize, p: usize, picked: std::result::Result<Vec<String>, Pick>, exe: Option<String>, others: &[(usize, HSTRING, String)]) {
     match (p, picked, exe) {
         (ID_INUSE, Ok(paths), _) => _ = who_uses(h, &paths),
         (ID_HASH, picked, _) => hash_pick(h, picked),
+        // the selection the menu counted, checked again against the folder the pane shows now
+        (ID_GROUP, picked, _) => group_into_folder(src, picked),
         (ID_WM_PAIR, Ok(two), Some(exe)) if two.len() == 2 => run_winmerge(&exe, &two[0], &two[1]),
         (p, _, Some(exe)) if p >= ID_WM_PANE => {
             // only the folder the menu showed for that pane
@@ -436,6 +640,36 @@ mod tests {
         assert_eq!(fresh_name("noext", |n| n == "noext"), "noext (2)");
         assert_eq!(fresh_name(".txt", |n| n == ".txt"), ".txt (2)");
         assert_eq!(fresh_name("a.txt", |_| true), ""); // all taken: nothing, never an existing name
+    }
+
+    #[test]
+    fn group_folder_names() {
+        let nf = "New folder";
+        // one item: its name without the extension
+        assert_eq!(group_base(&["Report 2026.docx"], nf), "Report 2026");
+        assert_eq!(group_base(&["photos"], nf), "photos");
+        assert_eq!(group_base(&["archive.tar.gz"], nf), "archive.tar");
+        // several: the shared start, trailing separators cut
+        assert_eq!(group_base(&["Trip - day 1.jpg", "Trip - day 2.jpg", "Trip - map.png"], nf), "Trip");
+        assert_eq!(group_base(&["IMG_2031.jpg", "IMG_2045.jpg"], nf), "IMG_20");
+        assert_eq!(group_base(&["invoice (1).pdf", "invoice (2).pdf"], nf), "invoice");
+        // too short a start, or none: the fallback
+        assert_eq!(group_base(&["ab1.txt", "ab2.txt"], nf), nf);
+        assert_eq!(group_base(&["a.txt", "b.txt"], nf), nf);
+        assert_eq!(group_base(&["--_.x", "--_.y"], nf), nf);
+        assert_eq!(group_base(&[], nf), nf);
+        // Korean names: compared by character, not byte
+        assert_eq!(group_base(&["회의록 1월.hwp", "회의록 2월.hwp"], "새 폴더"), "회의록");
+        assert_eq!(group_base(&["사진1.jpg", "사진2.jpg"], "새 폴더"), "새 폴더");
+        // a taken name gets a number at the end, never before a '.'
+        assert_eq!(group_name("Trip", 1), "Trip");
+        assert_eq!(group_name("Trip", 2), "Trip (2)");
+        assert_eq!(group_name("archive.tar", 3), "archive.tar (3)");
+        // only items that sit right in the pane's folder
+        let srcs = [r"C:\w\a.txt".to_string(), r"C:\w\b.txt".into()];
+        assert!(group_ok(&srcs, r"C:\w") && group_ok(&srcs, r"c:\W\"));
+        assert!(!group_ok(&srcs, r"C:\x") && !group_ok(&[r"C:\w\a.txt".into(), r"C:\x\b.txt".into()], r"C:\w") && !group_ok(&[], r"C:\w"));
+        assert!(is_shell_pick(ID_GROUP));
     }
 
     #[test]

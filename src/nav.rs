@@ -912,6 +912,7 @@ pub(crate) const WM_KIDS: u32 = WM_APP + 46; // wParam = request id; the list it
 pub(crate) const WM_THEME_SYNC: u32 = WM_APP + 47; // Windows light/dark may have changed: theme_sync
 pub(crate) const WM_PEEK_HOSTED: u32 = WM_APP + 49; // wParam = preview generation, lParam = 1 shown / 0 failed
 pub(crate) const WM_PEEK_LOST: u32 = WM_APP + 48; // the preview went inactive: close it unless it is active again
+pub(crate) const WM_GROUPED: u32 = WM_APP + 52; // Ctrl+F7 moved everything in; the details stay in GROUPED
 pub(crate) static NARROWING: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(-1); // column << 32 | width
 
 
