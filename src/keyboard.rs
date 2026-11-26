@@ -285,8 +285,30 @@ pub(crate) fn tree_input_click(prev: bool, in_tree: bool, left: bool) -> bool {
     if in_tree { prev || left } else { false }
 }
 
+// Alt pressed and let go with nothing else in between, or F10, with neither Ctrl, Shift nor Win held (nor Alt,
+// for F10): the view menu opens when that key is let go, as a hidden menu bar does in Chrome or Notepad. Any
+// other key, down or up, disarms it (Alt+←, Alt+1, Alt+Shift, AltGr's Ctrl ...); so do mouse buttons and the
+// wheel (pre_translate) and activation (Alt+Tab, main_proc). `mods`: Ctrl, Shift, Alt, Win as held with this
+// key. Gives the key now armed and whether this release opens the menu.
+pub(crate) fn menu_key_step(armed: Option<u16>, down: bool, vk: u16, repeat: bool, [ctrl, shift, alt, win]: [bool; 4]) -> (Option<u16>, bool) {
+    let menu_key = vk == VK_MENU.0 || vk == VK_F10.0;
+    match down {
+        true if menu_key && repeat => (armed.filter(|&k| k == vk), false),
+        true if menu_key => ((!ctrl && !shift && !win && (vk == VK_MENU.0 || !alt)).then_some(vk), false),
+        true => (None, false),
+        false => (None, armed == Some(vk)),
+    }
+}
+
 pub(crate) unsafe fn pre_translate(m: &MSG) -> bool {
     let in_tree = || app(|a| a.tree_hwnd == m.hwnd || IsChild(a.tree_hwnd, m.hwnd).as_bool());
+    // a click, Alt+drag or Alt+wheel: that Alt was not let go alone
+    if matches!(
+        m.message,
+        WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN | WM_XBUTTONDOWN | WM_NCLBUTTONDOWN | WM_NCRBUTTONDOWN | WM_NCMBUTTONDOWN | WM_NCXBUTTONDOWN | WM_MOUSEWHEEL | WM_MOUSEHWHEEL
+    ) {
+        MENU_ARM.set(None);
+    }
     if matches!(m.message, WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN | WM_XBUTTONDOWN) {
         let t = in_tree();
         app(|a| a.tree_input = tree_input_click(a.tree_input, t, m.message == WM_LBUTTONDOWN));
@@ -317,6 +339,17 @@ pub(crate) unsafe fn pre_translate(m: &MSG) -> bool {
             }
             // a held Alt+PgDn's repeats leave its folder list coming (a slow share would never get to answer)
             let repeat = m.lParam.0 & (1 << 30) != 0;
+            let vk = m.wParam.0 as u16;
+            let held = |k: VIRTUAL_KEY| GetKeyState(k.0 as i32) < 0;
+            let mods = [held(VK_CONTROL), held(VK_SHIFT), held(VK_MENU), held(VK_LWIN) || held(VK_RWIN)];
+            let in_main = m.hwnd == main || IsChild(main, m.hwnd).as_bool();
+            let (armed, _) = menu_key_step(MENU_ARM.get(), true, vk, repeat, mods);
+            MENU_ARM.set(armed.filter(|_| in_main));
+            // F10 opens the view menu when let go: never the view's accelerator nor Windows' hidden menu bar
+            // (Shift+F10, the context menu, isn't armed and goes on as before)
+            if in_main && vk == VK_F10.0 && armed.is_some() {
+                return true;
+            }
             if !(repeat && app(|a| a.kids.as_ref().is_some_and(|k| k.step != 0))) {
                 kids_cancel();
             }
@@ -364,6 +397,14 @@ pub(crate) unsafe fn pre_translate(m: &MSG) -> bool {
             if matches!(VIRTUAL_KEY(m.wParam.0 as u16), VK_LEFT | VK_RIGHT | VK_UP | VK_DOWN | VK_CONTROL | VK_MENU) {
                 end_nudge();
             }
+            // Alt let go alone, or F10: the view menu, and the release swallowed so no hidden system menu starts
+            let (armed, open) = menu_key_step(MENU_ARM.get(), false, m.wParam.0 as u16, false, [false; 4]);
+            MENU_ARM.set(armed);
+            let main = app(|a| a.main);
+            if open && (m.hwnd == main || IsChild(main, m.hwnd).as_bool()) {
+                view_menu_key();
+                return true;
+            }
             false
         }
         _ => false,
@@ -398,6 +439,8 @@ thread_local! {
     pub(crate) static LAST_TYPED: Cell<Option<Instant>> = const { Cell::new(None) };
     // the pane Ctrl+M was pressed in: its ⇄ menu opens when M is released
     pub(crate) static MENU_KEY: Cell<Option<usize>> = const { Cell::new(None) };
+    // Alt or F10 pressed alone: the view menu opens when it is let go (menu_key_step)
+    pub(crate) static MENU_ARM: Cell<Option<u16>> = const { Cell::new(None) };
 }
 
 /// Keys that type into Explorer's find-as-you-type: letters, digits, punctuation, the IME's (Korean) keys.

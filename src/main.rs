@@ -555,6 +555,8 @@ mod tests {
         main.extend((0..LIGHT.accents.len()).map(|k| ID_ACCENT + k));
         main.push(ID_ACCENT_PICK);
         distinct("main WM_COMMAND", &main);
+        // the view menu's copies of toolbar buttons send those buttons' commands, already counted once above
+        assert!(VIEW_BUTTONS.iter().all(|v| main.iter().filter(|&&id| id == v.0).count() == 1));
         // (c) timers, per window: SetTimer with a number already running replaces that timer
         distinct("main timers", &[TIMER_STATUS, TIMER_REVEAL, TIMER_FOCUS, dialog_jump::TIMER_DLG_RETRY, dialog_jump::TIMER_DLG_RESTORE, TIMER_SHELL, TIMER_EV_SELECT]);
         distinct("pane timers", &[TIMER_FILTER, TIMER_SETTLE, TIMER_SPIN]);
@@ -2172,7 +2174,7 @@ mod tests {
         // Help is the F1 row of the shortcut table and About only shows the version: neither is a setting to find.
         // The language item ("한국어 (Korean)") is not in these tables; the READMEs name it as English or Korean.
         let skip = [ID_HELP, ID_ABOUT];
-        let mut names: Vec<(&str, &str)> = VIEW_TOP.iter().chain(&VIEW_END).filter(|v| !skip.contains(&v.0)).map(|v| (v.1, v.2)).collect();
+        let mut names: Vec<(&str, &str)> = VIEW_TOP.iter().chain(&VIEW_END).chain(&VIEW_BUTTONS).filter(|v| !skip.contains(&v.0)).map(|v| (v.1, v.2)).collect();
         names.push(("Selection colour", "선택 색"));
         let name = |s: &'static str| s.split('\t').next().unwrap();
         let missing: Vec<String> = names
@@ -2466,6 +2468,46 @@ mod tests { tr("in", "안") }
         assert_eq!(held_key(Some(enter), a, false), (false, Some(enter)));
         assert_eq!(held_key(Some(enter), a, true), (false, Some(enter)));
         assert_eq!(held_key(None, enter, true), (false, None));
+    }
+
+    // Alt let go alone or F10 opens the view menu; Alt with any other key, a modifier or a click does not.
+    #[test]
+    fn menu_keys() {
+        let (alt, f10, left, shift, ctrl, hangul) = (VK_MENU.0, VK_F10.0, VK_LEFT.0, VK_SHIFT.0, VK_CONTROL.0, VK_HANGUL.0);
+        let none = [false; 4];
+        let with_alt = [false, false, true, false];
+        // presses in order (key, down, repeat, mods); the last release's verdict
+        let run = |keys: &[(u16, bool, bool, [bool; 4])]| {
+            let mut armed = None;
+            let mut open = false;
+            for &(vk, down, repeat, mods) in keys {
+                (armed, open) = menu_key_step(armed, down, vk, repeat, mods);
+            }
+            open
+        };
+        assert!(run(&[(alt, true, false, with_alt), (alt, false, false, none)])); // Alt alone
+        assert!(run(&[(alt, true, false, with_alt), (alt, true, true, with_alt), (alt, true, true, with_alt), (alt, false, false, none)])); // held a while
+        assert!(run(&[(f10, true, false, none), (f10, true, true, none), (f10, false, false, none)]));
+        // Alt+←, Alt+Space, Alt+1 ... : the other key disarms it
+        assert!(!run(&[(alt, true, false, with_alt), (left, true, false, with_alt), (left, false, false, with_alt), (alt, false, false, none)]));
+        assert!(!run(&[(alt, true, false, with_alt), (VK_SPACE.0, true, false, with_alt), (alt, false, false, none)]));
+        // Alt+Shift (input language), Ctrl+Alt / AltGr (Ctrl comes first), Win+Alt, Ctrl then Alt
+        assert!(!run(&[(alt, true, false, with_alt), (shift, true, false, [false, true, true, false]), (shift, false, false, with_alt), (alt, false, false, none)]));
+        assert!(!run(&[(ctrl, true, false, [true, false, false, false]), (alt, true, false, [true, false, true, false]), (alt, false, false, [true, false, false, false])]));
+        assert!(!run(&[(alt, true, false, [false, false, true, true]), (alt, false, false, none)]));
+        // Shift+F10 (context menu), Alt+F10, Ctrl+F10: not the view menu
+        assert!(!run(&[(f10, true, false, [false, true, false, false]), (f10, false, false, none)]));
+        assert!(!run(&[(f10, true, false, with_alt), (f10, false, false, none)]));
+        assert!(!run(&[(f10, true, false, [true, false, false, false]), (f10, false, false, none)]));
+        // a key pressed before Alt and let go while Alt is down
+        assert!(!run(&[(alt, true, false, with_alt), (left, false, false, with_alt), (alt, false, false, none)]));
+        // a Korean keyboard's right Alt is 한/영 (VK_HANGUL), never Alt
+        assert!(!run(&[(hangul, true, false, none), (hangul, false, false, none)]));
+        // a repeat that comes after a disarm (Ctrl+Alt held, Ctrl let go) does not arm again
+        assert_eq!(menu_key_step(None, true, alt, true, with_alt), (None, false));
+        // the release of an unarmed Alt (after a click, Alt+Tab: armed was cleared) opens nothing
+        assert_eq!(menu_key_step(None, false, alt, false, none), (None, false));
+        assert_eq!(menu_key_step(Some(f10), false, alt, false, none), (None, false));
     }
 
     // The letter a menu item underlines: the char after a lone '&' ("&&" is a literal '&').

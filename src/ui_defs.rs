@@ -333,6 +333,7 @@ F3, Space\tQuick preview of the focused file: pictures, text and code, Markdown,
 Del / Shift+Del, F2\tIn the preview: the file shown to the Recycle Bin / deleted for good (Windows asks as in Explorer; the preview moves on to the next file), or renamed in its header (Enter / Esc)\n\
 Ctrl+wheel, Ctrl+= / Ctrl+- / Ctrl+0\tIn the preview: zoom a picture or PDF in / out (the wheel zooms on the cursor) / back to fit; zoomed in, drag it or its scrollbars to move around\n\
 Ctrl+V\tWith a copied picture (screenshot, browser image): save it here as a PNG file; with copied text: save it as a text file named after its first line, ready to rename\n\
+Alt / F10\tView menu (Alt pressed and let go alone): settings, change layout, light / dark theme, language, help; ↑/↓ and Enter to choose, Esc to close\n\
 F1\tHelp (opens the README on GitHub)\n\
 Win+Alt+E\tBring Grids to front from any app (again: minimize)\n\
 Ctrl+Alt+G\tIn another app's Open / Save dialog: jump to a folder open in Grids\n\
@@ -392,6 +393,7 @@ F3, Space\t포커스한 파일 빠른 미리보기: 사진, 텍스트·코드, �
 Del / Shift+Del, F2\t미리보기에서: 보고 있는 파일을 휴지통으로 / 완전히 삭제 (탐색기처럼 Windows가 확인, 미리보기는 다음 파일로), 또는 머리줄에서 이름 바꾸기 (Enter / Esc)\n\
 Ctrl+휠, Ctrl+= / Ctrl+- / Ctrl+0\t미리보기에서: 사진·PDF 확대 / 축소 (휠은 커서 위치 기준) / 화면에 맞춤, 확대한 상태에서는 끌거나 스크롤바로 이동\n\
 Ctrl+V\t복사한 그림(스크린샷, 브라우저 이미지)이 있으면 이 폴더에 PNG 파일로 저장, 복사한 글은 텍스트 파일로 저장(첫 줄이 이름, 바로 이름 바꾸기)\n\
+Alt / F10\t보기 메뉴 (Alt는 혼자 눌렀다 떼기): 설정, 레이아웃 바꾸기, 라이트/다크 테마, 언어, 도움말. ↑/↓와 Enter로 고르고 Esc로 닫기\n\
 F1\t도움말 (GitHub README 열기)\n\
 Win+Alt+E\t어디서나 Grids 앞으로 (다시 누르면 최소화)\n\
 Ctrl+Alt+G\t다른 앱의 열기·저장 대화 상자에서: Grids에 열린 폴더로 이동\n\

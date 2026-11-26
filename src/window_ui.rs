@@ -134,6 +134,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             // WA_CLICKACTIVE: as before, so the click lands on what was under it (crumbs stay crumbs); TIMER_FOCUS
             // looks again once that click is handled.
             WM_ACTIVATE => {
+                MENU_ARM.set(None); // an Alt+Tab's Alt: let go here or elsewhere, it opens no menu
                 let (state, min) = ((wp.0 & 0xffff) as u32, wp.0 >> 16 & 0xffff != 0);
                 if state == WA_INACTIVE {
                     end_nudge(); // Alt+Tab mid Ctrl+Alt+arrow: that key release never comes here
@@ -155,6 +156,11 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             WM_SYSCOMMAND => {
                 if wp.0 as u32 & 0xfff0 == SC_MINIMIZE {
                     keep_focus(h);
+                }
+                // Alt or F10 alone: no menu bar to enter, so no invisible system menu mode that eats the next key
+                // (pre_translate opens the view menu instead). Alt+Space (lp ' ') still opens the window menu.
+                if wp.0 as u32 & 0xfff0 == SC_KEYMENU && lp.0 == 0 {
+                    return LRESULT(0);
                 }
                 return DefWindowProcW(h, msg, wp, lp);
             }
@@ -812,7 +818,7 @@ pub(crate) fn toolbar_tips() -> [(i32, &'static str, &'static str); 7] {
         (ID_TB_LAYOUT, "", tr("Layout: click = even grid, drag = rows per column", "레이아웃: 클릭 = 균등, 끌기 = 열마다 칸 수")),
         (ID_TB_SAVE, tr("Save session", "세션 저장"), ""), // tooltip set by refresh_save_button
         (ID_TB_LOAD, tr("Load", "불러오기"), tr("Load a session", "세션 불러오기")),
-        (ID_TB_VIEW, tr("View", "보기"), tr("View: hidden files · extensions · colours · language · help", "보기: 숨김 파일 · 확장명 · 선택 색 · 언어 · 도움말")),
+        (ID_TB_VIEW, tr("View", "보기"), tr("View (Alt or F10): hidden files · extensions · colours · language · help", "보기 (Alt 또는 F10): 숨김 파일 · 확장명 · 선택 색 · 언어 · 도움말")),
         (ID_TB_FAV, tr("Favourites", "즐겨찾기"), tr("Favourite folders (Ctrl+B, then 1 … 9) · Ctrl+Shift+B: add / remove this folder", "즐겨찾기 폴더 (Ctrl+B, 1 … 9) · Ctrl+Shift+B: 지금 폴더 추가 / 빼기")),
         (ID_TB_THEME, tr("Theme", "테마"), theme_tip()),
         (ID_TB_EV, tr("Search with Everything", "Everything으로 검색"), tr("Search with Everything (Ctrl+Shift+F)", "Everything으로 검색 (Ctrl+Shift+F)")),
@@ -1089,6 +1095,12 @@ pub(crate) const VIEW_TOP: [(usize, &str, &str); 12] = [
     (ID_CTXMENU, "Add \"Open in Grids\" to Explorer's right-click menu", "탐색기 오른쪽 클릭 메뉴에 \"Grids에서 열기\" 추가"),
     (ID_FOLLOW, "Follow Windows light/dark", "Windows 라이트·다크 따르기"),
 ];
+// Toolbar buttons also on the view menu, so the keyboard (Alt / F10) reaches them: the buttons' own commands.
+// Change layout comes first, the theme just above Follow Windows light/dark.
+pub(crate) const VIEW_BUTTONS: [(usize, &str, &str); 2] = [
+    (ID_TB_LAYOUT as usize, "Change layout…", "레이아웃 바꾸기…"),
+    (ID_TB_THEME as usize, "Light / dark theme", "라이트/다크 테마"),
+];
 pub(crate) const VIEW_END: [(usize, &str, &str); 7] = [
     (ID_TOUR, "Getting started tour", "처음 사용 안내"),
     (ID_KEY_TIPS, "Show shortcut tips on the status line", "상태줄에 단축키 팁 표시"),
@@ -1103,7 +1115,13 @@ pub(crate) const VIEW_END: [(usize, &str, &str); 7] = [
 pub(crate) unsafe fn make_menus() -> Result<HMENU> {
     let view = CreatePopupMenu()?;
     let item = |menu: HMENU, flags: MENU_ITEM_FLAGS, id: usize, text: &str| AppendMenuW(menu, flags, id, &HSTRING::from(text));
+    let [layout, theme] = VIEW_BUTTONS;
+    item(view, MF_STRING, layout.0, tr(layout.1, layout.2))?;
+    AppendMenuW(view, MF_SEPARATOR, 0, PCWSTR::null())?;
     for (id, en, ko) in VIEW_TOP {
+        if id == ID_FOLLOW {
+            item(view, MF_STRING, theme.0, tr(theme.1, theme.2))?;
+        }
         item(view, MF_STRING, id, tr(en, ko))?;
     }
     let colors = CreatePopupMenu()?;
@@ -1122,6 +1140,29 @@ pub(crate) unsafe fn make_menus() -> Result<HMENU> {
     Ok(view)
 }
 
+
+// Alt let go alone, or F10: the view menu under its button with its first item lit, so ↑/↓ and Enter pick at
+// once and a screen reader reads that item. Not mid splitter drag, resize or Ctrl+Alt+arrow, nor while a mouse
+// button is down or another window of Grids is in front.
+pub(crate) unsafe fn view_menu_key() {
+    let (main, busy) = app(|a| (a.main, a.drag.is_some() || a.nudge.is_some() || a.sizing));
+    let pressed = |k: VIRTUAL_KEY| GetAsyncKeyState(k.0 as i32) < 0;
+    if busy
+        || !IsWindowVisible(main).as_bool()
+        || IsIconic(main).as_bool()
+        || !IsWindowEnabled(main).as_bool()
+        || GetActiveWindow() != main
+        || !GetCapture().is_invalid()
+        || pressed(VK_LBUTTON)
+        || pressed(VK_RBUTTON)
+        || pressed(VK_MBUTTON)
+    {
+        return;
+    }
+    // taken by the menu's own loop once it is up (a click on the button still opens it with nothing lit)
+    _ = PostMessageW(Some(main), WM_KEYDOWN, WPARAM(VK_DOWN.0 as usize), LPARAM(0));
+    popup_menu(app(|a| a.view_menu), ID_TB_VIEW);
+}
 
 pub(crate) unsafe fn popup_menu(menu: HMENU, id: i32) {
     let main = app(|a| a.main);

@@ -100,6 +100,7 @@ The exe is not code-signed, so Windows SmartScreen may warn the first time: choo
 | Ctrl+B | Favourites list (↑/↓ or Home/End, Enter to open, 1 … 9 opens the numbered row at once, Del to remove, Alt+↑/↓ or drag to reorder); screen readers are given the list's name and the row picked ("Documents, C:\Users\…\Documents, 2/5") |
 | Ctrl+Shift+B | Add the active pane's folder to favourites, or remove it if it is one (as ☆+ in its header); the status bar says which |
 | Ctrl+/ | Keyboard shortcuts (this list; also View > Keyboard shortcuts): ↑/↓, PgUp/PgDn, Home/End step through it a row at a time, and screen readers read each row's keys and description. Its find box (Ctrl+F or Tab) keeps only the rows with every word typed, in English or Korean; ↓ / Enter goes to the first match. Esc empties the box, then closes |
+| Alt / F10 | View menu, with its first item lit (Alt pressed and let go on its own, as in a browser or Notepad): every setting, View > Change layout… and View > Light / dark theme included, without the mouse; ↑/↓ and Enter to choose, Esc to close. Alt with another key or a click stays that shortcut, and a stray Alt no longer swallows the next key |
 | F1 | Help (opens this README on GitHub, in the UI language) |
 | Ctrl+Shift+M | Maximize / restore the active pane (or double-click its header) |
 | Ctrl+Shift+E | Hide / show the folder tree (also View > Folder tree; its width is kept) |
