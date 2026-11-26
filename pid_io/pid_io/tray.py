@@ -60,6 +60,13 @@ SCHEMA = [
      "items": [
          _code(_sel("pt_width", "Perforated 트레이 폭", ["100", "150", "200"], "100", "계기 분기 1~2가닥용"), "T20"),
          _code(_num("ug_fit", "UG 트렌치 할증", 0.05, "", "", 0.05, True), "T21"),
+         _code(_txt("ug_widths", "트렌치 폭 (mm)", "300,450,600,900,1200",
+                    "케이블 단면적 합 ≤ 폭 × 유효 높이 × Fill인 가장 작은 폭. 넘치면 단(브래킷 단) 추가"), "T22"),
+         _code(_num("ug_height", "트렌치 케이블 유효 높이 (단당)", 200, "mm"), "T23"),
+         _code(_num("ug_fill", "트렌치 Fill ratio", 0.4, "", "", 0.05, True), "T24"),
+         _code(_sel("ug_runno", "트렌치 번호", ["트렌치 한 줄 (분기·폭 변경 때만 새 번호)", "구간마다"],
+                    "트렌치 한 줄 (분기·폭 변경 때만 새 번호)",
+                    "한 줄: 물리적으로 이어지고 폭이 같은 트렌치 = 번호 하나 (꺾여도 같은 번호). 구간: 케이블이 바뀔 때마다 번호"), "T25"),
      ]},
 ]
 ITEMS = {it["id"]: it for g in SCHEMA for it in g["items"]}
@@ -119,6 +126,20 @@ def size_for(a, v):
             return w, 1
     w = ws[-1]
     return w, max(1, math.ceil(a / (w * h * f) - 1e-9))
+
+
+def ug_widths(v):
+    w = sorted({int(x) for x in re.findall(r"\d+", str(v.get("ug_widths") or "")) if int(x) > 0})
+    return w or [300, 450, 600, 900, 1200]
+
+
+def ug_size(a, v):
+    """trench: cable area (mm2) -> (width, tiers of brackets)."""
+    ws, h, f = ug_widths(v), max(1.0, float(v["ug_height"])), max(0.01, float(v["ug_fill"]))
+    for w in ws:
+        if a <= w * h * f + 1e-9:
+            return w, 1
+    return ws[-1], max(1, math.ceil(a / (ws[-1] * h * f) - 1e-9))
 
 
 def fill(a, w, n, v):
@@ -244,13 +265,13 @@ def build(res, layout, s, dec=None):
         units = Counter((c.get("unit") or "00") for c in cs)
         u = units.most_common(1)[0][0] if units else "00"
         length = len(chain) - 1
-        seg = {"id": sid, "kind": kind, "length": length, "unit": u,
+        seg = {"id": sid, "kind": kind, "length": length, "unit": u, "_ends": (a, b),
                "poly": [[round(a[0] / m, 1), round(a[1] / m, 1)], [round(b[0] / m, 1), round(b[1] / m, 1)]],
                "cables": [c["no"] for c in cs], "trays": []}
         if kind == "UG":
-            num[("UG", u)] += 1
-            seg["no"] = f"UG-{u}-{num[('UG', u)]:03d}"
             seg["area"] = round(sum(area(od(c["spec"], v)) for c in cs))
+            seg["width"], seg["tiers"] = ug_size(seg["area"], v)
+            seg["fill"] = round(seg["area"] / (seg["width"] * max(1.0, float(v["ug_height"])) * seg["tiers"]), 3)
         else:
             num[("TR", u)] += 1
             seg["no"] = f"TR-{u}-{num[('TR', u)]:03d}"
@@ -272,6 +293,7 @@ def build(res, layout, s, dec=None):
                                      "fill": round(fill(a_, w, n, v), 3)})
         out["segments"].append(seg)
         seg_out[i] = seg
+    _number_ug(out["segments"], v)
     # each trunk cable: the trays / UG it runs in, in order from its start (JB, panel) to the room
     out["by_cable"] = {}
     for rid, idx in by_rid.items():
@@ -292,7 +314,11 @@ def build(res, layout, s, dec=None):
             for i, run in walk:
                 sg = seg_out[i]
                 if sg["kind"] == "UG":
-                    legs.append({"no": sg["no"], "kind": "UG", "size": "UG 트렌치", "m": run})
+                    if legs and legs[-1]["kind"] == "UG" and legs[-1]["no"] == sg["run"]:
+                        legs[-1]["m"] += run            # one trench run, one leg
+                    else:
+                        legs.append({"no": sg["run"], "kind": "UG", "m": run,
+                                     "size": f"트렌치 {sg['width']}" + (f" {sg['tiers']}단" if sg["tiers"] > 1 else "")})
                 else:
                     tr = next((x for x in sg["trays"] if x["cls"] == cls), None)
                     if tr:
@@ -305,6 +331,48 @@ def build(res, layout, s, dec=None):
     out["lost_overrides"] = len(set(over) - used_over)
     out["summary"] = _summary(out, v)
     return out
+
+
+def _number_ug(segs, v):
+    """UG numbers. 'run': segments joined end to end where nothing else meets (no branch) and the trench
+    keeps its size forms one trench run = one number (corners stay in the run); parts get /1, /2 ...
+    Numbered per unit, nearest the control room first (segments come in that order)."""
+    deg = Counter()
+    for s in segs:
+        for n in s["_ends"]:
+            deg[n] += 1
+    ug = [s for s in segs if s["kind"] == "UG"]
+    parent = list(range(len(ug)))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+    if v.get("ug_runno", "").startswith("트렌치"):
+        at = {}
+        for i, s in enumerate(ug):
+            for n in s["_ends"]:
+                at.setdefault(n, []).append(i)
+        for n, ids in at.items():
+            if len(ids) == 2 and deg[n] == 2:
+                a, b = (ug[i] for i in ids)
+                if (a["width"], a["tiers"]) == (b["width"], b["tiers"]):
+                    parent[find(ids[0])] = find(ids[1])
+    groups = {}
+    for i in range(len(ug)):
+        groups.setdefault(find(i), []).append(i)
+    num = Counter()
+    for r in sorted(groups.values(), key=lambda g: min(g)):
+        u = Counter(ug[i]["unit"] for i in r).most_common(1)[0][0]
+        num[u] += 1
+        run = f"UG-{u}-{num[u]:03d}"
+        for k, i in enumerate(sorted(r), 1):
+            ug[i]["run"] = run
+            ug[i]["no"] = run if len(r) == 1 else f"{run}/{k}"
+            ug[i]["parts"] = len(r)
+    for s in segs:
+        s.pop("_ends", None)
 
 
 def _snap(nodes, racks):
@@ -375,13 +443,29 @@ def _summary(t, v):
             if tr["fill"] > eff_fill(v) + 1e-9:
                 over += 1
     ug = sum(s["length"] for s in t["segments"] if s["kind"] == "UG")
+    ugw = {}
+    for s in t["segments"]:
+        if s["kind"] == "UG":
+            k = (s["width"], s["tiers"])
+            ugw[k] = ugw.get(k, 0) + s["length"]
+    runs = {}
+    for s in t["segments"]:
+        if s["kind"] == "UG":
+            r = runs.setdefault(s["run"], {"run": s["run"], "width": s["width"], "tiers": s["tiers"], "length": 0,
+                                           "parts": 0, "cables": set(), "unit": s["unit"]})
+            r["length"] += s["length"]
+            r["parts"] += 1
+            r["cables"].update(s["cables"])
     ug_cab = sum(s["length"] * len(s["cables"]) for s in t["segments"] if s["kind"] == "UG")
     return {"ladder": [{"cls": k[0], "width": k[1], "length": l_, "order": math.ceil(l_ * (1 + fit))}
                        for k, l_ in sorted(lad.items(), key=lambda kv: (["신호", "IS", "통신"].index(kv[0][0]), kv[0][1]))],
             "ladder_m": sum(lad.values()), "ug_m": ug, "ug_order": math.ceil(ug * (1 + float(v["ug_fit"]))),
             "ug_cable_m": ug_cab, "pt_m": sum(p["length"] for p in t["pt"]), "pt_n": len(t["pt"]),
             "segments": sum(1 for s in t["segments"] if s["kind"] != "UG"),
-            "ug_segments": sum(1 for s in t["segments"] if s["kind"] == "UG"), "overfill": over}
+            "ug_segments": sum(1 for s in t["segments"] if s["kind"] == "UG"), "overfill": over,
+            "ug_by_width": [{"width": k[0], "tiers": k[1], "length": l_, "order": math.ceil(l_ * (1 + float(v["ug_fit"])))}
+                            for k, l_ in sorted(ugw.items())],
+            "ug_runs": [{**r, "cables": len(r["cables"])} for r in runs.values()]}
 
 
 def checklist(v):
@@ -398,13 +482,16 @@ def write_sheets(wb, t, v, sheet):
     sm = t["summary"]
     data = [["사다리 트레이", f"{x['cls']} {x['width']}×{int(v['tray_height'])}", x["length"], x["order"]] for x in sm["ladder"]]
     data += [["", "(900으로 넘치는 구간은 단을 쌓아 단 수만큼 길이에 더함)", "", ""]]
-    data += [["UG 트렌치", "랙 밖 간선", sm["ug_m"], sm["ug_order"]],
+    data += [["UG 트렌치", f"폭 {x['width']}" + (f" × {x['tiers']}단" if x["tiers"] > 1 else ""), x["length"], x["order"]]
+             for x in sm["ug_by_width"]]
+    data += [["UG 트렌치 합계", f"트렌치 {len(sm['ug_runs'])}줄 · 구간 {sm['ug_segments']}", sm["ug_m"], sm["ug_order"]],
              ["Perforated 트레이", f"{v['pt_width']} (계기 분기 {sm['pt_n']}가닥)", sm["pt_m"], sm["pt_m"]]]
     sheet(wb.create_sheet("Tray_Summary"), ["구분", "규격", "길이 (m)", "물량 (할증 포함, m)"], data, [18, 30, 12, 20])
     rows = []
     for s in t["segments"]:
         if s["kind"] == "UG":
-            rows.append([s["no"], "UG 트렌치", "", "", "", s["length"], len(s["cables"]), s["area"], "", "", s["unit"],
+            rows.append([s["no"], f"UG 트렌치 ({s['run']})", "", s["width"], s["tiers"], s["length"], len(s["cables"]), s["area"],
+                         s["fill"], "자동 (트렌치 Fill)", s["unit"],
                          f"{s['poly'][0]} → {s['poly'][1]}", ", ".join(s["cables"])])
         for tr in s["trays"]:
             rows.append([tr["no"], "사다리 (랙)" if s["kind"] == "랙" else "사다리 (AG 서포트)", tr["cls"], tr["width"],
@@ -424,6 +511,9 @@ def write_sheets(wb, t, v, sheet):
     sheet(wb.create_sheet("Cable_Tray_Route"), ["Cable No", "구분", "From", "To", "Cable Spec", "외경 (mm)", "트레이 구분",
                                                 "사다리 (m)", "UG (m)", "구간 수", "트레이 경로 (출발 → 룸)"],
           cr, [22, 7, 18, 8, 26, 9, 9, 9, 8, 7, 120])
+    sheet(wb.create_sheet("Trench_Runs"), ["Trench No", "폭 (mm)", "브래킷 단", "길이 (m)", "구간 수", "케이블 수", "Unit"],
+          [[r["run"], r["width"], r["tiers"], r["length"], r["parts"], r["cables"], r["unit"]] for r in sm["ug_runs"]],
+          [14, 8, 8, 9, 8, 9, 6])
     sheet(wb.create_sheet("Perforated_Tray"), ["PT No", "케이블", "From (JB)", "To (계기)", "폭 (mm)", "길이 (m)"],
           [[p["no"], p["cable"], p["frm"], p["to"], p["width"], p["length"]] for p in t["pt"]], [14, 22, 18, 18, 8, 9])
     sheet(wb.create_sheet("Tray_Checklist"), ["No", "구분", "항목", "적용값", "기본값", "", "설명"],

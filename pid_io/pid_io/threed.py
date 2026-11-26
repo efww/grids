@@ -19,7 +19,7 @@ import time
 from pathlib import Path
 
 FORMAT = "pid_io-3d"
-VERSION = "0.1"
+VERSION = "0.2"
 
 
 def _r(x, n=2):
@@ -86,7 +86,7 @@ def build(project, res, layout, tray, sup, s, plot=None):
                    "trunk_off_rack": v["trunk_off"], "branch_level": v["no_rack"]},
         "anchors": [],                    # candidate reference points for alignment: equipment centres, room, IRP
         "racks": [], "equipment": [], "rooms": [], "instruments": [], "jbs": [],
-        "cables": [], "trays": [], "supports": [], "perforated": [],
+        "cables": [], "trays": [], "supports": [], "joints": [], "perforated": [],
     }
     for i, r in enumerate(racks_pt):
         out["racks"].append({"id": f"RACK-{i + 1:02d}", "rect_pt": [_r(x, 1) for x in r[:4]],
@@ -142,10 +142,11 @@ def build(project, res, layout, tray, sup, s, plot=None):
     for sg in (tray or {}).get("segments") or []:
         a, b = sg["poly"]
         el = rack_el if sg["kind"] == "랙" else off_el
-        base = {"seg": sg["no"], "kind": {"랙": "ladder_on_rack", "AG": "ladder_on_supports", "UG": "ug_trench"}[sg["kind"]],
+        base = {"seg": sg["no"], "run": sg.get("run"), "kind": {"랙": "ladder_on_rack", "AG": "ladder_on_supports", "UG": "ug_trench"}[sg["kind"]],
                 "start": P(a[0], a[1], el), "end": P(b[0], b[1], el), "length_m": sg["length"], "cables": sg["cables"]}
         if sg["kind"] == "UG":
-            out["trays"].append({**base, "no": sg["no"], "width_mm": None, "tiers": 1})
+            out["trays"].append({**base, "no": sg["no"], "width_mm": sg.get("width"), "tiers": sg.get("tiers", 1),
+                                 "fill": sg.get("fill")})
         for k, t in enumerate(sg.get("trays") or []):
             out["trays"].append({**base, "no": t["no"], "class": t["cls"], "width_mm": t["width"], "tiers": t["tiers"],
                                  "height_mm": float(v["tray_height"]), "fill": t["fill"],
@@ -153,7 +154,10 @@ def build(project, res, layout, tray, sup, s, plot=None):
     for x in (sup or {}).get("supports") or []:
         out["supports"].append({"no": x["no"], "type": x["type"], "name": x["name"], "typical": x["typical"],
                                 **P(x["x"], x["y"], x["el"] if x["type"] not in ("L", "T", "H") else 0),
-                                "top_el": x["el"], "width_mm": x.get("width"), "tiers": x.get("tiers"), "segs": x["segs"]})
+                                "top_el": x["el"], "width_mm": x.get("width"), "tiers": x.get("tiers"), "segs": x["segs"],
+                                "role": x.get("role", ""), "fix": x.get("fix", ""), "blocked": bool(x.get("blocked"))})
+    for j in (sup or {}).get("joints") or []:
+        out["joints"].append({"no": j["no"], "seg": j["seg"], **P(j["x"], j["y"], j["el"]), "trays": j["tray_nos"]})
     pt_sup = {p["pt"]: p["count"] for p in (sup or {}).get("pt") or []}
     for p in (tray or {}).get("pt") or []:
         cab = next((c for c in out["cables"] if c["no"] == p["cable"]), None)
@@ -161,7 +165,7 @@ def build(project, res, layout, tray, sup, s, plot=None):
                                   "length_m": p["length"], "brackets": pt_sup.get(p["no"]),
                                   "path": (cab or {}).get("path")})
     out["counts"] = {k: len(out[k]) for k in ("racks", "equipment", "rooms", "instruments", "jbs", "cables", "trays",
-                                              "supports", "perforated")}
+                                              "supports", "joints", "perforated")}
     out["counts"]["instruments_estimated"] = sum(1 for x in out["instruments"] if x["estimated"])
     return out
 

@@ -1,4 +1,4 @@
-# pid_io 3D 데이터 맞추기 프로토콜 (pid_io-3d 0.1)
+# pid_io 3D 데이터 맞추기 프로토콜 (pid_io-3d 0.2)
 
 배관팀 three.js 모델 위에 pid_io가 만든 계장 데이터(계기·JB·케이블 경로·트레이·트렌치·서포트)를 얹을 때, 사람이나 다른 AI가 이 순서대로 따라 하면 됩니다.
 파일: STEP 9 '3D 데이터 (JSON)' 버튼 → `projects/<프로젝트>/output/3D_<프로젝트>_<날짜>.json`
@@ -17,8 +17,9 @@
 | `instruments` | 계기 태그, 위치, `src`(위치 근거), `estimated`(추정 여부), 연결 JB |
 | `jbs` | JB 번호, 위치, 크기, 종류, 시스템·신호, 사양(재질·방폭·IP) |
 | `cables` | 케이블 번호, 사양, 외경(mm), 길이, `path`(3D 꺾임점 목록), 탄 트레이 번호 |
-| `trays` | 트레이·트렌치 구간: 종류(`ladder_on_rack` / `ladder_on_supports` / `ug_trench`), 시작·끝 점, 폭·단 수, Fill, 옆 트레이와의 간격 |
-| `supports` | 서포트 번호, 형식(L/T/H/RT/RC/UB/UM/UP), 타피컬 번호, 바닥 점, 최상단 EL |
+| `trays` | 트레이·트렌치 구간 (트렌치는 `run` = 트렌치 한 줄 번호, 폭·단): 종류(`ladder_on_rack` / `ladder_on_supports` / `ug_trench`), 시작·끝 점, 폭·단 수, Fill, 옆 트레이와의 간격 |
+| `supports` | 서포트 번호, 형식(L/T/H/RT/RF/RC/UB/UM/UP), 타피컬 번호, 바닥 점, 최상단 EL, 역할(피팅·익스펜션), 고정(앵커·가이드), `blocked`(장비 안) |
+| `joints` | 익스펜션 스플라이스 조인트 (0.2): 번호, 구간, 위치, 트레이 |
 | `perforated` | JB → 계기 Perforated 트레이 (태그별), 길이, 브래킷 수, 경로 |
 | `counts` | 개수 요약 (`instruments_estimated` = 위치가 추정인 계기 수) |
 
@@ -65,4 +66,8 @@
 
 ## 6. 다른 AI에게 시킬 때 프롬프트 예
 
-> 첨부한 pid_io-3d JSON(0.1)과 three.js 장면을 맞춰 줘. `protocols/3d_protocol.md` 3절 순서대로: anchors 중 모델에도 있는 장비 3개를 골라 평면 변환(회전·이동·축척)을 최소제곱으로 구하고, 모델 GL 높이로 z를 옮긴 뒤, 대응에 안 쓴 장비로 오차를 표로 보여 줘. 변환 행렬과 오차표만 답하고, 데이터 값은 바꾸지 마.
+> 첨부한 pid_io-3d JSON(0.2)과 three.js 장면을 맞춰 줘. `protocols/3d_protocol.md` 3절 순서대로: anchors 중 모델에도 있는 장비 3개를 골라 평면 변환(회전·이동·축척)을 최소제곱으로 구하고, 모델 GL 높이로 z를 옮긴 뒤, 대응에 안 쓴 장비로 오차를 표로 보여 줘. 변환 행렬과 오차표만 답하고, 데이터 값은 바꾸지 마.
+
+## 7. 확인용 3D 보기
+
+앱 STEP 9 '3D 보기' 버튼 (`/viewer3d?p=<프로젝트>`): 인터넷 없이 three.js(앱 폴더 `pid_io/app/static/vendor/three`, MIT)로 PLOT PLAN을 바닥에 깔고 같은 데이터를 그립니다. 배관 모델에 얹기 전에 우리 데이터가 맞는지 눈으로 보는 용도.

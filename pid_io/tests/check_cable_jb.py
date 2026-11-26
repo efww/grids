@@ -189,9 +189,10 @@ def check_res(where, rows, s, res, layout=None):
                 NOTES.append(f"[{where}] 자리 없이 계기 중심에 둔 JB {len(nos_)} {nos_[:3]}")
 
 
-def check_support(where, t, v, layout, res, s):
+def check_support(where, t, v, layout, res, s, dec=None):
     m = layout.m_per_pt if (layout is not None and res.get("geo")) else None
-    sp = SP.build(t, v, m)
+    obst = (layout.plot.get("obstacles") or []) if m else []
+    sp = SP.build(t, v, m, dec or {}, obst)
     if len(sp["pt"]) != len(t["pt"]):
         fail(where, "Perforated 서포트 행 수 != Perforated 트레이 수")
     span = SP.span_of(v["sp_pt_span"])
@@ -202,62 +203,107 @@ def check_support(where, t, v, layout, res, s):
     nos = [x["no"] for x in sp["supports"]]
     if len(nos) != len(set(nos)):
         fail(where, "서포트 번호 중복")
+    # trench runs: one width per run, run numbers belong to one run
+    runw = {}
+    for sg in t["segments"]:
+        if sg["kind"] == "UG":
+            if runw.setdefault(sg["run"], (sg["width"], sg["tiers"])) != (sg["width"], sg["tiers"]):
+                fail(where, f"트렌치 {sg['run']} 안에 폭이 다른 구간")
+                break
+            if sg["fill"] > max(0.01, float(v["ug_fill"])) + 1e-9 and sg["tiers"] == 1 and sg["width"] != TR.ug_widths(v)[-1]:
+                fail(where, f"{sg['no']} 트렌치 Fill {sg['fill']} > 기준")
+                break
     segs = {x["no"]: x for x in t["segments"]}
     by_no = {x["no"]: x for x in sp["supports"]}
+    nema = v["sp_fit"].startswith("NEMA")
+    r_fit, d_fit = float(v["sp_fit_r"]) / 1000, float(v["sp_fit_d"]) / 1000
     for g_ in sp["segments"]:
         sg = segs[g_["seg"]]
+        L = sg["length"]
+        sp_ = g_["span"]
         if sg["kind"] == "UG":
-            ut = v["sp_ug_type"]
-            sp_ = float(v["sp_ug_span"]) if ut.startswith("콘크리트") else float(v["sp_marker"]) if ut.startswith("직매설") else float(v["sp_pit"])
-        elif sg["kind"] == "랙":
-            sp_ = float(v["sp_bay"])
-        else:
-            sp_ = float(v["sp_span"])
-        sp_ = SP.span_of(sp_)
-        need = max(1, math.ceil(sg["length"] / sp_ - 1e-9)) + 1
-        if g_["count"] != need:
-            fail(where, f"{g_['seg']} 서포트 {g_['count']} != 필요 {need} (길이 {sg['length']} / 간격 {sp_})")
-            break
+            need = max(1, math.ceil(L / sp_ - 1e-9)) + 1
+            if g_["count"] != need:
+                fail(where, f"{g_['seg']} 서포트 {g_['count']} != 필요 {need} (길이 {L} / 간격 {sp_})")
+                break
+            continue
         n = max((x["tiers"] for x in sg["trays"]), default=1)
         tys = {by_no[k]["type"] for k in g_["nos"]}
         if sg["kind"] == "랙":
             want = "RT" if (n > 1 and v["sp_rack_stack"] == "T 서포트") else "RC"
-            if want == "RT" and "RT" not in tys:
+            if want == "RT" and not ({"RT", "RF"} & tys):
                 fail(where, f"{g_['seg']} 적층 {n}단인데 랙 위 T 서포트 없음")
                 break
             if want == "RC" and any(by_no[k]["type"] == "RT" and by_no[k]["segs"] == [g_["seg"]] for k in g_["nos"]):
                 fail(where, f"{g_['seg']} 1단(또는 끔)인데 랙 위 T 서포트")
                 break
-        elif sg["kind"] == "AG":
+        elif sg["kind"] == "AG" and not g_["user"]:
             wsum = sum(x["width"] for x in sg["trays"]) + 100 * max(0, len(sg["trays"]) - 1)
-            req = SP.ag_type(wsum, n, v)
+            req = SP.ag_choice(wsum, n, v)[0]
             own = [by_no[k]["type"] for k in g_["nos"] if by_no[k]["type"] in SP.RANK]
             if not own or min(SP.RANK[x] for x in own) < SP.RANK[req]:
                 fail(where, f"{g_['seg']} 서포트 형식 {set(own)} < 필요 {req} (폭 {wsum}, {n}단)")
                 break
-        if m:                                       # spacing along the segment never above the span
+        if m and L:
             a, b = sg["poly"]
-            pts = sorted(((by_no[k]["x"] - a[0]) ** 2 + (by_no[k]["y"] - a[1]) ** 2) ** .5 * m for k in g_["nos"])
-            gaps = [q - p for p, q in zip(pts, pts[1:])]
-            if gaps and max(gaps) > sp_ + 0.6:
-                fail(where, f"{g_['seg']} 서포트 간격 {max(gaps):.1f} m > {sp_} m")
+            dd = sorted((math.hypot(by_no[k]["x"] - a[0], by_no[k]["y"] - a[1]) * m,
+                         bool(by_no[k].get("moved") or by_no[k].get("blocked"))) for k in g_["nos"])
+            ds = [x for x, _ in dd]
+            if sg["kind"] == "AG":
+                for (p, fp), (q, fq) in zip(dd, dd[1:]):
+                    lim = (1.5 * sp_ if (fp or fq) else sp_) + 0.6     # a support slid off an equipment outline
+                    if q - p > lim:
+                        fail(where, f"{g_['seg']} 서포트 간격 {q - p:.1f} m > {sp_} m")
+                        break
+            if nema and sg["kind"] == "AG" and ds:
+                # every end is either a support at the end, or (fitting) a support within the fitting window
+                for end in (0.0, float(L)):
+                    near, fl = min((abs(d - end), f) for d, f in dd)
+                    lim = min(r_fit + d_fit, L / 2) + 0.15 + (0.5 * sp_ if fl else 0)
+                    if near > lim:
+                        fail(where, f"{g_['seg']} 끝에서 {near:.2f} m까지 서포트 없음 (피팅 창 {r_fit + d_fit} m)")
+                        break
+    # expansion splices: each straight run longer than the limit has ceil(L/Lx)-1 joints, one anchor per stretch
+    Lx = SP.exp_spacing(v)
+    njs = 0
+    for r in sp["runs"]:
+        want = (math.ceil(r["length"] / Lx - 1e-9) - 1) if (v["sp_exp"] == "사용" and r["length"] > Lx + 1e-9) else 0
+        if r["joints"] != want:
+            fail(where, f"직선 {r['segs'][0]}.. {r['length']} m 조인트 {r['joints']} != {want}")
+            break
+        njs += want
+    if len(sp["joints"]) != njs:
+        fail(where, f"조인트 수 {len(sp['joints'])} != 직선 구간 합 {njs}")
+    if sp["joints"]:
+        anc = sum(1 for x in sp["supports"] if x.get("fix") == "앵커")
+        if anc < len(sp["joints"]):
+            fail(where, f"앵커 {anc} < 조인트 {len(sp['joints'])} (조인트 사이마다 1개)")
+    # posts never left inside an equipment outline unless flagged
+    if m and obst:
+        pad = 0.25 / m
+        for x in sp["supports"]:
+            if x["type"] in ("L", "T", "H") and not x.get("blocked") and any(
+                    o[0] + pad < x["x"] < o[2] - pad and o[1] + pad < x["y"] < o[3] - pad for o in obst):
+                fail(where, f"{x['no']} 장비 안인데 표시 없음")
                 break
     if m:
         try:
             d3 = T3.build("check", res, layout, t, sp, s, layout.plot)
         except Exception as e:
             fail(where, f"3D 데이터 예외 {type(e).__name__}: {e}")
-            return
-        for k in ("instruments", "jbs", "supports"):
+            return sp
+        for k in ("instruments", "jbs", "supports", "joints"):
             for x in d3[k]:
                 if abs(x["m"][0] - x["pt"][0] * m) > 0.06 or abs(x["m"][1] - x["pt"][1] * m) > 0.06:
                     fail(where, f"3D {k} 좌표 m != pt × 축척")
-                    return
-        if len(d3["supports"]) != len(sp["supports"]) or len(d3["perforated"]) != len(t["pt"]):
-            fail(where, "3D 데이터 서포트/Perforated 수 다름")
+                    return sp
+        if len(d3["supports"]) != len(sp["supports"]) or len(d3["perforated"]) != len(t["pt"]) \
+                or len(d3["joints"]) != len(sp["joints"]):
+            fail(where, "3D 데이터 서포트/조인트/Perforated 수 다름")
         trunk_paths = sum(1 for c in d3["cables"] if c["kind"] != "분기" and c.get("path"))
         if trunk_paths != len(t.get("by_cable") or {}):
             fail(where, f"3D 간선 경로 {trunk_paths} != 트레이 표 케이블 {len(t.get('by_cable') or {})}")
+    return sp
 
 
 def build(rows, s, name, layout):
@@ -370,6 +416,27 @@ def main(name):
         t2 = TR.build(r2, lay2, s0, {})
         if t2["summary"] == t0["summary"]:
             fail("JB 이동", "트레이 물량이 안 바뀜")
+        # STEP 9 overrides on an AG segment (trunk off the rack = AG)
+        sA = copy.deepcopy(s0)
+        sA["values"]["trunk_off"] = "AG 서포트"
+        rA = build(rows, sA, name, lay)
+        tA = TR.build(rA, lay, sA, {})
+        ag = max((x for x in tA["segments"] if x["kind"] == "AG"), key=lambda x: x["length"], default=None)
+        if ag is None:
+            fail("서포트 변경", "AG 구간이 없음")
+        else:
+            p0 = check_support("서포트 AG", tA, sA["values"], lay, rA, sA)
+            g0 = next(x for x in p0["segments"] if x["id"] == ag["id"])
+            alt = "H" if g0["type"] != "H" else "T"
+            p1 = check_support("서포트 변경", tA, sA["values"], lay, rA, sA,
+                               {"sup_over": {ag["id"]: {"type": alt, "span": 1.5}}})
+            g1 = next(x for x in p1["segments"] if x["id"] == ag["id"])
+            if not g1["user"] or g1["type"] != alt or g1["span"] != 1.5 or g1["count"] <= g0["count"]:
+                fail("서포트 변경", f"{ag['no']} 형식·간격 변경이 반영 안 됨 {g0['type']}/{g0['span']}/{g0['count']} → {g1['type']}/{g1['span']}/{g1['count']}")
+            sm0, sm1 = p0["summary"], p1["summary"]
+            print(f"서포트 (간선 AG): 포스트 {sm0['supports']} · 조인트 {sm0['joints']} (≤ {sm0['exp_spacing']} m) · 앵커/가이드 "
+                  f"{sm0['anchor_pts']}/{sm0['guide_pts']} · 피팅 {sm0['fitting']} · 장비 피해 {sm0['moved']} / 못 옮김 {sm0['blocked']} · 질문 {sm0['questions']}")
+            print(f"서포트 변경 {ag['no']}: {g0['type']} {g0['span']} m {g0['count']}개 → {g1['type']} 1.5 m {g1['count']}개, 강재 {sm0['kg']} → {sm1['kg']} kg")
     # sizes / spare change -> index columns follow
     s2 = copy.deepcopy(s0)
     s2["values"]["jb_spare"] = 0.3

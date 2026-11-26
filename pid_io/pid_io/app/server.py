@@ -79,6 +79,33 @@ def create_project(name: str):
     shutil.copy(default_concept(), d / "concept.xlsx")
     save_meta(name, {"name": safe_name(name), "created": time.strftime("%Y-%m-%d %H:%M"),
                      "files": {}, "scenarios": []})
+    if (cable.presets_dir(HOME) / f"{COMPANY_PRESET}.json").exists():   # company default preset (v12)
+        s = cable.load(d)
+        cable.load_preset(HOME, COMPANY_PRESET, s)
+        cable.save(d, s)
+        _typicals_from_preset(name, COMPANY_PRESET)
+
+
+COMPANY_PRESET = "회사기본"
+
+
+def _typicals_to_preset(name: str, preset: str):
+    dst = cable.presets_dir(HOME) / f"{preset}_typical"
+    shutil.rmtree(dst, ignore_errors=True)
+    src = pdir(name) / "input" / "typical"
+    if src.exists() and any(src.glob("*.png")):
+        dst.mkdir(parents=True, exist_ok=True)
+        for f in src.glob("*.png"):
+            shutil.copy(f, dst / f.name)
+
+
+def _typicals_from_preset(name: str, preset: str):
+    src = cable.presets_dir(HOME) / f"{Path(preset).name}_typical"
+    if src.exists():
+        dst = pdir(name) / "input" / "typical"
+        dst.mkdir(parents=True, exist_ok=True)
+        for f in src.glob("*.png"):
+            shutil.copy(f, dst / f.name)
 
 
 def default_concept() -> Path:
@@ -776,6 +803,17 @@ def plot_update(name: str, b: dict):
     if b.get("tray_size"):                           # STEP 8: {seg, cls, w, n}
         t = b["tray_size"]
         dd.setdefault("tray_size", {}).setdefault(str(t["seg"]), {})[str(t["cls"])] = [int(t["w"]), max(1, int(t["n"]))]
+    if b.get("sup_over"):                            # STEP 9: {seg (tray segment id), type?, span?}
+        o = b["sup_over"]
+        cur = dd.setdefault("sup_over", {}).setdefault(str(o["seg"]), {})
+        if o.get("type") in ("L", "T", "H"):
+            cur["type"] = o["type"]
+        if o.get("span") not in (None, ""):
+            cur["span"] = max(0.5, float(o["span"]))
+        if o.get("ok"):
+            cur["ok"] = True                         # answered 'keep the automatic choice'
+    if b.get("sup_reset"):
+        (dd.get("sup_over") or {}).pop(str(b["sup_reset"]), None)
     if b.get("tray_reset"):
         (dd.get("tray_size") or {}).pop(str(b["tray_reset"]), None)
     if b.get("route_reset"):
@@ -841,13 +879,32 @@ def plot_view(name: str, lay, res):
             "located": st, "unlocated": g.get("unlocated", 0), "equipment": len(pl["equipment"])}
 
 
+def typical_dir(name: str) -> Path:
+    d = pdir(name) / "input" / "typical"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def save_typical(f: Path, data: bytes):
+    """picture (png / jpg) or a PDF page (first page, cropped to the drawn area) -> png."""
+    if data[:5] == b"%PDF-":
+        doc = fitz.open(stream=data, filetype="pdf")
+        doc[0].get_pixmap(dpi=110).save(f)             # whole first page; crop in the PDF beforehand if needed
+        return
+    from PIL import Image
+    import io
+    im = Image.open(io.BytesIO(data))
+    im.thumbnail((1400, 1400))
+    im.convert("RGB").save(f, "PNG")
+
+
 def cable_view(name: str):
     s, res, lay = cable_result(name)
     tr = cable.TR.build(res, lay, s, _plot_dec(name))
     trunk_areas = sorted({j["area"] for j in res["jbs"] if j["kind"] == "필드"}
                          | {c.get("unit") or "00" for c in res["cables"] if c["kind"] in ("패키지", "통신")})
     return {"schema": cable.SCHEMA, "values": s["values"], "trunk": s["trunk"], "preset": s.get("preset", ""),
-            "presets": cable.list_presets(HOME), "changed": len(cable.changed(s)),
+            "presets": cable.list_presets(HOME), "changed": len(cable.changed(s)), "company_preset": COMPANY_PRESET,
             "summary": res["summary"], "areas": trunk_areas,
             "jbs": [{k: j.get(k) for k in ("no", "kind", "area", "system", "cls", "is", "size", "used", "spare", "multi",
                                            "multi_size", "dwgs", "slot", "place", "moved", "material", "ex", "ip",
@@ -855,8 +912,9 @@ def cable_view(name: str):
             "jb_schema": cable.JB.SCHEMA, "size_table": cable.JB.size_table(s["values"]),
             "tray_schema": cable.TR.SCHEMA, "tray": tr,
             "tray_checklist": cable.TR.checklist(s["values"]),
-            "sup_schema": cable.SP.SCHEMA, "sup": cable.SP.build(tr, s["values"], lay.m_per_pt if lay else None),
+            "sup_schema": cable.SP.SCHEMA, "sup": cable.SP.build(tr, s["values"], lay.m_per_pt if lay else None, _plot_dec(name), _obstacles(lay)),
             "sup_checklist": cable.SP.checklist(s["values"]), "sup_types": cable.SP.TYPES,
+            "typicals": sorted(p.stem for p in typical_dir(name).glob("*.png")),
             "checklist": cable.JB.checklist(s["values"]),
             "cables": res["cables"][:400], "cables_total": len(res["cables"]),
             "plot": plot_view(name, lay, res)}
@@ -869,6 +927,7 @@ def cable_update(name: str, b: dict):
         s = {"values": dict(cable.DEFAULTS), "trunk": {}, "preset": ""}
     if b.get("preset_load"):
         cable.load_preset(HOME, b["preset_load"], s)
+        _typicals_from_preset(name, b["preset_load"])
     for k, v in (b.get("set") or {}).items():
         cable.set_value(s, k, v)
     for a, m in (b.get("trunk") or {}).items():
@@ -880,6 +939,7 @@ def cable_update(name: str, b: dict):
             s["trunk"][a] = float(m)
     if b.get("preset_save"):
         s["preset"] = cable.save_preset(HOME, b["preset_save"], s)
+        _typicals_to_preset(name, s["preset"])
     cable.save(d, s)
     return cable_view(name)
 
@@ -888,17 +948,26 @@ def cable_export(name: str):
     s, res, lay = cable_result(name)
     out = pdir(name) / "output" / f"Cable_Schedule_{safe_name(name)}_{time.strftime('%Y%m%d_%H%M')}.xlsx"
     tr = cable.TR.build(res, lay, s, _plot_dec(name))
-    sup = cable.SP.build(tr, s["values"], lay.m_per_pt if lay else None)
+    sup = cable.SP.build(tr, s["values"], lay.m_per_pt if lay else None, _plot_dec(name), _obstacles(lay))
     cable.write_xlsx(res, s, out, name, tr, sup)
     return {"files": [out.name]}
 
 
-def export_3d(name: str):
+def data_3d(name: str):
     from .. import threed
     s, res, lay = cable_result(name)
     tr = cable.TR.build(res, lay, s, _plot_dec(name))
-    sup = cable.SP.build(tr, s["values"], lay.m_per_pt if lay else None)
-    data = threed.build(name, res, lay, tr, sup, s, plot_read(name))
+    sup = cable.SP.build(tr, s["values"], lay.m_per_pt if lay else None, _plot_dec(name), _obstacles(lay))
+    return threed.build(name, res, lay, tr, sup, s, plot_read(name))
+
+
+def _obstacles(lay):
+    return (lay.plot.get("obstacles") or []) if lay is not None else []
+
+
+def export_3d(name: str):
+    from .. import threed
+    data = data_3d(name)
     out = pdir(name) / "output" / f"3D_{safe_name(name)}_{time.strftime('%Y%m%d_%H%M')}.json"
     threed.write(data, out)
     return {"files": [out.name], "counts": data["counts"]}
@@ -1081,6 +1150,14 @@ class H(BaseHTTPRequestHandler):
                     return self._send(404, {"error": "no font"})
                 ctype = {".otf": "font/otf", ".woff": "font/woff", ".woff2": "font/woff2"}.get(f.suffix.lower(), "font/ttf")
                 return self._send(200, f.read_bytes(), ctype, {"Cache-Control": "max-age=86400"})
+            if method == "GET" and parts[:1] == ["viewer3d"]:
+                return self._send(200, (STATIC / "viewer3d.html").read_text(encoding="utf-8").replace("/*FONTFACE*/", font_css()),
+                                  "text/html; charset=utf-8")
+            if method == "GET" and parts[:2] == ["vendor", "three"] and len(parts) == 3:
+                f = STATIC / "vendor" / "three" / Path(parts[2]).name
+                if not f.exists() or f.suffix != ".js":
+                    return self._send(404, {"error": "not found"})
+                return self._send(200, f.read_bytes(), "text/javascript; charset=utf-8", {"Cache-Control": "max-age=86400"})
             if parts[:1] != ["api"]:
                 return self._send(404, {"error": "not found"})
             if parts[1:] == ["projects"]:
@@ -1150,6 +1227,23 @@ class H(BaseHTTPRequestHandler):
                     return self._send(200, f.read_bytes(), "image/png")
             if act == "" and method == "GET":
                 return self._send(200, project_state(name))
+            if act == "typical":                             # STEP 9 typical support picture per type
+                t = q.get("t", [""])[0]
+                if t not in cable.SP.TYPES:
+                    raise ValueError("형식")
+                f = typical_dir(name) / f"{t}.png"
+                if method == "POST":
+                    data = self._body()
+                    if not data:
+                        raise ValueError("파일 내용이 비어 있습니다")
+                    if q.get("del"):
+                        f.unlink(missing_ok=True)
+                    else:
+                        save_typical(f, data)
+                    return self._send(200, cable_view(name))
+                if not f.exists():
+                    return self._send(404, {"error": "no typical"})
+                return self._send(200, f.read_bytes(), "image/png", {"Cache-Control": "no-cache"})
             if act == "upload" and method == "POST":
                 data = self._body()
                 kind = q.get("kind", [""])[0]
@@ -1305,6 +1399,9 @@ class H(BaseHTTPRequestHandler):
             if act == "cable_export" and method == "POST":
                 with CALC:
                     return self._send(200, cable_export(name))
+            if act == "data3d":
+                with CALC:
+                    return self._send(200, data_3d(name))
             if act == "export_3d" and method == "POST":
                 with CALC:
                     return self._send(200, export_3d(name))

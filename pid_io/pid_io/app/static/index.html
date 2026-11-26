@@ -919,6 +919,8 @@ function ckSide(d) {
     <p class="lead" style="font-size:12px;margin:0 0 10px;line-height:1.55">지금 케이블 설정을 이름 붙여 저장하고 다른 프로젝트에서 불러옵니다.${d.preset?` 현재: <b>${esc(d.preset)}</b>`:""}</p>
     ${d.presets.length?`<div style="display:flex;gap:6px;margin-bottom:8px"><select id="ckpre" style="flex:1">${d.presets.map(p=>`<option>${esc(p)}</option>`).join("")}</select><button class="btn sm line" id="ckload">불러오기</button></div>`:""}
     <div style="display:flex;gap:6px"><input type="text" id="ckname" placeholder="예: 김부장 기준" style="flex:1"><button class="btn sm" id="cksave">저장</button></div>
+    <div style="margin-top:8px"><button class="btn sm line" id="ckcomp" style="width:100%">회사 기본 프리셋으로 저장${d.presets.includes(d.company_preset)?" (덮어쓰기)":""}</button></div>
+    <p class="xnote" style="margin-top:6px">프리셋 = 케이블·JB·트레이(외경)·서포트 설정 전부 + 서포트 타피컬 그림. '${esc(d.company_preset)}'은 새 프로젝트를 만들 때 자동으로 적용됩니다.</p>
   </div>
   <div class="panel" style="font-size:12px;color:var(--sub);line-height:1.6">
     <b style="color:var(--ink)">케이블이 없는 행</b><br>${Object.entries(s.skipped).map(([k,n])=>`${esc(k)} ${fmt(n)}`).join("<br>")||"-"}
@@ -1097,6 +1099,7 @@ async function renderCable(m) {
   m.querySelectorAll("[data-trunk]").forEach(el => el.onchange = () => upd({trunk:{[el.dataset.trunk]: el.value}}));
   $("#ckreset").onclick = () => { if (confirm("케이블 설정을 모두 기본값으로 되돌릴까요?")) upd({reset:true}); };
   if ($("#ckload")) $("#ckload").onclick = () => { if (confirm(`'${$("#ckpre").value}' 프리셋으로 설정을 바꿀까요? (유닛별 길이는 유지)`)) upd({preset_load: $("#ckpre").value}); };
+  if ($("#ckcomp")) $("#ckcomp").onclick = async () => { if (!confirm(`지금 설정을 회사 기본 프리셋('${d.company_preset}')으로 저장할까요? 새 프로젝트에 자동으로 적용됩니다.`)) return; await upd({preset_save: d.company_preset}); toast("회사 기본 프리셋을 저장했습니다"); };
   $("#cksave").onclick = async () => { const n = $("#ckname").value.trim(); if (!n) return toast("프리셋 이름을 입력하세요", true); await upd({preset_save:n}); toast("프리셋을 저장했습니다"); };
   $("#ckmk").onclick = async () => { const b = $("#ckmk"); b.disabled = true; b.textContent = "만드는 중…";
     try { const r = await post(P("cable_export"), {}); toast(r.files.join(", ") + " 생성 · 5 출력 화면에서 받을 수 있습니다"); }
@@ -1302,15 +1305,15 @@ function trayOverlay(d) {
   const mpt = d.plot.m_per_pt || .155;
   const labels = t.segments.filter(s => s.length >= 10).map(s => { const [a,b] = s.poly, vert = Math.abs(a[0]-b[0]) < Math.abs(a[1]-b[1]);
     const x = (a[0]+b[0])/2 + (vert ? 6*k : 0), y = (a[1]+b[1])/2 - (vert ? 0 : 5*k), tr = s.trays[0], ug = s.kind === "UG";
-    return `<text x="${x}" y="${y}" font-size="${7.5*k}" fill="${ug?"#8a6d00":"#0b3d91"}" font-weight="700" ${vert?`transform="rotate(90 ${x} ${y})"`:""} style="pointer-events:none;paint-order:stroke" stroke="#fff" stroke-width="${2.2*k}">${esc(s.no)}${ug?"":` ${tr.width}${tr.tiers>1?" "+tr.tiers+"단":""}`}</text>`; }).join("");
+    return `<text x="${x}" y="${y}" font-size="${7.5*k}" fill="${ug?"#8a6d00":"#0b3d91"}" font-weight="700" ${vert?`transform="rotate(90 ${x} ${y})"`:""} style="pointer-events:none;paint-order:stroke" stroke="#fff" stroke-width="${2.2*k}">${esc(ug ? s.run : s.no)}${ug?` ${s.width}`:` ${tr.width}${tr.tiers>1?" "+tr.tiers+"단":""}`}</text>`; }).join("");
   const jbs = ((d.plot.geo||{}).stations||[]).map(x => `<rect x="${x.x-3.5*k}" y="${x.y-3.5*k}" width="${7*k}" height="${7*k}" fill="#f08a24" opacity=".85"><title>JB ${esc(x.jbs.join(", "))}</title></rect>`).join("");
   return `<svg viewBox="0 0 ${W} ${H}" style="position:absolute;inset:0;width:100%;height:100%" id="trsvg">${racks}${segs}${jbs}${mark}${labels}${hits}</svg>`;
 }
 function traySegCard(d) {
   const t = d.tray, V = d.values, s = t.segments.find(x => x.id === TM.sel), ws = (String(V.tray_widths).match(/\d+/g)||["300","600","900"]).map(Number).sort((a,b)=>a-b);
   if (!s) return `<div class="ritem" style="cursor:default;background:#f7faf8"><div class="b">선을 누르면 그 구간의 케이블과 트레이 크기를 보여 줍니다. 폭·단 수를 바꾸면 Fill ratio가 바로 다시 계산되고, '적용'을 누르면 물량에 들어갑니다.</div></div>`;
-  if (s.kind === "UG") return `<div class="ritem on" style="cursor:default"><div class="a"><b>${esc(s.no)}</b><span class="chip y">UG 트렌치</span></div>
-    <div class="b">랙을 타지 않는 간선 구간 · ${s.length} m · 케이블 ${s.cables.length}가닥 · 단면적 ${fmt(s.area)} mm²<br><span style="font-size:11.5px">${esc(s.cables.slice(0,12).join(", "))}${s.cables.length>12?" …":""}</span></div>
+  if (s.kind === "UG") return `<div class="ritem on" style="cursor:default"><div class="a"><b>${esc(s.run)}</b><span class="chip y">UG 트렌치 ${s.width}${s.tiers>1?" × "+s.tiers+"단":""}</span></div>
+    <div class="b">${s.parts>1?`트렌치 한 줄 ${esc(s.run)}의 구간 ${esc(s.no)} (${s.parts}구간) · `:""}${s.length} m · 케이블 ${s.cables.length}가닥 · 단면적 ${fmt(s.area)} mm² · Fill ${Math.round(s.fill*100)}%<br><span style="font-size:11.5px">${esc(s.cables.slice(0,12).join(", "))}${s.cables.length>12?" …":""}</span></div>
     <div style="margin-top:8px"><button class="btn sm line" id="trsx">선택 해제</button></div></div>`;
   const rows = s.trays.map((x, i) => { const e = TM.edit[x.cls] || [x.width, x.tiers]; const f = trFill(x.area, e[0], e[1], V);
     return `<tr><td style="min-width:110px"><b class="mono" style="white-space:nowrap">${esc(x.no)}</b><br><span style="font-size:11px;color:var(--sub);white-space:nowrap">${esc(x.cls)} · ${x.count}가닥</span><br><span style="font-size:11px;color:var(--sub)">${fmt(x.area)} mm²</span></td>
@@ -1331,7 +1334,8 @@ function traySide(d) {
     <div style="font-size:46px;font-weight:300;line-height:1.05;letter-spacing:-.03em"><span class="uline">${fmt(sm.ladder_m)}</span><small style="font-size:16px;color:var(--sub)"> m</small></div>
     <div style="font-size:12.5px;color:var(--sub);margin:8px 0 10px">구간 ${fmt(sm.segments)} · Fill 초과 <b style="color:${sm.overfill?"#e0002a":"inherit"}">${fmt(sm.overfill)}</b></div>
     ${sm.ladder.map(x=>`<div class="kv"><span>${esc(x.cls)} ${x.width}×${d.values.tray_height}</span><b>${fmt(x.length)} m → ${fmt(x.order)} m</b></div>`).join("")}
-    <div class="kv"><span>UG 트렌치 (${fmt(sm.ug_segments)}구간)</span><b>${fmt(sm.ug_m)} m → ${fmt(sm.ug_order)} m</b></div>
+    <div class="kv"><span>UG 트렌치 ${fmt((sm.ug_runs||[]).length)}줄 (${fmt(sm.ug_segments)}구간)</span><b>${fmt(sm.ug_m)} m → ${fmt(sm.ug_order)} m</b></div>
+    ${(sm.ug_by_width||[]).map(x=>`<div class="kv"><span style="padding-left:10px">트렌치 ${x.width}${x.tiers>1?" × "+x.tiers+"단":""}</span><b>${fmt(x.length)} m</b></div>`).join("")}
     <div class="kv"><span>Perforated ${esc(d.values.pt_width)} (${fmt(sm.pt_n)})</span><b>${fmt(sm.pt_m)} m</b></div>
     <p class="xnote" style="margin-top:8px">→ 오른쪽 값은 피팅·할증 포함 물량</p>
   </div>
@@ -1344,7 +1348,7 @@ function trayTable(d) {
   const vt = (k, lab) => `<a class="${TM.view===k?"on":""}" data-trv="${k}">${lab}</a>`;
   let body = "";
   if (TM.view === "seg") body = `<table class="nw"><tr><th>Tray No</th><th>종류</th><th>구분</th><th>폭</th><th>단</th><th style="text-align:right">m</th><th style="text-align:right">케이블</th><th style="text-align:right">mm²</th><th style="text-align:right">Fill</th></tr>
-    ${t.segments.flatMap(s => s.kind==="UG" ? [`<tr data-segrow="${s.id}" style="cursor:pointer"><td class="mono">${esc(s.no)}</td><td>UG</td><td></td><td></td><td></td><td style="text-align:right">${s.length}</td><td style="text-align:right">${s.cables.length}</td><td style="text-align:right">${fmt(s.area)}</td><td></td></tr>`]
+    ${t.segments.flatMap(s => s.kind==="UG" ? [`<tr data-segrow="${s.id}" style="cursor:pointer"><td class="mono">${esc(s.no)}</td><td>UG 트렌치</td><td></td><td>${s.width}</td><td>${s.tiers}</td><td style="text-align:right">${s.length}</td><td style="text-align:right">${s.cables.length}</td><td style="text-align:right">${fmt(s.area)}</td><td style="text-align:right">${Math.round(s.fill*100)}%</td></tr>`]
       : s.trays.map(x => `<tr data-segrow="${s.id}" style="cursor:pointer;${x.fill>lim+1e-9?"background:#fde8ea":""}"><td class="mono">${esc(x.no)}</td><td>${s.kind==="랙"?"사다리":"사다리 AG"}</td><td>${esc(x.cls)}</td><td>${x.width}</td><td>${x.tiers}</td><td style="text-align:right">${s.length}</td><td style="text-align:right">${x.count}</td><td style="text-align:right">${fmt(x.area)}</td><td style="text-align:right">${Math.round(x.fill*100)}%${x.user?" ✎":""}</td></tr>`)).join("")}</table>`;
   if (TM.view === "cab") body = `<p class="xnote">트레이는 태그가 아니라 멀티 케이블 단위로 맞춥니다 (인덱스 태그 → Multi Cable Number → 이 표). 출발(JB·제어반) → 룸 순서.</p>
     <table class="nw"><tr><th>Cable No</th><th>구분</th><th>From</th><th>Spec</th><th style="text-align:right">OD</th><th style="text-align:right">사다리 m</th><th style="text-align:right">UG m</th><th>트레이 경로</th></tr>
@@ -1409,28 +1413,93 @@ async function renderTray(m) {
 }
 
 /* ---------------------------------------------------------------- 9 support */
-const SPM = {tab:99, view:"type", sel:null};
-const SP_COL = {L:"#15ad60", T:"#2c7fc0", H:"#7e66cb", RT:"#d1335d", RC:"#9db3c8", UB:"#8a6d00", UM:"#8a6d00", UP:"#8a6d00"};
+const SPM = {tab:99, view:"type", sel:null, edit:null, live:null};
+const SP_COL = {L:"#15ad60", T:"#2c7fc0", H:"#7e66cb", RT:"#d1335d", RF:"#f08a24", RC:"#9db3c8", UB:"#8a6d00", UM:"#8a6d00", UP:"#8a6d00", PB:"#5f6b76"};
+/* simple section sketches of each support type (until the typical drawing is uploaded) */
+function supSketch(t, W=150, H=110) {
+  const c = SP_COL[t] || "#555", tr = (x,y,w) => `<rect x="${x}" y="${y}" width="${w}" height="7" fill="none" stroke="#0b3d91" stroke-width="2"/><line x1="${x}" y1="${y+7}" x2="${x+w}" y2="${y}" stroke="#0b3d91" stroke-width=".8"/>`;
+  const g = `<line x1="8" y1="${H-8}" x2="${W-8}" y2="${H-8}" stroke="#888" stroke-width="1.5"/>`;
+  const post = (x, y0=18) => `<rect x="${x-3}" y="${y0}" width="6" height="${H-8-y0}" fill="${c}"/><rect x="${x-9}" y="${H-11}" width="18" height="3" fill="${c}"/>`;
+  const arm = (x1,x2,y) => `<rect x="${x1}" y="${y}" width="${x2-x1}" height="5" fill="${c}"/>`;
+  let b = "";
+  if (t==="L") b = g + post(40) + arm(40,118,40) + tr(48,33,62);
+  else if (t==="T") b = g + post(W/2) + arm(22,W-22,40) + tr(28,33,40) + tr(W/2+6,33,40);
+  else if (t==="H") b = g + post(26) + post(W-26) + arm(26,W-26,40) + arm(26,W-26,66) + tr(34,33,W-68) + tr(34,59,W-68);
+  else if (t==="RT") b = `<rect x="8" y="${H-30}" width="${W-16}" height="8" fill="#9aa"/><text x="${W-12}" y="${H-12}" font-size="9" text-anchor="end" fill="#678">랙 빔</text>` + `<rect x="${W/2-3}" y="30" width="6" height="${H-60}" fill="${c}"/>` + arm(24,W-24,30) + tr(30,H-37,W-60) + tr(30,23,W-60);
+  else if (t==="RF") b = `<rect x="8" y="${H-30}" width="40" height="8" fill="#9aa"/><rect x="${W-48}" y="${H-30}" width="40" height="8" fill="#9aa"/>` + arm(30,W-30,H-40) + `<path d="M30 ${H-47} q45 -30 90 0" fill="none" stroke="#0b3d91" stroke-width="2"/><text x="${W/2}" y="${H-12}" font-size="9" text-anchor="middle" fill="#678">빔 사이 보조 빔</text>`;
+  else if (t==="RC") b = `<rect x="8" y="${H-30}" width="${W-16}" height="8" fill="#9aa"/>` + tr(30,H-37,W-60) + `<rect x="24" y="${H-40}" width="8" height="12" fill="${c}"/><rect x="${W-32}" y="${H-40}" width="8" height="12" fill="${c}"/>`;
+  else if (t==="UB" || t==="UM" || t==="UP") b = `<path d="M20 15 V${H-15} H${W-20} V15" fill="none" stroke="#8a7a50" stroke-width="5"/>` + arm(22,62,45) + arm(22,62,70) + `<circle cx="34" cy="40" r="4" fill="#333"/><circle cx="46" cy="40" r="4" fill="#333"/><circle cx="34" cy="65" r="4" fill="#333"/><text x="${W/2+10}" y="30" font-size="9" fill="#678">트렌치</text>`;
+  else if (t==="PB") b = `<rect x="20" y="10" width="10" height="${H-20}" fill="#9aa"/><text x="24" y="${H-2}" font-size="8" fill="#678">기둥·장비</text>` + `<path d="M30 40 H95 M30 40 L60 70" stroke="${c}" stroke-width="4" fill="none"/><rect x="45" y="30" width="45" height="7" fill="none" stroke="#0b3d91" stroke-width="2"/>`;
+  return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" style="background:#fafbfc;border:1px solid var(--line-l)">${b}</svg>`;
+}
+function supPic(d, t, W=150, H=110) {
+  return (d.typicals||[]).includes(t) ? `<img src="/api/${P("typical")}?t=${t}&v=${Date.now()%100000}" style="width:${W}px;height:${H}px;object-fit:contain;background:#fff;border:1px solid var(--line-l)">` : supSketch(t, W, H);
+}
 function supOverlay(d) {
   const pp = d.plot, [W,H] = pp.size, k = Math.max(W,H)/700, sp = d.sup;
   const racks = (pp.racks||[]).filter(r=>!r[6]).map(r => `<rect x="${r[0]}" y="${r[1]}" width="${r[2]-r[0]}" height="${r[3]-r[1]}" fill="#2c7fc0" opacity=".08"/>`).join("");
   const segs = d.tray.segments.map(s => { const [a,b] = s.poly, on = s.no === SPM.sel;
     return `<line x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}" stroke="${on?"#e0002a":s.kind==="UG"?"#c9b46a":"#9fc3e6"}" stroke-width="${(on?2.6:1.4)*k}" ${s.kind==="UG"?`stroke-dasharray="${4*k} ${2.5*k}"`:""}/>`; }).join("");
   const pts = sp.supports.map(x => { const on = SPM.sel && x.segs.includes(SPM.sel), r = (x.type==="RC"||x.type==="UB"?1.5:2.6)*k*(on?1.5:1);
-    const sh = ["L","T","H","RT"].includes(x.type) ? `<rect x="${x.x-r}" y="${x.y-r}" width="${2*r}" height="${2*r}" fill="${SP_COL[x.type]}"/>` : `<circle cx="${x.x}" cy="${x.y}" r="${r}" fill="${SP_COL[x.type]}"/>`;
-    return sh.replace("/>", `><title>${esc(x.no)} · ${esc(x.name)}${x.typical?" · "+esc(x.typical):""} · ${esc(x.segs.join(", "))} · EL ${x.el}</title></${sh.startsWith("<rect")?"rect":"circle"}>`); }).join("");
+    const tip = `<title>${esc(x.no)} · ${esc(x.name)}${x.role?" · "+esc(x.role):""}${x.fix?" · "+esc(x.fix):""}${x.blocked?" · 장비 안 (확인 필요)":x.moved?" · 장비 피해 "+x.moved+" m 이동":""}${x.typical?" · "+esc(x.typical):""} · ${esc(x.segs.join(", "))} · EL ${x.el}</title>`;
+    const stroke = x.blocked ? ` stroke="#e0002a" stroke-width="${2.2*k}"` : x.fix==="앵커" ? ` stroke="#000" stroke-width="${.9*k}"` : "";
+    return ["L","T","H","RT","RF"].includes(x.type) ? `<rect x="${x.x-r}" y="${x.y-r}" width="${2*r}" height="${2*r}" fill="${SP_COL[x.type]}"${stroke}>${tip}</rect>` : `<circle cx="${x.x}" cy="${x.y}" r="${r}" fill="${SP_COL[x.type]}"${stroke}>${tip}</circle>`; }).join("");
+  const ej = sp.joints.map(j => { const r = 3.2*k; return `<path d="M${j.x-r} ${j.y-r} L${j.x+r} ${j.y+r} M${j.x-r} ${j.y+r} L${j.x+r} ${j.y-r}" stroke="#c2185b" stroke-width="${1.4*k}"><title>${esc(j.no)} 익스펜션 스플라이스 · ${esc(j.seg)} · 트레이 ${j.trays}</title></path>`; }).join("");
+  const qs = sp.questions.map(q => { const s = d.tray.segments.find(x => x.no === q.seg); if (!s) return ""; const [a,b] = s.poly;
+    return `<circle cx="${(a[0]+b[0])/2}" cy="${(a[1]+b[1])/2}" r="${7*k}" fill="none" stroke="#ffba00" stroke-width="${2*k}"><title>질문: ${esc(q.seg)}</title></circle>`; }).join("");
   const hits = d.tray.segments.map(s => { const [a,b] = s.poly;
     return `<line x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}" stroke="transparent" stroke-width="${9*k}" data-spseg="${esc(s.no)}" style="cursor:pointer"/>`; }).join("");
-  return `<svg viewBox="0 0 ${W} ${H}" style="position:absolute;inset:0;width:100%;height:100%" id="spsvg">${racks}${segs}${hits}${pts}</svg>`;
+  return `<svg viewBox="0 0 ${W} ${H}" style="position:absolute;inset:0;width:100%;height:100%" id="spsvg">${racks}${segs}${qs}${hits}${pts}${ej}</svg>`;
+}
+function supSliders(d) {
+  const V = d.values, sl = (id, lab, min, max, st, unit) => `<div style="margin:8px 0"><div style="display:flex;justify-content:space-between;font-size:12.5px"><span>${lab}</span><b id="spv-${id}">${V[id]} ${unit}</b></div>
+    <input type="range" min="${min}" max="${max}" step="${st}" value="${V[id]}" data-sprange="${id}" data-unit="${unit}" style="width:100%"></div>`;
+  return `<div class="panel" style="padding:12px 14px;margin-bottom:10px"><b style="font-size:13px">간격 바로 바꾸기</b><span class="def" style="margin-left:6px">끌면 도면이 바로 바뀝니다</span>
+    ${sl("sp_span","AG 최대 간격",0.5,6,0.5,"m")}${sl("sp_bay","랙 빔 간격",1,12,0.5,"m")}${sl("sp_ug_span","트렌치 브래킷",0.5,5,0.5,"m")}${sl("sp_dt","온도차 ΔT (익스펜션)",10,100,5,"°C")}
+    <div class="xnote" style="margin:4px 0 0">익스펜션 최대 간격 ${d.sup.summary.exp_spacing} m · 조인트 ${d.sup.summary.joints}</div></div>`;
+}
+function supQuestions(d) {
+  const qs = d.sup.questions, T = d.sup_types;
+  if (!qs.length) return "";
+  return `<div class="panel" style="border-left:4px solid #ffba00;margin-bottom:12px"><b>어떤 걸로 할까요? (${qs.length})</b>
+    <p class="xnote">규칙 경계라 형식에 따라 강재가 크게 달라지는 구간만 묻습니다. 답하지 않으면 AI 선택(가벼운 쪽)으로 계산합니다.</p>
+    ${qs.slice(0,8).map(q=>`<div style="display:flex;gap:14px;align-items:center;padding:8px 0;border-top:1px solid var(--line-l)">
+      <div style="min-width:150px"><b class="mono">${esc(q.seg)}</b><br><span style="font-size:12px;color:var(--sub)">${esc(q.why)} · ${q.count}개</span></div>
+      <div style="text-align:center">${supPic(d,q.auto,120,88)}<br><span class="chip b" style="font-size:10.5px">AI 선택</span> ${esc(T[q.auto])}<br><span class="def">${fmt(q.kg_auto)} kg</span><br><button class="btn sm" data-spq="${esc(q.id)}" data-spqt="${q.auto}" data-ok="1">이걸로</button></div>
+      <div style="text-align:center">${supPic(d,q.alt,120,88)}<br>${esc(T[q.alt])}<br><span class="def">${fmt(q.kg_alt)} kg</span><br><button class="btn sm line" data-spq="${esc(q.id)}" data-spqt="${q.alt}">이걸로</button></div></div>`).join("")}</div>`;
+}
+function supSegCard(d) {
+  const g = d.sup.segments.find(x => x.seg === SPM.sel); const T = d.sup_types;
+  if (!g) return `<p class="xnote">구간 선을 누르면 그 구간의 형식·간격을 바꿀 수 있습니다.</p>`;
+  const e = SPM.edit || {type:g.type, span:g.span};
+  const cand = g.kind === "AG" ? ["L","T","H"] : [];
+  return `<div class="panel" style="padding:12px 14px;border:1px solid #e0002a"><div style="display:flex;justify-content:space-between"><b class="mono">${esc(g.seg)}</b><a id="spsx" style="cursor:pointer;font-size:12px">선택 해제</a></div>
+    <div style="font-size:12px;color:var(--sub);margin:4px 0 8px">${esc(g.kind==="랙"?"랙 위":g.kind==="UG"?"UG 트렌치":"랙 밖 AG")} · ${g.length} m · 서포트 ${g.count}${g.joints?` · 조인트 ${g.joints}`:""}${g.user?' · <span class="chip b" style="font-size:10px">사용자 변경</span>':""}</div>
+    ${cand.length?`<div style="display:flex;gap:6px;flex-wrap:wrap">${cand.map(t=>`<div data-sptype="${t}" style="cursor:pointer;text-align:center;padding:3px;border:2px solid ${e.type===t?"#e0002a":"transparent"}">${supPic(d,t,84,62)}<div style="font-size:11px">${esc(T[t].split(" ")[0])}${g.auto===t?' <span class="chip b" style="font-size:9.5px;padding:0 3px">AI</span>':""}</div></div>`).join("")}</div>`:""}
+    <div style="margin-top:8px;font-size:12.5px">간격 <input type="number" step="0.5" min="0.5" id="spspan" value="${e.span}" style="width:70px"> m</div>
+    <div style="display:flex;gap:6px;margin-top:8px"><button class="btn sm" id="spapply">적용</button>${g.user?`<button class="btn sm line" id="spreset">자동으로</button>`:""}</div></div>`;
+}
+function supCards(d) {
+  const sm = d.sup.summary, T = d.sup_types, V = d.values;
+  const cnt = t => (sm.rows.find(x=>x.type===t)||{}).count || 0;
+  return `<p class="xnote" style="margin-top:10px">형식마다 그림(타피컬 드로잉이 없으면 간단한 단면 스케치)을 보여 줍니다. 타피컬이 오면 그림(PNG/JPG 또는 PDF 1쪽)을 올리면 이 카드와 질문 카드에 그 그림이 나옵니다. 형식 선택 규칙은 'AG 서포트' 탭의 규칙표.</p>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px">${Object.keys(T).map(t=>`<div class="panel" style="padding:10px;margin:0">
+      ${supPic(d,t,176,128)}<div style="margin-top:6px"><b>${esc(T[t])}</b></div>
+      <div style="font-size:12px;color:var(--sub)">${esc(V["sp_typ_"+t]||"")} · ${fmt(cnt(t))}개</div>
+      <div style="margin-top:6px;display:flex;gap:6px"><label class="btn sm line" style="cursor:pointer">그림 올리기<input type="file" accept=".png,.jpg,.jpeg,.pdf" data-sptyp="${t}" style="display:none"></label>${(d.typicals||[]).includes(t)?`<button class="btn sm line" data-sptypdel="${t}">스케치로</button>`:""}</div></div>`).join("")}</div>`;
 }
 function supSide(d) {
   const sm = d.sup.summary;
   return `<div class="panel">
-    <div style="font-size:12.5px;color:var(--sub)">서포트 (AG · 랙 위 T)</div>
+    <div style="font-size:12.5px;color:var(--sub)">서포트 (포스트)</div>
     <div style="font-size:46px;font-weight:300;line-height:1.05;letter-spacing:-.03em"><span class="uline">${fmt(sm.supports)}</span><small style="font-size:16px;color:var(--sub)"> 개</small></div>
     <div style="font-size:12.5px;color:var(--sub);margin:8px 0 10px">강재 ${fmt(sm.kg)} kg → 할증 ${fmt(sm.kg_order)} kg · 클램프 ${fmt(sm.clamps)}</div>
     ${sm.rows.map(x=>`<div class="kv"><span>${esc(x.name)}${x.typical?` <span class="def">${esc(x.typical)}</span>`:""}</span><b>${fmt(x.count)}</b></div>`).join("")}
-    <p class="xnote" style="margin-top:8px">일반값 기준. 타피컬 드로잉은 나중에 '자재 · 타피컬' 탭에 넣으면 바로 다시 계산됩니다.</p></div>
+    <div class="kv"><span>피팅 서포트 (NEMA VE 2)</span><b>${fmt(sm.fitting)}</b></div>
+    <div class="kv"><span>익스펜션 조인트 (≤ ${sm.exp_spacing} m)</span><b>${fmt(sm.joints)} · 플레이트 ${fmt(sm.joint_plates)}</b></div>
+    <div class="kv"><span>앵커 / 가이드 지점</span><b>${fmt(sm.anchor_pts)} / ${fmt(sm.guide_pts)}</b></div>
+    <div class="kv"><span>장비 피해 옮김 / <span style="color:${sm.blocked?"#e0002a":"inherit"}">못 옮김</span></span><b>${fmt(sm.moved)} / ${fmt(sm.blocked)}</b></div>
+    <p class="xnote" style="margin-top:8px">일반값 기준. 타피컬 드로잉은 나중에 '형식 카드'·'자재 · 타피컬' 탭에 넣으면 바로 다시 계산됩니다.</p></div>
   <div class="panel" style="font-size:12px;color:var(--sub);line-height:1.6"><b style="color:var(--ink)">STEP 8에서 내려오는 것</b><br>
     구간(종류·폭·단·길이), Perforated(계기 태그별 길이). 랙 밖 간선 = <b>${esc(d.values.trunk_off)}</b>, AG 서포트 EL ${esc(d.values.sup_el)} m, 랙 EL ${esc(d.values.rack_el)} m.<br>
     <a data-go="tray" style="cursor:pointer">STEP 8 트레이 크기 바꾸기 →</a> · <a data-go="cable" style="cursor:pointer">STEP 6 경로 · 높이 →</a></div>`;
@@ -1441,61 +1510,78 @@ function supTable(d) {
   let body = "";
   if (SPM.view === "type") body = `<table class="nw"><tr><th>형식</th><th>타피컬</th><th style="text-align:right">개수</th><th style="text-align:right">주 부재 m</th><th style="text-align:right">kg</th><th style="text-align:right">할증 kg</th><th style="text-align:right">베이스</th><th style="text-align:right">앵커</th><th style="text-align:right">클램프</th></tr>
     ${sp.summary.rows.map(x=>`<tr><td><b>${esc(x.name)}</b></td><td>${esc(x.typical)}</td><td style="text-align:right">${fmt(x.count)}</td><td style="text-align:right">${fmt(x.steel_m)}</td><td style="text-align:right">${fmt(x.kg)}</td><td style="text-align:right">${fmt(x.kg_order)}</td><td style="text-align:right">${fmt(x.base)}</td><td style="text-align:right">${fmt(x.anchors)}</td><td style="text-align:right">${fmt(x.clamps)}</td></tr>`).join("")}</table>`;
-  if (SPM.view === "seg") body = `<table class="nw"><tr><th>구간</th><th>종류</th><th>트레이</th><th style="text-align:right">m</th><th style="text-align:right">서포트</th><th>형식</th><th>번호</th></tr>
-    ${sp.segments.map(g=>`<tr data-sprow="${esc(g.seg)}" style="cursor:pointer;${g.seg===SPM.sel?"background:#eef5fc":""}"><td class="mono">${esc(g.seg)}</td><td>${esc(g.kind)}</td><td class="mono" style="font-size:12px">${esc(g.trays.join(", "))}</td><td style="text-align:right">${g.length}</td><td style="text-align:right">${g.count}</td><td style="font-size:12px">${Object.entries(g.types).map(([k,n])=>esc(T[k])+" "+n).join(", ")}</td><td class="mono" style="font-size:12px">${esc(g.range)}</td></tr>`).join("")}</table>`;
-  if (SPM.view === "list") body = `<table class="nw"><tr><th>Support No</th><th>형식</th><th>타피컬</th><th>구간</th><th style="text-align:right">폭</th><th style="text-align:right">단</th><th style="text-align:right">EL</th><th style="text-align:right">X m</th><th style="text-align:right">Y m</th><th style="text-align:right">kg</th></tr>
-    ${sp.supports.filter(x=>!SPM.sel||x.segs.includes(SPM.sel)).slice(0,500).map(x=>`<tr><td class="mono">${esc(x.no)}</td><td>${esc(x.name)}</td><td style="font-size:12px">${esc(x.typical)}</td><td class="mono" style="font-size:12px">${esc(x.segs.join(", "))}</td><td style="text-align:right">${x.width||""}</td><td style="text-align:right">${x.tiers||""}</td><td style="text-align:right">${x.el}</td><td style="text-align:right">${x.x_m??""}</td><td style="text-align:right">${x.y_m??""}</td><td style="text-align:right">${x.kg}</td></tr>`).join("")}</table>`;
+  if (SPM.view === "seg") body = `<table class="nw"><tr><th>구간</th><th>종류</th><th>트레이</th><th style="text-align:right">m</th><th style="text-align:right">간격</th><th style="text-align:right">서포트</th><th style="text-align:right">조인트</th><th>형식</th><th>번호</th></tr>
+    ${sp.segments.map(g=>`<tr data-sprow="${esc(g.seg)}" style="cursor:pointer;${g.seg===SPM.sel?"background:#eef5fc":""}"><td class="mono">${esc(g.seg)}${g.user?" ✎":""}</td><td>${esc(g.kind)}</td><td class="mono" style="font-size:12px">${esc(g.trays.join(", "))}</td><td style="text-align:right">${g.length}</td><td style="text-align:right">${g.span}</td><td style="text-align:right">${g.count}</td><td style="text-align:right">${g.joints||""}</td><td style="font-size:12px">${Object.entries(g.types).map(([k,n])=>esc(T[k])+" "+n).join(", ")}</td><td class="mono" style="font-size:12px">${esc(g.range)}</td></tr>`).join("")}</table>`;
+  if (SPM.view === "list") body = `<table class="nw"><tr><th>Support No</th><th>형식</th><th>역할</th><th>고정</th><th>타피컬</th><th>구간</th><th style="text-align:right">폭</th><th style="text-align:right">단</th><th style="text-align:right">EL</th><th style="text-align:right">X m</th><th style="text-align:right">Y m</th><th style="text-align:right">kg</th></tr>
+    ${sp.supports.filter(x=>!SPM.sel||x.segs.includes(SPM.sel)).slice(0,500).map(x=>`<tr><td class="mono">${esc(x.no)}</td><td>${esc(x.name)}</td><td style="font-size:12px">${esc(x.role)}</td><td style="font-size:12px">${esc(x.fix)}</td><td style="font-size:12px">${esc(x.typical)}</td><td class="mono" style="font-size:12px">${esc(x.segs.join(", "))}</td><td style="text-align:right">${x.width||""}</td><td style="text-align:right">${x.tiers||""}</td><td style="text-align:right">${x.el}</td><td style="text-align:right">${x.x_m??""}</td><td style="text-align:right">${x.y_m??""}</td><td style="text-align:right">${x.kg}</td></tr>`).join("")}</table>`;
+  if (SPM.view === "ej") body = `<p class="xnote">NEMA VE 2: 직선 구간이 ${sp.summary.exp_spacing} m(= 이동량 ÷ (선팽창계수 × ΔT))보다 길면 익스펜션 스플라이스. 양쪽 600 mm 안에 서포트, 조인트 사이 가운데 서포트 = 앵커, 나머지 = 가이드.</p><table class="nw"><tr><th>EJ No</th><th>구간</th><th style="text-align:right">구간 시작에서 m</th><th style="text-align:right">트레이 (단 포함)</th><th>트레이</th><th style="text-align:right">EL</th></tr>
+    ${sp.joints.map(j=>`<tr><td class="mono">${esc(j.no)}</td><td class="mono">${esc(j.seg)}</td><td style="text-align:right">${j.at_m}</td><td style="text-align:right">${j.trays}</td><td class="mono" style="font-size:12px">${esc(j.tray_nos.join(", "))}</td><td style="text-align:right">${j.el}</td></tr>`).join("")}</table>`;
   if (SPM.view === "pt") body = `<p class="xnote">Perforated는 물량만 냅니다. 계기 태그마다 길이 ÷ 간격 = 브래킷 수.</p><table class="nw"><tr><th>Tag</th><th>PT No</th><th>From (JB)</th><th style="text-align:right">m</th><th style="text-align:right">브래킷</th><th style="text-align:right">kg</th></tr>
     ${sp.pt.slice(0,500).map(p=>`<tr><td class="mono"><b>${esc(p.tag)}</b></td><td class="mono">${esc(p.pt)}</td><td class="mono">${esc(p.jb)}</td><td style="text-align:right">${p.length}</td><td style="text-align:right">${p.count}</td><td style="text-align:right">${p.kg}</td></tr>`).join("")}</table>`;
-  return `<div class="panel" style="margin-top:16px"><div class="tabs" style="margin-bottom:10px">${vt("type","형식별")}${vt("seg",`구간별 (${sp.segments.length})`)}${vt("list",`서포트 목록 (${sp.supports.length})`)}${vt("pt",`Perforated 태그별 (${sp.pt.length})`)}</div>${body}</div>`;
+  return `<div class="panel" style="margin-top:16px"><div class="tabs" style="margin-bottom:10px">${vt("type","형식별")}${vt("seg",`구간별 (${sp.segments.length})`)}${vt("list",`서포트 목록 (${sp.supports.length})`)}${vt("ej",`익스펜션 조인트 (${sp.joints.length})`)}${vt("pt",`Perforated 태그별 (${sp.pt.length})`)}</div>${body}</div>`;
 }
 async function renderSupport(m) {
   const t = S.tok;
   if (!CK.data || CK.data._p !== S.project) { CK.data = await api(P("cable")); CK.data._p = S.project; }
   if (t !== S.tok) return;
   const d = CK.data, G = d.sup_schema, V = d.values, NT = G.length;
-  if (SPM.tab > NT + 1 || SPM.tab < 0) SPM.tab = NT;
+  if (SPM.tab > NT + 2 || SPM.tab < 0) SPM.tab = NT;
   m.className = "ext-page";
-  const tabs = `<a class="${SPM.tab===NT?"on":""}" data-spt="${NT}">PLOT 서포트</a>` + G.map((x,i)=>`<a class="${i===SPM.tab?"on":""}" data-spt="${i}">${esc(x.title)}</a>`).join("")
+  const tabs = `<a class="${SPM.tab===NT?"on":""}" data-spt="${NT}">PLOT 서포트</a><a class="${SPM.tab===NT+2?"on":""}" data-spt="${NT+2}">형식 카드</a>` + G.map((x,i)=>`<a class="${i===SPM.tab?"on":""}" data-spt="${i}">${esc(x.title)}</a>`).join("")
     + `<a class="${SPM.tab===NT+1?"on":""}" data-spt="${NT+1}">체크리스트</a>`;
   const T = d.sup_types;
   let body;
   if (SPM.tab === NT) body = !d.plot ? `<div class="empty" style="margin-top:12px">STEP 6에서 PLOT PLAN을 올리면 트레이 구간을 따라 서포트를 놓습니다. 지금은 Perforated 브래킷(계기 태그별)만 냅니다.</div>`
-    : `<div style="display:flex;gap:16px;align-items:flex-start;margin-top:12px">
-      <div style="width:300px;flex:none">
-        <div class="legend">${["L","T","H","RT","RC","UB"].map(k=>`<span><i style="background:${SP_COL[k]}"></i>${esc(T[k])}</span>`).join("")}</div>
-        <p class="xnote">■ = 서포트(포스트), ● = 클램프·브래킷. 구간 양 끝을 포함해 간격마다 놓으므로 꺾임·분기점에는 항상 하나가 있고, 이웃 구간과 한 개를 같이 씁니다.<br>
-        <b>랙 위</b>: 1단이면 랙 빔(${esc(V.sp_bay)} m)마다 클램프만, 단을 쌓으면 T 서포트.<br><b>랙 밖 AG</b>: ${esc(V.sp_span)} m마다, 형식 ${esc(V.sp_type)}.<br><b>UG</b>: ${esc(V.sp_ug_type)}.</p>
-        ${SPM.sel?`<p class="xnote">선택: <b class="mono">${esc(SPM.sel)}</b> <a id="spsx" style="cursor:pointer">선택 해제</a></p>`:`<p class="xnote">구간 선을 누르면 그 구간 서포트만 목록에 보여 줍니다.</p>`}</div>
+    : `<div style="margin-top:12px">${supQuestions(d)}</div><div style="display:flex;gap:16px;align-items:flex-start">
+      <div style="width:300px;flex:none">${supSegCard(d)}${supSliders(d)}
+        <div class="legend">${["L","T","H","RT","RF","RC","UB"].map(k=>`<span><i style="background:${SP_COL[k]}"></i>${esc(T[k])}</span>`).join("")}<span><i style="background:#c2185b"></i>✕ 익스펜션</span></div>
+        <p class="xnote">■ 서포트(포스트, 검은 테두리 = 앵커), ● 클램프·브래킷, ✕ 익스펜션 스플라이스, 노란 원 = 질문.<br>
+        <b>NEMA VE 2</b>: ${esc(V.sp_fit)}. 피팅 끝에서 ${V.sp_fit_d} mm 안에 서포트, 꺾임점 자체엔 없음.<br>
+        <b>랙 위</b>: 1단이면 랙 빔마다 클램프만, 단을 쌓으면 T 서포트.</p></div>
       <div class="viewer" style="flex:1;height:calc(100vh - 260px)"><div style="position:relative;width:100%;max-width:${Math.round(d.plot.size[0]*50/72)*2}px"><img src="/api/${P("plot_png")}?v=${encodeURIComponent(d.plot.file)}" style="width:100%;display:block">${supOverlay(d)}</div></div></div>`;
+  else if (SPM.tab === NT+2) body = supCards(d);
   else if (SPM.tab === NT+1) body = `<p class="xnote" style="margin-top:10px">서포트 설계 가정 체크리스트입니다. 엑셀 Support_Checklist 시트에도 들어갑니다.</p>
     <table class="mini"><tr><th>No</th><th>구분</th><th>항목</th><th>적용값</th><th>기본값</th><th>설명</th></tr>
     ${d.sup_checklist.map(c=>`<tr style="${c.changed?"background:var(--chg)":""}"><td class="mono">${esc(c.code)}</td><td>${esc(c.group)}</td><td><b>${esc(c.name)}</b></td><td>${esc(typeof c.value==="number"&&c.value>0&&c.value<1?Math.round(c.value*100)+"%":c.value)}</td><td style="color:var(--sub)">${esc(typeof c.default==="number"&&c.default>0&&c.default<1?Math.round(c.default*100)+"%":c.default)}</td><td style="font-size:11.5px;color:var(--sub)">${esc(c.help)}</td></tr>`).join("")}</table>`;
   else body = `<p class="xnote" style="margin-top:10px">${esc(G[SPM.tab].lead)}</p>${ckItems(G[SPM.tab], V, d)}`;
+  const sy = window.scrollY, vw = m.querySelector(".viewer"), vs = vw ? [vw.scrollLeft, vw.scrollTop] : null;
   m.innerHTML = `
   <div class="head"><div><div class="eyebrow">STEP 9</div><h1>서포트</h1>
-    <p class="lead">STEP 8 트레이·트렌치 구간을 따라 서포트를 놓고 형식별 물량(개수·강재·앵커·클램프)을 냅니다. 간격·형식·자재는 일반값이고, 타피컬 드로잉이 오면 그 값으로 바꿉니다.</p></div>
-    <div style="display:flex;gap:8px"><button class="btn" id="spmk">케이블 · JB · 트레이 · 서포트 엑셀</button><button class="btn line" id="sp3d">3D 데이터 (JSON)</button></div></div>
+    <p class="lead">STEP 8 트레이·트렌치 구간을 따라 서포트를 놓고 형식별 물량(개수·강재·앵커·클램프)을 냅니다. 피팅·익스펜션은 NEMA VE 2, 간격·형식·자재는 일반값이고, 타피컬 드로잉이 오면 그 값으로 바꿉니다.</p></div>
+    <div style="display:flex;gap:8px"><button class="btn" id="spmk">케이블 · JB · 트레이 · 서포트 엑셀</button><button class="btn line" id="sp3d">3D 데이터 (JSON)</button><button class="btn line" id="spview">3D 보기</button></div></div>
   <div style="display:flex;gap:20px;align-items:flex-start">
     <div style="flex:1;min-width:0"><div class="panel"><div class="tabs">${tabs}</div>${body}</div>${supTable(d)}</div>
     <div class="side">${supSide(d)}</div>
   </div>`;
+  window.scrollTo(0, sy); const vw2 = m.querySelector(".viewer"); if (vw2 && vs) { vw2.scrollLeft = vs[0]; vw2.scrollTop = vs[1]; }
   const upd = async body => { try { CK.data = await post(P("cable"), body); CK.data._p = S.project; if (S.screen==="support") renderSupport(m); } catch(e) { toast(e.message, true); } };
+  const plotUpd = async body => { try { CK.data = await post(P("plot"), body); CK.data._p = S.project; SPM.edit = null; if (S.screen==="support") renderSupport(m); } catch(e) { toast(e.message, true); } };
   m.querySelectorAll("[data-spt]").forEach(a => a.onclick = () => { SPM.tab = +a.dataset.spt; renderSupport(m); });
   m.querySelectorAll("[data-spv]").forEach(a => a.onclick = () => { SPM.view = a.dataset.spv; renderSupport(m); });
   m.querySelectorAll("[data-go]").forEach(a => a.onclick = () => go(a.dataset.go));
   m.querySelectorAll("[data-ck]").forEach(el => el.onchange = () => upd({set:{[el.dataset.ck]: el.value}}));
   m.querySelectorAll("[data-cktog]").forEach(el => el.onclick = () => { const it = G.flatMap(x=>x.items).find(x=>x.id===el.dataset.cktog);
     upd({set:{[it.id]: el.classList.contains("on") ? it.options.find(o=>o!==it.on) : it.on}}); });
-  m.querySelectorAll("[data-sprow]").forEach(r => r.onclick = () => { SPM.sel = r.dataset.sprow; SPM.tab = NT; SPM.view = "list"; renderSupport(m); window.scrollTo(0,0); });
+  m.querySelectorAll("[data-sprow]").forEach(r => r.onclick = () => { SPM.sel = r.dataset.sprow; SPM.edit = null; SPM.tab = NT; SPM.view = "list"; renderSupport(m); window.scrollTo(0,0); });
+  m.querySelectorAll("[data-sprange]").forEach(el => el.oninput = () => { $("#spv-"+el.dataset.sprange).textContent = el.value + " " + el.dataset.unit;
+    clearTimeout(SPM.live); SPM.live = setTimeout(() => upd({set:{[el.dataset.sprange]: el.value}}), 180); });
   const svg = $("#spsvg");
-  if (svg) svg.querySelectorAll("[data-spseg]").forEach(el => el.onclick = () => { SPM.sel = SPM.sel === el.dataset.spseg ? null : el.dataset.spseg; if (SPM.sel) SPM.view = "list"; renderSupport(m); });
-  if ($("#spsx")) $("#spsx").onclick = () => { SPM.sel = null; renderSupport(m); };
+  if (svg) svg.querySelectorAll("[data-spseg]").forEach(el => el.onclick = () => { SPM.sel = SPM.sel === el.dataset.spseg ? null : el.dataset.spseg; SPM.edit = null; if (SPM.sel) SPM.view = "list"; renderSupport(m); });
+  if ($("#spsx")) $("#spsx").onclick = () => { SPM.sel = null; SPM.edit = null; renderSupport(m); };
+  const g = d.sup.segments.find(x => x.seg === SPM.sel);
+  m.querySelectorAll("[data-sptype]").forEach(el => el.onclick = () => { SPM.edit = {type: el.dataset.sptype, span: +($("#spspan")||{}).value || g.span}; renderSupport(m); });
+  if ($("#spapply")) $("#spapply").onclick = () => { const e = SPM.edit || {}; const sp = +$("#spspan").value; plotUpd({sup_over: {seg: g.id, type: g.kind === "AG" ? (e.type || g.type) : undefined, span: sp !== g.span ? sp : undefined}}); };
+  if ($("#spreset")) $("#spreset").onclick = () => plotUpd({sup_reset: g.id});
+  m.querySelectorAll("[data-spq]").forEach(b => b.onclick = () => plotUpd({sup_over: {seg: b.dataset.spq, type: b.dataset.ok ? undefined : b.dataset.spqt, ok: !!b.dataset.ok}}));
+  m.querySelectorAll("[data-sptyp]").forEach(inp => inp.onchange = async () => { const f = inp.files[0]; if (!f) return;
+    try { CK.data = await api(P("typical?t="+inp.dataset.sptyp), {method:"POST", body:f}); CK.data._p = S.project; renderSupport(m); toast("타피컬 그림을 넣었습니다"); } catch(e) { toast(e.message, true); } });
+  m.querySelectorAll("[data-sptypdel]").forEach(b => b.onclick = async () => { try { CK.data = await api(P("typical?del=1&t="+b.dataset.sptypdel), {method:"POST", body:"x"}); CK.data._p = S.project; renderSupport(m); } catch(e) { toast(e.message, true); } });
   const btn = (id, path, lab) => { $(id).onclick = async () => { const b = $(id); b.disabled = true; b.textContent = "만드는 중…";
     try { const r = await post(P(path), {}); toast(r.files.join(", ") + " 생성 · 5 출력 화면에서 받을 수 있습니다"); } catch(e) { toast(e.message, true); }
     if ($(id)) { $(id).disabled = false; $(id).textContent = lab; } }; };
   btn("#spmk", "cable_export", "케이블 · JB · 트레이 · 서포트 엑셀");
   btn("#sp3d", "export_3d", "3D 데이터 (JSON)");
+  $("#spview").onclick = () => window.open("/viewer3d?p=" + encodeURIComponent(S.project), "_blank");
 }
 
 api("font").then(f => { const k = Object.keys(f.found||{}); $("#fontst").innerHTML = k.length
