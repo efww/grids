@@ -711,13 +711,13 @@ pub(crate) unsafe fn toggle_ctx_menu() {
 pub(crate) unsafe fn shell_menu(menu: HMENU, src: usize, picked: &std::result::Result<Vec<String>, Pick>, no_dirs: bool, others: &[(usize, HSTRING, String)]) -> Option<String> {
     _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
     let flags = if picked.is_ok() { MF_STRING } else { MF_STRING | MF_GRAYED };
-    _ = AppendMenuW(menu, flags, ID_INUSE, &HSTRING::from(tr("Which program is using this?", "어떤 프로그램이 쓰고 있나요?")));
+    _ = AppendMenuW(menu, flags, ID_INUSE, &HSTRING::from(tr2(M_INUSE)));
     // SHA-256: up to HASH_MAX picked files, no folders; while one runs, the same place stops it
     let (flags, label) = match hash_busy() {
-        Some(pct) => (MF_STRING, tr("Stop the checksum ({p}%)", "체크섬 계산 중지 ({p}%)").replace("{p}", &pct.to_string())),
+        Some(pct) => (MF_STRING, tr2(M_HASH_STOP).replace("{p}", &pct.to_string())),
         None => {
             let ok = no_dirs && picked.as_ref().is_ok_and(|p| p.len() <= HASH_MAX);
-            (if ok { MF_STRING } else { MF_STRING | MF_GRAYED },tr("Checksum (SHA-256) of the selected files", "선택한 파일의 체크섬(SHA-256)").to_string())
+            (if ok { MF_STRING } else { MF_STRING | MF_GRAYED },tr2(M_HASH).to_string())
         }
     };
     _ = AppendMenuW(menu, flags, ID_HASH, &HSTRING::from(label));
@@ -726,16 +726,16 @@ pub(crate) unsafe fn shell_menu(menu: HMENU, src: usize, picked: &std::result::R
     org_menu(menu, org_ok(picked, no_dirs, &here));
     let label = match picked {
         Ok(p) if group_ok(p, &here) => {
-            let t = tr("Move {n} selected items into a new folder  (Ctrl+F7)", "선택한 {n}개를 새 폴더로 묶기  (Ctrl+F7)");
+            let t = tr2(M_GROUP_N);
             (MF_STRING, t.replace("{n}", &p.len().to_string()))
         }
-        _ => (MF_STRING | MF_GRAYED, tr("Move the selected items into a new folder  (Ctrl+F7)", "선택한 항목을 새 폴더로 묶기  (Ctrl+F7)").to_string()),
+        _ => (MF_STRING | MF_GRAYED, tr2(M_GROUP).to_string()),
     };
     _ = AppendMenuW(menu, label.0, ID_GROUP, &HSTRING::from(label.1));
     let exe = winmerge_exe()?;
     match picked {
         Ok(two) if two.len() == 2 => {
-            _ = AppendMenuW(menu, MF_STRING, ID_WM_PAIR, &HSTRING::from(tr("Compare the 2 selected items with WinMerge", "선택한 2개를 WinMerge로 비교")));
+            _ = AppendMenuW(menu, MF_STRING, ID_WM_PAIR, &HSTRING::from(tr2(M_WM_PAIR)));
         }
         _ => {
             let here = is_fs(&app(|a| a.s.paths[src].clone()));
@@ -745,7 +745,7 @@ pub(crate) unsafe fn shell_menu(menu: HMENU, src: usize, picked: &std::result::R
                     _ = AppendMenuW(sub, flags, ID_WM_PANE + k, label);
                 }
                 let flags = if others.is_empty() { MF_POPUP | MF_GRAYED } else { MF_POPUP };
-                _ = AppendMenuW(menu, flags, sub.0 as usize, &HSTRING::from(tr("Compare this folder with WinMerge", "이 폴더를 WinMerge로 비교")));
+                _ = AppendMenuW(menu, flags, sub.0 as usize, &HSTRING::from(tr2(M_WM_PANE)));
             }
         }
     }

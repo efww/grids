@@ -1920,6 +1920,57 @@ mod tests {
         assert_eq!(held_key(None, enter, true), (false, None));
     }
 
+    // The letter a menu item underlines: the char after a lone '&' ("&&" is a literal '&').
+    fn mnemonic(s: &str) -> Option<char> {
+        let mut it = s.chars();
+        while let Some(c) = it.next() {
+            if c == '&' {
+                match it.next() {
+                    Some('&') => {}
+                    n => return n.map(|c| c.to_ascii_uppercase()),
+                }
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn open_in_menu_pane_labels() {
+        assert_eq!(pane_label("Pane", 2, "Sage", r"C:\R&D"), r"Pane &3 (Sage)    C:\R&&D");
+        assert_eq!(pane_label("패널", 0, "", "A && B"), "패널 &1    A &&&& B");
+        assert_eq!(pane_label("Pane", 8, "", "x"), "Pane &9    x");
+        assert_eq!(pane_label("Pane", 9, "", "R&D"), "Pane 10    R&&D"); // 10–16: no digit to give
+        for k in 0..MAXP {
+            let want = (k < 9).then(|| char::from(b'1' + k as u8));
+            assert_eq!(mnemonic(&pane_label("Pane", k, "Rose", "Tom & Jerry")), want, "pane {}", k + 1);
+        }
+    }
+
+    // Every ⇄ menu item that can show at the top level at the same time: one letter each, none a pane digit,
+    // none the first letter of an unmarked item (the grey title, "Pane 10" …), in both languages.
+    #[test]
+    fn open_in_menu_letters() {
+        let slots: [&[(&str, &str)]; 8] =
+            [&[M_SWAP], &[M_COPY], &[M_MOVE], &[M_INUSE], &[M_HASH, M_HASH_STOP], &[M_ORG], &[M_GROUP_N, M_GROUP], &[M_WM_PAIR, M_WM_PANE]];
+        for ko in [false, true] {
+            let mut seen: Vec<char> = "123456789".chars().collect();
+            seen.extend(["Open the selected folder", "Pane"].iter().map(|s| s.chars().next().unwrap()));
+            for slot in slots {
+                let letters: Vec<_> = slot.iter().map(|t| mnemonic(if ko { t.1 } else { t.0 })).collect();
+                let c = letters[0].unwrap_or_else(|| panic!("no letter: {:?}", slot[0]));
+                assert!(letters.iter().all(|l| *l == Some(c)), "{slot:?}");
+                assert!(!seen.contains(&c), "{c} used twice ({slot:?}, ko {ko})");
+                seen.push(c);
+                for t in slot {
+                    let s = if ko { t.1 } else { t.0 };
+                    assert_eq!(s.matches('&').count(), 1, "{s}");
+                    // Korean marks it in a tail, "…(&C)", the way Windows menus do for non-Latin text
+                    assert!(!ko || s.contains(&format!("(&{c})")), "{s}");
+                }
+            }
+        }
+    }
+
     #[test]
     fn insert_marks_and_steps() {
         let (sel, focus, show) = (SVSI_SELECT.0 as u32, SVSI_FOCUSED.0 as u32, SVSI_ENSUREVISIBLE.0 as u32);

@@ -19,7 +19,7 @@ pub(crate) unsafe fn create_pane(i: usize) -> Result<Pane> {
         (ID_BACK, tr("Back", "뒤로"), tr("Back  (Alt+←) · right-click: recent folders", "뒤로  (Alt+←) · 오른쪽 클릭: 최근 폴더")),
         (ID_FWD, tr("Forward", "앞으로"), tr("Forward  (Alt+→) · right-click: recent folders", "앞으로  (Alt+→) · 오른쪽 클릭: 최근 폴더")),
         (ID_UP, tr("Parent folder", "상위 폴더"), tr("Parent folder  (Alt+↑)", "상위 폴더  (Alt+↑)")),
-        (ID_OPEN_IN, tr("Open in another pane", "다른 패널에서 열기"), tr("Open in / copy or move to / swap with another pane", "다른 패널에서 열기 / 복사·이동 / 자리 바꾸기")),
+        (ID_OPEN_IN, tr("Open in another pane", "다른 패널에서 열기"), tr("Open in / copy or move to / swap with another pane  (Ctrl+M)", "다른 패널에서 열기 / 복사·이동 / 자리 바꾸기  (Ctrl+M)")),
         (ID_FAV, tr("Favourite", "즐겨찾기"), tr("Add to favourites (filled star: remove)", "즐겨찾기에 추가 (채워진 별: 빼기)")),
     ];
     for (id, name, tip) in buttons {

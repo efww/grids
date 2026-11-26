@@ -184,6 +184,14 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
             }
         }
         VK_C if ctrl && shift && !alt && list() => copy_paths(a),
+        // Ctrl+M: the ⇄ menu, opened when M is let go, so M's auto-repeats (swallowed while held) can't pick
+        // its "&Move" item
+        VK_M if ctrl && !shift && !alt && list() => {
+            if m.lParam.0 & (1 << 30) == 0 {
+                app(|x| x.held = Some(VK_M.0));
+                MENU_KEY.set(Some(a));
+            }
+        }
         // held until released: one box / one inversion per press (Ctrl+Num+ stays Explorer's column fit)
         k @ (VK_ADD | VK_SUBTRACT | VK_MULTIPLY) if !ctrl && !alt && list() => {
             app(|x| x.held = Some(k.0));
@@ -301,7 +309,16 @@ pub(crate) unsafe fn pre_translate(m: &MSG) -> bool {
             used
         }
         WM_KEYUP | WM_SYSKEYUP => {
+            let armed = app(|a| a.held) == Some(VK_M.0);
             app(|a| a.held = a.held.filter(|&k| k != m.wParam.0 as u16));
+            // Ctrl+M let go: the ⇄ menu of the pane it was pressed in, under its ⇄ button as a click opens it
+            if VIRTUAL_KEY(m.wParam.0 as u16) == VK_M {
+                let pane = MENU_KEY.take().filter(|_| armed);
+                if let Some((i, h)) = pane.and_then(|i| app(|a| a.panes.iter().take(a.s.panes()).nth(i)?.as_ref().map(|p| (i, p.hwnd)))) {
+                    open_in_menu(h, i);
+                    return true;
+                }
+            }
             // Ctrl+Alt+arrow: the panes take the moved splitter once the arrow, Ctrl or Alt is let go
             if matches!(VIRTUAL_KEY(m.wParam.0 as u16), VK_LEFT | VK_RIGHT | VK_UP | VK_DOWN | VK_CONTROL | VK_MENU) {
                 end_nudge();
@@ -338,6 +355,8 @@ pub(crate) unsafe fn new_folder(i: usize) {
 
 thread_local! {
     pub(crate) static LAST_TYPED: Cell<Option<Instant>> = const { Cell::new(None) };
+    // the pane Ctrl+M was pressed in: its ⇄ menu opens when M is released
+    pub(crate) static MENU_KEY: Cell<Option<usize>> = const { Cell::new(None) };
 }
 
 /// Keys that type into Explorer's find-as-you-type: letters, digits, punctuation, the IME's (Korean) keys.

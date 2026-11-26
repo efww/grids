@@ -96,6 +96,7 @@ The exe is not code-signed, so Windows SmartScreen may warn the first time: choo
 | Ctrl+Shift+E | Hide / show the folder tree (also View menu → Folder tree; its width is kept) |
 | Ctrl+Shift+O | Open the folders of open Explorer windows and tabs in panes, from the active pane on (also View menu; panes already showing one of them stay put) |
 | Ctrl+Shift+C | Copy the full path of the selected items (or of the current folder) |
+| Ctrl+M | ⇄ menu from the file list (opens under the ⇄ button): open in another pane, copy / move the selected items to one, swap places, checksum, WinMerge. Then one key picks: a pane's number (1–9) opens there, C or M then a number copies / moves there, S swaps; every item has an underlined letter |
 | Num+ / Ctrl+Shift+A | Select files by pattern (`*.jpg;*.png` or part of a name; Shift+Enter deselects) |
 | Num− | Deselect files by pattern |
 | Num* | Invert the selection |

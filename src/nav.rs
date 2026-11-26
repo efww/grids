@@ -566,6 +566,32 @@ pub(crate) unsafe fn open_in(src: usize, dst: usize) {
     }
 }
 
+// ⇄ menu items (English, Korean), each with its own '&' letter so Ctrl+M then one key picks it; panes 1–9 take
+// the digits. Alternatives that never show together (checksum / stop, pair / folder compare) share a letter.
+// R, not P, for compare: "Pane 10" … carry no '&', and menus match an unmarked item by its first letter.
+pub(crate) const M_SWAP: (&str, &str) = ("&Swap places with  (Ctrl+Alt+Shift+arrows)", "자리 바꾸기(&S)  (Ctrl+Alt+Shift+방향키)");
+pub(crate) const M_COPY: (&str, &str) = ("&Copy {n} selected items to", "선택한 {n}개 복사(&C)");
+pub(crate) const M_MOVE: (&str, &str) = ("&Move {n} selected items to", "선택한 {n}개 이동(&M)");
+pub(crate) const M_INUSE: (&str, &str) = ("&Which program is using this?", "어떤 프로그램이 쓰고 있나요?(&W)");
+pub(crate) const M_HASH: (&str, &str) = ("Chec&ksum (SHA-256) of the selected files", "선택한 파일의 체크섬(SHA-256)(&K)");
+pub(crate) const M_HASH_STOP: (&str, &str) = ("Stop the chec&ksum ({p}%)", "체크섬 계산 중지(&K) ({p}%)");
+pub(crate) const M_ORG: (&str, &str) = ("Sort the selected files into &date folders", "선택한 파일을 날짜별 폴더로 정리(&D)");
+pub(crate) const M_GROUP_N: (&str, &str) = ("Move {n} selected items into a &new folder  (Ctrl+F7)", "선택한 {n}개를 새 폴더로 묶기(&N)  (Ctrl+F7)");
+pub(crate) const M_GROUP: (&str, &str) = ("Move the selected items into a &new folder  (Ctrl+F7)", "선택한 항목을 새 폴더로 묶기(&N)  (Ctrl+F7)");
+pub(crate) const M_WM_PAIR: (&str, &str) = ("Compa&re the 2 selected items with WinMerge", "선택한 2개를 WinMerge로 비교(&R)");
+pub(crate) const M_WM_PANE: (&str, &str) = ("Compa&re this folder with WinMerge", "이 폴더를 WinMerge로 비교(&R)");
+
+pub(crate) fn tr2(t: (&'static str, &'static str)) -> &'static str {
+    tr(t.0, t.1)
+}
+
+// "Pane &3 (Sage)    R&&D": panes 1–9 underline their number (10–16 stay plain); '&' in a folder name stays a letter.
+pub(crate) fn pane_label(word: &str, k: usize, tint: &str, disp: &str) -> String {
+    let num = if k < 9 { format!("&{}", k + 1) } else { (k + 1).to_string() };
+    let tag = if tint.is_empty() { String::new() } else { format!(" ({tint})") };
+    format!("{word} {num}{tag}    {}", disp.replace('&', "&&"))
+}
+
 pub(crate) unsafe fn open_in_menu(h: HWND, src: usize) {
     // (pane, shown name, folder it held when the menu opened, colour label)
     let items = app(|a| {
@@ -573,11 +599,8 @@ pub(crate) unsafe fn open_in_menu(h: HWND, src: usize) {
         let live = live.filter(|(k, _)| *k != src);
         live.filter_map(|(k, p)| Some((k, p.as_ref()?.disp.clone(), a.s.paths[k].clone(), a.s.tints[k]))).collect::<Vec<_>>()
     });
-    // "Pane 3 (Sage)    C:\work"
-    let label = |k: usize, t: u8, disp: &str| {
-        let tag = if t == 0 { String::new() } else { format!(" ({})", tint_name(t)) };
-        HSTRING::from(format!("{} {}{tag}    {disp}", tr("Pane", "패널"), k + 1))
-    };
+    // "Pane &3 (Sage)    C:\work"
+    let label = |k: usize, t: u8, disp: &str| HSTRING::from(pane_label(tr("Pane", "패널"), k, if t == 0 { "" } else { tint_name(t) }, disp));
     let arr = view_of::<IFolderView2>(src).and_then(|fv| fv.GetSelection(false).ok());
     let count = arr.as_ref().and_then(|a| a.GetCount().ok()).unwrap_or(0);
     let picked = collect_all(count, |k| unsafe { arr.as_ref()?.GetItemAt(k).ok()?.GetDisplayName(SIGDN_FILESYSPATH).ok().map(|p| pwstr(p)) });
@@ -600,14 +623,14 @@ pub(crate) unsafe fn open_in_menu(h: HWND, src: usize) {
             _ = AppendMenuW(sub, MF_STRING, 301 + k, &label(*k, *t, disp));
         }
         let flags = if items.is_empty() { MF_POPUP | MF_GRAYED } else { MF_POPUP };
-        _ = AppendMenuW(menu, flags, sub.0 as usize, &HSTRING::from(tr("Swap places with  (Ctrl+Alt+Shift+arrows)", "자리 바꾸기  (Ctrl+Alt+Shift+방향키)")));
+        _ = AppendMenuW(menu, flags, sub.0 as usize, &HSTRING::from(tr2(M_SWAP)));
     }
     match &picked {
         Ok(srcs) => {
             let n = srcs.len();
             let titles = [
-                (false, 101, tr("Copy {n} selected items to", "선택한 {n}개 복사").replace("{n}", &n.to_string())),
-                (true, 201, tr("Move {n} selected items to", "선택한 {n}개 이동").replace("{n}", &n.to_string())),
+                (false, 101, tr2(M_COPY).replace("{n}", &n.to_string())),
+                (true, 201, tr2(M_MOVE).replace("{n}", &n.to_string())),
             ];
             for (mv, base, title) in titles {
                 let Ok(sub) = CreatePopupMenu() else { continue };
@@ -635,6 +658,10 @@ pub(crate) unsafe fn open_in_menu(h: HWND, src: usize) {
         _ = GetWindowRect(b, &mut rc);
     }
     let pick = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN, rc.left, rc.bottom, None, h, None).0;
+    // picked with Enter: its auto-repeats would open a file in the list that gets the focus next
+    if GetKeyState(VK_RETURN.0 as i32) < 0 {
+        app(|a| a.held = Some(VK_RETURN.0));
+    }
     _ = DestroyMenu(menu);
     match (pick as usize, picked) {
         (0, _) => {}

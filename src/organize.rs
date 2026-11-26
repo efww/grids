@@ -119,14 +119,15 @@ pub(crate) unsafe fn org_menu(menu: HMENU, ok: bool) {
     let hint = tr("Photos by date taken, other files by date modified", "사진은 찍은 날짜, 나머지는 수정한 날짜 기준");
     _ = AppendMenuW(sub, MF_STRING | MF_GRAYED, 0, &HSTRING::from(hint));
     _ = AppendMenuW(sub, MF_SEPARATOR, 0, PCWSTR::null());
-    let names = [tr("By year", "연도별"), tr("By month", "월별"), tr("By day", "날짜별")];
+    // One underlined letter each (Y / M / D) so the keyboard picks them in one press.
+    let names = [tr("By &year", "연도별(&Y)"), tr("By &month", "월별(&M)"), tr("By &day", "날짜별(&D)")];
     for (k, name) in names.into_iter().enumerate() {
         let example = bucket_name(today, k).unwrap_or_default();
         _ = AppendMenuW(sub, MF_STRING, ID_ORG + k, &HSTRING::from(format!("{name}  ({example})")));
     }
     let busy = ORGANIZING.load(Ordering::SeqCst);
     let flags = if ok && !busy { MF_POPUP } else { MF_POPUP | MF_GRAYED };
-    _ = AppendMenuW(menu, flags, sub.0 as usize, &HSTRING::from(tr("Sort the selected files into date folders", "선택한 파일을 날짜별 폴더로 정리")));
+    _ = AppendMenuW(menu, flags, sub.0 as usize, &HSTRING::from(tr2(M_ORG)));
 }
 
 // Picked from the ⇄ menu: the selection it counted, checked again; the dates are read on a worker thread.
