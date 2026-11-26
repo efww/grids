@@ -44,14 +44,14 @@ def write_template(all_rows: list[Row], template: Path, out: Path, source_file: 
     style_row = [copy(c._style) for c in ws[first + 3]]      # blank formatted row
     last = max(ws.max_row, first + len(rows) - 1)
     for r in range(first, last + 1):
-        for c in range(2, 31):
+        for c in range(2, 34):
             ws.cell(r, c).value = None
     # extra columns: where each row came from
     for c, h in ((28, "산출구분"), (29, "근거 (도면/노트/체크리스트)"), (30, "원본 Tag"), (31, "Plant No"),
-                 (32, "Sheet No")):
+                 (32, "Sheet No"), (33, "Signal Type")):                     # 33: decision 8
         cell = ws.cell(2, c, h)
         cell._style = copy(ws.cell(2, 27)._style)
-        ws.column_dimensions[cell.column_letter].width = (12, 46, 16, 10, 10)[c - 28]
+        ws.column_dimensions[cell.column_letter].width = (12, 46, 16, 10, 10, 14)[c - 28]
     try:
         from openpyxl.comments import Comment
         ws.cell(2, 22).comment = Comment("값 = 심볼 인식 신뢰도 (0~1). OCR은 사용하지 않음.", "pid_io")
@@ -68,8 +68,9 @@ def write_template(all_rows: list[Row], template: Path, out: Path, source_file: 
             12: getattr(row, "equip", ""), 14: row.location, 15: row.system, 16: row.io,
             17: getattr(row, "ioloc", ""), 18: row.vendor_pkg, 19: source_file, 20: row.page or None, 21: row.coord,
             22: row.conf, 23: row.status, 24: "; ".join(row.inform),
-            27: " | ".join(x for x in (row.title, row.symbol_cls, row.signal) if x),
+            27: " | ".join(x for x in (row.title, row.symbol_cls) if x),
             28: row.origin, 29: row.basis, 30: row.src_tag, 31: sh.get("plant_no", ""), 32: sh.get("sheet_no", ""),
+            33: signal_type(row),
         }
         for c, v in vals.items():
             cell = ws.cell(r, c)
@@ -86,7 +87,7 @@ def write_template(all_rows: list[Row], template: Path, out: Path, source_file: 
             for c in line:
                 if isinstance(c.value, str) and "502" in c.value:
                     c.value = c.value.replace("502", str(n_last))
-    ws.auto_filter.ref = f"A2:AF{max(n_last, 502)}"
+    ws.auto_filter.ref = f"A2:AG{max(n_last, 502)}"
     _restore_rules(ws, max(n_last, 502))
     _io_summary(wb, max(n_last, 502), concept, spares)
     if "Settings" in wb.sheetnames:                    # decision 19
@@ -119,6 +120,20 @@ def write_template(all_rows: list[Row], template: Path, out: Path, source_file: 
     for col, w in zip("ABCDEFGHIJ", (16, 8, 8, 14, 11, 34, 6, 12, 7, 12)):
         wf.column_dimensions[col].width = w
     wb.save(out)
+
+
+SIGNAL_BY_IO = {"AI": "4-20mA (HART)", "AO": "4-20mA (HART)", "DI": "24VDC", "DO": "24VDC",
+                "TC/RTD": "RTD", "Serial/Comm": "COMM"}
+
+
+def signal_type(row) -> str:
+    """Signal Type column (decision 8): the IO rule's signal text, else by IO type."""
+    if row.io in ("Serial/Comm", "TC/RTD"):
+        return SIGNAL_BY_IO[row.io]
+    s = (row.signal or "").strip()
+    if s and s not in ("-", "?") and row.io not in ("-", "", None):
+        return s
+    return SIGNAL_BY_IO.get(row.io, "")
 
 
 def _io_summary(wb, last, concept, spares=None):
