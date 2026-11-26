@@ -766,10 +766,7 @@ unsafe fn paint_ev(h: HWND) {
             }
             let icon = RECT { left: g.head[0].left + s(8), top: row.top + (row.bottom - row.top - s(16)) / 2, right: g.head[0].left + s(24), bottom: 0 };
             if let (Some(il), Some(ix)) = (&ilist, hit.icon.filter(|&x| x >= 0)) {
-                if let Ok(hi) = il.GetIcon(ix, ILD_NORMAL.0) {
-                    _ = DrawIconEx(dc, icon.left, icon.top, hi, s(16), s(16), 0, None, DI_NORMAL);
-                    _ = DestroyIcon(hi);
-                }
+                shell_icon(dc, il, ix, RECT { right: icon.left + s(16), bottom: icon.top + s(16), ..icon });
             }
             let cell = |c: usize| RECT { left: g.head[c].left + s(8), right: g.head[c].right - s(8), top: row.top, bottom: row.bottom };
             text(dc, RECT { left: icon.right + s(8), ..cell(0) }, &hit.name, font, ink, DT_LEFT);

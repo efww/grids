@@ -164,9 +164,7 @@ unsafe fn draw_button_face(d: &DRAWITEMSTRUCT) {
             let icon = RECT { left: rc.left + s(6), top: rc.top + (rc.bottom - rc.top - s(16)) / 2, right: rc.left + s(22), bottom: 0 };
             let after = icon.right + s(4);
             if let Some(il) = (after + text_w(dc, &label, font) <= rc.right).then(|| small_ilist()).flatten() {
-                if let Ok(hi) = il.GetIcon(ix, ILD_NORMAL.0) {
-                    _ = DrawIconEx(dc, icon.left, icon.top, hi, s(16), s(16), 0, None, DI_NORMAL);
-                    _ = DestroyIcon(hi);
+                if shell_icon(dc, &il, ix, RECT { right: icon.left + s(16), bottom: icon.top + s(16), ..icon }) {
                     return text(dc, RECT { left: after, ..rc }, &label, font, ink, DT_LEFT);
                 }
             }

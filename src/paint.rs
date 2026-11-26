@@ -1,4 +1,5 @@
 use crate::*;
+use std::rc::Rc;
 
 // ---------- painting ----------
 
@@ -121,6 +122,93 @@ pub(crate) unsafe fn small_ilist() -> Option<IImageList> {
         app(|a| a.ilist = l.clone());
         l
     })
+}
+
+// ---------- icons at the monitor's own size ----------
+// The small list's size is fixed at sign-in, by the main monitor's scale. On another monitor (or after a scale
+// change) its icons would be stretched blurry or shrunk ragged: take the list at least as large and box-average
+// it down, like Explorer, VS Code and Chrome pick per monitor. Jumbo is left out: a 16 dip icon is 48 px even at
+// 300 %, and a type without a 256 px picture sits in its top-left corner (preview.rs type_icon).
+const ICON_LISTS: [u32; 3] = [SHIL_SMALL, SHIL_LARGE, SHIL_EXTRALARGE];
+const SHRUNK_MAX: usize = 256;
+
+thread_local! {
+    // (SHIL_*, its list, its icons' side in px), looked up once; a list that fails is left out
+    static ICON_SIZES: RefCell<Option<Vec<(u32, IImageList, i32)>>> = const { RefCell::new(None) };
+    // (icon index, px) -> the larger list's icon averaged down to px; None: draw it the old way
+    static SHRUNK: RefCell<std::collections::HashMap<(i32, i32), Option<Rc<Pix>>>> = RefCell::new(Default::default());
+}
+
+/// Which list (their icon sides) a px icon comes from: the smallest at least px, else the largest.
+pub(crate) fn pick_list(sides: &[i32], px: i32) -> Option<usize> {
+    let k = sides.iter().enumerate();
+    k.clone().filter(|(_, &s)| s >= px).min_by_key(|(_, &s)| s).or_else(|| k.max_by_key(|(_, &s)| s)).map(|(i, _)| i)
+}
+
+unsafe fn icon_lists() -> Vec<(u32, IImageList, i32)> {
+    if let Some(v) = ICON_SIZES.with(|c| c.borrow().clone()) {
+        return v;
+    }
+    let mut v = Vec::new();
+    for shil in ICON_LISTS {
+        if let Ok(l) = SHGetImageList::<IImageList>(shil as i32) {
+            let (mut cx, mut cy) = (0, 0);
+            if l.GetIconSize(&mut cx, &mut cy).is_ok() && cx > 0 {
+                v.push((shil, l, cx));
+            }
+        }
+    }
+    ICON_SIZES.with(|c| *c.borrow_mut() = Some(v.clone()));
+    v
+}
+
+unsafe fn draw_list_icon(dc: HDC, list: &IImageList, index: i32, r: RECT) -> bool {
+    let Ok(icon) = list.GetIcon(index, ILD_NORMAL.0) else { return false };
+    _ = DrawIconEx(dc, r.left, r.top, icon, r.right - r.left, r.bottom - r.top, 0, None, DI_NORMAL);
+    _ = DestroyIcon(icon);
+    true
+}
+
+// A larger list's icon averaged down to px, kept: premultiplied by fix_alpha (only when it comes straight),
+// never twice. A mask-only icon (alpha all 0 as stored) gives None, so it is drawn the old way, not as a black square.
+// A failed read is not kept: it may be passing, and keeping it would leave the small list stretched until the cache fills.
+unsafe fn shrunk(list: &IImageList, index: i32, px: i32) -> Option<Rc<Pix>> {
+    if let Some(p) = SHRUNK.with(|c| c.borrow().get(&(index, px)).cloned()) {
+        return p;
+    }
+    let mut src = icon_pix(list, index)?;
+    let p = src.bgra.chunks_exact(4).any(|q| q[3] != 0).then(|| {
+        fix_alpha(&mut src.bgra);
+        Rc::new(shrink(&src, px))
+    });
+    SHRUNK.with(|c| {
+        let mut c = c.borrow_mut();
+        if c.len() >= SHRUNK_MAX {
+            c.clear();
+        }
+        c.insert((index, px), p.clone());
+    });
+    p
+}
+
+/// System icon `index` in the square r at r's width in px, from the list that suits it. A list exactly that size
+/// is drawn as before (DrawIconEx), so at the sign-in scale nothing changes; any failure falls back to the small
+/// list stretched over r. False: no icon could be had, nothing drawn. Outside app(..): the shell may send messages back.
+pub(crate) unsafe fn shell_icon(dc: HDC, small: &IImageList, index: i32, r: RECT) -> bool {
+    let px = r.right - r.left;
+    let lists = icon_lists();
+    let sides: Vec<i32> = lists.iter().map(|l| l.2).collect();
+    if let Some((shil, list, side)) = pick_list(&sides, px).map(|k| &lists[k]) {
+        if *side > px {
+            if let Some(p) = shrunk(list, index, px) {
+                blit_bgra(dc, RECT { left: r.left, top: r.top, right: r.left + p.w, bottom: r.top + p.h }, p.w, p.h, &p.bgra);
+                return true;
+            }
+        } else if draw_list_icon(dc, if *shil == SHIL_SMALL { small } else { list }, index, r) {
+            return true; // exactly px, or the largest list stretched past it
+        }
+    }
+    draw_list_icon(dc, small, index, r)
 }
 
 // The folder icon's square at the front of the address pill, like Explorer's address bar; none in a narrow pill.
@@ -660,10 +748,7 @@ pub(crate) unsafe fn paint_pane(h: HWND) {
             }
         }
         if let (Some(il), Some(r), true) = (&ilist, addr_icon(pg.addr, dpi), folder >= 0) {
-            if let Ok(icon) = il.GetIcon(folder, ILD_NORMAL.0) {
-                _ = DrawIconEx(dc, r.left, r.top, icon, r.right - r.left, r.bottom - r.top, 0, None, DI_NORMAL);
-                _ = DestroyIcon(icon);
-            }
+            shell_icon(dc, il, folder, r);
         }
         // idle address bar: C: › Users › Public, parents dimmed, the crumb under the mouse shaded,
         // a '›' whose subfolder list is on its way tinted and showing '…'
@@ -716,4 +801,112 @@ pub(crate) unsafe fn paint_pane(h: HWND) {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use windows::Win32::Storage::FileSystem::FILE_ATTRIBUTE_DIRECTORY;
+
+    #[test]
+    fn list_for_size() {
+        let sides = [16, 32, 48];
+        for (px, k) in [(12, 0), (16, 0), (20, 1), (24, 1), (32, 1), (40, 2), (48, 2), (64, 2)] {
+            assert_eq!(pick_list(&sides, px), Some(k), "{px} px");
+        }
+        // signed in at 150 %: the small list already fits 16 px; lists in any order
+        assert_eq!(pick_list(&[24, 48, 72], 16), Some(0));
+        assert_eq!(pick_list(&[48, 16, 32], 24), Some(2));
+        assert_eq!(pick_list(&[48, 16, 32], 96), Some(0));
+        assert_eq!(pick_list(&[], 16), None);
+    }
+
+    const BG: [u8; 3] = [200, 120, 40]; // B, G, R: a colour, so a dark or light fringe shows
+
+    // What f draws into a side x side 32-bit DIB filled with BG: B, G, R per pixel.
+    unsafe fn drawn(side: i32, f: impl FnOnce(HDC, RECT)) -> Vec<[u8; 3]> {
+        let bmi = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: side,
+                biHeight: -side,
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let dc = CreateCompatibleDC(None);
+        let mut bits = std::ptr::null_mut();
+        let bmp = CreateDIBSection(Some(dc), &bmi, DIB_RGB_COLORS, &mut bits, None, 0).expect("DIB");
+        let old = SelectObject(dc, bmp.into());
+        let px = std::slice::from_raw_parts_mut(bits as *mut u8, (side * side * 4) as usize);
+        for p in px.chunks_exact_mut(4) {
+            p[..3].copy_from_slice(&BG);
+            p[3] = 255;
+        }
+        f(dc, RECT { left: 0, top: 0, right: side, bottom: side });
+        _ = GdiFlush();
+        let out = px.chunks_exact(4).map(|p| [p[0], p[1], p[2]]).collect();
+        SelectObject(dc, old);
+        _ = DeleteDC(dc);
+        _ = DeleteObject(bmp.into());
+        out
+    }
+
+    // Premultiplied pixels laid over BG from the top-left, as shell_icon places them.
+    fn over_bg(p: &Pix, side: i32) -> Vec<[u8; 3]> {
+        let mut out = vec![BG; (side * side) as usize];
+        for y in 0..p.h.min(side) {
+            for x in 0..p.w.min(side) {
+                let i = ((y * p.w + x) * 4) as usize;
+                let a = p.bgra[i + 3] as u32;
+                for c in 0..3 {
+                    out[(y * side + x) as usize][c] = (p.bgra[i + c] as u32 + (BG[c] as u32 * (255 - a) + 127) / 255).min(255) as u8;
+                }
+            }
+        }
+        out
+    }
+
+    // How many pixels differ by more than `by` in some channel.
+    fn far(a: &[[u8; 3]], b: &[[u8; 3]], by: u8) -> usize {
+        a.iter().zip(b).filter(|(p, q)| (0..3).any(|c| p[c].abs_diff(q[c]) > by)).count()
+    }
+
+    // The folder icon as the address bar draws it at 200 % (dpi 192: s(16) = 32 px) and 150 % (24 px): the pixels
+    // of the list that suits (on a 100 % runner the large list as is, then averaged down 32 -> 24 and alpha-blended),
+    // not the small list stretched as before.
+    #[test]
+    fn icons_at_monitor_size() {
+        unsafe {
+            _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+            let mut fi = SHFILEINFOW::default();
+            let flags = SHGFI_SYSICONINDEX | SHGFI_USEFILEATTRIBUTES;
+            SHGetFileInfoW(&HSTRING::from(r"C:\Windows"), FILE_ATTRIBUTE_DIRECTORY, Some(&mut fi), size_of::<SHFILEINFOW>() as u32, flags);
+            let folder = fi.iIcon;
+            assert!(folder >= 0, "no folder icon index");
+            let small = SHGetImageList::<IImageList>(SHIL_SMALL as i32).expect("small icon list");
+            let lists = icon_lists();
+            let sides: Vec<i32> = lists.iter().map(|l| l.2).collect();
+            let mut averaged = false;
+            for dpi in [192, 144] {
+                let px = 16 * dpi / 96;
+                let (shil, _, side) = &lists[pick_list(&sides, px).expect("icon lists")];
+                assert!(*side >= px, "lists {sides:?}: none as large as {px} px");
+                let src = list_icon(*shil as i32, folder).expect("folder icon");
+                averaged |= *side > px;
+                let want = over_bg(&if *side > px { shrink(&src, px) } else { src }, px);
+                let got = drawn(px, |dc, r| assert!(shell_icon(dc, &small, folder, r)));
+                assert_eq!(far(&got, &want, 4), 0, "dpi {dpi}: {px} px icon is not the {side} px list's (lists {sides:?})");
+                if sides[0] != px {
+                    let old = drawn(px, |dc, r| assert!(draw_list_icon(dc, &small, folder, r)));
+                    let off = far(&old, &got, 8);
+                    assert!(off > (px * px / 50) as usize, "dpi {dpi}: only {off} pixels differ from the small list stretched");
+                }
+            }
+            assert!(averaged, "lists {sides:?}: the averaged-down path was not reached");
+        }
+    }
 }

@@ -1491,12 +1491,8 @@ pub(crate) unsafe fn paint_peek(h: HWND) {
         let j = peek_job();
         let gen = j.gen;
         // header: icon, name in bold, the facts after it in the secondary colour
-        if let (Some(p), Some(il)) = (&j.done, &ilist) {
-            if let Some(icon) = (p.icon >= 0).then(|| il.GetIcon(p.icon, ILD_NORMAL.0).ok()).flatten() {
-                let r = g.icon;
-                _ = DrawIconEx(dc, r.left, r.top, icon, r.right - r.left, r.bottom - r.top, 0, None, DI_NORMAL);
-                _ = DestroyIcon(icon);
-            }
+        if let (Some(p), Some(il)) = (j.done.as_ref().filter(|p| p.icon >= 0), &ilist) {
+            shell_icon(dc, il, p.icon, g.icon);
         }
         let room = g.title.right - g.title.left;
         if let Some(problem) = renaming {

@@ -180,8 +180,14 @@ pub(crate) fn opaque_within(p: &Pix, side: i32) -> bool {
     any
 }
 
-unsafe fn list_icon(size: i32, index: i32) -> Option<Pix> {
-    let list = SHGetImageList::<IImageList>(size).ok()?;
+pub(crate) unsafe fn list_icon(size: i32, index: i32) -> Option<Pix> {
+    let mut p = icon_pix(&SHGetImageList::<IImageList>(size).ok()?, index)?;
+    fix_alpha(&mut p.bgra);
+    Some(p)
+}
+
+/// Icon `index` of `list` as stored, before fix_alpha: all alpha 0 here means a mask-only icon, not a photo.
+pub(crate) unsafe fn icon_pix(list: &IImageList, index: i32) -> Option<Pix> {
     let icon = list.GetIcon(index, ILD_NORMAL.0).ok()?;
     let mut ii = ICONINFO::default();
     let got = GetIconInfo(icon, &mut ii).is_ok();
@@ -189,7 +195,7 @@ unsafe fn list_icon(size: i32, index: i32) -> Option<Pix> {
     if !got {
         return None;
     }
-    let p = (!ii.hbmColor.is_invalid()).then(|| bitmap_pix(ii.hbmColor)).flatten();
+    let p = (!ii.hbmColor.is_invalid()).then(|| bitmap_raw(ii.hbmColor)).flatten();
     _ = DeleteObject(ii.hbmColor.into());
     _ = DeleteObject(ii.hbmMask.into());
     p
@@ -338,6 +344,13 @@ pub(crate) unsafe fn shell_pic(path: &str, w: i32, h: i32, flags: SIIGBF) -> Opt
 }
 
 pub(crate) unsafe fn bitmap_pix(bmp: HBITMAP) -> Option<Pix> {
+    let mut p = bitmap_raw(bmp)?;
+    fix_alpha(&mut p.bgra);
+    Some(p)
+}
+
+// The bitmap's pixels as 32-bit top-down BGRA, alpha as it comes.
+unsafe fn bitmap_raw(bmp: HBITMAP) -> Option<Pix> {
     let mut bm = BITMAP::default();
     GetObjectW(bmp.into(), size_of::<BITMAP>() as i32, Some(&mut bm as *mut _ as _));
     let (w, h) = (bm.bmWidth, bm.bmHeight.abs());
@@ -360,7 +373,6 @@ pub(crate) unsafe fn bitmap_pix(bmp: HBITMAP) -> Option<Pix> {
     if rows != h || rows == 0 {
         return None;
     }
-    fix_alpha(&mut bgra);
     Some(Pix { w, h, bgra })
 }
 

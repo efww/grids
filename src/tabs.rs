@@ -349,9 +349,7 @@ pub(crate) unsafe fn paint_tabs(
         // no icon to draw (none known, GetIcon failed): the name stays where it was without icons
         let mut left = r.left + s(8);
         if let (Some((il, ixs)), Some(ir)) = (icons, tab_icon_rect(*r, tabs.len() > 1, dpi)) {
-            if let Some(icon) = ixs.get(k).filter(|&&n| n >= 0).and_then(|&n| il.GetIcon(n, ILD_NORMAL.0).ok()) {
-                _ = DrawIconEx(dc, ir.left, ir.top, icon, ir.right - ir.left, ir.bottom - ir.top, 0, None, DI_NORMAL);
-                _ = DestroyIcon(icon);
+            if ixs.get(k).is_some_and(|&n| n >= 0 && shell_icon(dc, il, n, ir)) {
                 left = r.left + s(28);
             }
         }
