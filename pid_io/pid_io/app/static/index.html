@@ -871,10 +871,10 @@ function ckCtl(it, v) {
   if (it.on) return `<button class="tog ${String(v)===it.on?"on":""}" data-cktog="${it.id}"></button><span class="def" style="width:84px">${esc(v)}</span>`;
   if (it.type === "select") return `<select data-ck="${it.id}">${it.options.map(o=>`<option ${o===String(v)?"selected":""}>${esc(o)}</option>`).join("")}</select>`;
   if (it.type === "text") return `<input type="text" data-ck="${it.id}" value="${esc(v)}" style="width:230px">`;
-  const pct = it.step < 1;
+  const pct = !!it.pct;
   return `<input type="number" data-ck="${it.id}" step="${it.step||1}" min="0" value="${esc(v)}">${pct?`<span class="def">${Math.round(v*100)}%</span>`:(it.unit?`<span class="def">${esc(it.unit)}</span>`:"")}`;
 }
-function ckDef(it) { return it.step < 1 ? Math.round(it.default*100)+"%" : it.default + (it.unit||""); }
+function ckDef(it) { return it.pct ? Math.round(it.default*100)+"%" : it.default + (it.unit||""); }
 function ckBranch(g, V) {
   const shc = {"OS (전체 차폐)":"OS","IS+OS (개별+전체 차폐)":"IS-OS","비차폐":""};
   const by = id => g.items.find(x => x.id === id);
@@ -903,7 +903,7 @@ function ckSide(d) {
   const s = d.summary, K = s.kinds || {};
   const kv = (k, lab) => K[k] ? `<div class="kv"><span>${lab}</span><b>${fmt(K[k].count)}가닥 · ${fmt(K[k].length)} m</b></div>` : "";
   return `<div class="panel">
-    <div style="font-size:12.5px;color:var(--sub)">케이블 총 길이 (가정 길이)</div>
+    <div style="font-size:12.5px;color:var(--sub)">케이블 총 길이 ${s.by_plot?`(PLOT 좌표 ${fmt(s.by_plot)}가닥 · 나머지 가정)`:"(가정 길이)"}</div>
     <div style="font-size:46px;font-weight:300;line-height:1.05;letter-spacing:-.03em"><span class="uline">${fmt(s.length)}</span><small style="font-size:16px;color:var(--sub)"> m</small></div>
     <div style="font-size:12.5px;color:var(--sub);margin:8px 0 10px">${fmt(s.cables)}가닥 · JB ${fmt(s.jbs)}개 · JB 평균 채움 ${Math.round(s.jb_fill*100)}%</div>
     ${kv("분기","분기 (계기→JB)")}${kv("멀티","멀티 (JB→룸)")}${kv("패키지","패키지 제어반→룸")}${kv("MCC","전기실(IRP)→룸")}${kv("통신","통신 직결")}
@@ -931,31 +931,93 @@ function ckTables(d) {
     ${d.cables_total>d.cables.length?`<p class="def" style="margin-top:6px">화면에는 ${fmt(d.cables.length)}가닥만 표시합니다. 전체 ${fmt(d.cables_total)}가닥은 엑셀에 들어갑니다.</p>`:""}`;
   return `<div class="panel" style="margin-top:16px"><div class="tabs" style="margin-bottom:10px">${vt("spec","사양별 물량")}${vt("jb",`JB 리스트 (${d.jbs.length})`)}${vt("cab",`케이블 스케줄 (${d.cables_total})`)}</div>${body}</div>`;
 }
+/* ---- PLOT PLAN tab (inside step 6) */
+const PL = {pick:null};
+function plotOverlay(pp) {
+  const [W,H] = pp.size, g = pp.geo || {}, k = Math.max(W,H)/700;
+  const room = (pp.questions.find(q=>q.id==="room")||{}).pos, irp = (pp.questions.find(q=>q.id==="irp")||{}).pos;
+  const L = (x,y,c,w) => room ? `<polyline points="${x},${y} ${room[0]},${y} ${room[0]},${room[1]}" fill="none" stroke="${c}" stroke-width="${w*k}" opacity=".55"/>` : "";
+  const routes = (g.routes||[]).map(r => L(r[0], r[1], r[2]==="pkg"?"#d1335d":r[2]==="irp"?"#7e66cb":"#f08a24", r[2]==="jb"?1.6:1.1)).join("");
+  const inst = Object.values(g.inst||{}).map(p => `<circle cx="${p[0]}" cy="${p[1]}" r="${2.2*k}" fill="${p[2].startsWith("추정")?"#9aa":"#15ad60"}"/>`).join("");
+  const jbs = (g.jbs||[]).map(j => `<rect x="${j[1]-4*k}" y="${j[2]-4*k}" width="${8*k}" height="${8*k}" fill="#f08a24" stroke="#fff" stroke-width="${.8*k}"><title>${esc(j[0])}</title></rect>`).join("");
+  const pk = Object.entries(g.pkgs||{}).map(([n,p]) => `<rect x="${p[0]-3.5*k}" y="${p[1]-3.5*k}" width="${7*k}" height="${7*k}" fill="#d1335d"><title>${esc(n)}</title></rect>`).join("");
+  const mark = (p,c,lab) => p ? `<circle cx="${p[0]}" cy="${p[1]}" r="${11*k}" fill="none" stroke="${c}" stroke-width="${3*k}"/><text x="${p[0]+14*k}" y="${p[1]+5*k}" font-size="${15*k}" font-weight="700" fill="${c}">${lab}</text>` : "";
+  return `<svg viewBox="0 0 ${W} ${H}" style="position:absolute;inset:0;width:100%;height:100%" id="plsvg">${routes}${inst}${pk}${jbs}${mark(room,"#2c7fc0","제어실")}${mark(irp,"#7e66cb","IRP")}</svg>`;
+}
+function plotTab(d) {
+  const pp = d.plot;
+  const card = (kind, title, desc, fn) => `<div class="fcard ${fn?"ok":"opt"}" style="min-height:120px"><div class="hd">${esc(title)}<span class="st">${fn?"올림":"없음"}</span></div>
+    <div class="bd"><div class="n">${fn?`<span class="fn">${esc(fn)}</span>`:esc(desc)}</div>
+    <label class="btn sm line">${fn?"다른 파일":"파일 선택"}<input type="file" accept=".pdf" data-plup="${kind}"></label></div></div>`;
+  const files = `<div class="grid g2" style="margin-bottom:14px">${card("plot","PLOT PLAN (벡터 PDF)","최신 PLOT PLAN. 장비 태그 글자가 P&ID와 같은 형식이면 위치가 자동으로 잡힙니다.", pp&&pp.file)}
+    ${card("plotref","축척 참고 도면 (선택)","축척 표기가 없는 확대본일 때, 축척(1:N)이 적힌 이전 PLOT PLAN을 올리면 같은 장비 크기로 축척을 맞춥니다.", pp&&pp.ref)}</div>`;
+  if (!pp) return files + `<div class="empty">PLOT PLAN을 올리면 계기·JB·제어실 위치 초안을 그리고 케이블 길이를 도면 좌표로 계산합니다.</div>`;
+  const st = s => s==="ok" ? `<span class="chip g">확인</span>` : s==="check" ? `<span class="chip y">확인 필요</span>` : `<span class="chip r">입력 필요</span>`;
+  const qs = pp.questions.map(q => `<div class="ritem" style="cursor:default">
+    <div class="a"><b>${esc(q.title)}</b>${st(q.state)}</div><div class="b">${esc(q.text)}${q.why?`<br><span style="color:var(--mute)">${esc(q.why)}</span>`:""}</div>
+    <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
+      ${q.state!=="ok" && (q.id!=="scale"? q.pos : pp.m_per_pt) ? `<button class="btn sm" data-plok="${q.id}">맞음</button>`:""}
+      ${q.id==="scale" ? `<input type="number" id="plscale" placeholder="1:N 의 N" style="width:110px"><button class="btn sm line" id="plscaleb">축척 입력</button>`
+        : `<button class="btn sm line" data-plpick="${q.id}">${PL.pick===q.id?"도면을 누르세요…":"도면에서 위치 지정"}</button>`}</div></div>`).join("");
+  const s = d.summary;
+  return files + `<div style="display:flex;gap:16px;align-items:flex-start">
+    <div style="width:330px;flex:none">
+      <div class="panel" style="padding:0">${qs}
+        <div class="ritem" style="cursor:default"><div class="a"><b>계기 위치</b></div><div class="b">장비 태그 위치 ${fmt(pp.located["장비"])} · 추정 ${fmt(pp.located["추정"])} (시트 장비 중심·반복 배치) · 미정 ${fmt(pp.unlocated)}<br>PLOT 장비 글자 ${fmt(pp.equipment)}개</div></div>
+        <div class="ritem" style="cursor:default"><div class="a"><b>PLOT 길이 적용</b></div><div class="b">${fmt(s.by_plot||0)} / ${fmt(s.cables)}가닥${d.values.plot_use!=="사용"?" · 지금은 '가정 길이만' 설정":""}</div></div>
+      </div>
+      <div class="legend" style="margin-top:10px"><span><i style="background:#15ad60"></i>계기(장비 위치)</span><span><i style="background:#9aa"></i>계기(추정)</span><span><i style="background:#f08a24"></i>JB</span><span><i style="background:#d1335d"></i>패키지 제어반</span><span><i style="background:#2c7fc0"></i>제어실</span><span><i style="background:#7e66cb"></i>IRP</span></div>
+      <p class="xnote">선은 직각 경로 초안입니다. 높이(랙 EL, UG/AG)는 '경로 · 높이 (Z)' 탭 값으로 더합니다.</p>
+    </div>
+    <div class="viewer" style="flex:1;height:calc(100vh - 260px);cursor:${PL.pick?"crosshair":"default"}">
+      <div style="position:relative;width:100%;max-width:${Math.round(pp.size[0]*50/72)*2}px" id="plwrap"><img src="/api/${P("plot_png")}?v=${encodeURIComponent(pp.file)}" style="width:100%;display:block" id="plimg">${plotOverlay(pp)}</div>
+    </div></div>`;
+}
+function bindPlot(m, upd) {
+  m.querySelectorAll("[data-plup]").forEach(inp => inp.onchange = async () => {
+    const f = inp.files[0]; if (!f) return;
+    toast("올리는 중… PLOT PLAN 읽기는 몇 초 걸립니다");
+    try { await api(P("upload?kind="+inp.dataset.plup), {method:"POST", headers:{"X-Filename":encodeURIComponent(f.name)}, body:f}); upd({}); }
+    catch(e) { toast(e.message, true); } });
+  m.querySelectorAll("[data-plok]").forEach(b => b.onclick = () => plotPost({confirm:b.dataset.plok}, m));
+  m.querySelectorAll("[data-plpick]").forEach(b => b.onclick = () => { PL.pick = PL.pick===b.dataset.plpick ? null : b.dataset.plpick; renderCable(m); });
+  const sb = $("#plscaleb"); if (sb) sb.onclick = () => { const n = +$("#plscale").value; if (!n) return toast("축척 1:N의 N을 입력하세요", true); plotPost({scale_n:n}, m); };
+  const w = $("#plwrap"); if (w) w.onclick = e => {
+    if (!PL.pick || !CK.data.plot) return;
+    const r = w.getBoundingClientRect(), [W,H] = CK.data.plot.size;
+    const x = (e.clientX - r.left) / r.width * W, y = (e.clientY - r.top) / r.height * H;
+    const k = PL.pick; PL.pick = null; plotPost({[k]: [x, y]}, m); };
+}
+async function plotPost(body, m) {
+  try { CK.data = await post(P("plot"), body); CK.data._p = S.project; if (S.screen==="cable") renderCable(m); } catch(e) { toast(e.message, true); }
+}
+
 async function renderCable(m) {
   const t = S.tok;
   if (!CK.data || CK.data._p !== S.project) { CK.data = await api(P("cable")); CK.data._p = S.project; }
   if (t !== S.tok) return;
   const d = CK.data, G = d.schema, V = d.values;
-  if (CK.tab >= G.length) CK.tab = 0;
-  const g = G[CK.tab];
+  if (CK.tab >= G.length || CK.tab < -1) CK.tab = 0;
+  const g = G[Math.max(0, CK.tab)];
   m.className = "ext-page";
   m.innerHTML = `
   <div class="head"><div><div class="eyebrow">STEP 6</div><h1>케이블 · JB</h1>
-    <p class="lead">만들어진 인덱스의 IO로 분기 케이블, JB, 멀티 케이블을 뽑습니다. PLOT PLAN 전이라 길이는 가정입니다. (변경 ${d.changed}건)</p></div>
+    <p class="lead">만들어진 인덱스의 IO로 분기 케이블, JB, 멀티 케이블을 뽑습니다. PLOT PLAN이 있으면 도면 좌표로, 없으면 가정 길이로 계산합니다. (변경 ${d.changed}건)</p></div>
     <div style="display:flex;gap:8px"><button class="btn line" id="ckreset">기본값으로</button><button class="btn" id="ckmk">케이블 엑셀 만들기</button></div></div>
   <div style="display:flex;gap:20px;align-items:flex-start">
     <div style="flex:1;min-width:0">
       <div class="panel">
-        <div class="tabs">${G.map((x,i)=>`<a class="${i===CK.tab?"on":""}" data-ckt="${i}">${esc(x.title)}</a>`).join("")}</div>
-        <p class="xnote" style="margin-top:10px">${esc(g.lead)}</p>
-        ${g.id === "branch" ? ckBranch(g, V) : ckItems(g, V, d)}
+        <div class="tabs">${G.map((x,i)=>`<a class="${i===CK.tab?"on":""}" data-ckt="${i}">${esc(x.title)}</a>`).join("")}<a class="${CK.tab===-1?"on":""}" data-ckt="-1">PLOT PLAN 초안${d.plot?` <span class="chip b" style="font-size:10.5px;padding:0 5px">${fmt(d.summary.by_plot||0)}</span>`:""}</a></div>
+        ${CK.tab === -1 ? `<div style="margin-top:12px">${plotTab(d)}</div>` : `<p class="xnote" style="margin-top:10px">${esc(g.lead)}</p>
+        ${g.id === "branch" ? ckBranch(g, V) : ckItems(g, V, d)}`}
       </div>
       ${ckTables(d)}
     </div>
     <div class="side">${ckSide(d)}</div>
   </div>`;
   const upd = async body => { try { CK.data = await post(P("cable"), body); CK.data._p = S.project; if (S.screen==="cable") renderCable(m); } catch(e) { toast(e.message, true); } };
-  m.querySelectorAll("[data-ckt]").forEach(a => a.onclick = () => { CK.tab = +a.dataset.ckt; renderCable(m); });
+  m.querySelectorAll("[data-ckt]").forEach(a => a.onclick = () => { CK.tab = +a.dataset.ckt; PL.pick = null; renderCable(m); });
+  bindPlot(m, upd);
   m.querySelectorAll("[data-ckv]").forEach(a => a.onclick = () => { CK.view = a.dataset.ckv; renderCable(m); });
   m.querySelectorAll("[data-ck]").forEach(el => el.onchange = () => upd({set:{[el.dataset.ck]: el.value}}));
   m.querySelectorAll("[data-cktog]").forEach(el => el.onclick = () => { const it = G.flatMap(x=>x.items).find(x=>x.id===el.dataset.cktog);

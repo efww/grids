@@ -35,7 +35,7 @@ from ..pipeline import ORIGINS, PROTO, apply_overrides, compute, impact, load_ex
 
 STATIC = Path(__file__).resolve().parent / "static"
 HOME = Path(os.environ.get("PID_IO_HOME", Path.cwd() / "projects")).resolve()
-KINDS = {"pdf": ".pdf", "template": ".xlsx", "ref": ".xlsx", "concept": ".xlsx"}
+KINDS = {"pdf": ".pdf", "template": ".xlsx", "ref": ".xlsx", "concept": ".xlsx", "plot": ".pdf", "plotref": ".pdf"}
 COLORS = {"FIELD": (0.08, 0.68, 0.38), "DCS_SHARED": (0.31, 0.63, 0.88), "PANEL_CR": (0.31, 0.63, 0.88),
           "PANEL_BEHIND": (0.5, 0.5, 0.5), "PLC": (0.49, 0.4, 0.8), "ESD_INTERLOCK": (0.82, 0.2, 0.36),
           "DCS_INTERLOCK": (1, 0.73, 0), "HW_INTERLOCK": (1, 0.73, 0)}
@@ -704,16 +704,113 @@ def _area_map(name: str) -> dict:
     return ((load_protocol(am) or {}).get("map") or {}) if am.exists() else {}
 
 
+# ------------------------------------------------------------------ plot plan
+def _plot_dec(name: str) -> dict:
+    f = pdir(name) / "plot_decisions.json"
+    return json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
+
+
+def plot_read(name: str):
+    """Plot plan read once per file version (plot.json); None when no plot uploaded."""
+    from .. import plot as plotmod
+    d, files = pdir(name), meta(name).get("files", {})
+    if not files.get("plot"):
+        return None
+    pf = d / "input" / files["plot"]
+    rf = d / "input" / files["plotref"] if files.get("plotref") else None
+    key = [files["plot"], pf.stat().st_mtime_ns, files.get("plotref"), rf.stat().st_mtime_ns if rf else 0]
+    cj = d / "cache" / "plot.json"
+    if cj.exists():
+        old = json.loads(cj.read_text(encoding="utf-8"))
+        if old.get("_key") == key:
+            return old
+    pl = plotmod.read_plot(pf, rf)
+    pl["_key"] = key
+    (d / "cache").mkdir(exist_ok=True)
+    cj.write_text(json.dumps(pl, ensure_ascii=False), encoding="utf-8")
+    (d / "cache" / "plot_50.png").unlink(missing_ok=True)
+    return pl
+
+
+def plot_layout(name: str, rows):
+    from .. import plot as plotmod
+    pl = plot_read(name)
+    if not pl:
+        return None
+    try:
+        pt = page_texts_cached(name)
+    except Exception:
+        pt = {}
+    return plotmod.Layout(pl, pt, [r.unit for r in rows if r.unit], _plot_dec(name))
+
+
+def plot_png(name: str) -> Path:
+    d = pdir(name)
+    f = d / "cache" / "plot_50.png"
+    if not f.exists():
+        plot_read(name)
+        doc = fitz.open(d / "input" / meta(name)["files"]["plot"])
+        doc[0].get_pixmap(dpi=50).save(f)
+    return f
+
+
+def plot_update(name: str, b: dict):
+    d = pdir(name)
+    dd = _plot_dec(name)
+    if b.get("reset"):
+        dd = {}
+    for k in ("room", "irp"):
+        if b.get(k):
+            dd[k] = [float(b[k][0]), float(b[k][1])]
+    if b.get("scale_n"):                            # paper scale 1:N
+        dd["m_per_pt"] = float(b["scale_n"]) * 25.4 / 72 / 1000
+    if b.get("confirm"):
+        dd.setdefault("confirmed", [])
+        if b["confirm"] not in dd["confirmed"]:
+            dd["confirmed"].append(b["confirm"])
+    (d / "plot_decisions.json").write_text(json.dumps(dd, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
 def cable_result(name: str):
     c = computed(name)
     if not c:
         raise ValueError("먼저 추출을 실행해 주세요")
     s = cable.load(pdir(name))
-    return s, cable.build(c[4], s, _area_map(name))
+    lay = plot_layout(name, c[4])
+    return s, cable.build(c[4], s, _area_map(name), lay), lay
+
+
+def plot_view(name: str, lay, res):
+    pl = plot_read(name)
+    if not pl:
+        return None
+    dd = _plot_dec(name)
+    conf = set(dd.get("confirmed", []))
+    sc = pl["scale"]
+    m = lay.m_per_pt if lay else sc["m_per_pt"]
+    q = []
+    q.append({"id": "scale", "title": "축척",
+              "text": (f"1pt = {m:.3f} m (종이 1:{m / (25.4 / 72) * 1000:.0f} 상당)" if m else "축척을 찾지 못했습니다"),
+              "why": ("사용자 입력" if dd.get("m_per_pt") else " / ".join(sc["evidence"][:4])),
+              "state": "ok" if (dd.get("m_per_pt") or "scale" in conf) else ("ask" if (not m or not sc["confident"]) else "check")})
+    for k, lab, words in (("room", "제어실 (DCS/ESD 캐비닛)", "CCR / MCB / CONTROL"), ("irp", "IRP (모터 신호 출발점)", "IRP / MCC")):
+        p = getattr(lay, k) if lay else None
+        src = getattr(lay, f"{k}_src") if lay else ""
+        q.append({"id": k, "title": lab,
+                  "text": (f"도면의 {words} 글자 위치로 잡았습니다" if src == "도면 글자" else
+                           "사용자가 지정한 위치" if src else f"{words} 글자를 찾지 못했습니다. 도면에서 위치를 눌러 주세요"),
+                  "state": "ok" if (src == "사용자 지정" or k in conf) else ("check" if p else "ask"), "pos": p})
+    g = (res or {}).get("geo") or {}
+    st = {"장비": 0, "추정": 0}
+    for x in (g.get("inst") or {}).values():
+        st["추정" if x[2].startswith("추정") else "장비"] += 1
+    return {"file": meta(name)["files"].get("plot"), "ref": meta(name)["files"].get("plotref"),
+            "size": pl["size"], "m_per_pt": m, "questions": q, "geo": g,
+            "located": st, "unlocated": g.get("unlocated", 0), "equipment": len(pl["equipment"])}
 
 
 def cable_view(name: str):
-    s, res = cable_result(name)
+    s, res, lay = cable_result(name)
     trunk_areas = sorted({j["area"] for j in res["jbs"] if j["kind"] == "필드"}
                          | {c.get("unit") or "00" for c in res["cables"] if c["kind"] in ("패키지", "통신")})
     return {"schema": cable.SCHEMA, "values": s["values"], "trunk": s["trunk"], "preset": s.get("preset", ""),
@@ -721,7 +818,8 @@ def cable_view(name: str):
             "summary": res["summary"], "areas": trunk_areas,
             "jbs": [{k: j[k] for k in ("no", "kind", "area", "system", "cls", "is", "size", "used", "spare", "multi",
                                        "dwgs")} for j in res["jbs"]],
-            "cables": res["cables"][:400], "cables_total": len(res["cables"])}
+            "cables": res["cables"][:400], "cables_total": len(res["cables"]),
+            "plot": plot_view(name, lay, res)}
 
 
 def cable_update(name: str, b: dict):
@@ -747,7 +845,7 @@ def cable_update(name: str, b: dict):
 
 
 def cable_export(name: str):
-    s, res = cable_result(name)
+    s, res, _ = cable_result(name)
     out = pdir(name) / "output" / f"Cable_Schedule_{safe_name(name)}_{time.strftime('%Y%m%d_%H%M')}.xlsx"
     cable.write_xlsx(res, s, out, name)
     return {"files": [out.name]}
@@ -1025,6 +1123,8 @@ class H(BaseHTTPRequestHandler):
                     m["pdf_info"] = {"pages": doc.page_count,
                                      "vector": sum(1 for p in doc if p.get_text().strip()) > doc.page_count / 2}
                 save_meta(name, m)
+                if kind == "plot":                       # positions picked on an older plot do not carry over
+                    (d / "plot_decisions.json").unlink(missing_ok=True)
                 if kind == "pdf":
                     shutil.rmtree(d / "cache" / "raster", ignore_errors=True)
                     (d / "cache" / "page_texts.json").unlink(missing_ok=True)
@@ -1126,6 +1226,12 @@ class H(BaseHTTPRequestHandler):
                     if method == "POST":
                         return self._send(200, cable_update(name, self._json()))
                     return self._send(200, cable_view(name))
+            if act == "plot" and method == "POST":
+                with CALC:
+                    plot_update(name, self._json())
+                    return self._send(200, cable_view(name))
+            if act == "plot_png":
+                return self._send(200, plot_png(name).read_bytes(), "image/png", {"Cache-Control": "no-cache"})
             if act == "cable_export" and method == "POST":
                 with CALC:
                     return self._send(200, cable_export(name))

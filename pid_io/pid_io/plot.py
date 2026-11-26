@@ -219,3 +219,126 @@ if __name__ == "__main__":                       # python -m pid_io.plot PLOT.pd
     import sys
     print(json.dumps(read_plot(Path(sys.argv[1]), Path(sys.argv[2]) if len(sys.argv) > 2 else None),
                      ensure_ascii=False, indent=1)[:4000])
+
+
+# ------------------------------------------------------------------ layout: where each index row sits on the plot
+KEY = re.compile(r"^(\d{2})-([A-Z]{1,4})-(\d{3})")
+
+
+def _keys(tag: str):
+    """'10-PK-301A/B' -> ['10-PK-301A', '10-PK-301B', '10-PK-301'];  '10-PK-6021' -> ['10-PK-602'] ...
+    Package numbers in the index carry a unit letter or digit after the 3-digit number."""
+    tag = (tag or "").strip().replace("PKG-", "PK-")
+    m = KEY.match(tag)
+    if not m:
+        return []
+    base = m.group(0)
+    rest = tag[len(base):]
+    out = [base + s for s in rest.split("/") if s and s.isalpha() and len(s) == 1] if rest else []
+    if rest and "/" in rest:
+        first = rest.split("/")[0]
+        out = [base + first] + [base + s for s in rest.split("/")[1:]]
+    elif rest and rest.isalpha() and len(rest) == 1:
+        out = [base + rest]
+    return out + [base]
+
+
+def _reading_order(pts, tol=25):
+    """top-to-bottom rows (within tol pt), left-to-right inside a row."""
+    pts = sorted(pts, key=lambda p: p[1])
+    rows, cur = [], []
+    for p in pts:
+        if cur and abs(p[1] - cur[0][1]) > tol:
+            rows.append(cur)
+            cur = []
+        cur.append(p)
+    if cur:
+        rows.append(cur)
+    return [p for r in rows for p in sorted(r, key=lambda q: q[0])]
+
+
+class Layout:
+    """Plot positions for rooms, panels and index rows. Coordinates in plot pt; m = pt * m_per_pt."""
+
+    def __init__(self, plot: dict, page_texts: dict | None = None, units: list[str] | None = None,
+                 decisions: dict | None = None):
+        dec = decisions or {}
+        self.plot = plot
+        self.m_per_pt = dec.get("m_per_pt") or plot["scale"]["m_per_pt"]
+        self.pos, self.guessed = {}, set()             # key -> (x, y)
+        units = sorted(set(units or []))
+        for tag, pts in plot["equipment"].items():
+            pts = [tuple(p) for p in pts]
+            m = KEY.match(tag.replace("PKG-", "PK-"))
+            if len(pts) > 1 and m and units:
+                # one label drawn per train with the first train's prefix: spread over the trains in reading order
+                u0 = m.group(1)
+                later = [u for u in units if u >= u0]
+                for u, p in zip(later, _reading_order(pts)):
+                    for k in _keys(u + tag[2:]):
+                        self.pos.setdefault(k, p)
+                        if u != u0:
+                            self.guessed.add(k)
+            for k in _keys(tag):
+                self.pos.setdefault(k, pts[0])
+        # P&ID sheet -> equipment printed on it (anchor for instruments without Equipment No)
+        self.sheet_eq = {}
+        for dwg, val in (page_texts or {}).items():
+            text = val[1] if isinstance(val, (list, tuple)) else str(val)
+            tags = {t for t in re.findall(r"\b\d{2}-[A-Z]{1,4}-\d{3}[A-Z]?\b", text)}
+            self.sheet_eq[dwg] = sorted(tags)
+        self.room = tuple(dec["room"]) if dec.get("room") else self._label_pos(plot["rooms"], ("CCR", "MCB", "CONTROL"))
+        self.irp = tuple(dec["irp"]) if dec.get("irp") else self._label_pos(plot["panels"], ("IRP",)) or \
+            self._label_pos(plot["panels"], ("MCC",))
+        self.room_src = "사용자 지정" if dec.get("room") else ("도면 글자" if self.room else "")
+        self.irp_src = "사용자 지정" if dec.get("irp") else ("도면 글자" if self.irp else "")
+
+    @staticmethod
+    def _label_pos(labels, words):
+        for w in words:
+            hit = [l for l in labels if re.search(rf"\b{w}\b", l["text"].upper())]
+            if hit:
+                return (statistics.mean(l["x"] for l in hit), statistics.mean(l["y"] for l in hit))
+        return None
+
+    def _find(self, tag, unit=""):
+        for k in _keys(tag):
+            if k in self.pos:
+                return self.pos[k], ("추정(반복 배치)" if k in self.guessed else "장비")
+        return None, ""
+
+    def _centroid(self, tags, unit=""):
+        pts = []
+        for t in tags:
+            if unit and KEY.match(t) and t[:2] != unit:
+                t = unit + t[2:]                     # sheet drawn for the first train, row belongs to another
+            p, _ = self._find(t)
+            if p:
+                pts.append(p)
+        if not pts:
+            return None
+        return (statistics.mean(p[0] for p in pts), statistics.mean(p[1] for p in pts))
+
+    def unit_anchor(self, unit):
+        pts = [p for k, p in self.pos.items() if k[:2] == unit]
+        if not pts:
+            return None
+        return (statistics.mean(p[0] for p in pts), statistics.mean(p[1] for p in pts))
+
+    def locate(self, row):
+        """-> ((x, y) or None, source)"""
+        for t in (row.equip, row.vendor_pkg, row.src_tag if KEY.match(row.src_tag or "") else ""):
+            p, src = self._find(t) if t else (None, "")
+            if p:
+                return p, src
+        p = self._centroid(self.sheet_eq.get(row.dwg, []), row.unit)
+        if p:
+            return p, f"추정({row.dwg} 시트 장비 중심)"
+        p = self.unit_anchor(row.unit)
+        if p:
+            return p, f"추정(유닛 {row.unit} 장비 중심)"
+        return None, "위치 미정"
+
+    def dist(self, a, b):
+        """Manhattan distance in m (cables run along orthogonal routes)."""
+        return (abs(a[0] - b[0]) + abs(a[1] - b[1])) * self.m_per_pt

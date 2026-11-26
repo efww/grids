@@ -33,8 +33,9 @@ def _sel(id, name, options, default, help="", on=None):
     return d
 
 
-def _num(id, name, default, unit="", help="", step=1):
-    return {"id": id, "name": name, "type": "number", "default": default, "unit": unit, "help": help, "step": step}
+def _num(id, name, default, unit="", help="", step=1, pct=False):
+    return {"id": id, "name": name, "type": "number", "default": default, "unit": unit, "help": help, "step": step,
+            "pct": pct}
 
 
 def _txt(id, name, default, help=""):
@@ -63,7 +64,7 @@ SCHEMA = [
          _sel("jb_size_A", "아날로그 JB 크기", [f"{n}P" for n in MULTI_STD], "24P"),
          _sel("jb_size_D", "디지털 JB 크기", [f"{n}P" for n in MULTI_STD], "24P"),
          _sel("jb_size_R", "RTD JB 크기", [f"{n}T" for n in MULTI_STD], "12T"),
-         _num("jb_spare", "JB 스페어율", 0.2, "", "사용 페어 × (1 + 스페어율) ≤ JB 크기. 20%면 24P JB에 20페어까지", 0.05),
+         _num("jb_spare", "JB 스페어율", 0.2, "", "사용 페어 × (1 + 스페어율) ≤ JB 크기. 20%면 24P JB에 20페어까지", 0.05, True),
          _sel("multi_sizing", "멀티 케이블 크기", ["JB 크기와 같게", "사용+스페어 최소 규격"], "JB 크기와 같게",
               "최소 규격: 사용 페어 × (1+스페어율)을 담는 가장 작은 표준 규격 (6/12/24/36/48)"),
          _sel("multi_sq", "멀티 케이블 굵기 (SQ)", SQ, "1.25"),
@@ -92,13 +93,31 @@ SCHEMA = [
               "멀티페어 집합", "MCC 신호는 필드 JB를 거치지 않고 전기실에서 룸으로 바로 갑니다"),
          _sel("mcc_sq", "MCC 케이블 굵기 (SQ)", SQ, "1.25"),
      ]},
-    {"id": "len", "title": "길이 가정 (PLOT PLAN 전)",
-     "lead": "PLOT PLAN이 없어서 길이는 전부 가정입니다. 유닛별 간선 길이는 아래 표에서 따로 줄 수 있습니다.",
+    {"id": "route", "title": "경로 · 높이 (Z)",
+     "lead": "PLOT PLAN이 있으면 수평 길이는 도면 좌표(직각 경로)로, 높이는 아래 값으로 더합니다. 없으면 다음 탭의 가정 길이를 씁니다.",
+     "items": [
+         _sel("plot_use", "PLOT PLAN 좌표로 길이 계산", ["사용", "가정 길이만"], "사용",
+              "PLOT PLAN을 올리고 축척·제어실 위치가 잡히면 적용됩니다", on="사용"),
+         _sel("main_route", "간선 (JB → 룸)", ["랙 (AG)", "UG 트렌치", "AG 서포트"], "랙 (AG)"),
+         _num("rack_el", "랙 높이 (EL)", 6.0, "m", "케이블 트레이가 놓이는 랙 단 높이", 0.5),
+         _sel("no_rack", "랙 없는 구간 (계기 → JB)", ["AG 서포트", "UG 트렌치"], "AG 서포트",
+              "분기 케이블. 수소 등 가스 체류 우려가 있으면 보통 AG"),
+         _num("sup_el", "AG 서포트 높이 (EL)", 3.0, "m", "", 0.5),
+         _num("ug_depth", "UG 매설 깊이", 0.8, "m", "", 0.1),
+         _num("inst_el", "계기 높이 (EL)", 1.5, "m", "", 0.1),
+         _num("jb_el", "JB 높이 (EL)", 1.2, "m", "", 0.1),
+         _num("room_el", "룸 케이블 인입 높이 (EL)", 0.0, "m", "케이블 피트·바닥이면 0", 0.1),
+         _num("route_factor", "수평 우회계수", 1.1, "", "직각 경로 × 계수 (랙 굴곡·우회)", 0.05),
+         _num("field_min", "계기 → JB 최소 수평 길이", 5, "m", "같은 장비 옆이라 도면 거리가 0에 가까울 때"),
+         _num("jb_radius", "JB 반경", 40, "m", "PLOT 좌표가 있으면 이 거리 안의 계기끼리 JB로 묶습니다 (분리 기준은 그대로)"),
+     ]},
+    {"id": "len", "title": "길이 가정",
+     "lead": "PLOT PLAN이 없거나 위치를 못 찾은 케이블에 쓰는 가정 길이입니다. 유닛별 간선 길이는 아래 표에서 따로 줄 수 있습니다.",
      "items": [
          _num("len_field", "계기 → JB", 30, "m", "분기 케이블 평균 길이"),
          _num("len_trunk", "JB → 룸 (기본)", 200, "m", "랙을 타는 간선. 유닛별 값이 있으면 그 값"),
          _num("len_mcc", "전기실(IRP/MCC) → 룸", 50, "m", "PLOT PLAN이 들어오면 전기실과 룸 위치로 계산"),
-         _num("len_margin", "길이 여유율", 0.1, "", "단말·처짐·우회", 0.05),
+         _num("len_margin", "길이 여유율", 0.1, "", "단말·처짐·우회", 0.05, True),
          _num("len_round", "길이 올림 단위", 5, "m"),
          _txt("room_DCS", "DCS 도착 룸", "CCR"),
          _txt("room_ESD", "ESD 도착 룸", "CCR"),
@@ -258,8 +277,79 @@ def _trunk(area: str, v: dict, trunk: dict) -> float:
 
 
 # ------------------------------------------------------------------ build
-def build(rows, s: dict, area_map: dict | None = None):
+class _Geo:
+    """Lengths from the plot plan: horizontal = orthogonal distance x detour factor, vertical from the Z settings."""
+
+    def __init__(self, layout, v):
+        self.L, self.v = layout, v
+        self.cache = {}
+        self.geo = {"inst": {}, "jbs": [], "pkgs": {}, "routes": [], "room": layout.room, "irp": layout.irp,
+                    "unlocated": 0, "guessed": 0}
+
+    def loc(self, r):
+        if r.tag not in self.cache:
+            p, src = self.L.locate(r)
+            self.cache[r.tag] = (p, src)
+            if p is None:
+                self.geo["unlocated"] += 1
+            else:
+                if src.startswith("추정"):
+                    self.geo["guessed"] += 1
+                self.geo["inst"][r.tag] = [round(p[0], 1), round(p[1], 1), src]
+        return self.cache[r.tag]
+
+    def zf(self, start, end):
+        """vertical metres for a run whose ends sit at `start` / `end` EL, routed per main_route."""
+        v = self.v
+        mode = v["main_route"]
+        if mode.startswith("랙"):
+            lvl = float(v["rack_el"])
+        elif mode.startswith("UG"):
+            lvl = -float(v["ug_depth"])
+        else:
+            lvl = float(v["sup_el"])
+        return abs(start - lvl) + abs(lvl - end)
+
+    def zb(self):
+        v = self.v
+        lvl = -float(v["ug_depth"]) if v["no_rack"].startswith("UG") else float(v["sup_el"])
+        return abs(float(v["inst_el"]) - lvl) + abs(lvl - float(v["jb_el"]))
+
+    def h(self, a, b):
+        return self.L.dist(a, b) * float(self.v["route_factor"])
+
+
+def _spatial(members, cap, G):
+    """Greedy clusters on the plot: seed = west-/north-most free instrument, then its nearest
+    neighbours within the JB radius until the JB is full. Unlocated rows keep drawing order."""
+    rad = float(G.v["jb_radius"])
+    located = [(r, G.loc(r)[0]) for r in members]
+    free = [x for x in located if x[1]]
+    out = []
+    while free:
+        free.sort(key=lambda x: (x[1][0] + x[1][1]))
+        seed = free[0][1]
+        near = sorted(free, key=lambda x: G.L.dist(seed, x[1]))
+        ch = [x for x in near if G.L.dist(seed, x[1]) <= rad][:cap] or near[:1]
+        ids = {id(x[0]) for x in ch}
+        free = [x for x in free if id(x[0]) not in ids]
+        out.append([x[0] for x in ch])
+    lost = [r for r, p in located if not p]
+    out += [lost[i:i + cap] for i in range(0, len(lost), cap)]
+    return out
+
+
+def _centre(pts):
+    pts = [p for p in pts if p]
+    if not pts:
+        return None
+    return (sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts))
+
+
+def build(rows, s: dict, area_map: dict | None = None, layout=None):
     v, trunk = s["values"], s.get("trunk") or {}
+    G = _Geo(layout, v) if (layout is not None and v.get("plot_use") == "사용" and layout.m_per_pt
+                            and layout.room) else None
     area_map = area_map or {}
     spare = float(v["jb_spare"])
     room = lambda sys_: v.get(f"room_{sys_}") or "CCR"
@@ -301,6 +391,14 @@ def build(rows, s: dict, area_map: dict | None = None):
             mshield = v["multi_shield_A"] if cls in ("A", "R", "X") else v["multi_shield_D"]
             spec = _spec(f"{size}{unit}", v["multi_sq"], mshield)
             tl = _trunk(ch[0].unit or "00", v, trunk)
+            how = f"제어반→룸 {tl:g}m 가정"
+            if G:
+                p = _centre([G.loc(r)[0] for r in ch])
+                if p:
+                    hh, zz = G.h(p, G.L.room), G.zf(float(v["jb_el"]), float(v["room_el"]))
+                    tl, how = hh + zz, f"PLOT 수평 {hh:.0f}m + 높이 {zz:.1f}m ({G.loc(ch[0])[1]})"
+                    G.geo["pkgs"][area] = [round(p[0], 1), round(p[1], 1)]
+                    G.geo["routes"].append([round(p[0], 1), round(p[1], 1), "pkg"])
             sl = SYS_LETTER.get(sys_, "M")
             cables.append({"no": uniq(f"MC-{area}-{sl}{cls}" + (f"-{k:02d}" if len(members) > cap else "")),
                            "kind": "패키지", "frm": f"{area} UCP", "frm_type": "패키지 제어반",
@@ -309,7 +407,7 @@ def build(rows, s: dict, area_map: dict | None = None):
                            "length": _round_len(tl, v), "area": area, "dwg": ch[0].dwg, "coord": "",
                            "unit": ch[0].unit, "pairs_used": len(ch),
                            "basis": f"패키지 인터페이스 {len(ch)}점 ({', '.join(r.tag for r in ch[:6])}"
-                                    f"{' …' if len(ch) > 6 else ''}) · 스페어 {spare:.0%} · 제어반→룸 {tl:g}m 가정"})
+                                    f"{' …' if len(ch) > 6 else ''}) · 스페어 {spare:.0%} · {how}"})
 
     # ---------------- field / package JBs, chunked in drawing order
     for (route, area, sys_, cls, is_), members in sorted(groups.items(), key=lambda kv: [str(x) for x in kv[0]]):
@@ -319,7 +417,7 @@ def build(rows, s: dict, area_map: dict | None = None):
         unit = "T" if cls == "R" else "P"
         size = _n(v[f"jb_size_{'R' if cls == 'R' else ('A' if cls in ('A', 'X') else 'D')}"])
         cap = max(1, int(math.floor(size / (1 + spare) + 1e-9)))
-        chunks = [members[i:i + cap] for i in range(0, len(members), cap)]
+        chunks = _spatial(members, cap, G) if G else [members[i:i + cap] for i in range(0, len(members), cap)]
         sl = SYS_LETTER.get(sys_, "M")
         base = f"JB-{area}-{sl}{cls}{'I' if is_ else ''}"
         for k, ch in enumerate(chunks, 1):
@@ -332,6 +430,13 @@ def build(rows, s: dict, area_map: dict | None = None):
             room_ = room(sys_) if sys_ != "MIX" else room("DCS")
             mc = "MC-" + jb[3:]
             tl = _trunk(area if route != "pkg" else (ch[0].unit or "00"), v, trunk)
+            how = f"JB→룸 {tl:g}m 가정" + (" (유닛별 값)" if area in trunk else "")
+            pj = _centre([G.loc(r)[0] for r in ch]) if G else None
+            if pj:
+                hh, zz = G.h(pj, G.L.room), G.zf(float(v["jb_el"]), float(v["room_el"]))
+                tl, how = hh + zz, f"PLOT 수평 {hh:.0f}m + 높이 {zz:.1f}m (JB = 계기 {len(ch)}개 중심)"
+                G.geo["jbs"].append([jb, round(pj[0], 1), round(pj[1], 1), sys_])
+                G.geo["routes"].append([round(pj[0], 1), round(pj[1], 1), "jb"])
             jbs.append({"no": jb, "kind": "패키지 Skid" if route == "pkg" else "필드", "area": area, "system": sys_,
                         "cls": CLS_NAME[cls], "is": "IS" if is_ else "Non-IS", "size": f"{size}{unit}",
                         "used": len(ch), "spare": size - len(ch), "fill": round(len(ch) / size, 3),
@@ -341,22 +446,32 @@ def build(rows, s: dict, area_map: dict | None = None):
             for r in ch:
                 io = "RTD" if r.io == "TC/RTD" else r.io
                 spec = _spec(v[f"{io}_form"], v[f"{io}_sq"], v[f"{io}_shield"])
+                fl, how_f = float(v["len_field"]), f"계기→JB {v['len_field']}m 가정"
+                pi = G.loc(r) if pj else (None, "")
+                if pi[0]:
+                    hh = max(G.h(pi[0], pj), float(v["field_min"]))
+                    zz = G.zb()
+                    fl, how_f = hh + zz, f"PLOT 수평 {hh:.0f}m + 높이 {zz:.1f}m (계기 위치: {pi[1]})"
                 cables.append({"no": uniq(f"C-{r.tag}"), "kind": "분기", "frm": r.tag, "frm_type": "계기",
                                "to": jb, "to_type": "JB", "spec": spec, "io": r.io, "system": r.system,
-                               "is": "IS" if is_ else "Non-IS", "length": _round_len(float(v["len_field"]), v),
+                               "is": "IS" if is_ else "Non-IS", "length": _round_len(fl, v),
                                "area": area, "dwg": r.dwg, "coord": r.coord, "unit": r.unit,
-                               "basis": f"{io} → {spec} (케이블 설정) · 계기→JB {v['len_field']}m 가정"})
+                               "basis": f"{io} → {spec} (케이블 설정) · {how_f}"})
             spec = _spec(f"{msize}{unit}", v["multi_sq"], mshield)
             cables.append({"no": uniq(mc), "kind": "멀티", "frm": jb, "frm_type": "JB", "to": room_, "to_type": "룸",
                            "spec": spec, "io": CLS_NAME[cls], "system": sys_, "is": "IS" if is_ else "Non-IS",
                            "length": _round_len(tl, v), "area": area, "dwg": "", "coord": "",
                            "unit": ch[0].unit, "pairs_used": len(ch),
-                           "basis": f"사용 {len(ch)}{unit} · 스페어 {spare:.0%} · {v['multi_sizing']} · "
-                                    f"JB→룸 {tl:g}m 가정" + (" (유닛별 값)" if area in trunk else "")})
+                           "basis": f"사용 {len(ch)}{unit} · 스페어 {spare:.0%} · {v['multi_sizing']} · {how}"})
 
     # ---------------- MCC signals straight to the room
     if mcc:
         src = "IRP" if v["mcc_from"].startswith("IRP") else "MCC"
+        mlen, mhow = float(v["len_mcc"]), f"{src}→룸 {v['len_mcc']}m 가정"
+        if G and G.L.irp:
+            hh, zz = G.h(G.L.irp, G.L.room), G.zf(float(v["room_el"]), float(v["room_el"]))
+            mlen, mhow = hh + zz, f"PLOT 수평 {hh:.0f}m + 높이 {zz:.1f}m ({src} 위치: {G.L.irp_src})"
+            G.geo["routes"].append([round(G.L.irp[0], 1), round(G.L.irp[1], 1), "irp"])
         if v["mcc_mode"].startswith("멀티"):
             by = {}
             for r, cls in mcc:
@@ -371,9 +486,9 @@ def build(rows, s: dict, area_map: dict | None = None):
                     cables.append({"no": uniq(f"MC-{src}-{SYS_LETTER.get(sys_, 'M')}{cls}-{k:02d}"), "kind": "MCC",
                                    "frm": src, "frm_type": src, "to": room(sys_) if sys_ != "MIX" else room("DCS"),
                                    "to_type": "룸", "spec": spec, "io": CLS_NAME[cls], "system": sys_, "is": "Non-IS",
-                                   "length": _round_len(float(v["len_mcc"]), v), "area": "MCC", "dwg": "",
+                                   "length": _round_len(mlen, v), "area": "MCC", "dwg": "",
                                    "coord": "", "unit": "", "pairs_used": len(ch),
-                                   "basis": f"모터 신호 {len(ch)}점 · 스페어 {spare:.0%} · {src}→룸 {v['len_mcc']}m 가정"
+                                   "basis": f"모터 신호 {len(ch)}점 · 스페어 {spare:.0%} · {mhow}"
                                             + (" · MCC↔IRP는 전기 범위 (미집계)" if src == "IRP" else "")})
         else:
             by = {}
@@ -385,24 +500,33 @@ def build(rows, s: dict, area_map: dict | None = None):
                 cables.append({"no": uniq(f"CC-{motor}-{SYS_LETTER.get(sys_, 'M')}"), "kind": "MCC", "frm": src,
                                "frm_type": src, "to": room(sys_), "to_type": "룸", "spec": spec,
                                "io": "/".join(sorted({r.io for r in members})), "system": sys_, "is": "Non-IS",
-                               "length": _round_len(float(v["len_mcc"]), v), "area": "MCC", "dwg": "", "coord": "",
+                               "length": _round_len(mlen, v), "area": "MCC", "dwg": "", "coord": "",
                                "unit": members[0].unit, "pairs_used": len(members),
-                               "basis": f"{motor} 신호 {len(members)}점 × 2심 · 스페어 {spare:.0%}"})
+                               "basis": f"{motor} 신호 {len(members)}점 × 2심 · 스페어 {spare:.0%} · {mhow}"})
 
     # ---------------- comm ports: home run
     for r in comm:
         src = r.vendor_pkg or r.equip or ("MCC" if r.location == "MCC" else r.tag)
         area = r.unit or "00"
         tl = float(v["len_mcc"]) if r.location == "MCC" else _trunk(area, v, trunk)
+        how = f"{tl:g}m 가정"
+        if G:
+            p = G.L.irp if r.location == "MCC" else G.loc(r)[0]
+            if p:
+                hh, zz = G.h(p, G.L.room), G.zf(float(v["jb_el"]), float(v["room_el"]))
+                tl, how = hh + zz, f"PLOT 수평 {hh:.0f}m + 높이 {zz:.1f}m"
         cables.append({"no": uniq(f"CB-{r.tag}"), "kind": "통신", "frm": src,
                        "frm_type": "MCC" if r.location == "MCC" else "패키지", "to": room(r.system if r.system in SYS_LETTER else "DCS"),
                        "to_type": "룸", "spec": v["COMM_spec"], "io": r.io, "system": r.system, "is": "Non-IS",
                        "length": _round_len(tl, v), "area": area, "dwg": r.dwg, "coord": r.coord, "unit": r.unit,
-                       "basis": f"통신 포트 직결 · {tl:g}m 가정"})
+                       "basis": f"통신 포트 직결 · {how}"})
 
     order = {"분기": 0, "멀티": 0, "패키지": 1, "MCC": 2, "통신": 3}   # JB branches stay next to their multi
     cables.sort(key=lambda c: order[c["kind"]])
-    return {"cables": cables, "jbs": jbs, "skipped": skipped, "summary": summarize(cables, jbs, skipped)}
+    res = {"cables": cables, "jbs": jbs, "skipped": skipped, "summary": summarize(cables, jbs, skipped)}
+    res["summary"]["by_plot"] = sum(1 for c in cables if "PLOT" in c["basis"])
+    res["geo"] = G.geo if G else None
+    return res
 
 
 def summarize(cables, jbs, skipped):
