@@ -2549,14 +2549,16 @@ mod tests { tr("in", "안") }
 
     // Every ⇄ menu item that can show at the top level at the same time: one letter each, none a pane digit,
     // none the first letter of an unmarked item (the grey title, "Pane 10" …), in both languages.
+    fn menu_slots() -> [&'static [(&'static str, &'static str)]; 10] {
+        [&[M_SWAP], &[M_COPY], &[M_MOVE], &[M_INUSE], &[M_HASH, M_HASH_STOP], &[M_ORG], &[M_GROUP_N, M_GROUP], &[M_EMPTY], &[M_USAGE], &[M_WM_PAIR, M_WM_PANE]]
+    }
+
     #[test]
     fn open_in_menu_letters() {
-        let slots: [&[(&str, &str)]; 10] =
-            [&[M_SWAP], &[M_COPY], &[M_MOVE], &[M_INUSE], &[M_HASH, M_HASH_STOP], &[M_ORG], &[M_GROUP_N, M_GROUP], &[M_EMPTY], &[M_USAGE], &[M_WM_PAIR, M_WM_PANE]];
         for ko in [false, true] {
             let mut seen: Vec<char> = "123456789".chars().collect();
             seen.extend(["Open the selected folder", "Pane"].iter().map(|s| s.chars().next().unwrap()));
-            for slot in slots {
+            for slot in menu_slots() {
                 let letters: Vec<_> = slot.iter().map(|t| mnemonic(if ko { t.1 } else { t.0 })).collect();
                 let c = letters[0].unwrap_or_else(|| panic!("no letter: {:?}", slot[0]));
                 assert!(letters.iter().all(|l| *l == Some(c)), "{slot:?}");
@@ -2568,6 +2570,34 @@ mod tests { tr("in", "안") }
                     // Korean marks it in a tail, "…(&C)", the way Windows menus do for non-Latin text
                     assert!(!ko || s.contains(&format!("(&{c})")), "{s}");
                 }
+            }
+        }
+    }
+
+    // Every ⇄ menu letter is named in the Ctrl+M row of the shortcut window (both languages) and of both
+    // README tables, after "Then one key" / "키 하나로", so a new ⇄ item can't leave its letter undocumented.
+    #[test]
+    fn open_in_menu_letters_documented() {
+        let row = |what: &str, text: &str, start: &str, marker: &str| -> String {
+            let line = text.lines().find(|l| l.starts_with(start)).unwrap_or_else(|| panic!("{what}: no Ctrl+M row"));
+            let (_, tail) = line.split_once(marker).unwrap_or_else(|| panic!("{what}: no {marker:?} in the Ctrl+M row"));
+            tail.to_string()
+        };
+        // an upper-case letter on its own: "S swaps", "S는" count; "SHA-256", "WinMerge", "Ctrl+F7" don't
+        let alone = |s: &str, c: char| {
+            let v: Vec<char> = s.chars().collect();
+            (0..v.len()).any(|i| v[i] == c && !(i > 0 && v[i - 1].is_ascii_alphanumeric()) && !v.get(i + 1).is_some_and(|n| n.is_ascii_alphanumeric()))
+        };
+        let docs = [
+            ("KEYS_EN", row("KEYS_EN", KEYS_EN, "Ctrl+M\t", "Then one key")),
+            ("KEYS_KO", row("KEYS_KO", KEYS_KO, "Ctrl+M\t", "키 하나로")),
+            ("README.md", row("README.md", include_str!("../README.md"), "| Ctrl+M |", "Then one key")),
+            ("README.ko.md", row("README.ko.md", include_str!("../README.ko.md"), "| Ctrl+M |", "키 하나로")),
+        ];
+        for slot in menu_slots() {
+            let c = mnemonic(slot[0].0).unwrap_or_else(|| panic!("no letter: {:?}", slot[0]));
+            for (what, tail) in &docs {
+                assert!(alone(tail, c), "{what}: the Ctrl+M row doesn't name the ⇄ menu letter {c} ({:?})", slot[0].0);
             }
         }
     }

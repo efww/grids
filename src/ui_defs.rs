@@ -310,7 +310,7 @@ Ctrl+Shift+E\tHide / show the folder tree (its width is kept)\n\
 Ctrl+Shift+O\tOpen the folders of Explorer windows and tabs in panes (panes already showing one stay put)\n\
 Ctrl+Shift+C\tCopy the full path of the selected items (or of the current folder)\n\
 Ctrl+Shift+U\tFolder usage: what takes up space in this folder, biggest first with bars, filled in as the subfolders are summed (→ into a folder, ← up, Enter selects the item in the pane, Ctrl+Enter opens the folder, Esc closes; also in the ⇄ menu)\n\
-Ctrl+M\t⇄ menu from the file list: open in another pane, copy / move the selected items to one, swap places, checksum. Then one key: a pane's number opens there, C / M then a number copies / moves, S swaps\n\
+Ctrl+M\t⇄ menu from the file list: open in another pane, copy / move the selected items to one, swap places and the other ⇄ items. Then one key: a pane's number opens there, C / M then a number copies / moves, S swaps, W which program is using the files, K checksum (files only), D date folders (files only; then Y / M / D), N into a new folder, E removes empty folders, U folder usage, R WinMerge (when installed)\n\
 Ctrl+Shift+R\tBatch rename the selected items (none selected: every file in the folder): rules such as replace, numbering, date, case; live preview, Undo, presets. In the window: Ctrl+Enter renames, Esc closes; in the rule list Space switches a rule on/off, Ins adds, Del removes, Alt+↑/↓ moves it\n\
 Num+ / Ctrl+Shift+A\tSelect files by pattern (*.jpg;*.png or part of a name; Shift+Enter deselects)\n\
 Num−\tDeselect files by pattern\n\
@@ -342,7 +342,7 @@ Ctrl+Alt+G\tIn another app's Open / Save dialog: jump to a folder open in Grids\
 F2, Del, Ctrl+C/X/V, F5\tSame as Explorer\n\n\
 Address bar: click a folder in the path to go there; click a › to list the folders inside; click the current folder or empty space, or press Ctrl+L, to type a path\n\
 Layout button: click for an even grid, press and drag for rows per column (arrow keys + Enter work too)\n\
-⇄ button: open the selected folder (or the current one) in another pane, with this pane's columns; or copy / move the selected files (up to 10,000) to another pane's folder, a favourite or recent folder, or any folder you choose; which program is using the selected files; what takes up space in this folder (Ctrl+Shift+U); Compare with WinMerge (2 selected items, or this folder with another pane's) when WinMerge is installed\n\
+⇄ button: open the selected folder (or the current one) in another pane, with this pane's columns; or copy / move the selected files (up to 10,000) to another pane's folder, a favourite or recent folder, or any folder you choose; swap places with another pane; which program is using the selected files; SHA-256 checksum of the selected files; sort the selected files into date folders; move the selected items into a new folder (Ctrl+F7); remove empty folders in this folder; what takes up space in this folder (Ctrl+Shift+U); Compare with WinMerge (2 selected items, or this folder with another pane's) when WinMerge is installed\n\
 Save (Ctrl+S): overwrite the current session file; green dot = unsaved layout changes (not folder moves)\n\
 Load (Ctrl+O): pick a saved session by its layout preview\n\
 Drive buttons (C: D: …): open that drive in the active pane; its drive is underlined\n\
@@ -372,7 +372,7 @@ Ctrl+Shift+E\t폴더 트리 숨기기 / 보이기 (폭은 그대로 유지)\n\
 Ctrl+Shift+O\t탐색기 창·탭의 폴더를 패널로 가져오기 (이미 그 폴더를 연 패널은 그대로)\n\
 Ctrl+Shift+C\t선택한 항목(없으면 현재 폴더)의 전체 경로 복사\n\
 Ctrl+Shift+U\t이 폴더 용량 분석: 공간을 차지하는 항목을 큰 순서로 막대와 함께, 하위 폴더를 계산하는 대로 채움 (→ 폴더 안으로, ← 위로, Enter는 패널에서 그 항목 선택, Ctrl+Enter는 폴더 열기, Esc 닫기, ⇄ 메뉴에도 있음)\n\
-Ctrl+M\t파일 목록에서 ⇄ 메뉴 열기: 다른 패널에서 열기, 선택 항목 복사·이동, 자리 바꾸기, 체크섬. 이어서 키 하나로: 패널 번호는 그 패널에서 열기, C / M 다음 번호는 복사 / 이동, S는 자리 바꾸기\n\
+Ctrl+M\t파일 목록에서 ⇄ 메뉴 열기: 다른 패널에서 열기, 선택 항목 복사·이동, 자리 바꾸기와 그 밖의 ⇄ 항목. 이어서 키 하나로: 패널 번호는 그 패널에서 열기, C / M 다음 번호는 복사 / 이동, S는 자리 바꾸기, W는 파일을 쓰고 있는 프로그램, K는 체크섬(파일만), D는 날짜별 폴더(파일만, 이어서 Y / M / D), N은 새 폴더로 묶기, E는 빈 폴더 지우기, U는 용량 분석, R은 WinMerge 비교(설치된 경우)\n\
 Ctrl+Shift+R\t선택한 항목(선택 없으면 폴더의 모든 파일) 일괄 이름 바꾸기: 바꾸기·번호·날짜·대소문자 같은 규칙, 실시간 미리보기, 되돌리기, 프리셋. 창 안에서 Ctrl+Enter 바꾸기, Esc 닫기, 규칙 목록에서 Space 켜기/끄기, Ins 추가, Del 빼기, Alt+↑/↓ 순서 바꾸기\n\
 Num+ / Ctrl+Shift+A\t패턴으로 파일 선택 (*.jpg;*.png 또는 이름 일부, Shift+Enter는 선택 해제)\n\
 Num−\t패턴으로 파일 선택 해제\n\
@@ -404,7 +404,7 @@ Ctrl+Alt+G\t다른 앱의 열기·저장 대화 상자에서: Grids에 열린 �
 F2, Del, Ctrl+C/X/V, F5\t탐색기와 동일\n\n\
 주소 칸: 경로의 폴더를 누르면 그리로 이동, › 를 누르면 그 안의 폴더 목록, 현재 폴더·빈 곳을 누르거나 Ctrl+L이면 경로 입력\n\
 레이아웃 버튼: 클릭 = 균등 배치, 누른 채 끌기 = 열마다 칸 수 (방향키+Enter도 가능)\n\
-⇄ 버튼: 선택한 폴더(없으면 현재 폴더)를 다른 패널에서 열기, 열 순서·폭·정렬도 함께. 또는 선택한 파일을 다른 패널 폴더·즐겨찾기·최근 폴더·직접 고른 폴더로 복사·이동 (최대 10,000개). 선택한 파일을 쓰고 있는 프로그램 확인. 이 폴더 용량 분석 (Ctrl+Shift+U). WinMerge가 있으면 WinMerge로 비교 (선택한 2개, 또는 이 폴더와 다른 패널 폴더)\n\
+⇄ 버튼: 선택한 폴더(없으면 현재 폴더)를 다른 패널에서 열기, 열 순서·폭·정렬도 함께. 또는 선택한 파일을 다른 패널 폴더·즐겨찾기·최근 폴더·직접 고른 폴더로 복사·이동 (최대 10,000개). 다른 패널과 자리 바꾸기. 선택한 파일을 쓰고 있는 프로그램 확인. 선택한 파일의 체크섬(SHA-256). 선택한 파일을 날짜별 폴더로 정리. 선택한 항목을 새 폴더로 묶기 (Ctrl+F7). 이 폴더 안의 빈 폴더 지우기. 이 폴더 용량 분석 (Ctrl+Shift+U). WinMerge가 있으면 WinMerge로 비교 (선택한 2개, 또는 이 폴더와 다른 패널 폴더)\n\
 저장 (Ctrl+S): 지금 세션 파일에 바로 덮어쓰기, 초록 점 = 저장 안 된 배치 변경(폴더 이동은 제외)\n\
 불러오기 (Ctrl+O): 저장한 세션을 배치 미리보기로 보고 한 번 클릭\n\
 드라이브 버튼 (C: D: …): 지금 패널에서 그 드라이브 열기, 지금 패널의 드라이브에 밑줄\n\

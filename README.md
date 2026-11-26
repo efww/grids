@@ -109,7 +109,7 @@ The exe is not code-signed, so Windows SmartScreen may warn the first time: choo
 | Ctrl+Shift+O | Open the folders of open Explorer windows and tabs in panes, from the active pane on (also View > Open folders from Explorer windows; panes already showing one of them stay put) |
 | Ctrl+Shift+C | Copy the full path of the selected items (or of the current folder) |
 | Ctrl+Shift+U | Folder usage: what takes up space in this folder, biggest first (→ into a folder, ← up, Enter: select it in the pane, Ctrl+Enter: open the folder, Esc: close) |
-| Ctrl+M | ⇄ menu from the file list (opens under the ⇄ button): open in another pane, copy / move the selected items to one, swap places, checksum, remove empty folders, folder usage, WinMerge. Then one key picks: a pane's number (1–9) opens there, C or M then a number copies / moves there, S swaps, E removes empty folders, U shows folder usage; every item has an underlined letter |
+| Ctrl+M | ⇄ menu from the file list (opens under the ⇄ button): open in another pane, copy / move the selected items to one, swap places, which program is using the files, checksum, date folders, into a new folder, remove empty folders, folder usage, WinMerge. Then one key picks: a pane's number (1–9) opens there, C or M then a number copies / moves there, S swaps, W shows which program is using the files, K checksums (files only), D sorts into date folders (files only; then Y / M / D), N moves into a new folder, E removes empty folders, U shows folder usage, R compares with WinMerge (when installed); every item has an underlined letter |
 | Num+ / Ctrl+Shift+A | Select files by pattern (`*.jpg;*.png` or part of a name; Shift+Enter deselects) |
 | Num− | Deselect files by pattern |
 | Num* | Invert the selection |
