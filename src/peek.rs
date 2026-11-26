@@ -10,6 +10,7 @@ pub(crate) struct PeekReq {
     pub(crate) h: i32,
     pub(crate) hwnd: isize, // popup told by WM_PEEK_DONE
     pub(crate) plain: bool, // the preview handler failed: read the file ourselves
+    pub(crate) fetch: bool, // Enter on an online-only file's card: download it for the preview
 }
 
 pub(crate) struct Pix {
@@ -43,6 +44,7 @@ pub(crate) struct Peeked {
     pub(crate) body: Body,
     pub(crate) icon: i32,          // system image list index for the header, -1 = none
     pub(crate) meta: Vec<String>,  // header facts: type, dimensions / pages / lines, size, date
+    pub(crate) cloud: bool,        // the card of an online-only file, not downloaded: Enter fetches it
 }
 
 impl PeekJob {
@@ -165,7 +167,7 @@ pub(crate) fn peek_loop(
         // a zoom that failed posts nothing: the fitted picture stays
         if let (true, Some(gen)) = (failed, gen) {
             let card = Body::Card { icon: None, rows: vec![(tr("Preview", "미리보기").into(), tr("Can't preview this file", "이 파일은 미리 볼 수 없습니다").into())] };
-            if lock().fail(gen, Peeked { body: card, icon: -1, meta: Vec::new() }) {
+            if lock().fail(gen, Peeked { body: card, icon: -1, meta: Vec::new(), cloud: false }) {
                 tell(gen, &req);
             }
         }
@@ -174,9 +176,12 @@ pub(crate) fn peek_loop(
 
 unsafe fn peek_item(gen: usize, req: &PeekReq) {
     let t = Instant::now();
-    let body = content(req);
+    // one look at the folder listing decides both the body and the header line
+    let online = online(req);
+    let body = content_of(req, online.as_ref());
     let tc = t.elapsed().as_millis();
-    let (icon, meta) = meta(&req.path, &body);
+    let (icon, meta) = meta(&req.path, &body, online.as_ref());
+    let cloud = online.is_some();
     if crate::hwpdoc::is_hwp(&req.path) {
         crate::hwpdoc::log(format!("F3 content {tc}ms meta {}ms", t.elapsed().as_millis() - tc));
     }
@@ -185,7 +190,7 @@ unsafe fn peek_item(gen: usize, req: &PeekReq) {
         _ => None,
     };
     let tell = || _ = PostMessageW(Some(HWND(req.hwnd as _)), WM_PEEK_DONE, WPARAM(gen), LPARAM(0));
-    if peek_job().publish(gen, Peeked { body, icon, meta }) {
+    if peek_job().publish(gen, Peeked { body, icon, meta, cloud }) {
         tell();
         // the first page is up; the rest follow while this is still the item shown
         if let (Some(total), Ok(doc)) = (more, pdf_open(&req.path)) {
@@ -371,24 +376,40 @@ pub(crate) unsafe fn load_peek(plain: bool) {
     show_item(fv.GetItem::<IShellItem>(fv.GetFocusedItem().unwrap_or(-1)).ok(), plain);
 }
 
+// A new item never carries the download asked for the last one: an online-only file shows its card again.
 unsafe fn show_item(it: Option<IShellItem>, plain: bool) {
+    let shown = |kind| it.as_ref().and_then(|it| it.GetDisplayName(kind).ok()).map(|p| pwstr(p));
+    app(|a| a.peek_name = shown(SIGDN_NORMALDISPLAY).unwrap_or_default());
+    let path = shown(SIGDN_FILESYSPATH).or_else(|| shown(SIGDN_DESKTOPABSOLUTEPARSING));
+    ask(path.map(|path| PeekReq { path, w: 0, h: 0, hwnd: 0, plain, fetch: false }));
+}
+
+// The item on screen asked for again, not the pane's focused one: plain when its preview handler failed,
+// fetched on Enter at its online-only card. A download already agreed to stays agreed.
+unsafe fn ask_again(plain: bool, fetch: bool) {
+    let req = peek_job().req.clone();
+    if let Some(r) = req {
+        ask(Some(PeekReq { plain: r.plain || plain, fetch: r.fetch || fetch, ..r }));
+    }
+}
+
+// From a clean view, at the picture area's size; None: nothing to show but an empty card.
+unsafe fn ask(req: Option<PeekReq>) {
     let (h, dpi) = app(|a| (a.peek, a.dpi));
     unload_handler();
     view(|v| {
         (v.y, v.x, v.layout, v.max_y, v.edge_at, v.wheel) = (0, 0, None, 0, None, 0);
         (v.zoom, v.zwheel, v.zwant, v.zsent, v.drag) = (0, 0, None, None, None);
     });
-    let shown = |kind| it.as_ref().and_then(|it| it.GetDisplayName(kind).ok()).map(|p| pwstr(p));
-    app(|a| a.peek_name = shown(SIGDN_NORMALDISPLAY).unwrap_or_default());
     let mut rc = RECT::default();
     _ = GetClientRect(h, &mut rc);
     let st = peek_geo(rc, dpi).stage;
-    match shown(SIGDN_FILESYSPATH).or_else(|| shown(SIGDN_DESKTOPABSOLUTEPARSING)) {
-        Some(path) => want_peek(Some(PeekReq { path, w: st.right - st.left, h: st.bottom - st.top, hwnd: h.0 as isize, plain })),
+    match req {
+        Some(r) => want_peek(Some(PeekReq { w: st.right - st.left, h: st.bottom - st.top, hwnd: h.0 as isize, ..r })),
         None => {
             let mut j = peek_job();
             j.want(None);
-            j.done = Some(Peeked { body: Body::Card { icon: None, rows: Vec::new() }, icon: -1, meta: Vec::new() });
+            j.done = Some(Peeked { body: Body::Card { icon: None, rows: Vec::new() }, icon: -1, meta: Vec::new(), cloud: false });
         }
     }
     _ = InvalidateRect(Some(h), None, false);
@@ -839,12 +860,12 @@ unsafe fn start_handler(h: HWND, gen: usize) {
     let (w, ht) = (st.right - st.left - 2, st.bottom - st.top - 2);
     let style = WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN;
     let Ok(win) = CreateWindowExW(WINDOW_EX_STYLE(0), w!("GridsPeekHost"), w!(""), style, st.left + 1, st.top + 1, w, ht, Some(h), None, None, None) else {
-        return load_peek(true);
+        return ask_again(true, false);
     };
     view(|v| v.host_win = Some(win));
     let (hwnd, popup, area) = (win.0 as isize, h.0 as isize, RECT { left: 0, top: 0, right: w, bottom: ht });
     if std::thread::Builder::new().spawn(move || host_thread(gen, clsid, path, hwnd, popup, area)).is_err() {
-        load_peek(true);
+        ask_again(true, false);
     }
 }
 
@@ -878,7 +899,7 @@ unsafe fn handler_ready(h: HWND, gen: usize, ok: bool) {
             _ = SetFocus(Some(h));
         }
     } else {
-        load_peek(true);
+        ask_again(true, false);
     }
     _ = InvalidateRect(Some(h), None, false);
 }
@@ -1704,6 +1725,8 @@ pub(crate) extern "system" fn peek_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 // a held F3 only opens it; its repeats must not close it again
                 VK_ESCAPE | VK_SPACE | VK_F3 if lp.0 & (1 << 30) == 0 => close_peek(h),
                 VK_DELETE if lp.0 & (1 << 30) == 0 => delete_peek(h, GetKeyState(VK_SHIFT.0 as i32) < 0),
+                // an online-only file's card: download it now, for this item only
+                VK_RETURN if lp.0 & (1 << 30) == 0 && peek_job().done.as_ref().is_some_and(|d| d.cloud) => ask_again(false, true),
                 VK_F2 => start_rename(h),
                 k if GetKeyState(VK_CONTROL.0 as i32) < 0 => match k {
                     VK_OEM_PLUS | VK_ADD => zoom_peek(h, Some(1), None),

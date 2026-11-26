@@ -1391,9 +1391,9 @@ mod tests {
 
     #[test]
     fn peek_newest_only() {
-        let req = |p: &str| Some(PeekReq { path: p.into(), w: 10, h: 10, hwnd: 0, plain: false });
-        let pix = || Peeked { body: Body::Pic(Pix { w: 1, h: 1, bgra: vec![0; 4] }), icon: -1, meta: Vec::new() };
-        let card = || Peeked { body: Body::Card { icon: None, rows: Vec::new() }, icon: -1, meta: Vec::new() };
+        let req = |p: &str| Some(PeekReq { path: p.into(), w: 10, h: 10, hwnd: 0, plain: false, fetch: false });
+        let pix = || Peeked { body: Body::Pic(Pix { w: 1, h: 1, bgra: vec![0; 4] }), icon: -1, meta: Vec::new(), cloud: false };
+        let card = || Peeked { body: Body::Card { icon: None, rows: Vec::new() }, icon: -1, meta: Vec::new(), cloud: false };
         let mut j = PeekJob { gen: 0, req: None, done: None, zoom: None, zseq: 0, sharp: Vec::new() };
         j.want(req("a"));
         let a = j.gen;
@@ -2599,9 +2599,9 @@ mod tests {
 
     #[test]
     fn peek_fail_card() {
-        let req = |p: &str| Some(PeekReq { path: p.into(), w: 10, h: 10, hwnd: 0, plain: false });
-        let card = || Peeked { body: Body::Card { icon: None, rows: Vec::new() }, icon: -1, meta: Vec::new() };
-        let pages = || Peeked { body: Body::Pages { pages: Vec::new(), total: 3 }, icon: -1, meta: Vec::new() };
+        let req = |p: &str| Some(PeekReq { path: p.into(), w: 10, h: 10, hwnd: 0, plain: false, fetch: false });
+        let card = || Peeked { body: Body::Card { icon: None, rows: Vec::new() }, icon: -1, meta: Vec::new(), cloud: false };
+        let pages = || Peeked { body: Body::Pages { pages: Vec::new(), total: 3 }, icon: -1, meta: Vec::new(), cloud: false };
         let mut j = PeekJob { gen: 0, req: None, done: None, zoom: None, zseq: 0, sharp: Vec::new() };
         j.want(req("a"));
         let a = j.gen;
@@ -2611,6 +2611,55 @@ mod tests {
         assert!(!j.fail(j.gen, card()) && matches!(j.done, Some(Peeked { body: Body::Pages { .. }, .. }))); // first page stays
         j.want(req("c"));
         assert!(j.fail(j.gen, card()) && matches!(j.done, Some(Peeked { body: Body::Card { .. }, .. })));
+    }
+
+    #[test]
+    fn cloud_only_attributes() {
+        assert!(!cloud_only(0x20)); // archive: on this PC
+        assert!(cloud_only(0x20 | 0x40_0000)); // RECALL_ON_DATA_ACCESS: OneDrive "online-only"
+        assert!(cloud_only(0x4_0000)); // RECALL_ON_OPEN
+        assert!(cloud_only(0x1000)); // OFFLINE
+        assert!(!cloud_only(0x10 | 0x40_0000)); // a folder is listed, not downloaded
+        assert!(!cloud_only(0x400 | 0x80000 | 0x20)); // reparse point + pinned, downloaded already
+        let p = Pix { w: 4, h: 2, bgra: vec![200; 32] };
+        let s = shrink(&p, 2);
+        assert!(s.w == 2 && s.h == 1 && s.bgra.iter().all(|&b| b == 200));
+        // a 48 px icon in a 256 px square's corner, versus one drawn out to the edge
+        let mut j = Pix { w: 256, h: 256, bgra: vec![0; 256 * 256 * 4] };
+        j.bgra[(47 * 256 + 47) * 4 + 3] = 255;
+        assert!(opaque_within(&j, 48));
+        j.bgra[(200 * 256 + 10) * 4 + 3] = 255;
+        assert!(!opaque_within(&j, 48));
+        assert!(!opaque_within(&Pix { w: 256, h: 256, bgra: vec![0; 256 * 256 * 4] }, 48)); // nothing drawn
+        let long = format!(r"C:\{}\a.txt", "d".repeat(300));
+        assert_eq!(long_path(&long), format!(r"\\?\{long}"));
+        assert_eq!(long_path(&format!(r"\\srv\s\{}", "d".repeat(300))), format!(r"\\?\UNC\srv\s\{}", "d".repeat(300)));
+        assert_eq!(long_path(r"C:\short.txt"), r"C:\short.txt");
+    }
+
+    // An online-only file's preview reads nothing until Enter asks for it.
+    #[test]
+    fn peek_cloud_card() {
+        use windows::Win32::Storage::FileSystem::{SetFileAttributesW, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_OFFLINE};
+        let d = std::env::temp_dir().join(format!("grids-cloud-{}", std::process::id()));
+        _ = std::fs::create_dir_all(&d);
+        let f = d.join("note.txt");
+        std::fs::write(&f, "hello cloud").unwrap();
+        let path = f.to_string_lossy().into_owned();
+        let req = |fetch| PeekReq { path: path.clone(), w: 100, h: 100, hwnd: 0, plain: false, fetch };
+        let text = |b: &Body| matches!(b, Body::Text { text, .. } if text.contains("hello cloud"));
+        unsafe {
+            assert!(text(&content(&req(false))), "a local file is read as before");
+            SetFileAttributesW(&HSTRING::from(path.as_str()), FILE_ATTRIBUTE_OFFLINE).unwrap();
+            assert!(online(&req(false)).is_some() && online(&req(true)).is_none());
+            let card = content(&req(false));
+            assert!(matches!(&card, Body::Card { rows, .. } if rows[0].1.contains("Enter") && rows.iter().any(|r| r.1 == "11 B")), "the card, not the text");
+            let (_, m) = meta(&path, &card, online(&req(false)).as_ref());
+            assert!(m.iter().any(|s| s == "Online-only" || s == "온라인 전용"), "{m:?}");
+            assert!(text(&content(&req(true))), "Enter: read it");
+            SetFileAttributesW(&HSTRING::from(path.as_str()), FILE_ATTRIBUTE_NORMAL).unwrap();
+        }
+        _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
@@ -2646,7 +2695,7 @@ mod tests {
                 if r.path == "boom" {
                     panic!("test: a preview fails with the lock held");
                 }
-                if j.publish(gen, Peeked { body: Body::Text { text: r.path.clone(), kind: TextKind::Plain, cut: false }, icon: -1, meta: Vec::new() }) {
+                if j.publish(gen, Peeked { body: Body::Text { text: r.path.clone(), kind: TextKind::Plain, cut: false }, icon: -1, meta: Vec::new(), cloud: false }) {
                     drop(j);
                     _ = tx.send(gen);
                 }
@@ -2654,7 +2703,7 @@ mod tests {
             peek_loop(&JOB, &WAKE, &QUIT, serve, move |gen, _| _ = told.send(gen));
         })));
         let want = |p: &str| {
-            lock().want(Some(PeekReq { path: p.into(), w: 10, h: 10, hwnd: 0, plain: false }));
+            lock().want(Some(PeekReq { path: p.into(), w: 10, h: 10, hwnd: 0, plain: false, fetch: false }));
             WAKE.notify_one();
         };
         want("boom");

@@ -1,6 +1,6 @@
 use crate::*;
 use windows::Win32::Storage::EnhancedStorage::*;
-use windows::Win32::Storage::FileSystem::{FileTimeToLocalFileTime, GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW};
+use windows::Win32::Storage::FileSystem::{FileTimeToLocalFileTime, FindClose, FindFirstFileW, GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW, WIN32_FIND_DATAW};
 use windows::Win32::System::Com::StructuredStorage::{IStorage, StgOpenStorageEx, STGFMT_STORAGE};
 use windows::Win32::System::Time::FileTimeToSystemTime;
 use windows::Win32::UI::Shell::PropertiesSystem::{IPropertyStore, PSFormatForDisplayAlloc, SHGetPropertyStoreFromParsingName, GPS_DEFAULT, PDFF_DEFAULT};
@@ -107,8 +107,153 @@ fn text_body(path: &str, kind: TextKind) -> Option<Body> {
     looks_text(&b).then(|| Body::Text { text: decode_text(&b), kind, cut })
 }
 
-/// The preview of one file or folder. Never just its icon: what can't be shown becomes a card of facts.
+// ---------- online-only cloud files: never read until asked ----------
+
+/// A file only in the cloud (OneDrive, Dropbox, Google Drive placeholders, or offline storage): reading any of it
+/// makes Windows download all of it. FILE_ATTRIBUTE_OFFLINE | RECALL_ON_OPEN | RECALL_ON_DATA_ACCESS, as a folder
+/// listing reports them (RECALL_ON_OPEN has the value of FILE_ATTRIBUTE_EA elsewhere).
+pub(crate) fn cloud_only(attr: u32) -> bool {
+    attr & 0x10 == 0 /* not a folder */ && attr & (0x1000 | 0x4_0000 | 0x40_0000) != 0
+}
+
+/// The file's folder-listing entry when it is online-only and the download wasn't asked for (Enter on its card).
+/// Finding it reads the folder, never the file.
+pub(crate) unsafe fn online(req: &PeekReq) -> Option<WIN32_FIND_DATAW> {
+    if req.fetch {
+        return None;
+    }
+    listed_online(&req.path)
+}
+
+/// The folder-listing entry of `path` when it is online-only, asked or not.
+unsafe fn listed_online(path: &str) -> Option<WIN32_FIND_DATAW> {
+    let mut d = WIN32_FIND_DATAW::default();
+    let found = FindFirstFileW(&HSTRING::from(long_path(path)), &mut d).ok()?;
+    _ = FindClose(found);
+    cloud_only(d.dwFileAttributes).then_some(d)
+}
+
+/// A path past MAX_PATH with the \\?\ prefix, so Win32 still finds it; a shorter one as it is.
+pub(crate) fn long_path(path: &str) -> String {
+    if path.encode_utf16().count() < 260 || path.starts_with(r"\\?\") || path.starts_with(r"\\.\") {
+        path.to_string()
+    } else if let Some(unc) = path.strip_prefix(r"\\") {
+        format!(r"\\?\UNC\{unc}")
+    } else if path.get(1..3) == Some(r":\") {
+        format!(r"\\?\{path}")
+    } else {
+        path.to_string()
+    }
+}
+
+fn ft_u64(t: FILETIME) -> u64 {
+    (t.dwHighDateTime as u64) << 32 | t.dwLowDateTime as u64
+}
+
+// The type's own icon, by its extension and attributes only (the file isn't touched), at about `side` px.
+unsafe fn type_icon(path: &str, attr: u32, side: i32) -> Option<Pix> {
+    let mut fi = SHFILEINFOW::default();
+    let flags = SHGFI_SYSICONINDEX | SHGFI_USEFILEATTRIBUTES;
+    SHGetFileInfoW(&HSTRING::from(path), FILE_FLAGS_AND_ATTRIBUTES(attr), Some(&mut fi), size_of::<SHFILEINFOW>() as u32, flags);
+    // a type with no 256 px picture comes as its 48 px icon in the jumbo square's top-left corner: take that size then
+    let p = list_icon(SHIL_JUMBO as i32, fi.iIcon)?;
+    let p = if opaque_within(&p, 48) { list_icon(SHIL_EXTRALARGE as i32, fi.iIcon).unwrap_or(p) } else { p };
+    Some(shrink(&p, side))
+}
+
+/// Whether all that is drawn in `p` lies in its top-left side x side, the rest empty (alpha 0).
+pub(crate) fn opaque_within(p: &Pix, side: i32) -> bool {
+    if p.w <= side && p.h <= side {
+        return false;
+    }
+    let mut any = false;
+    for y in 0..p.h {
+        for x in 0..p.w {
+            if p.bgra[((y * p.w + x) * 4 + 3) as usize] != 0 {
+                if x >= side || y >= side {
+                    return false;
+                }
+                any = true;
+            }
+        }
+    }
+    any
+}
+
+unsafe fn list_icon(size: i32, index: i32) -> Option<Pix> {
+    let list = SHGetImageList::<IImageList>(size).ok()?;
+    let icon = list.GetIcon(index, ILD_NORMAL.0).ok()?;
+    let mut ii = ICONINFO::default();
+    let got = GetIconInfo(icon, &mut ii).is_ok();
+    _ = DestroyIcon(icon);
+    if !got {
+        return None;
+    }
+    let p = (!ii.hbmColor.is_invalid()).then(|| bitmap_pix(ii.hbmColor)).flatten();
+    _ = DeleteObject(ii.hbmColor.into());
+    _ = DeleteObject(ii.hbmMask.into());
+    p
+}
+
+/// A picture box-averaged down to fit side x side (premultiplied, so averaging keeps the edges clean).
+pub(crate) fn shrink(p: &Pix, side: i32) -> Pix {
+    if side <= 0 || p.w <= side && p.h <= side {
+        return Pix { w: p.w, h: p.h, bgra: p.bgra.clone() };
+    }
+    let k = side as f64 / p.w.max(p.h) as f64;
+    let (w, h) = (((p.w as f64 * k) as i32).max(1), ((p.h as f64 * k) as i32).max(1));
+    let mut out = vec![0u8; (w * h * 4) as usize];
+    for y in 0..h {
+        let (y0, y1) = (y * p.h / h, ((y + 1) * p.h / h).max(y * p.h / h + 1));
+        for x in 0..w {
+            let (x0, x1) = (x * p.w / w, ((x + 1) * p.w / w).max(x * p.w / w + 1));
+            let mut sum = [0u32; 4];
+            for sy in y0..y1 {
+                for sx in x0..x1 {
+                    let i = ((sy * p.w + sx) * 4) as usize;
+                    for (c, s) in sum.iter_mut().enumerate() {
+                        *s += p.bgra[i + c] as u32;
+                    }
+                }
+            }
+            let n = ((y1 - y0) * (x1 - x0)) as u32;
+            let o = ((y * w + x) * 4) as usize;
+            for (c, s) in sum.iter().enumerate() {
+                out[o + c] = ((s + n / 2) / n) as u8;
+            }
+        }
+    }
+    Pix { w, h, bgra: out }
+}
+
+/// What the preview shows of an online-only file before Enter: its type's icon and what the folder listing says.
+/// note: why there is no preview.
+unsafe fn cloud_card(path: &str, d: &WIN32_FIND_DATAW, note: &str) -> Body {
+    let side = 96 * GetDpiForSystem() as i32 / 96;
+    let size = (d.nFileSizeHigh as u64) << 32 | d.nFileSizeLow as u64;
+    let mut rows = vec![(tr("Preview", "미리보기").to_string(), note.to_string())];
+    rows.push((tr("Size", "크기").into(), format!("{} B", group_digits(size))));
+    if let Some(t) = when_ft(ft_u64(d.ftCreationTime)) {
+        rows.push((tr("Created", "만든 날짜").into(), t));
+    }
+    if let Some(dir) = Path::new(path).parent() {
+        rows.push((tr("Folder", "위치").into(), dir.display().to_string()));
+    }
+    Body::Card { icon: type_icon(path, d.dwFileAttributes, side), rows }
+}
+
+#[cfg(test)]
 pub(crate) unsafe fn content(req: &PeekReq) -> Body {
+    content_of(req, online(req).as_ref())
+}
+
+/// The preview of one file or folder. Never just its icon: what can't be shown becomes a card of facts.
+/// online: online() looked up already; an online-only file then gets its card and is never opened.
+pub(crate) unsafe fn content_of(req: &PeekReq, online: Option<&WIN32_FIND_DATAW>) -> Body {
+    if let Some(d) = online {
+        let note = tr("Online-only file, not downloaded · Enter: download for the preview", "온라인 전용 파일이라 내려받지 않음 · Enter: 내려받아 미리보기");
+        return cloud_card(&req.path, d, note);
+    }
     let path = req.path.as_str();
     let meta = std::fs::metadata(path).ok();
     if meta.as_ref().is_some_and(|m| m.is_dir()) {
@@ -132,8 +277,12 @@ pub(crate) unsafe fn content(req: &PeekReq) -> Body {
     }
     let heavy = HANDLED.contains(&e) || OFFICE_ZIP.contains(&e) || matches!(e, "pdf" | "eml" | "hwp" | "hwpx" | "hwpt" | "psd" | "psb");
     if heavy && meta.as_ref().is_some_and(|m| m.len() > HEAVY_MAX) {
-        let note = (tr("Preview", "미리보기").to_string(), tr("Skipped: larger than 10 MB", "10 MB보다 커서 생략").to_string());
-        return card(path, &[note]);
+        let skipped = tr("Skipped: larger than 10 MB", "10 MB보다 커서 생략");
+        // still only in the cloud (Enter asked for it): the full card's thumbnail and properties would download it
+        if let Some(d) = listed_online(path) {
+            return cloud_card(path, &d, skipped);
+        }
+        return card(path, &[(tr("Preview", "미리보기").to_string(), skipped.to_string())]);
     }
     if !req.plain && HANDLED.contains(&e) {
         if let Some(g) = handler_for(e) {
@@ -341,14 +490,25 @@ unsafe fn prop(ps: &IPropertyStore, k: &PROPERTYKEY) -> Option<String> {
 }
 
 /// (system image list icon, "JPEG 이미지 · 3840 x 2400 · 1.5 MB · 2026-10-23 10:27")
-pub(crate) unsafe fn meta(path: &str, body: &Body) -> (i32, Vec<String>) {
+/// online: an online-only file's folder listing (online()): then only it and the extension are used.
+pub(crate) unsafe fn meta(path: &str, body: &Body, online: Option<&WIN32_FIND_DATAW>) -> (i32, Vec<String>) {
     let mut fi = SHFILEINFOW::default();
-    let flags = SHGFI_SYSICONINDEX | SHGFI_SMALLICON | SHGFI_TYPENAME;
-    SHGetFileInfoW(&HSTRING::from(path), FILE_FLAGS_AND_ATTRIBUTES(0), Some(&mut fi), size_of::<SHFILEINFOW>() as u32, flags);
+    let mut flags = SHGFI_SYSICONINDEX | SHGFI_SMALLICON | SHGFI_TYPENAME;
+    if online.is_some() {
+        flags |= SHGFI_USEFILEATTRIBUTES;
+    }
+    let attr = FILE_FLAGS_AND_ATTRIBUTES(online.map_or(0, |d| d.dwFileAttributes));
+    SHGetFileInfoW(&HSTRING::from(path), attr, Some(&mut fi), size_of::<SHFILEINFOW>() as u32, flags);
     let mut out = Vec::new();
     let t = String::from_utf16_lossy(&fi.szTypeName[..fi.szTypeName.iter().position(|&c| c == 0).unwrap_or(0)]);
     if !t.is_empty() {
         out.push(t);
+    }
+    if let Some(d) = online {
+        out.push(tr("Online-only", "온라인 전용").into());
+        out.push(human((d.nFileSizeHigh as u64) << 32 | d.nFileSizeLow as u64));
+        out.extend(when_ft(ft_u64(d.ftLastWriteTime)));
+        return (fi.iIcon, out);
     }
     let ko = KO.load(Ordering::Relaxed);
     let e = ext_of(path);
@@ -640,7 +800,14 @@ unsafe fn hwp_preview(path: &str, req: &PeekReq) -> Option<Body> {
 
 fn when(t: std::io::Result<std::time::SystemTime>) -> Option<String> {
     let t = t.ok()?.duration_since(std::time::UNIX_EPOCH).ok()?;
-    let ft = (t.as_secs() + 11_644_473_600) * 10_000_000 + t.subsec_nanos() as u64 / 100;
+    when_ft((t.as_secs() + 11_644_473_600) * 10_000_000 + t.subsec_nanos() as u64 / 100)
+}
+
+// A FILETIME (100 ns since 1601, UTC) as local "2026-10-23 10:27"; 0 = not known.
+fn when_ft(ft: u64) -> Option<String> {
+    if ft == 0 {
+        return None;
+    }
     let ft = FILETIME { dwLowDateTime: ft as u32, dwHighDateTime: (ft >> 32) as u32 };
     let mut local = FILETIME::default();
     let mut st = SYSTEMTIME::default();
