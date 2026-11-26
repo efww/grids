@@ -264,8 +264,19 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 id if id == ID_TB_LAYOUT as usize => open_grid(),
                 id if id == ID_TB_SAVE as usize => save_current(),
                 id if id == ID_TB_LOAD as usize => open_load(),
-                id if id == ID_TB_FAV as usize => open_favs(),
-                id if id == ID_TB_EV as usize => open_ev(),
+                // a tip only when the list did open (not when this click closed it)
+                id if id == ID_TB_FAV as usize => {
+                    open_favs();
+                    if !app(|a| a.fav_popup).0.is_null() {
+                        mouse_tip(TIP_FAVS);
+                    }
+                }
+                id if id == ID_TB_EV as usize => {
+                    open_ev();
+                    if ev_popup_up() {
+                        mouse_tip(TIP_EV); // "Everything is not running" is a note: no tip over it
+                    }
+                }
                 id if id == ID_TB_UPDATE as usize => update_click(),
                 ID_UPDATES => toggle_updates(),
                 id if id == ID_TB_THEME as usize => {
@@ -281,6 +292,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 ID_HIDDEN => toggle_hidden(),
                 ID_EXT => toggle_extensions(),
                 ID_DBLUP => app(|a| a.s.dblup ^= true),
+                ID_KEY_TIPS => app(|a| a.s.key_tips ^= true),
                 ID_TABS => toggle_tabs(),
                 ID_FOLLOW => {
                     if app(|a| {
@@ -337,6 +349,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 check(ID_DLGJUMP, jump);
                 check(ID_CTXMENU, ctx_menu_on()); // read from the registry, not a setting
                 check(ID_UPDATES, app(|a| a.s.updates));
+                check(ID_KEY_TIPS, app(|a| a.s.key_tips));
                 check(ID_LANG, KO.load(Ordering::Relaxed));
                 check(ID_STAR, starred());
                 for (k, (_, c)) in theme_pal(dark).accents.iter().enumerate() {
@@ -417,12 +430,12 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
 
 pub(crate) extern "system" fn pane_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     unsafe {
-        let nav = |flags: u32| {
-            if let Some(i) = pane_of(h) {
-                set_active(i);
-                browse(i, flags);
-                focus_view(i);
-            }
+        let nav = |flags: u32| -> bool {
+            let Some(i) = pane_of(h) else { return false };
+            set_active(i);
+            let moved = browse(i, flags);
+            focus_view(i);
+            moved
         };
         let on_kind_icon = |x: i32, y: i32| {
             let dpi = app(|a| a.dpi);
@@ -460,7 +473,11 @@ pub(crate) extern "system" fn pane_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 let on_addr = x >= addr.left && x < addr.right && y >= addr.top && y < addr.bottom;
                 if let Some(i) = pane_of(h).filter(|_| !on_addr && !on_kind_icon(x, y)) {
                     set_active(i);
+                    let was = app(|a| a.zoom);
                     toggle_zoom();
+                    if app(|a| a.zoom) != was {
+                        mouse_tip(TIP_ZOOM);
+                    }
                 }
             }
             // filter icon: file types; address bar crumbs (set_active already ran in pre_translate)
@@ -529,9 +546,22 @@ pub(crate) extern "system" fn pane_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 // pill gets an accent outline while its edit has focus
                 (ID_EDIT, EN_SETFOCUS | EN_KILLFOCUS) => sync_addr(h),
                 (ID_FILTER, EN_SETFOCUS | EN_KILLFOCUS) => _ = InvalidateRect(Some(h), None, false),
-                (ID_BACK, _) => nav(SBSP_NAVIGATEBACK),
-                (ID_FWD, _) => nav(SBSP_NAVIGATEFORWARD),
-                (ID_UP, _) => nav(SBSP_PARENT),
+                // the buttons only: the mouse's side buttons (WM_APPCOMMAND) share nav but are a shortcut already
+                (ID_BACK, _) => {
+                    if nav(SBSP_NAVIGATEBACK) {
+                        mouse_tip(TIP_BACK);
+                    }
+                }
+                (ID_FWD, _) => {
+                    if nav(SBSP_NAVIGATEFORWARD) {
+                        mouse_tip(TIP_FWD);
+                    }
+                }
+                (ID_UP, _) => {
+                    if nav(SBSP_PARENT) {
+                        mouse_tip(TIP_UP);
+                    }
+                }
                 (ID_OPEN_IN, _) => {
                     if let Some(i) = pane_of(h) {
                         open_in_menu(h, i);
@@ -580,8 +610,8 @@ pub(crate) extern "system" fn pane_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             }
             // mouse side buttons
             WM_APPCOMMAND => match (lp.0 >> 16) & 0x0fff {
-                1 => nav(SBSP_NAVIGATEBACK),
-                2 => nav(SBSP_NAVIGATEFORWARD),
+                1 => _ = nav(SBSP_NAVIGATEBACK),
+                2 => _ = nav(SBSP_NAVIGATEFORWARD),
                 _ => return DefWindowProcW(h, msg, wp, lp),
             },
             _ => return DefWindowProcW(h, msg, wp, lp),
@@ -931,6 +961,7 @@ pub(crate) unsafe fn make_menus() -> Result<HMENU> {
     item(view, MF_STRING, ID_LANG, "한국어 (Korean)")?;
     AppendMenuW(view, MF_SEPARATOR, 0, PCWSTR::null())?;
     item(view, MF_STRING, ID_TOUR, tr("Getting started tour", "처음 사용 안내"))?;
+    item(view, MF_STRING, ID_KEY_TIPS, tr("Show shortcut tips on the status line", "상태줄에 단축키 팁 표시"))?;
     item(view, MF_STRING, ID_KEYS, tr("Keyboard shortcuts\tCtrl+/", "단축키\tCtrl+/"))?;
     item(view, MF_STRING, ID_HELP, tr("Help (online)\tF1", "도움말 (온라인)\tF1"))?;
     item(view, MF_STRING, ID_UPDATES, tr("Check for updates", "업데이트 확인"))?;

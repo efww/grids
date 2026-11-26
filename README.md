@@ -118,6 +118,8 @@ Address bar: click a folder in the path to go there; click a › to list the fol
 
 Getting started tour: the first time Grids starts on a new install (no grids.ini yet, started without folders), bubbles point at the layout button, the address bar, ⇄, save and the View button one by one, with how to use each and the moves that are easy to miss. → / Enter next, ← back, Tab between its buttons, Esc or a click elsewhere closes; screen readers read each step. View menu → Getting started tour shows it again any time (where grids.ini can't be written next to the exe, it comes up at every start).
 
+Shortcut tips: when you do something with the mouse that also has a key — a pane's ← / → / ↑ button, ★ or the Everything magnifier on the toolbar, double-clicking a pane header, a tab's + or the current tab's × — the status line says so for a few seconds (e.g. "Tip: Alt+↑ does this too"). Each tip shows once per run and at most 3 times in all, never over another status note, and stops for good once you use that key. View menu → Show shortcut tips on the status line turns them off.
+
 ## Known issues
 
 **Don't run Grids as administrator.** A user reported that PowerToys Mouse Crosshairs (and similar tools) stopped following the cursor and froze where they clicked over Grids. It happens only when Grids runs as administrator: Windows doesn't let a program without administrator rights receive mouse input over a window that has them (UIPI), so a normal PowerToys gets no mouse movement over an elevated Grids. Give both the same rights, either way:

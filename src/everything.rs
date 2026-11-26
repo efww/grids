@@ -435,6 +435,11 @@ pub(crate) unsafe fn open_ev() {
     SendMessageW(edit, EM_SETSEL, Some(WPARAM(0)), Some(LPARAM(-1)));
 }
 
+// The search popup is up (shortcut tip after the toolbar button).
+pub(crate) fn ev_popup_up() -> bool {
+    ev(|e| !e.h.0.is_null())
+}
+
 pub(crate) unsafe fn ev_close(back: bool) {
     let (h, prev) = ev(|e| (e.h, e.prev));
     if h.0.is_null() {

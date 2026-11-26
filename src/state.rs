@@ -76,6 +76,7 @@ pub(crate) struct App {
     pub(crate) focus_req: HWND,     // pane to focus once its folder shows (set_layout gave it the active pane's place)
     pub(crate) note: Option<(String, Instant)>, // status line confirmation and when it goes (runtime only)
     pub(crate) lost: usize,                     // missing folders the shown note counts (gone_note)
+    pub(crate) tips_now: u8,                    // shortcut tips (bit = TIP_* action) already shown since Grids started (runtime only)
     pub(crate) said: Option<Instant>,           // the note (by its end time) last handed to screen readers
     pub(crate) status_hwnd: HWND,               // the status line control (screen readers); null = the main window paints it
     pub(crate) note_hwnd: HWND,                 // the note's live region (zero size, nothing drawn); null = no announcements
@@ -169,6 +170,7 @@ thread_local! {
         home: [None; MAXP],
         focus_req: HWND::default(),
         note: None,
+        tips_now: 0,
         lost: 0,
         said: None,
         status_hwnd: HWND::default(),

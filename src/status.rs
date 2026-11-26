@@ -266,6 +266,37 @@ pub(crate) unsafe fn update_status() {
     }
 }
 
+// Shortcut tips (Key Promoter): the mouse just did something a key also does. Its key shows on the status line for
+// 4 seconds, once per run and at most TIP_MAX times in all; never over another note (path copied, missing folder,
+// Everything not running) still showing or waiting to show.
+pub(crate) unsafe fn mouse_tip(action: usize) {
+    if SAVED.lock().unwrap_or_else(|e| e.into_inner()).is_some() {
+        return;
+    }
+    let ko = KO.load(Ordering::Relaxed);
+    let now = Instant::now();
+    let shown = app(|a| {
+        // an expired note stays Some until the next update_status: its end time decides
+        let busy = a.note.as_ref().is_some_and(|(_, t)| now < *t);
+        if busy || a.tips_now & (1 << action) != 0 {
+            return false;
+        }
+        let Some(tip) = key_tip(action, a.s.key_tips_seen[action], a.s.key_tips, ko) else { return false };
+        a.tips_now |= 1 << action;
+        a.s.key_tips_seen[action] += 1;
+        a.note = Some((tip, now + Duration::from_secs(4)));
+        true
+    });
+    if shown {
+        update_status();
+    }
+}
+
+// The key itself was used: its tip never shows again.
+pub(crate) fn key_used(action: usize) {
+    app(|a| a.s.key_tips_seen[action] = TIP_LEARNED);
+}
+
 // ---------- the status line for screen readers ----------
 // An owner-drawn static on the status line, like Explorer's and Notepad's status bars: its text is the whole line
 // (a screen reader's "read status bar") and its role a status bar. Next to it a zero-size static holds only the

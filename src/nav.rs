@@ -338,10 +338,9 @@ pub(crate) unsafe fn rec_event(i: usize, ev: Nav, pidl: *const ITEMIDLIST) {
     }
 }
 
-pub(crate) unsafe fn browse(i: usize, flags: u32) {
-    if let Some(eb) = eb_of(i) {
-        _ = eb.BrowseToIDList(std::ptr::null(), flags);
-    }
+/// true when the browser accepted the move (false: no pane, or nothing to go back/forward/up to)
+pub(crate) unsafe fn browse(i: usize, flags: u32) -> bool {
+    eb_of(i).is_some_and(|eb| eb.BrowseToIDList(std::ptr::null(), flags).is_ok())
 }
 
 pub(crate) unsafe fn browse_item(i: usize, si: &IShellItem) {

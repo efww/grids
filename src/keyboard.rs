@@ -78,8 +78,15 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
             }
         }
         VK_TAB if ctrl => cycle(if shift { -1 } else { 1 }),
-        VK_T if ctrl && !shift && !alt && tabs_on() => new_tab(a),
-        VK_W if ctrl && !shift && !alt && tabs_on() => close_tab(a, app(|x| x.s.tab[a])),
+        // the keys that have a mouse tip (mouse_tip) mark it learned
+        VK_T if ctrl && !shift && !alt && tabs_on() => {
+            key_used(TIP_NEW_TAB);
+            new_tab(a);
+        }
+        VK_W if ctrl && !shift && !alt && tabs_on() => {
+            key_used(TIP_CLOSE_TAB);
+            close_tab(a, app(|x| x.s.tab[a]));
+        }
         VK_K if ctrl && !shift && !alt && tabs_on() => dup_tab(a, app(|x| x.s.tab[a])),
         k @ (VK_NEXT | VK_PRIOR) if ctrl && !shift && !alt && tabs_on() => step_tab(a, if k == VK_NEXT { 1 } else { -1 }),
         k if ctrl && !shift && !alt && (VK_1.0..=VK_9.0).contains(&k.0) && ((k.0 - VK_1.0) as usize) < app(|x| x.s.panes()) => {
@@ -108,24 +115,42 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
                 _ => nudge_split(0, 1, repeat),
             }
         }
-        VK_LEFT if alt => browse(a, SBSP_NAVIGATEBACK),
-        VK_RIGHT if alt => browse(a, SBSP_NAVIGATEFORWARD),
-        VK_UP if alt => browse(a, SBSP_PARENT),
+        VK_LEFT if alt => {
+            key_used(TIP_BACK);
+            browse(a, SBSP_NAVIGATEBACK);
+        }
+        VK_RIGHT if alt => {
+            key_used(TIP_FWD);
+            browse(a, SBSP_NAVIGATEFORWARD);
+        }
+        VK_UP if alt => {
+            key_used(TIP_UP);
+            browse(a, SBSP_PARENT);
+        }
         VK_L if ctrl => return focus_ctl(a, ID_EDIT),
         VK_D if alt => return focus_ctl(a, ID_EDIT),
         VK_F4 if !alt => return focus_ctl(a, ID_EDIT),
-        VK_F if ctrl && shift && !alt => open_ev(),
+        VK_F if ctrl && shift && !alt => {
+            key_used(TIP_EV);
+            open_ev();
+        }
         VK_F if ctrl => return focus_ctl(a, ID_FILTER),
         VK_H if ctrl => toggle_hidden(),
         VK_S if ctrl => save_current(),
-        VK_B if ctrl && !shift && !alt => open_favs(),
+        VK_B if ctrl && !shift && !alt => {
+            key_used(TIP_FAVS);
+            open_favs();
+        }
         // auto-repeat (bit 30) is swallowed: holding Ctrl+/ toggles once
         VK_OEM_2 if ctrl && !shift && !alt => {
             if m.lParam.0 & (1 << 30) == 0 {
                 toggle_keys();
             }
         }
-        VK_M if ctrl && shift && !alt => toggle_zoom(),
+        VK_M if ctrl && shift && !alt => {
+            key_used(TIP_ZOOM);
+            toggle_zoom();
+        }
         VK_E if ctrl && shift && !alt => toggle_tree(),
         VK_O if ctrl && shift && !alt => gather_explorer(),
         VK_R if ctrl && shift && !alt => {

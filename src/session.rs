@@ -35,6 +35,8 @@ pub(crate) struct Session {
     pub(crate) ev_cols: Option<[f64; 3]>, // Everything search: column borders dragged, as parts of the row width
     pub(crate) ev_sort: u32,           // Everything search: its sort code (1 name ascending ... 14 newest first), app-wide
     pub(crate) updates: bool,          // look for a newer release now and then (off = no network at all), app-wide
+    pub(crate) key_tips: bool,         // a mouse action with a shortcut names it on the status line (View menu), app-wide
+    pub(crate) key_tips_seen: [u8; TIP_N], // per action (TIP_KEYS): times its tip showed; TIP_LEARNED = its key was used
 }
 
 impl Default for Session {
@@ -71,8 +73,41 @@ impl Default for Session {
             ev_sort: 1,
             ev_cols: None,
             updates: true,
+            key_tips: true,
+            key_tips_seen: [0; TIP_N],
         }
     }
+}
+
+// ---------- shortcut tips (Key Promoter): a mouse action that has a key says so, a few times ----------
+
+pub(crate) const TIP_N: usize = 8;
+pub(crate) const TIP_BACK: usize = 0;
+pub(crate) const TIP_FWD: usize = 1;
+pub(crate) const TIP_UP: usize = 2;
+pub(crate) const TIP_FAVS: usize = 3;
+pub(crate) const TIP_EV: usize = 4;
+pub(crate) const TIP_ZOOM: usize = 5;
+pub(crate) const TIP_NEW_TAB: usize = 6;
+pub(crate) const TIP_CLOSE_TAB: usize = 7;
+pub(crate) const TIP_KEYS: [&str; TIP_N] = ["Alt+←", "Alt+→", "Alt+↑", "Ctrl+B", "Ctrl+Shift+F", "Ctrl+Shift+M", "Ctrl+T", "Ctrl+W"];
+pub(crate) const TIP_MAX: u8 = 3; // shown this many times at most
+pub(crate) const TIP_LEARNED: u8 = 4; // the key itself was used: never again
+
+/// The tip for a mouse action, if it is still due: tips on, its key not used yet, shown fewer than TIP_MAX times.
+pub(crate) fn key_tip(action: usize, seen: u8, on: bool, ko: bool) -> Option<String> {
+    let key = TIP_KEYS.get(action)?;
+    (on && seen < TIP_MAX).then(|| if ko { format!("팁: {key} 로도 할 수 있어요") } else { format!("Tip: {key} does this too") })
+}
+
+/// key_tips_seen=01240000, digit by digit so a list that grows later keeps what was learned:
+/// missing digits are 0, extra ones are dropped, anything but 0..=4 is 0.
+pub(crate) fn tips_seen_parse(v: &str) -> [u8; TIP_N] {
+    let mut out = [0; TIP_N];
+    for (o, c) in out.iter_mut().zip(v.trim().chars()) {
+        *o = c.to_digit(10).filter(|&d| d <= TIP_LEARNED as u32).unwrap_or(0) as u8;
+    }
+    out
 }
 
 pub(crate) fn even(n: usize) -> Vec<f64> {
@@ -175,6 +210,8 @@ impl Session {
                 "ev_sort" => s.ev_sort = ev_sort_ok(v.trim().parse().unwrap_or(1)),
                 "ev_cols" => s.ev_cols = ev_cols_parse(v),
                 "update_check" => s.updates = v.trim() != "0",
+                "key_tips" => s.key_tips = v.trim() != "0",
+                "key_tips_seen" => s.key_tips_seen = tips_seen_parse(v),
                 "lang" => s.ko = v.trim() == "ko",
                 "session" => s.file = v.trim().to_string(),
                 "fav" if !v.trim().is_empty() => s.favs.push(v.trim().to_string()),
@@ -241,6 +278,10 @@ impl Session {
         if let Some(c) = self.ev_cols {
             o += &format!("ev_cols={:.4},{:.4},{:.4}\n", c[0], c[1], c[2]);
         }
+        o += &format!("key_tips={}\n", self.key_tips as u8);
+        if self.key_tips_seen.iter().any(|&n| n != 0) {
+            o += &format!("key_tips_seen={}\n", self.key_tips_seen.iter().map(|n| n.to_string()).collect::<String>());
+        }
         o += &format!("lang={}\n", if self.ko { "ko" } else { "en" });
         if !self.file.is_empty() && one(&self.file) {
             o += &format!("session={}\n", self.file);
@@ -284,7 +325,9 @@ impl Session {
 
     /// What goes into a named session file: no window position, no pointer to itself, no favourites or recent folders.
     pub(crate) fn snapshot(&self) -> String {
-        Session { win: None, file: String::new(), favs: Vec::new(), recent: Vec::new(), order: Vec::new(), rn_presets: Vec::new(), ..self.clone() }.to_ini()
+        // shortcut tips are app-wide: a session file carries the default switch and no counts
+        let (key_tips, key_tips_seen) = (true, [0; TIP_N]);
+        Session { win: None, file: String::new(), favs: Vec::new(), recent: Vec::new(), order: Vec::new(), rn_presets: Vec::new(), key_tips, key_tips_seen, ..self.clone() }.to_ini()
     }
 
     /// Takes grid + folders from a named session; window position and sidebar width stay as they are.
@@ -854,6 +897,8 @@ mod tests {
             ev_cols: Some([0.25, 0.5, 0.75]),
             ev_sort: 13,
             updates: false,
+            key_tips: false,
+            key_tips_seen: [4, 0, 1, 2, 3, 4, 0, 1],
         }
     }
 
@@ -891,6 +936,8 @@ mod tests {
             "ev_sort=13",
             "update_check=0",
             "ev_cols=0.2500,0.5000,0.7500",
+            "key_tips=0",
+            "key_tips_seen=40123401",
             "lang=ko",
             r"session=C:\Grids\sessions\일.grids",
             "order=15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0",
@@ -931,6 +978,7 @@ mod tests {
             "ev_here=0",
             "ev_sort=1",
             "update_check=1",
+            "key_tips=1",
             "lang=en",
         ];
         assert_eq!(Session::default().to_ini(), lines(&want));
@@ -958,6 +1006,7 @@ mod tests {
         assert_eq!((s.follow, s.dblup, s.tree, s.hotkey, s.dlgjump, s.updates), (false, true, true, true, true, true));
         assert_eq!((s.tabs_on, s.ev_here, s.ev_sort, s.ev_cols, s.ko), (false, false, 1, None, false));
         assert_eq!((s.accent_dark, s.order.len(), s.tints.iter().all(|&t| t == 0)), (DARK.accents[1].1, 0, true));
+        assert_eq!((s.key_tips, s.key_tips_seen), (true, [0; TIP_N]));
     }
 
     #[test]
@@ -1001,6 +1050,32 @@ mod tests {
     }
 
     #[test]
+    fn key_tips_seen_reads_digit_by_digit() {
+        let seen = |v: &str| Session::parse(&format!("key_tips_seen={v}\n")).key_tips_seen;
+        assert_eq!(seen("40123401"), [4, 0, 1, 2, 3, 4, 0, 1]);
+        assert_eq!(seen("44"), [4, 4, 0, 0, 0, 0, 0, 0]); // shorter (an older list): the rest 0
+        assert_eq!(seen("1234012340"), [1, 2, 3, 4, 0, 1, 2, 3]); // longer (a newer list): the rest dropped
+        assert_eq!(seen("9x-4 3"), [0, 0, 0, 4, 0, 3, 0, 0]); // only 0..=4 count, place by place
+        assert_eq!(seen(""), [0; TIP_N]);
+        assert!(!Session::parse("key_tips=0\n").key_tips);
+        assert!(Session::parse("key_tips=1\n").key_tips);
+        let s = Session { key_tips_seen: [0, 0, 0, 0, 0, 0, 0, 2], ..Session::default() };
+        assert!(s.to_ini().contains("key_tips_seen=00000002\n"));
+        assert_eq!(Session::parse(&s.to_ini()), s);
+    }
+
+    #[test]
+    fn key_tip_text_and_limits() {
+        assert_eq!(key_tip(TIP_UP, 0, true, false).as_deref(), Some("Tip: Alt+↑ does this too"));
+        assert_eq!(key_tip(TIP_UP, 2, true, true).as_deref(), Some("팁: Alt+↑ 로도 할 수 있어요"));
+        assert_eq!(key_tip(TIP_CLOSE_TAB, 0, true, false).as_deref(), Some("Tip: Ctrl+W does this too"));
+        assert_eq!(key_tip(TIP_UP, TIP_MAX, true, false), None); // shown enough
+        assert_eq!(key_tip(TIP_UP, TIP_LEARNED, true, false), None); // the key was used
+        assert_eq!(key_tip(TIP_UP, 0, false, false), None); // switched off
+        assert_eq!(key_tip(TIP_N, 0, true, false), None);
+    }
+
+    #[test]
     fn take_layout_boundary() {
         let b = every();
         let a = Session {
@@ -1035,9 +1110,11 @@ mod tests {
             ev_cols: Some([0.125, 0.25, 0.5]),
             ev_sort: 5,
             updates: true,
+            key_tips: true,
+            key_tips_seen: [1, 1, 1, 1, 0, 0, 0, 0],
         };
         let snap = b.snapshot();
-        for key in ["win=", "session=", "fav=", "recent=", "order=", "rename_preset="] {
+        for key in ["win=", "session=", "fav=", "recent=", "order=", "rename_preset=", "key_tips_seen=", "key_tips=0"] {
             assert!(!snap.lines().any(|l| l.starts_with(key)), "{key} in a session file");
         }
         let mut got = a.clone();

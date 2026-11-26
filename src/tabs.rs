@@ -192,13 +192,21 @@ pub(crate) unsafe fn tab_mouse(h: HWND, i: usize, x: i32, y: i32, click: TabClic
     let (n, cur) = app(|a| (a.s.tab_list(i).len(), a.s.tab[i]));
     let Some(hit) = tab_hit(pane_geo(rc.right, rc.bottom, dpi).tabs, n, cur, x, y, dpi) else { return false };
     set_active(i);
-    match tab_action(hit, click) {
+    let act = tab_action(hit, click);
+    match act {
         TabAct::Pick(k) => pick_tab(i, k),
         TabAct::Close(k) => close_tab(i, k),
         TabAct::New => new_tab(i),
         TabAct::Nothing => {}
     }
     focus_view(i);
+    // shortcut tip when it did happen: Ctrl+W closes the current tab only, and a middle click is quick already
+    let now = app(|a| a.s.tab_list(i).len());
+    match act {
+        TabAct::New if now > n => mouse_tip(TIP_NEW_TAB),
+        TabAct::Close(k) if click == TabClick::Left && k == cur && now < n => mouse_tip(TIP_CLOSE_TAB),
+        _ => {}
+    }
     true
 }
 
