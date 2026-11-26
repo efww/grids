@@ -66,11 +66,14 @@ pub(crate) unsafe fn note_arranged(h: HWND) {
 // The invisible resize border a snapped window's rect has past the work area (about 7 px at 100%), at monitor `mon`'s
 // DPI, for fit_saved. 0 when that DPI is unknown.
 pub(crate) unsafe fn snap_slack(mon: HMONITOR) -> i32 {
-    let (mut x, mut y) = (0, 0);
-    if GetDpiForMonitor(mon, MDT_EFFECTIVE_DPI, &mut x, &mut y).is_err() || x == 0 {
-        return 0;
-    }
+    let Some(x) = mon_dpi(mon) else { return 0 };
     GetSystemMetricsForDpi(SM_CXSIZEFRAME, x) + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, x)
+}
+
+/// Monitor `mon`'s DPI (its scale setting); None when Windows can't say.
+pub(crate) unsafe fn mon_dpi(mon: HMONITOR) -> Option<u32> {
+    let (mut x, mut y) = (0, 0);
+    (GetDpiForMonitor(mon, MDT_EFFECTIVE_DPI, &mut x, &mut y).is_ok() && x != 0).then_some(x)
 }
 
 // Same timer id: SetTimer only changes the interval (WM_DESTROY's KillTimer still ends it).
@@ -544,8 +547,8 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 close_tour(false); // measured for the old DPI
                 let dpi = (wp.0 & 0xffff) as i32;
                 app(|a| {
-                    a.s.side = a.s.side * dpi / a.dpi;
-                    a.dpi = dpi;
+                    a.s.side = side_at(a.s.side, a.dpi, dpi);
+                    (a.dpi, a.s.side_dpi) = (dpi, dpi);
                 });
                 apply_font();
                 fit_load();

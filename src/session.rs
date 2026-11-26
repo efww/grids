@@ -7,6 +7,7 @@ pub(crate) struct Session {
     pub(crate) win: Option<[i32; 5]>, // normal rect l,t,r,b + maximized flag
     pub(crate) places: Vec<(String, [i32; 5])>, // per monitor setup (mon_sig): its last `win`, newest first, WIN_PLACES at most
     pub(crate) side: i32,             // sidebar width in px
+    pub(crate) side_dpi: i32,         // the DPI `side` was measured at (a.dpi when saved); 0 = not known (an older ini)
     pub(crate) heights: Vec<usize>,   // panes per column, left to right (1..=4 columns of 1..=4)
     pub(crate) colr: Vec<f64>,        // column width ratios
     pub(crate) rowr: Vec<Vec<f64>>,   // row height ratios, per column
@@ -49,6 +50,7 @@ impl Default for Session {
             win: None,
             places: Vec::new(),
             side: 0,
+            side_dpi: 0,
             heights: vec![2, 2],
             colr: even(2),
             rowr: vec![even(2); 2],
@@ -213,6 +215,7 @@ impl Session {
                     }
                 }
                 "side" => s.side = v.parse().unwrap_or(0),
+                "side_dpi" => s.side_dpi = v.parse().unwrap_or(0),
                 "cols" => {
                     let h: Vec<usize> = nums::<usize>(v).into_iter().take(4).map(|n| n.clamp(1, 4)).collect();
                     if !h.is_empty() {
@@ -304,7 +307,11 @@ impl Session {
             o += &format!("win_at={g}|{}\n", join(w));
         }
         let rowr = self.rowr.iter().map(|r| join(r)).collect::<Vec<_>>().join("|");
-        o += &format!("side={}\ncols={}\n", self.side, join(&self.heights));
+        o += &format!("side={}\n", self.side);
+        if self.side_dpi != 0 {
+            o += &format!("side_dpi={}\n", self.side_dpi); // older Grids skip the key
+        }
+        o += &format!("cols={}\n", join(&self.heights));
         o += &format!("colr={}\nrowr={rowr}\nactive={}\n", join(&self.colr), self.active);
         o += &format!("accent={:06X}\naccent_dark={:06X}\naccent_sys={}\n", self.accent, self.accent_dark, self.accent_sys as u8);
         o += &format!("dark={}\n", self.dark as u8);
@@ -367,7 +374,8 @@ impl Session {
     pub(crate) fn snapshot(&self) -> String {
         // shortcut tips are app-wide: a session file carries the default switch and no counts
         let (key_tips, key_tips_seen) = (true, [0; TIP_N]);
-        Session { win: None, places: Vec::new(), file: String::new(), favs: Vec::new(), recent: Vec::new(), order: Vec::new(), rn_presets: Vec::new(), key_tips, key_tips_seen, ..self.clone() }.to_ini()
+        // the tree width is not part of a session's layout (take_layout), so no DPI for it either
+        Session { win: None, places: Vec::new(), side_dpi: 0, file: String::new(), favs: Vec::new(), recent: Vec::new(), order: Vec::new(), rn_presets: Vec::new(), key_tips, key_tips_seen, ..self.clone() }.to_ini()
     }
 
     /// Takes grid + folders from a named session; window position and sidebar width stay as they are.
@@ -541,6 +549,39 @@ pub(crate) fn permute_in(cur: &mut Session, base: Option<&mut Session>, perm: &[
 
 fn moved(order: &[u8]) -> bool {
     order.iter().enumerate().any(|(k, &o)| k != o as usize)
+}
+
+/// Tree width `side` measured at DPI `from`, at DPI `to`. Rounded, so 96 to 120 and back does not drift a pixel,
+/// and in i64, so a huge saved width cannot overflow. An unknown DPI (0) leaves it as it is.
+pub(crate) fn side_at(side: i32, from: i32, to: i32) -> i32 {
+    if from <= 0 || to <= 0 {
+        return side;
+    }
+    let (s, f, t) = (side as i64, from as i64, to as i64);
+    let v = if s >= 0 { (2 * s * t + f) / (2 * f) } else { -((-2 * s * t + f) / (2 * f)) };
+    v.clamp(i32::MIN as i64, i32::MAX as i64) as i32
+}
+
+/// The DPI grids.ini's tree width was saved at: its side_dpi=, else (an older ini) the DPI of the monitor its last
+/// window position lies on (`win_dpi`), else not known.
+pub(crate) fn side_from(side_dpi: i32, win_dpi: Option<i32>) -> Option<i32> {
+    let ok = |d: i32| (48..=960).contains(&d);
+    if ok(side_dpi) {
+        Some(side_dpi)
+    } else {
+        win_dpi.filter(|&d| ok(d))
+    }
+}
+
+/// Startup tree width at `made`, the DPI of the monitor the window is created on, before it moves (hidden) to its
+/// saved place, whose WM_DPICHANGED (side_at) takes it back to `from`'s. 0 or less: the default 240 DIP at `made`.
+/// A width blown up by older starts (each multiplied it by the DPI ratio) is held to 1200 DIP of the DPI it was saved at.
+pub(crate) fn start_side(side: i32, from: Option<i32>, made: i32) -> i32 {
+    if side <= 0 {
+        return 240 * made / 96;
+    }
+    let from = from.unwrap_or(made);
+    side_at(side.min(1200 * from / 96), from, made)
 }
 
 /// The save dot: panes moved away from where the session file has them, or a layout change.
@@ -996,6 +1037,7 @@ mod tests {
             win: Some([100, 50, 1300, 850, 1]),
             places: vec![("-1920,0,0,1080;0,0,2560,1440".into(), [100, 50, 1300, 850, 1]), ("0,0,1920,1080".into(), [-8, 0, 968, 1040, 0])],
             side: 280,
+            side_dpi: 144,
             heights: vec![1, 3, 2],
             colr: vec![0.25, 0.5, 0.25],
             rowr: vec![vec![1.0], vec![0.5, 0.25, 0.25], vec![0.75, 0.25]],
@@ -1052,6 +1094,7 @@ mod tests {
             "win_at=-1920,0,0,1080;0,0,2560,1440|100,50,1300,850,1",
             "win_at=0,0,1920,1080|-8,0,968,1040,0",
             "side=280",
+            "side_dpi=144",
             "cols=1,3,2",
             "colr=0.25,0.5,0.25",
             "rowr=1|0.5,0.25,0.25|0.75,0.25",
@@ -1121,6 +1164,75 @@ mod tests {
             "lang=en",
         ];
         assert_eq!(Session::default().to_ini(), lines(&want));
+    }
+
+    // One start as main.rs runs it: grids.ini read, the window made on the primary monitor (`made`), moved hidden to its
+    // saved monitor (`target`, WM_DPICHANGED when the DPI differs), then saved. `win_dpi`: the DPI under its old win=.
+    fn start(ini: &str, win_dpi: Option<i32>, made: i32, target: i32) -> Session {
+        let mut s = Session::parse(ini);
+        let from = side_from(s.side_dpi, win_dpi);
+        (s.side, s.side_dpi) = (start_side(s.side, from, made), made);
+        if target != made {
+            (s.side, s.side_dpi) = (side_at(s.side, made, target), target);
+        }
+        Session::parse(&s.to_ini())
+    }
+
+    #[test]
+    fn tree_width_survives_starts_across_dpis() {
+        // 150% external monitor, 100% primary: before, 360 -> 540 -> 810 ... per start
+        let mut ini = Session { side: 360, side_dpi: 144, ..Default::default() }.to_ini();
+        for _ in 0..5 {
+            let s = start(&ini, Some(144), 96, 144);
+            assert_eq!((s.side, s.side_dpi), (360, 144));
+            ini = s.to_ini();
+        }
+        // the other way round: 100% monitor, 150% primary; it does not shrink
+        let mut ini = Session { side: 240, side_dpi: 96, ..Default::default() }.to_ini();
+        for _ in 0..5 {
+            let s = start(&ini, Some(96), 144, 96);
+            assert_eq!((s.side, s.side_dpi), (240, 96));
+            ini = s.to_ini();
+        }
+        // an older ini (no side_dpi=): the DPI under its last window position, then side_dpi= from then on
+        let s = start("win=2000,0,3000,800,0\nside=360\n", Some(144), 96, 144);
+        assert_eq!((s.side, s.side_dpi), (360, 144));
+        assert!(s.to_ini().contains("side=360\nside_dpi=144\ncols="));
+        assert_eq!(start(&s.to_ini(), Some(144), 96, 144).side, 360);
+        // no saved place, no DPI known: as it was; no width yet: 240 DIP at the DPI it opens at
+        assert_eq!(start("side=300\n", None, 120, 120).side, 300);
+        assert_eq!(start("", None, 144, 144).side, 360);
+        assert_eq!(start("side=0\nside_dpi=96\n", Some(96), 144, 96).side, 240);
+        // side_dpi wins over the window's monitor; a damaged one falls back to it
+        assert_eq!((side_from(120, Some(144)), side_from(0, Some(144)), side_from(5000, Some(96))), (Some(120), Some(144), Some(96)));
+        assert_eq!((side_from(0, None), side_from(0, Some(0)), side_from(-1, Some(9999))), (None, None, None));
+    }
+
+    #[test]
+    fn tree_width_rounds_and_caps() {
+        // 96 <-> 120 back and forth: no pixel lost or gained
+        let mut w = 301;
+        for _ in 0..10 {
+            w = side_at(side_at(w, 96, 120), 120, 96);
+            assert_eq!(w, 301);
+        }
+        // big -> small -> big (the startup path) may move one pixel once, then holds
+        let once = side_at(side_at(361, 144, 96), 96, 144);
+        assert!((once - 361).abs() <= 1);
+        let mut w = once;
+        for _ in 0..5 {
+            w = side_at(side_at(w, 144, 96), 96, 144);
+            assert_eq!(w, once);
+        }
+        assert_eq!((side_at(360, 144, 96), side_at(360, 0, 96), side_at(360, 96, 0)), (240, 360, 360));
+        // no overflow on a width grown huge by older starts
+        assert_eq!(side_at(i32::MAX, 96, 960), i32::MAX);
+        assert_eq!(side_at(i32::MAX / 2, 960, 96), (i32::MAX / 2) / 10);
+        // held to 1200 DIP of the saved DPI, then taken to the DPI made at: back to 1200 DIP of the target
+        let ini = Session { side: 1_000_000, side_dpi: 144, ..Default::default() }.to_ini();
+        assert_eq!(start(&ini, None, 96, 144).side, 1800);
+        assert_eq!(start("side=99999999\n", Some(96), 96, 96).side, 1200);
+        assert_eq!(start_side(1100, Some(96), 96), 1100); // under the cap: untouched
     }
 
     #[test]
@@ -1268,6 +1380,7 @@ mod tests {
             win: Some([1, 2, 3, 4, 0]),
             places: vec![("0,0,800,600".into(), [5, 6, 7, 8, 1])],
             side: 150,
+            side_dpi: 120,
             heights: vec![4],
             colr: vec![1.0],
             rowr: vec![vec![0.25; 4]],
@@ -1304,7 +1417,7 @@ mod tests {
             key_tips_seen: [1, 1, 1, 1, 0, 0, 0, 0, 0],
         };
         let snap = b.snapshot();
-        for key in ["win=", "win_at=", "session=", "fav=", "recent=", "order=", "rename_preset=", "key_tips_seen=", "key_tips=0"] {
+        for key in ["win=", "win_at=", "session=", "fav=", "recent=", "order=", "rename_preset=", "key_tips_seen=", "key_tips=0", "side_dpi="] {
             assert!(!snap.lines().any(|l| l.starts_with(key)), "{key} in a session file");
         }
         let mut got = a.clone();

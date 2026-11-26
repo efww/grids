@@ -353,9 +353,14 @@ fn main() -> Result<()> {
         let square = DWMWCP_DONOTROUND;
         _ = DwmSetWindowAttribute(main, DWMWA_WINDOW_CORNER_PREFERENCE, &square as *const _ as _, 4);
         let dpi = GetDpiForWindow(main) as i32;
-        if s.side <= 0 {
-            s.side = 240 * dpi / 96;
-        }
+        // grids.ini's tree width is at the DPI it was saved at, and the window is made on the primary monitor first:
+        // taken to this DPI here, the hidden move to its saved place below (WM_DPICHANGED) brings it back exactly
+        let win_dpi = || {
+            let [l, t, r, b, _] = s.win?;
+            mon_dpi(MonitorFromRect(&RECT { left: l, top: t, right: r, bottom: b }, MONITOR_DEFAULTTONEAREST)).map(|d| d as i32)
+        };
+        let from = side_from(s.side_dpi, win_dpi());
+        (s.side, s.side_dpi) = (start_side(s.side, from, dpi), dpi);
         // the place last used with the monitors connected now, else the last place; either goes through fit_saved below
         let sig = monitor_sig();
         let win = pick_place(&s.places, sig.as_deref(), s.win);
