@@ -273,10 +273,33 @@ pub(crate) unsafe fn save_session_as() -> Result<()> {
     Ok(())
 }
 
+/// The status-line note for a session file that can't be read (a desktop shortcut, the jump list or the command
+/// line naming it). `missing`: it isn't there at all (renamed or deleted since the link was made), else locked,
+/// no access and the like.
+pub(crate) fn session_unread_note(ko: bool, path: &Path, missing: bool) -> String {
+    let (name, (en, kr)) = if missing {
+        (path.file_stem(), ("Session \"{name}\" not found — it was renamed or deleted", "찾을 수 없는 세션: \"{name}\" — 이름이 바뀌었거나 지워짐"))
+    } else {
+        (path.file_name(), ("Couldn't open session file: {name}", "세션 파일을 열지 못했습니다: {name}"))
+    };
+    let name = name.map_or_else(|| path.to_string_lossy(), |n| n.to_string_lossy());
+    (if ko { kr } else { en }).replace("{name}", &name)
+}
+
+pub(crate) fn not_found(e: &std::io::Error) -> bool {
+    e.kind() == std::io::ErrorKind::NotFound
+}
+
 pub(crate) unsafe fn load_session_file(path: &Path) {
-    let Ok(text) = std::fs::read_to_string(path) else {
-        _ = MessageBeep(MB_ICONWARNING);
-        return;
+    let text = match std::fs::read_to_string(path) {
+        Ok(t) => t,
+        Err(e) => {
+            _ = MessageBeep(MB_ICONWARNING);
+            let note = session_unread_note(KO.load(Ordering::Relaxed), path, not_found(&e));
+            app(|a| a.note = Some((note, Instant::now() + Duration::from_secs(5))));
+            update_status();
+            return;
+        }
     };
     for i in 0..MAXP {
         destroy_pane(i);
@@ -571,6 +594,17 @@ mod tests {
         _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn unread_session_notes() {
+        let p = Path::new(r"C:\Grids\sessions\업무.grids");
+        assert_eq!(session_unread_note(false, p, true), "Session \"업무\" not found — it was renamed or deleted");
+        assert_eq!(session_unread_note(true, p, true), "찾을 수 없는 세션: \"업무\" — 이름이 바뀌었거나 지워짐");
+        assert_eq!(session_unread_note(false, p, false), "Couldn't open session file: 업무.grids");
+        assert_eq!(session_unread_note(true, p, false), "세션 파일을 열지 못했습니다: 업무.grids");
+        let gone = std::fs::read_to_string(std::env::temp_dir().join("grids-no-such-session.grids")).unwrap_err();
+        assert!(not_found(&gone));
     }
 
     #[test]

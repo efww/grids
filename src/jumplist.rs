@@ -227,6 +227,106 @@ unsafe fn make_link(exe: &HSTRING, l: &JumpLink, icon: (&HSTRING, i32)) -> Resul
     Ok(link)
 }
 
+// ---------- a desktop shortcut to a session (right-click on a session card) ----------
+// The same link a jump-list session item is: this grids.exe with the session file as its one argument. No
+// AppUserModelID of its own, so it is just like a shortcut made by hand (its Properties › Shortcut key works).
+
+/// What a file name on the desktop holds for the shortcut being made.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum Slot {
+    Free,
+    Mine,  // a Grids link to this same exe and session: left as it is
+    Other, // anything else, or a link that can't be read: never replaced
+}
+
+pub(crate) enum LinkFail {
+    Taken,      // every name tried belongs to another file
+    Os(String), // Windows' reason
+}
+
+/// The shortcut's file name: "<name> (Grids).lnk", or " (2)" … " (9)" after it when that's taken by another
+/// file. A name that already holds this same link is used again, so making it twice doesn't leave two.
+/// None = all nine are taken.
+pub(crate) fn shortcut_name(stem: &str, slot: impl Fn(&str) -> Slot) -> Option<String> {
+    let names: Vec<String> = (1..=9).map(|k| if k == 1 { format!("{stem} (Grids).lnk") } else { format!("{stem} (Grids) ({k}).lnk") }).collect();
+    let slots: Vec<Slot> = names.iter().map(|n| slot(n)).collect();
+    let k = slots.iter().position(|s| *s == Slot::Mine).or_else(|| slots.iter().position(|s| *s == Slot::Free))?;
+    Some(names[k].clone())
+}
+
+/// The status-line note after "Create desktop shortcut" (None: made).
+pub(crate) fn shortcut_note(ko: bool, name: &str, fail: Option<&LinkFail>) -> String {
+    let (en, kr) = match fail {
+        None => ("Desktop shortcut to \"{name}\" made", "바탕 화면에 \"{name}\" 바로 가기를 만듦"),
+        Some(LinkFail::Taken) => ("No shortcut made: the desktop's \"{name} (Grids)\" names belong to other files", "바로 가기를 만들지 않음: 바탕 화면의 \"{name} (Grids)\" 이름을 다른 파일이 쓰고 있음"),
+        Some(LinkFail::Os(_)) => ("Couldn't make a desktop shortcut to \"{name}\": {why}", "바탕 화면에 \"{name}\" 바로 가기를 만들지 못함: {why}"),
+    };
+    let why = match fail {
+        Some(LinkFail::Os(w)) => w.trim().trim_end_matches('.').replace(['\r', '\n'], " "),
+        _ => String::new(),
+    };
+    (if ko { kr } else { en }).replace("{why}", &why).replace("{name}", name)
+}
+
+fn wide_str(b: &[u16]) -> String {
+    String::from_utf16_lossy(&b[..b.iter().position(|&c| c == 0).unwrap_or(b.len())])
+}
+
+// What `file` holds: nothing, this same Grids link (target exe and arguments), or something else.
+unsafe fn link_slot(file: &Path, exe: &Path, args: &str) -> Slot {
+    match std::fs::symlink_metadata(file) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Slot::Free,
+        Err(_) => return Slot::Other,
+        Ok(_) => {}
+    }
+    let mine = (|| -> Result<bool> {
+        let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)?;
+        link.cast::<IPersistFile>()?.Load(&HSTRING::from(file.as_os_str()), STGM_READ)?;
+        let mut buf = [0u16; 2048];
+        link.GetPath(&mut buf, std::ptr::null_mut(), 0)?;
+        let target = wide_str(&buf);
+        buf = [0u16; 2048];
+        link.GetArguments(&mut buf)?;
+        Ok(target.eq_ignore_ascii_case(&exe.to_string_lossy()) && wide_str(&buf) == args)
+    })();
+    if mine.unwrap_or(false) { Slot::Mine } else { Slot::Other }
+}
+
+/// Makes the desktop shortcut that opens `session` (the file made). One already there for it is left untouched,
+/// so a Shortcut key, icon or Run setting the user gave it in Properties isn't wiped.
+pub(crate) unsafe fn desktop_shortcut(session: &Path, ko: bool) -> std::result::Result<PathBuf, LinkFail> {
+    let os = |e: Error| LinkFail::Os(e.message().to_string());
+    let exe = std::env::current_exe().map_err(|e| LinkFail::Os(e.to_string()))?;
+    let p = SHGetKnownFolderPath(&FOLDERID_Desktop, KF_FLAG_DEFAULT, None).map_err(os)?;
+    let desk = p.to_string();
+    CoTaskMemFree(Some(p.0 as _));
+    let desk = PathBuf::from(desk.map_err(|e| LinkFail::Os(e.to_string()))?);
+    let args = quote_arg(&session.to_string_lossy());
+    let stem = session.file_stem().unwrap_or_default().to_string_lossy().into_owned();
+    let name = shortcut_name(&stem, |n| link_slot(&desk.join(n), &exe, &args)).ok_or(LinkFail::Taken)?;
+    let file = desk.join(name);
+    if file.exists() {
+        return Ok(file); // Slot::Mine: already opens this session
+    }
+    (|| -> Result<()> {
+        let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)?;
+        let exe_w = HSTRING::from(exe.as_os_str());
+        link.SetPath(&exe_w)?;
+        link.SetArguments(&HSTRING::from(args.as_str()))?;
+        if let Some(dir) = exe.parent() {
+            link.SetWorkingDirectory(&HSTRING::from(dir.as_os_str()))?;
+        }
+        link.SetIconLocation(&exe_w, 0)?;
+        let desc = if ko { format!("Grids 세션: {stem}") } else { format!("Grids session: {stem}") };
+        _ = link.SetDescription(&HSTRING::from(desc)); // the tooltip; too long a name just goes without
+        link.cast::<IPersistFile>()?.Save(&HSTRING::from(file.as_os_str()), true)
+    })()
+    .map_err(os)?;
+    let wide = HSTRING::from(file.as_os_str());
+    SHChangeNotify(SHCNE_CREATE, SHCNF_PATHW, Some(wide.as_ptr() as _), None);
+    Ok(file)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -287,6 +387,46 @@ mod tests {
         assert_eq!(quote_arg(r"D:\"), r#""D:\\""#);
         // what plain quotes would do: the closing quote is eaten
         assert_eq!(split(r#""D:\""#), vec![r#"D:""#.to_string()]);
+    }
+
+    #[test]
+    fn shortcut_names() {
+        let free = |_: &str| Slot::Free;
+        assert_eq!(shortcut_name("업무 4분할", free).as_deref(), Some("업무 4분할 (Grids).lnk"));
+        // taken by another file: the next number, never replaced
+        let one_taken = |n: &str| if n == "a (Grids).lnk" { Slot::Other } else { Slot::Free };
+        assert_eq!(shortcut_name("a", one_taken).as_deref(), Some("a (Grids) (2).lnk"));
+        // made before under a number: that one is used again, not a second link
+        let mine_at_3 = |n: &str| match n {
+            "a (Grids) (3).lnk" => Slot::Mine,
+            "a (Grids) (2).lnk" => Slot::Other,
+            _ => Slot::Free,
+        };
+        assert_eq!(shortcut_name("a", mine_at_3).as_deref(), Some("a (Grids) (3).lnk"));
+        let last_free = |n: &str| if n == "a (Grids) (9).lnk" { Slot::Free } else { Slot::Other };
+        assert_eq!(shortcut_name("a", last_free).as_deref(), Some("a (Grids) (9).lnk"));
+        assert_eq!(shortcut_name("a", |_| Slot::Other), None);
+    }
+
+    #[test]
+    fn shortcut_args_are_one_session_path() {
+        for p in [r"C:\Grids\sessions\업무.grids", r"D:\my tools\Grids\sessions\a b.grids", r"\\srv\share\g\sessions\x.qdr"] {
+            assert_eq!(split(&quote_arg(p)), vec![p.to_string()], "{p}");
+            assert_eq!(session_arg(&split(&quote_arg(p))), Some(p));
+        }
+    }
+
+    #[test]
+    fn shortcut_notes() {
+        let os = LinkFail::Os("Access is denied.\r\n".into());
+        for fail in [None, Some(&LinkFail::Taken), Some(&os)] {
+            for ko in [false, true] {
+                let t = shortcut_note(ko, "업무", fail);
+                assert!(t.contains("\"업무") && !t.contains(['{', '\r', '\n']), "{t}");
+            }
+        }
+        assert_eq!(shortcut_note(false, "x", Some(&os)), "Couldn't make a desktop shortcut to \"x\": Access is denied");
+        assert_eq!(shortcut_note(true, "업무", None), "바탕 화면에 \"업무\" 바로 가기를 만듦");
     }
 
     #[test]

@@ -299,6 +299,22 @@ unsafe fn delete_card(h: HWND, k: usize) {
     }
 }
 
+// Right-click → Create desktop shortcut: a link that opens this session (double-click it, or give it a Shortcut
+// key in its Properties). The popup stays open; the outcome shows on the main window's status line.
+unsafe fn shortcut_card(k: usize) {
+    let Some(path) = app(|a| a.cards.get(k).map(|c| c.0.clone())) else { return };
+    let name = path.file_stem().unwrap_or_default().to_string_lossy().into_owned();
+    let ko = KO.load(Ordering::Relaxed);
+    let fail = desktop_shortcut(&path, ko).err();
+    if fail.is_some() {
+        _ = MessageBeep(MB_ICONWARNING);
+    }
+    let text = shortcut_note(ko, &name, fail.as_ref());
+    let secs = if fail.is_some() { 5 } else { 3 };
+    app(|a| a.note = Some((text, Instant::now() + Duration::from_secs(secs))));
+    update_status();
+}
+
 // Right-click → Rename: an edit box over the card's name, all of it selected.
 unsafe fn start_rename(h: HWND, k: usize) {
     let (mut edit, font, name) = app(|a| (a.load_edit, a.font, a.cards.get(k).map(|c| c.0.file_stem().unwrap_or_default().to_string_lossy().into_owned())));
@@ -587,6 +603,8 @@ pub(crate) extern "system" fn load_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 let Ok(menu) = CreatePopupMenu() else { return LRESULT(0) };
                 _ = AppendMenuW(menu, MF_STRING, 1, &HSTRING::from(tr("Rename", "이름 바꾸기")));
                 _ = AppendMenuW(menu, MF_STRING, 2, &HSTRING::from(tr("Delete", "삭제")));
+                _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
+                _ = AppendMenuW(menu, MF_STRING, 3, &HSTRING::from(tr("Create desktop shortcut", "바탕 화면에 바로 가기 만들기")));
                 let mut at = POINT::default();
                 _ = GetCursorPos(&mut at);
                 let pick = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, at.x, at.y, None, h, None).0;
@@ -594,6 +612,7 @@ pub(crate) extern "system" fn load_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 match pick {
                     1 => start_rename(h, k),
                     2 => delete_card(h, k),
+                    3 => shortcut_card(k),
                     _ => {}
                 }
             }
