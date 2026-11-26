@@ -995,6 +995,9 @@ mod tests {
         assert!(is_fs(r"C:\") && is_fs(r"\\srv\share") && !is_fs("::{20D04FE0-3AEA-1069-A2D8-08002B30309D}"));
         let titles = [r"C:\Users\x\Downloads", "", r"C:\"].map(window_title);
         assert_eq!(titles, ["Downloads - Grids", "Grids", "C: - Grids"]);
+        // "Users - Grids" is what the runner's double-click-for-parent test waits for
+        let titles = [r"C:\Users", r"C:\Users\", r"C:\Users\Public", r"\\srv\share"].map(window_title);
+        assert_eq!(titles, ["Users - Grids", "Users - Grids", "Public - Grids", "share - Grids"]);
     }
 
     #[test]
@@ -1584,6 +1587,21 @@ mod tests {
         let mut f = Some((r"C:\w\a".to_string(), r"C:\w\b".to_string()));
         rec_step(&mut f, Nav::Failed, r"C:\w\b");
         assert!(f.is_none());
+    }
+
+    #[test]
+    fn status_notes() {
+        // more missing folders while the note still shows add up; else the count starts again
+        assert_eq!([lost_next(0, true), lost_next(1, true), lost_next(3, false), lost_next(0, false)], [1, 2, 1, 1]);
+        assert_eq!(gone_text(true, 1, r"C:\a\b", r"C:\a"), r"없는 폴더: C:\a\b · C:\a 엶");
+        assert_eq!(gone_text(false, 1, r"C:\a\b", r"C:\a"), r"Not found: C:\a\b · opened C:\a");
+        assert_eq!(gone_text(false, 3, r"C:\a\b", r"C:\a"), "3 saved folders were missing · opened the nearest parent folders");
+        assert_eq!(gone_text(true, 3, r"C:\a\b", r"C:\a"), "저장된 폴더 3개가 없어 가장 가까운 상위 폴더를 엶");
+        // the renamed folder's own name: trailing backslash, drive root, share
+        assert_eq!(follow_text(false, r"C:\Work\Report 2026\"), "Followed renamed folder: Report 2026");
+        assert_eq!(follow_text(true, r"C:\Work\Report 2026\"), "폴더 이름이 바뀌어 따라감: Report 2026");
+        assert_eq!(follow_text(false, r"D:\"), "Followed renamed folder: D:");
+        assert_eq!(follow_text(true, r"\\srv\share\new"), "폴더 이름이 바뀌어 따라감: new");
     }
 
     #[test]

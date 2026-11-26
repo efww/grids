@@ -108,15 +108,24 @@ pub(crate) unsafe fn browse_marked(i: usize, to: &str, from: &str, follow: bool)
 
 // "Not found: … · opened …" for 8 s; more recoveries while it shows merge into one count.
 pub(crate) fn gone_note(a: &mut App, missing: &str, opened: &str) {
-    let live = a.lost > 0 && a.note.as_ref().is_some_and(|(_, t)| Instant::now() < *t);
-    a.lost = if live { a.lost + 1 } else { 1 };
-    let text = match (KO.load(Ordering::Relaxed), a.lost) {
+    let showing = a.note.as_ref().is_some_and(|(_, t)| Instant::now() < *t);
+    a.lost = lost_next(a.lost, showing);
+    let text = gone_text(KO.load(Ordering::Relaxed), a.lost, missing, opened);
+    a.note = Some((text, Instant::now() + Duration::from_secs(8)));
+}
+
+// The count after one more missing folder: added to the last one while its note still shows, else a fresh 1.
+pub(crate) fn lost_next(lost: usize, showing: bool) -> usize {
+    if lost > 0 && showing { lost + 1 } else { 1 }
+}
+
+pub(crate) fn gone_text(ko: bool, n: usize, missing: &str, opened: &str) -> String {
+    match (ko, n) {
         (false, 1) => format!("Not found: {missing} · opened {opened}"),
         (true, 1) => format!("없는 폴더: {missing} · {opened} 엶"),
         (false, n) => format!("{n} saved folders were missing · opened the nearest parent folders"),
         (true, n) => format!("저장된 폴더 {n}개가 없어 가장 가까운 상위 폴더를 엶"),
-    };
-    a.note = Some((text, Instant::now() + Duration::from_secs(8)));
+    }
 }
 
 // ---------- folders renamed or removed elsewhere ----------
@@ -354,10 +363,13 @@ pub(crate) unsafe fn shell_tick(h: HWND) {
 
 // "Followed renamed folder: name" for 5 s.
 pub(crate) fn follow_note(a: &mut App, disp: &str) {
-    let leaf = disp.trim_end_matches('\\').rsplit('\\').next().unwrap_or(disp);
-    let text = if KO.load(Ordering::Relaxed) { format!("폴더 이름이 바뀌어 따라감: {leaf}") } else { format!("Followed renamed folder: {leaf}") };
-    a.note = Some((text, Instant::now() + Duration::from_secs(5)));
+    a.note = Some((follow_text(KO.load(Ordering::Relaxed), disp), Instant::now() + Duration::from_secs(5)));
     a.lost = 0;
+}
+
+pub(crate) fn follow_text(ko: bool, disp: &str) -> String {
+    let leaf = disp.trim_end_matches('\\').rsplit('\\').next().unwrap_or(disp);
+    if ko { format!("폴더 이름이 바뀌어 따라감: {leaf}") } else { format!("Followed renamed folder: {leaf}") }
 }
 
 // Pending / Failed events of a pane with a recovery or a rename follow waiting; Complete goes through on_nav.
