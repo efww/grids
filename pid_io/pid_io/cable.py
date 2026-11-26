@@ -107,7 +107,9 @@ SCHEMA = [
          _num("inst_el", "계기 높이 (EL)", 1.5, "m", "", 0.1),
          _num("jb_el", "JB 높이 (EL)", 1.2, "m", "", 0.1),
          _num("room_el", "룸 케이블 인입 높이 (EL)", 0.0, "m", "케이블 피트·바닥이면 0", 0.1),
-         _num("route_factor", "수평 우회계수", 1.1, "", "직각 경로 × 계수 (랙 굴곡·우회)", 0.05),
+         _num("rack_pref", "랙 우선도", 3, "", "랙 밖 1m를 랙 몇 m로 볼지. 클수록 돌아가더라도 랙을 탑니다", 0.5),
+         _num("rack_width", "직접 그린 랙 폭", 6, "m", "PLOT 화면에서 다각선으로 그린 랙의 폭"),
+         _num("route_factor", "분기 우회계수", 1.1, "", "계기 → JB 직각 거리 × 계수 (짧은 구간이라 경로 탐색 생략)", 0.05),
          _num("field_min", "계기 → JB 최소 수평 길이", 5, "m", "같은 장비 옆이라 도면 거리가 0에 가까울 때"),
          _num("jb_radius", "JB 반경", 40, "m", "PLOT 좌표가 있으면 이 거리 안의 계기끼리 JB로 묶습니다 (분리 기준은 그대로)"),
      ]},
@@ -310,6 +312,29 @@ class _Geo:
             lvl = float(v["sup_el"])
         return abs(start - lvl) + abs(lvl - end)
 
+    def run(self, p, start_el, end_el, kind):
+        """Routed run to the control room: -> (metres incl. height, basis text)."""
+        v = self.v
+        mode = v["main_route"]
+        use_r = mode.startswith("랙")
+        r = self.L.router(float(v["rack_pref"]), float(v["rack_width"]), use_r).route(p)
+        if not r:
+            hh, zz = self.h(p, self.L.room), self.zf(start_el, end_el)
+            return hh + zz, f"PLOT 직각 {hh:.0f}m (경로 못 찾음) + 높이 {zz:.1f}m"
+        if mode.startswith("UG") or (use_r and v["no_rack"].startswith("UG")):
+            gl = -float(v["ug_depth"])
+        else:
+            gl = float(v["sup_el"])
+        rl = float(v["rack_el"])
+        first = rl if (use_r and r["first_rack"]) else gl
+        last = rl if (use_r and r["last_rack"]) else gl
+        z = abs(start_el - first) + (r["changes"] * abs(rl - gl) if use_r else 0) + abs(last - end_el)
+        horiz = r["ground"] + r["rack"]
+        self.geo["routes"].append({"poly": r["poly"], "kind": kind})
+        lvl = "UG" if gl < 0 else "AG 서포트"
+        return horiz + z, (f"PLOT 경로 {horiz:.0f}m (랙 {r['rack']:.0f} · {lvl} {r['ground']:.0f}) + 높이 {z:.1f}m"
+                           if use_r else f"PLOT 경로 {horiz:.0f}m ({mode}) + 높이 {z:.1f}m")
+
     def zb(self):
         v = self.v
         lvl = -float(v["ug_depth"]) if v["no_rack"].startswith("UG") else float(v["sup_el"])
@@ -395,10 +420,9 @@ def build(rows, s: dict, area_map: dict | None = None, layout=None):
             if G:
                 p = _centre([G.loc(r)[0] for r in ch])
                 if p:
-                    hh, zz = G.h(p, G.L.room), G.zf(float(v["jb_el"]), float(v["room_el"]))
-                    tl, how = hh + zz, f"PLOT 수평 {hh:.0f}m + 높이 {zz:.1f}m ({G.loc(ch[0])[1]})"
+                    tl, how = G.run(p, float(v["jb_el"]), float(v["room_el"]), "pkg")
+                    how += f" ({G.loc(ch[0])[1]})"
                     G.geo["pkgs"][area] = [round(p[0], 1), round(p[1], 1)]
-                    G.geo["routes"].append([round(p[0], 1), round(p[1], 1), "pkg"])
             sl = SYS_LETTER.get(sys_, "M")
             cables.append({"no": uniq(f"MC-{area}-{sl}{cls}" + (f"-{k:02d}" if len(members) > cap else "")),
                            "kind": "패키지", "frm": f"{area} UCP", "frm_type": "패키지 제어반",
@@ -433,10 +457,9 @@ def build(rows, s: dict, area_map: dict | None = None, layout=None):
             how = f"JB→룸 {tl:g}m 가정" + (" (유닛별 값)" if area in trunk else "")
             pj = _centre([G.loc(r)[0] for r in ch]) if G else None
             if pj:
-                hh, zz = G.h(pj, G.L.room), G.zf(float(v["jb_el"]), float(v["room_el"]))
-                tl, how = hh + zz, f"PLOT 수평 {hh:.0f}m + 높이 {zz:.1f}m (JB = 계기 {len(ch)}개 중심)"
+                tl, how = G.run(pj, float(v["jb_el"]), float(v["room_el"]), "jb")
+                how += f" (JB = 계기 {len(ch)}개 중심)"
                 G.geo["jbs"].append([jb, round(pj[0], 1), round(pj[1], 1), sys_])
-                G.geo["routes"].append([round(pj[0], 1), round(pj[1], 1), "jb"])
             jbs.append({"no": jb, "kind": "패키지 Skid" if route == "pkg" else "필드", "area": area, "system": sys_,
                         "cls": CLS_NAME[cls], "is": "IS" if is_ else "Non-IS", "size": f"{size}{unit}",
                         "used": len(ch), "spare": size - len(ch), "fill": round(len(ch) / size, 3),
@@ -469,9 +492,8 @@ def build(rows, s: dict, area_map: dict | None = None, layout=None):
         src = "IRP" if v["mcc_from"].startswith("IRP") else "MCC"
         mlen, mhow = float(v["len_mcc"]), f"{src}→룸 {v['len_mcc']}m 가정"
         if G and G.L.irp:
-            hh, zz = G.h(G.L.irp, G.L.room), G.zf(float(v["room_el"]), float(v["room_el"]))
-            mlen, mhow = hh + zz, f"PLOT 수평 {hh:.0f}m + 높이 {zz:.1f}m ({src} 위치: {G.L.irp_src})"
-            G.geo["routes"].append([round(G.L.irp[0], 1), round(G.L.irp[1], 1), "irp"])
+            mlen, mhow = G.run(G.L.irp, float(v["room_el"]), float(v["room_el"]), "irp")
+            mhow += f" ({src} 위치: {G.L.irp_src})"
         if v["mcc_mode"].startswith("멀티"):
             by = {}
             for r, cls in mcc:
@@ -513,8 +535,7 @@ def build(rows, s: dict, area_map: dict | None = None, layout=None):
         if G:
             p = G.L.irp if r.location == "MCC" else G.loc(r)[0]
             if p:
-                hh, zz = G.h(p, G.L.room), G.zf(float(v["jb_el"]), float(v["room_el"]))
-                tl, how = hh + zz, f"PLOT 수평 {hh:.0f}m + 높이 {zz:.1f}m"
+                tl, how = G.run(p, float(v["jb_el"]), float(v["room_el"]), "comm")
         cables.append({"no": uniq(f"CB-{r.tag}"), "kind": "통신", "frm": src,
                        "frm_type": "MCC" if r.location == "MCC" else "패키지", "to": room(r.system if r.system in SYS_LETTER else "DCS"),
                        "to_type": "룸", "spec": v["COMM_spec"], "io": r.io, "system": r.system, "is": "Non-IS",

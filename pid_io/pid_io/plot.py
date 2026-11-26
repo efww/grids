@@ -205,7 +205,9 @@ def read_plot(pdf: Path, ref_pdf: Path | None = None) -> dict:
     ref = fitz.open(ref_pdf)[0] if ref_pdf else None
     sc = detect_scale(page, ref)
     eq = equipment(page)
+    m = sc.m_per_pt or 0.2                   # size filters only; lengths wait for a confirmed scale
     return {
+        "racks": detect_racks(page, m), "obstacles": detect_obstacles(page, m),
         "pdf": Path(pdf).name, "size": [page.rect.width, page.rect.height],
         "scale": {"m_per_pt": sc.m_per_pt, "method": sc.method, "evidence": sc.evidence, "confident": sc.confident},
         "equipment": {t: [[round(x, 1), round(y, 1)] for x, y in v] for t, v in eq.items()},
@@ -257,6 +259,14 @@ def _reading_order(pts, tol=25):
     return [p for r in rows for p in sorted(r, key=lambda q: q[0])]
 
 
+_ROUTERS: dict = {}
+
+
+def json_key(x):
+    import json
+    return json.dumps(x, sort_keys=True)
+
+
 class Layout:
     """Plot positions for rooms, panels and index rows. Coordinates in plot pt; m = pt * m_per_pt."""
 
@@ -290,6 +300,10 @@ class Layout:
         self.room = tuple(dec["room"]) if dec.get("room") else self._label_pos(plot["rooms"], ("CCR", "MCB", "CONTROL"))
         self.irp = tuple(dec["irp"]) if dec.get("irp") else self._label_pos(plot["panels"], ("IRP",)) or \
             self._label_pos(plot["panels"], ("MCC",))
+        off = set(dec.get("racks_off") or [])
+        self.racks_auto = [r + [i in off] for i, r in enumerate(plot.get("racks") or [])]
+        self.racks_user = [p for p in (dec.get("racks_add") or []) if len(p) >= 2]
+        self._router = {}
         self.room_src = "사용자 지정" if dec.get("room") else ("도면 글자" if self.room else "")
         self.irp_src = "사용자 지정" if dec.get("irp") else ("도면 글자" if self.irp else "")
 
@@ -339,6 +353,217 @@ class Layout:
             return p, f"추정(유닛 {row.unit} 장비 중심)"
         return None, "위치 미정"
 
+    def rack_rects(self, width_m=6.0):
+        out = [r[:4] for r in self.racks_auto if not r[-1]]
+        hw = width_m / 2 / self.m_per_pt
+        for poly in self.racks_user:
+            for (x0, y0), (x1, y1) in zip(poly, poly[1:]):
+                if abs(x1 - x0) >= abs(y1 - y0):            # snapped to the nearer axis, like a real rack
+                    out.append([min(x0, x1) - hw, y0 - hw, max(x0, x1) + hw, y0 + hw])
+                    if abs(y1 - y0) > 1:
+                        out.append([x1 - hw, min(y0, y1) - hw, x1 + hw, max(y0, y1) + hw])
+                else:
+                    out.append([x0 - hw, min(y0, y1) - hw, x0 + hw, max(y0, y1) + hw])
+                    if abs(x1 - x0) > 1:
+                        out.append([min(x0, x1) - hw, y1 - hw, max(x0, x1) + hw, y1 + hw])
+        return out
+
+    def router(self, pref=3.0, width_m=6.0, use_racks=True):
+        key = (round(pref, 2), round(width_m, 2), use_racks)
+        if key not in self._router:
+            k = (str(self.plot.get("_key")), json_key(self.racks_auto), json_key(self.racks_user), self.room,
+                 self.m_per_pt, key)
+            if k not in _ROUTERS:
+                if len(_ROUTERS) > 8:
+                    _ROUTERS.clear()
+                _ROUTERS[k] = Router(self.plot["size"], self.m_per_pt,
+                                     self.rack_rects(width_m) if use_racks else [],
+                                     self.plot.get("obstacles") or [], self.room, pref if use_racks else 1.0)
+            self._router[key] = _ROUTERS[k]
+        return self._router[key]
+
     def dist(self, a, b):
         """Manhattan distance in m (cables run along orthogonal routes)."""
         return (abs(a[0] - b[0]) + abs(a[1] - b[1])) * self.m_per_pt
+
+
+# ------------------------------------------------------------------ pipe racks and obstacles
+def detect_racks(page, m_per_pt: float, tol=1.5):
+    """Pipe racks seen from above look like ladders: two rows of column markers (a ~1 m box
+    around an H-beam) at a steady bay (2-13 m), the rows 3-12 m apart. Returns rects in pt:
+    [x0, y0, x1, y1, 'H'|'V', bents]."""
+    m = m_per_pt
+    cols = []
+    for d in page.get_drawings():
+        it, r = d["items"], d["rect"]
+        if (len(it) == 1 and it[0][0] in ("qu", "re") and 0.5 <= r.width * m <= 1.6 and 0.5 <= r.height * m <= 1.6
+                and min(r.width, r.height) / max(r.width, r.height) > 0.65):
+            c = ((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2)
+            if not any(abs(c[0] - e[0]) < tol and abs(c[1] - e[1]) < tol for e in cols):
+                cols.append(c)
+    out = []
+    for axis in (0, 1):                 # 0: rack runs along x (bents are vertical pairs)
+        a, b = (0, 1) if axis == 0 else (1, 0)
+        bents = []
+        for c in cols:
+            cand = [e for e in cols if e is not c and abs(c[a] - e[a]) < tol and 3 <= (e[b] - c[b]) * m <= 12]
+            if cand:
+                e = min(cand, key=lambda e: e[b] - c[b])
+                bents.append(((c[a] + e[a]) / 2, c[b], e[b]))
+        grp = {}
+        for x, lo, hi in bents:
+            key = next((k for k in grp if abs(k[0] - lo) < tol and abs(k[1] - hi) < tol), (lo, hi))
+            grp.setdefault(key, []).append(x)
+        for (lo, hi), xs in grp.items():
+            xs = sorted(xs)
+            run = [xs[0]]
+            for x in xs[1:] + [None]:
+                if x is not None and (x - run[-1]) * m <= 13:
+                    run.append(x)
+                    continue
+                if len(run) >= 3 and (run[-1] - run[0]) * m >= 10:
+                    r = [run[0], lo, run[-1], hi] if axis == 0 else [lo, run[0], hi, run[-1]]
+                    out.append([round(v, 1) for v in r] + ["H" if axis == 0 else "V", len(run)])
+                run = [x] if x is not None else []
+    return out
+
+
+def detect_obstacles(page, m_per_pt: float):
+    """Equipment, containers and buildings the cable route must go around: boxes (2-80 m)
+    with a label or drawing inside, and round tank outlines."""
+    m = m_per_pt
+    words = [((w[0] + w[2]) / 2, (w[1] + w[3]) / 2) for w in page.get_text("words")]
+    pts, cand = [], []
+    for d in page.get_drawings():
+        it, r = d["items"], d["rect"]
+        for x in it:
+            if x[0] == "l":
+                pts.append(((x[1].x + x[2].x) / 2, (x[1].y + x[2].y) / 2))
+        w, h = r.width * m, r.height * m
+        if not (2 <= w <= 80 and 2 <= h <= 80):
+            continue
+        if len(it) == 1 and it[0][0] in ("qu", "re"):
+            cand.append((r, "box"))
+        elif len(it) >= 6 and abs(r.width - r.height) / max(r.width, r.height) < 0.06 and w <= 40:
+            cand.append((r, "round"))
+    B = 25.0                                              # spatial buckets: count points inside a box fast
+    bins = {}
+    for wt, plist in ((10, words), (1, pts)):
+        for p in plist:
+            bins.setdefault((int(p[0] // B), int(p[1] // B)), []).append((p, wt))
+
+    def inside(rect):
+        n = 0
+        for bx in range(int(rect.x0 // B), int(rect.x1 // B) + 1):
+            for by in range(int(rect.y0 // B), int(rect.y1 // B) + 1):
+                for p, wt in bins.get((bx, by), ()):
+                    if rect.x0 < p[0] < rect.x1 and rect.y0 < p[1] < rect.y1:
+                        n += wt
+                        if n >= 8:
+                            return n
+        return n
+    out = []
+    for r, kind in cand:
+        inner = fitz.Rect(r.x0 + r.width * 0.1, r.y0 + r.height * 0.1, r.x1 - r.width * 0.1, r.y1 - r.height * 0.1)
+        if kind == "box" and inside(inner) < 8:
+            continue
+        q = [round(r.x0, 1), round(r.y0, 1), round(r.x1, 1), round(r.y1, 1), kind]
+        if q not in out:
+            out.append(q)
+    return out
+
+
+class Router:
+    """Shortest cable route to the control room on a 1 m grid: racks cost 1 per metre, open ground
+    `pref` per metre (so racks are used when they are near), obstacles are blocked. One Dijkstra from
+    the room serves every source."""
+
+    def __init__(self, size_pt, m_per_pt, racks, obstacles, room, pref=3.0, cell=1.0):
+        import heapq
+        self.m, self.cell = m_per_pt, cell
+        W, H = int(size_pt[0] * m_per_pt / cell) + 1, int(size_pt[1] * m_per_pt / cell) + 1
+        self.W, self.H = W, H
+        self.kind = bytearray(W * H)              # 0 ground, 1 rack, 2 blocked
+        f = m_per_pt / cell
+
+        def cells(r, shrink=0.0):
+            x0, y0, x1, y1 = (int(r[0] * f + shrink), int(r[1] * f + shrink),
+                              int(r[2] * f - shrink), int(r[3] * f - shrink))
+            for y in range(max(0, y0), min(H, y1 + 1)):
+                for x in range(max(0, x0), min(W, x1 + 1)):
+                    yield y * W + x
+        for o in obstacles:
+            for i in cells(o, 0.3 / cell):
+                self.kind[i] = 2
+        for rk in racks:
+            for i in cells(rk):
+                self.kind[i] = 1                   # a rack over an equipment box still passes
+        self.goal = self.free(room)
+        INF = float("inf")
+        dist = [INF] * (W * H)
+        self.par = [-1] * (W * H)
+        dist[self.goal] = 0.0
+        pq = [(0.0, self.goal)]
+        while pq:
+            d, i = heapq.heappop(pq)
+            if d > dist[i]:
+                continue
+            x, y = i % W, i // W
+            for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+                if 0 <= nx < W and 0 <= ny < H:
+                    j = ny * W + nx
+                    k = self.kind[j]
+                    if k == 2:
+                        continue
+                    nd = d + cell * (1.0 if k == 1 else pref)
+                    if nd < dist[j]:
+                        dist[j] = nd
+                        self.par[j] = i
+                        heapq.heappush(pq, (nd, j))
+        self.dist = dist
+
+    def free(self, p):
+        """grid cell of p; if p is inside an obstacle (IRP in a building, room itself) the nearest open cell."""
+        f = self.m / self.cell
+        x, y = min(self.W - 1, max(0, int(p[0] * f))), min(self.H - 1, max(0, int(p[1] * f)))
+        if self.kind[y * self.W + x] != 2:
+            return y * self.W + x
+        for rad in range(1, 200):
+            for dx in range(-rad, rad + 1):
+                for dy in (-rad, rad) if abs(dx) != rad else range(-rad, rad + 1):
+                    nx, ny = x + dx, y + dy
+                    if 0 <= nx < self.W and 0 <= ny < self.H and self.kind[ny * self.W + nx] != 2:
+                        return ny * self.W + nx
+        return y * self.W + x
+
+    def route(self, p):
+        """-> (metres on ground, metres on rack, level changes ground<->rack, polyline in pt) or None."""
+        i = self.free(p)
+        if self.dist[i] == float("inf"):
+            return None
+        g = r = 0.0
+        changes = 0
+        prev = None
+        pts = []
+        f = self.cell / self.m
+        while i != -1:
+            k = self.kind[i]
+            if prev is not None:
+                if k == 1:
+                    r += self.cell
+                else:
+                    g += self.cell
+                if (k == 1) != (prev == 1):
+                    changes += 1
+            pts.append(((i % self.W + 0.5) * f, (i // self.W + 0.5) * f))
+            prev = k
+            i = self.par[i]
+        first_rack = self.kind[self.free(p)] == 1
+        # keep corners only
+        poly = [pts[0]]
+        for a, b, c in zip(pts, pts[1:], pts[2:]):
+            if (b[0] - a[0]) * (c[1] - b[1]) != (b[1] - a[1]) * (c[0] - b[0]):
+                poly.append(b)
+        poly.append(pts[-1])
+        return {"ground": g, "rack": r, "changes": changes, "first_rack": first_rack,
+                "last_rack": self.kind[self.goal] == 1, "poly": [[round(x, 1), round(y, 1)] for x, y in poly]}

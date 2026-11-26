@@ -718,7 +718,7 @@ def plot_read(name: str):
         return None
     pf = d / "input" / files["plot"]
     rf = d / "input" / files["plotref"] if files.get("plotref") else None
-    key = [files["plot"], pf.stat().st_mtime_ns, files.get("plotref"), rf.stat().st_mtime_ns if rf else 0]
+    key = [files["plot"], pf.stat().st_mtime_ns, files.get("plotref"), rf.stat().st_mtime_ns if rf else 0, "v2"]
     cj = d / "cache" / "plot.json"
     if cj.exists():
         old = json.loads(cj.read_text(encoding="utf-8"))
@@ -764,6 +764,14 @@ def plot_update(name: str, b: dict):
             dd[k] = [float(b[k][0]), float(b[k][1])]
     if b.get("scale_n"):                            # paper scale 1:N
         dd["m_per_pt"] = float(b["scale_n"]) * 25.4 / 72 / 1000
+    if b.get("rack_add"):                            # polyline drawn on the plot, pt
+        dd.setdefault("racks_add", []).append([[float(x), float(y)] for x, y in b["rack_add"]])
+    if b.get("rack_del") is not None:
+        dd["racks_add"] = [r for i, r in enumerate(dd.get("racks_add", [])) if i != int(b["rack_del"])]
+    if b.get("rack_toggle") is not None:             # switch an auto-detected rack off / on
+        off = set(dd.get("racks_off", []))
+        off ^= {int(b["rack_toggle"])}
+        dd["racks_off"] = sorted(off)
     if b.get("confirm"):
         dd.setdefault("confirmed", [])
         if b["confirm"] not in dd["confirmed"]:
@@ -804,7 +812,15 @@ def plot_view(name: str, lay, res):
     st = {"장비": 0, "추정": 0}
     for x in (g.get("inst") or {}).values():
         st["추정" if x[2].startswith("추정") else "장비"] += 1
-    return {"file": meta(name)["files"].get("plot"), "ref": meta(name)["files"].get("plotref"),
+    ra = lay.racks_auto if lay else []
+    q.append({"id": "racks", "title": "파이프랙",
+              "text": f"사다리 모양 랙 {sum(1 for r in ra if not r[-1])}개 자동 인식"
+                      + (f" (끈 것 {sum(1 for r in ra if r[-1])})" if any(r[-1] for r in ra) else "")
+                      + (f" · 직접 그린 랙 {len(lay.racks_user)}개" if lay and lay.racks_user else ""),
+              "why": "기둥 표시가 두 줄로 일정 간격 반복되는 곳. 틀린 랙은 눌러서 끄고, 빠진 랙은 다각선으로 그리세요",
+              "state": "ok" if "racks" in conf else "check"})
+    return {"racks": ra, "racks_user": lay.racks_user if lay else [], "obstacles": len(pl.get("obstacles") or []),
+            "file": meta(name)["files"].get("plot"), "ref": meta(name)["files"].get("plotref"),
             "size": pl["size"], "m_per_pt": m, "questions": q, "geo": g,
             "located": st, "unlocated": g.get("unlocated", 0), "equipment": len(pl["equipment"])}
 
