@@ -114,145 +114,120 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
     if key_types(vk, ctrl, alt) && list() {
         LAST_TYPED.set(Some(Instant::now()));
     }
-    match vk {
-        // AltGr comes as Ctrl+Alt: a character (ł, ś, ß, [ ...), never a shortcut. Typing in the boxes, the view's otherwise.
-        _ if ctrl && key_types(vk, ctrl, alt) => return !(addr || filt) && shell(),
-        // Space: preview, as in Finder (F3 too); the preview's own Space closes it
-        VK_SPACE if !ctrl && !shift && !alt && list() && space_peeks(typed_ago) => {
-            if m.lParam.0 & (1 << 30) == 0 {
+    let in_main = || IsChild(app(|x| x.main), m.hwnd).as_bool();
+    let ctx = KeyCtx { addr, filt, tabs: tabs_on(), panes: app(|x| x.s.panes()), typed_ago, list: &list, in_main: &in_main };
+    // key_route picks where the key goes; the arms here do it (and say whether it was used)
+    match key_route(vk, ctrl, shift, alt, &ctx) {
+        KeyRoute::Typing => return !(addr || filt) && shell(),
+        KeyRoute::Peek => {
+            if !repeat {
                 open_peek(a);
             }
         }
-        VK_TAB if ctrl => {
-            cycle(if shift { -1 } else { 1 });
+        KeyRoute::CyclePane(d) => {
+            cycle(d);
             pane_said(a, repeat);
         }
         // the keys that have a mouse tip (mouse_tip) mark it learned
-        VK_T if ctrl && !shift && !alt && tabs_on() => {
+        KeyRoute::NewTab => {
             key_used(TIP_NEW_TAB);
             tab_said(a, repeat, || {
                 new_tab(a);
                 false
             });
         }
-        VK_W if ctrl && !shift && !alt && tabs_on() => {
+        KeyRoute::CloseTab => {
             key_used(TIP_CLOSE_TAB);
             tab_said(a, repeat, || close_tab(a, app(|x| x.s.tab[a])));
         }
-        VK_K if ctrl && !shift && !alt && tabs_on() => tab_said(a, repeat, || dup_tab(a, app(|x| x.s.tab[a]))),
-        k @ (VK_NEXT | VK_PRIOR) if ctrl && !shift && !alt && tabs_on() => tab_said(a, repeat, || step_tab(a, if k == VK_NEXT { 1 } else { -1 })),
-        k @ (VK_NEXT | VK_PRIOR) if ctrl && shift && !alt && tabs_on() => tab_said(a, repeat, || {
-            move_cur_tab(a, if k == VK_NEXT { 1 } else { -1 });
+        KeyRoute::DupTab => tab_said(a, repeat, || dup_tab(a, app(|x| x.s.tab[a]))),
+        KeyRoute::StepTab(d) => tab_said(a, repeat, || step_tab(a, d)),
+        KeyRoute::MoveTab(d) => tab_said(a, repeat, || {
+            move_cur_tab(a, d);
             false
         }),
-        // Alt+1 … Alt+9: the nth tab, 9 the last (as a browser's Ctrl+1 … 9; Ctrl+digits are the panes). Number pad keys stay out.
-        k if alt && !ctrl && !shift && tabs_on() && (VK_1.0..=VK_9.0).contains(&k.0) => tab_said(a, repeat, || pick_nth_tab(a, (k.0 - VK_1.0 + 1) as usize)),
-        k if ctrl && !shift && !alt && (VK_1.0..=VK_9.0).contains(&k.0) && ((k.0 - VK_1.0) as usize) < app(|x| x.s.panes()) => {
-            let i = (k.0 - VK_1.0) as usize;
+        KeyRoute::NthTab(n) => tab_said(a, repeat, || pick_nth_tab(a, n)),
+        KeyRoute::Pane(i) => {
             set_active(i);
             focus_view(i);
             pane_said(a, repeat);
         }
-        k @ (VK_LEFT | VK_RIGHT | VK_UP | VK_DOWN) if alt && shift && !ctrl => {
-            match k {
-                VK_LEFT => move_pane(-1, 0),
-                VK_RIGHT => move_pane(1, 0),
-                VK_UP => move_pane(0, -1),
-                _ => move_pane(0, 1),
-            }
+        KeyRoute::MovePane(dx, dy) => {
+            move_pane(dx, dy);
             pane_said(a, repeat);
         }
-        k @ (VK_LEFT | VK_RIGHT | VK_UP | VK_DOWN) if alt && shift && ctrl => match k {
-            VK_LEFT => swap_dir(-1, 0),
-            VK_RIGHT => swap_dir(1, 0),
-            VK_UP => swap_dir(0, -1),
-            _ => swap_dir(0, 1),
-        },
-        k @ (VK_LEFT | VK_RIGHT | VK_UP | VK_DOWN) if alt && ctrl && !shift => {
-            let repeat = m.lParam.0 & (1 << 30) != 0;
-            match k {
-                VK_LEFT => nudge_split(-1, 0, repeat),
-                VK_RIGHT => nudge_split(1, 0, repeat),
-                VK_UP => nudge_split(0, -1, repeat),
-                _ => nudge_split(0, 1, repeat),
-            }
-        }
-        VK_LEFT if alt => {
+        KeyRoute::Swap(dx, dy) => swap_dir(dx, dy),
+        KeyRoute::Nudge(dx, dy) => nudge_split(dx, dy, repeat),
+        KeyRoute::Back => {
             key_used(TIP_BACK);
             browse(a, SBSP_NAVIGATEBACK);
         }
-        VK_RIGHT if alt => {
+        KeyRoute::Forward => {
             key_used(TIP_FWD);
             browse(a, SBSP_NAVIGATEFORWARD);
         }
-        VK_UP if alt => {
+        KeyRoute::Up => {
             key_used(TIP_UP);
             browse(a, SBSP_PARENT);
         }
-        // the next / previous folder in the same parent; held, it steps once (not into the boxes' own PgDn)
-        k @ (VK_NEXT | VK_PRIOR) if alt && !ctrl && !shift && !(addr || filt) => {
-            if m.lParam.0 & (1 << 30) == 0 {
-                sibling_step(a, if k == VK_NEXT { 1 } else { -1 });
+        KeyRoute::Sibling(d) => {
+            if !repeat {
+                sibling_step(a, d);
             }
         }
-        VK_L if ctrl => return focus_ctl(a, ID_EDIT),
-        VK_D if alt => return focus_ctl(a, ID_EDIT),
-        VK_F4 if !alt => return focus_ctl(a, ID_EDIT),
-        VK_F if ctrl && shift && !alt => {
+        KeyRoute::FocusAddr => return focus_ctl(a, ID_EDIT),
+        KeyRoute::Everything => {
             key_used(TIP_EV);
             open_ev();
         }
-        VK_F if ctrl => return focus_ctl(a, ID_FILTER),
-        VK_H if ctrl => toggle_hidden(),
-        VK_S if ctrl => save_current(),
-        // Ctrl+O: the saved sessions, picked from the keys (held, it opens once)
-        VK_O if ctrl && !shift && !alt => {
-            if m.lParam.0 & (1 << 30) == 0 {
+        KeyRoute::FocusFilter => return focus_ctl(a, ID_FILTER),
+        KeyRoute::Hidden => toggle_hidden(),
+        KeyRoute::Save => save_current(),
+        KeyRoute::Load => {
+            if !repeat {
                 key_used(TIP_LOAD);
                 toggle_load();
             }
         }
-        VK_B if ctrl && !shift && !alt => {
+        KeyRoute::Favs => {
             key_used(TIP_FAVS);
             open_favs();
         }
-        // Ctrl+Shift+B: the active pane's ☆+ from the keys (a browser's "bookmark this page"); held, it toggles once.
-        // Not while the list is open: it would shrink the favourites under the list's highlight.
-        VK_B if ctrl && shift && !alt => {
-            if m.lParam.0 & (1 << 30) == 0 && app(|x| x.fav_popup.0.is_null()) {
+        // not while the list is open: it would shrink the favourites under the list's highlight
+        KeyRoute::FavToggle => {
+            if !repeat && app(|x| x.fav_popup.0.is_null()) {
                 fav_key(a);
             }
         }
-        // auto-repeat (bit 30) is swallowed: holding Ctrl+/ toggles once
-        VK_OEM_2 if ctrl && !shift && !alt => {
-            if m.lParam.0 & (1 << 30) == 0 {
+        KeyRoute::Keys => {
+            if !repeat {
                 toggle_keys();
             }
         }
-        VK_M if ctrl && shift && !alt => {
+        KeyRoute::Zoom => {
             key_used(TIP_ZOOM);
             toggle_zoom();
         }
-        VK_E if ctrl && shift && !alt => toggle_tree(),
-        VK_O if ctrl && shift && !alt => gather_explorer(),
-        VK_R if ctrl && shift && !alt => {
-            if m.lParam.0 & (1 << 30) == 0 {
+        KeyRoute::Tree => toggle_tree(),
+        KeyRoute::Gather => gather_explorer(),
+        KeyRoute::Rename => {
+            if !repeat {
                 open_rename(a);
             }
         }
-        VK_F1 => open_help(),
-        VK_RETURN if addr => go_edit(a),
-        VK_RETURN if filt => {
+        KeyRoute::Help => open_help(),
+        KeyRoute::AddrGo => go_edit(a),
+        KeyRoute::FilterApply => {
             apply_filter(a);
             focus_view(a);
         }
-        VK_ESCAPE if addr => addr_reset(a, m.hwnd),
-        VK_ESCAPE if filt => {
+        KeyRoute::AddrCancel => addr_reset(a, m.hwnd),
+        KeyRoute::FilterClear => {
             _ = SetWindowTextW(m.hwnd, w!(""));
             apply_filter(a);
             focus_view(a);
         }
-        VK_F6 if !ctrl && !alt && IsChild(app(|x| x.main), m.hwnd).as_bool() => {
+        KeyRoute::FocusRing => {
             let th = app(|x| x.tree_hwnd);
             let tv = FindWindowExW(Some(th), None, w!("SysTreeView32"), PCWSTR::null()).ok().filter(|_| !th.0.is_null() && IsWindowVisible(th).as_bool());
             let in_tree = th == m.hwnd || IsChild(th, m.hwnd).as_bool();
@@ -267,106 +242,252 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
                 _ => focus_view(a),
             }
         }
-        VK_DOWN if alt && !ctrl && !shift && filt => kind_menu(a), // a combo box's Alt+↓
-        // Ctrl+G: Windows' own folders, from the list, the address bar, the filter or the tree; held, it opens once
-        VK_G if ctrl && !shift && !alt => {
-            if m.lParam.0 & (1 << 30) == 0 {
+        KeyRoute::KindMenu => kind_menu(a),
+        KeyRoute::GoMenu => {
+            if !repeat {
                 go_menu(a);
             }
         }
-        // the view leaves F5 to its frame, as Explorer's does: reload the active pane from anywhere in the window
-        VK_F5 if !ctrl && !alt && !shift => {
+        KeyRoute::Refresh => {
             resum_sizes();
             if let Some(sv) = view_of::<IShellView>(a) {
                 _ = sv.Refresh();
             }
             spin_refresh(a);
         }
-        _ if addr || filt => return false,
-        // Ctrl+Enter: the chosen folders as tabs behind this one, Ctrl+Shift+Enter: the focused folder in a new tab,
-        // gone to (a browser's Ctrl+click / Ctrl+Shift+click). Files, no folder or tabs off: the view's own Enter.
+        KeyRoute::BoxKey => return false,
         // Held, it opens once: the Enter still down doesn't open an item in the list that comes.
-        VK_RETURN if ctrl && !alt && tabs_on() && list() => {
-            let paths = if repeat { Vec::new() } else { tab_targets(a, shift) };
+        KeyRoute::OpenTabs(go) => {
+            let paths = if repeat { Vec::new() } else { tab_targets(a, go) };
             if paths.is_empty() {
                 return shell();
             }
             app(|x| x.held = Some(VK_RETURN.0));
-            if shift {
+            if go {
                 tab_said(a, false, || open_in_tabs(a, &paths, true));
             } else {
                 open_in_tabs(a, &paths, false);
                 set_note(opened_tabs_note(paths.len().min(OPEN_TABS_MAX), KO.load(Ordering::Relaxed)));
             }
         }
-        // Insert: flip the focused item's selection and step down, as in Total Commander; held, it auto-repeats
-        // (Ctrl+Insert / Shift+Insert stay Explorer's copy / paste)
-        VK_INSERT if !ctrl && !shift && !alt && list() => mark_and_next(a),
-        // sort the list by name / date modified / size; again: the other way round (F4 stays the address bar's)
-        k @ (VK_F3 | VK_F5 | VK_F6) if ctrl && !shift && !alt && list() => {
-            if m.lParam.0 & (1 << 30) == 0 {
-                sort_by(a, match k {
-                    VK_F3 => 0,
-                    VK_F5 => 1,
-                    _ => 2,
-                });
+        KeyRoute::Mark => mark_and_next(a),
+        KeyRoute::Sort(kind) => {
+            if !repeat {
+                sort_by(a, kind);
             }
         }
-        VK_C if ctrl && shift && !alt && list() => copy_paths(a),
-        VK_U if ctrl && shift && !alt && list() => {
-            if m.lParam.0 & (1 << 30) == 0 {
+        KeyRoute::CopyPaths => copy_paths(a),
+        KeyRoute::Usage => {
+            if !repeat {
                 open_usage(a);
             }
         }
-        // Ctrl+M: the ⇄ menu, opened when M is let go, so M's auto-repeats (swallowed while held) can't pick
-        // its "&Move" item
-        VK_M if ctrl && !shift && !alt && list() => {
-            if m.lParam.0 & (1 << 30) == 0 {
+        // the ⇄ menu opens when M is let go, so M's auto-repeats (swallowed while held) can't pick its "&Move" item
+        KeyRoute::MoveMenu => {
+            if !repeat {
                 app(|x| x.held = Some(VK_M.0));
                 MENU_KEY.set(Some(a));
             }
         }
-        // held until released: one box / one inversion per press (Ctrl+Num+ stays Explorer's column fit)
-        k @ (VK_ADD | VK_SUBTRACT | VK_MULTIPLY) if !ctrl && !alt && list() => {
-            app(|x| x.held = Some(k.0));
-            match k {
-                VK_MULTIPLY => invert_selection(a),
-                _ => open_match(a, k == VK_SUBTRACT),
-            }
+        // held until released, as the key pressed (Num+, Num− or Ctrl+Shift+A's A): one box / inversion per press
+        KeyRoute::Match(desel) => {
+            app(|x| x.held = Some(vk.0));
+            open_match(a, desel);
         }
-        VK_A if ctrl && shift && !alt && list() => {
-            app(|x| x.held = Some(VK_A.0));
-            open_match(a, false);
+        KeyRoute::Invert => {
+            app(|x| x.held = Some(vk.0));
+            invert_selection(a);
         }
-        VK_DOWN if alt && !ctrl && !shift => recent_menu(a),
-        VK_F3 if !ctrl && !shift && !alt && list() => {
-            if m.lParam.0 & (1 << 30) == 0 {
-                open_peek(a);
-            }
-        }
-        VK_F7 if !ctrl && !shift && !alt && list() => {
-            if m.lParam.0 & (1 << 30) == 0 {
+        KeyRoute::Recent => recent_menu(a),
+        KeyRoute::NewFolder => {
+            if !repeat {
                 new_folder(a);
             }
         }
-        VK_F7 if !ctrl && shift && !alt && list() => {
-            if m.lParam.0 & (1 << 30) == 0 {
+        KeyRoute::NewText => {
+            if !repeat {
                 new_text_file(a);
             }
         }
-        VK_F7 if ctrl && !shift && !alt && list() => {
-            if m.lParam.0 & (1 << 30) == 0 {
+        KeyRoute::Group => {
+            if !repeat {
                 group_key(a);
             }
         }
-        VK_V if ctrl && !shift && !alt && list() => {
-            if !paste_key(m.lParam.0 & (1 << 30) != 0, || try_paste(a)) {
+        KeyRoute::Paste => {
+            if !paste_key(repeat, || try_paste(a)) {
                 return shell();
             }
         }
-        _ => return shell(),
+        KeyRoute::Shell => return shell(),
     }
     true
+}
+
+// Where a key goes (Grids' own action, a box's, or the shell view's), as key() then does it. The arms' order is the
+// behaviour: Ctrl+Shift+F before Ctrl+F, the filter's Alt+↓ before the list's, F5 before Ctrl+F5 ... (key_routes test).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum KeyRoute {
+    Typing,
+    Peek,
+    CyclePane(i32),
+    NewTab,
+    CloseTab,
+    DupTab,
+    StepTab(i32),
+    MoveTab(i32),
+    NthTab(usize),
+    Pane(usize),
+    MovePane(i32, i32),
+    Swap(i32, i32),
+    Nudge(i32, i32),
+    Back,
+    Forward,
+    Up,
+    Sibling(i32),
+    FocusAddr,
+    Everything,
+    FocusFilter,
+    Hidden,
+    Save,
+    Load,
+    Favs,
+    FavToggle,
+    Keys,
+    Zoom,
+    Tree,
+    Gather,
+    Rename,
+    Help,
+    AddrGo,
+    FilterApply,
+    AddrCancel,
+    FilterClear,
+    FocusRing,
+    KindMenu,
+    GoMenu,
+    Refresh,
+    BoxKey,
+    OpenTabs(bool),
+    Mark,
+    Sort(usize),
+    CopyPaths,
+    Usage,
+    MoveMenu,
+    Match(bool),
+    Invert,
+    Recent,
+    NewFolder,
+    NewText,
+    Group,
+    Paste,
+    Shell,
+}
+
+// What key_route looks at besides the key: the focus in the address bar / filter, tabs on, the pane count, the last
+// typed key's age; and, asked only by the arms that need it, whether the focus is in the file list / the main window.
+pub(crate) struct KeyCtx<'a> {
+    pub(crate) addr: bool,
+    pub(crate) filt: bool,
+    pub(crate) tabs: bool,
+    pub(crate) panes: usize,
+    pub(crate) typed_ago: Option<Duration>,
+    pub(crate) list: &'a dyn Fn() -> bool,
+    pub(crate) in_main: &'a dyn Fn() -> bool,
+}
+
+pub(crate) fn key_route(vk: VIRTUAL_KEY, ctrl: bool, shift: bool, alt: bool, c: &KeyCtx) -> KeyRoute {
+    use KeyRoute::*;
+    let (addr, filt, tabs, list) = (c.addr, c.filt, c.tabs, c.list);
+    let dir = |k: VIRTUAL_KEY| match k {
+        VK_LEFT => (-1, 0),
+        VK_RIGHT => (1, 0),
+        VK_UP => (0, -1),
+        _ => (0, 1),
+    };
+    let step = |k: VIRTUAL_KEY| if k == VK_NEXT { 1 } else { -1 };
+    match vk {
+        // AltGr comes as Ctrl+Alt: a character (ł, ś, ß, [ ...), never a shortcut. Typing in the boxes, the view's otherwise.
+        _ if ctrl && key_types(vk, ctrl, alt) => Typing,
+        // Space: preview, as in Finder (F3 too); the preview's own Space closes it
+        VK_SPACE if !ctrl && !shift && !alt && list() && space_peeks(c.typed_ago) => Peek,
+        VK_TAB if ctrl => CyclePane(if shift { -1 } else { 1 }),
+        VK_T if ctrl && !shift && !alt && tabs => NewTab,
+        VK_W if ctrl && !shift && !alt && tabs => CloseTab,
+        VK_K if ctrl && !shift && !alt && tabs => DupTab,
+        k @ (VK_NEXT | VK_PRIOR) if ctrl && !shift && !alt && tabs => StepTab(step(k)),
+        k @ (VK_NEXT | VK_PRIOR) if ctrl && shift && !alt && tabs => MoveTab(step(k)),
+        // Alt+1 … Alt+9: the nth tab, 9 the last (as a browser's Ctrl+1 … 9; Ctrl+digits are the panes). Number pad keys stay out.
+        k if alt && !ctrl && !shift && tabs && (VK_1.0..=VK_9.0).contains(&k.0) => NthTab((k.0 - VK_1.0 + 1) as usize),
+        k if ctrl && !shift && !alt && (VK_1.0..=VK_9.0).contains(&k.0) && ((k.0 - VK_1.0) as usize) < c.panes => Pane((k.0 - VK_1.0) as usize),
+        k @ (VK_LEFT | VK_RIGHT | VK_UP | VK_DOWN) if alt && shift && !ctrl => MovePane(dir(k).0, dir(k).1),
+        k @ (VK_LEFT | VK_RIGHT | VK_UP | VK_DOWN) if alt && shift && ctrl => Swap(dir(k).0, dir(k).1),
+        k @ (VK_LEFT | VK_RIGHT | VK_UP | VK_DOWN) if alt && ctrl && !shift => Nudge(dir(k).0, dir(k).1),
+        VK_LEFT if alt => Back,
+        VK_RIGHT if alt => Forward,
+        VK_UP if alt => Up,
+        // the next / previous folder in the same parent; held, it steps once (not into the boxes' own PgDn)
+        k @ (VK_NEXT | VK_PRIOR) if alt && !ctrl && !shift && !(addr || filt) => Sibling(step(k)),
+        VK_L if ctrl => FocusAddr,
+        VK_D if alt => FocusAddr,
+        VK_F4 if !alt => FocusAddr,
+        VK_F if ctrl && shift && !alt => Everything,
+        VK_F if ctrl => FocusFilter,
+        VK_H if ctrl => Hidden,
+        VK_S if ctrl => Save,
+        // Ctrl+O: the saved sessions, picked from the keys (held, it opens once)
+        VK_O if ctrl && !shift && !alt => Load,
+        VK_B if ctrl && !shift && !alt => Favs,
+        // Ctrl+Shift+B: the active pane's ☆+ from the keys (a browser's "bookmark this page"); held, it toggles once
+        VK_B if ctrl && shift && !alt => FavToggle,
+        // auto-repeat (bit 30) is swallowed: holding Ctrl+/ toggles once
+        VK_OEM_2 if ctrl && !shift && !alt => Keys,
+        VK_M if ctrl && shift && !alt => Zoom,
+        VK_E if ctrl && shift && !alt => Tree,
+        VK_O if ctrl && shift && !alt => Gather,
+        VK_R if ctrl && shift && !alt => Rename,
+        VK_F1 => Help,
+        VK_RETURN if addr => AddrGo,
+        VK_RETURN if filt => FilterApply,
+        VK_ESCAPE if addr => AddrCancel,
+        VK_ESCAPE if filt => FilterClear,
+        VK_F6 if !ctrl && !alt && (c.in_main)() => FocusRing,
+        VK_DOWN if alt && !ctrl && !shift && filt => KindMenu, // a combo box's Alt+↓
+        // Ctrl+G: Windows' own folders, from the list, the address bar, the filter or the tree; held, it opens once
+        VK_G if ctrl && !shift && !alt => GoMenu,
+        // the view leaves F5 to its frame, as Explorer's does: reload the active pane from anywhere in the window
+        VK_F5 if !ctrl && !alt && !shift => Refresh,
+        _ if addr || filt => BoxKey,
+        // Ctrl+Enter: the chosen folders as tabs behind this one, Ctrl+Shift+Enter: the focused folder in a new tab,
+        // gone to (a browser's Ctrl+click / Ctrl+Shift+click). Files, no folder or tabs off: the view's own Enter.
+        VK_RETURN if ctrl && !alt && tabs && list() => OpenTabs(shift),
+        // Insert: flip the focused item's selection and step down, as in Total Commander; held, it auto-repeats
+        // (Ctrl+Insert / Shift+Insert stay Explorer's copy / paste)
+        VK_INSERT if !ctrl && !shift && !alt && list() => Mark,
+        // sort the list by name / date modified / size; again: the other way round (F4 stays the address bar's)
+        k @ (VK_F3 | VK_F5 | VK_F6) if ctrl && !shift && !alt && list() => Sort(match k {
+            VK_F3 => 0,
+            VK_F5 => 1,
+            _ => 2,
+        }),
+        VK_C if ctrl && shift && !alt && list() => CopyPaths,
+        VK_U if ctrl && shift && !alt && list() => Usage,
+        // Ctrl+M: the ⇄ menu, opened when M is let go
+        VK_M if ctrl && !shift && !alt && list() => MoveMenu,
+        // (Ctrl+Num+ stays Explorer's column fit)
+        k @ (VK_ADD | VK_SUBTRACT | VK_MULTIPLY) if !ctrl && !alt && list() => match k {
+            VK_MULTIPLY => Invert,
+            _ => Match(k == VK_SUBTRACT),
+        },
+        VK_A if ctrl && shift && !alt && list() => Match(false),
+        VK_DOWN if alt && !ctrl && !shift => Recent,
+        VK_F3 if !ctrl && !shift && !alt && list() => Peek,
+        VK_F7 if !ctrl && !shift && !alt && list() => NewFolder,
+        VK_F7 if !ctrl && shift && !alt && list() => NewText,
+        VK_F7 if ctrl && !shift && !alt && list() => Group,
+        VK_V if ctrl && !shift && !alt && list() => Paste,
+        _ => Shell,
+    }
 }
 
 // F6 ring: 0 file list, 1 address bar, 2 filter, 3 folder tree (skipped without one).

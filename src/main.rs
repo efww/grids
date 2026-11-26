@@ -4356,4 +4356,130 @@ mod tests { tr("in", "안") }
             assert!(!key_types(vk, true, true), "{:#x}", vk.0);
         }
     }
+
+    // A keycap as the shortcut list writes it ("Ctrl+Shift+PgDn", "Num−", "Ctrl+/") as (vk, ctrl, shift, alt).
+    fn cap_key(cap: &str) -> (VIRTUAL_KEY, bool, bool, bool) {
+        let (mut ctrl, mut shift, mut alt, mut k) = (false, false, false, cap);
+        loop {
+            if let Some(r) = k.strip_prefix("Ctrl+") {
+                (ctrl, k) = (true, r);
+            } else if let Some(r) = k.strip_prefix("Shift+") {
+                (shift, k) = (true, r);
+            } else if let Some(r) = k.strip_prefix("Alt+") {
+                (alt, k) = (true, r);
+            } else {
+                break;
+            }
+        }
+        let f = k.strip_prefix('F').and_then(|n| n.parse::<u16>().ok()).filter(|n| (1..=12).contains(n));
+        let vk = match k {
+            "Tab" => VK_TAB,
+            "Enter" => VK_RETURN,
+            "Esc" => VK_ESCAPE,
+            "Space" => VK_SPACE,
+            "Insert" => VK_INSERT,
+            "PgDn" => VK_NEXT,
+            "PgUp" => VK_PRIOR,
+            "←" => VK_LEFT,
+            "→" => VK_RIGHT,
+            "↑" => VK_UP,
+            "↓" => VK_DOWN,
+            "/" => VK_OEM_2,
+            "Num+" => VK_ADD,
+            "Num\u{2212}" => VK_SUBTRACT,
+            "Num*" => VK_MULTIPLY,
+            _ if f.is_some() => VIRTUAL_KEY(VK_F1.0 + f.unwrap() - 1),
+            _ if k.len() == 1 && (k.as_bytes()[0].is_ascii_uppercase() || k.as_bytes()[0].is_ascii_digit()) => VIRTUAL_KEY(k.as_bytes()[0] as u16),
+            _ => panic!("can't read the key {cap:?}"),
+        };
+        (vk, ctrl, shift, alt)
+    }
+
+    // key_route for a keycap with the focus in `at`: "" the file list, "addr" the address bar, "filter" the filter.
+    fn route_with(at: &str, cap: &str, tabs: bool, panes: usize, typed_ago: Option<Duration>) -> KeyRoute {
+        let (vk, ctrl, shift, alt) = cap_key(cap);
+        let (list, in_main) = (|| at.is_empty(), || true);
+        key_route(vk, ctrl, shift, alt, &KeyCtx { addr: at == "addr", filt: at == "filter", tabs, panes, typed_ago, list: &list, in_main: &in_main })
+    }
+
+    fn route(at: &str, cap: &str) -> KeyRoute {
+        route_with(at, cap, true, 9, None)
+    }
+
+    // Every key the in-app shortcut list names is one Grids acts on (not typing, not the shell view's own): in the
+    // file list with tabs on and 9 panes, an "in the filter" row in the filter, Enter / Esc in either box.
+    #[test]
+    fn listed_keys_are_handled() {
+        // not key()'s to route: Alt / F10 (pre_translate opens the view menu when let go), Windows-wide hotkeys
+        // (Win+Alt+E, Ctrl+Alt+G), and Explorer's own keys handed to the view (of that row F5 is ours: Refresh);
+        // the preview's rows are its own (peek_key)
+        let skip = [":Alt", ":F10", ":Win+Alt+E", ":Ctrl+Alt+G", ":F2", ":Del", ":Ctrl+C/X/V"];
+        let caps: Vec<String> = app_key_rows(KEYS_EN).into_iter().flatten().collect();
+        for s in skip {
+            assert!(caps.iter().any(|c| c == s), "{s} is no longer listed: take it out of skip");
+        }
+        let mut seen = 0;
+        for cap in caps.iter().filter(|c| !c.starts_with("preview:") && !skip.contains(&c.as_str())) {
+            let (ctx, key) = cap.split_once(':').unwrap();
+            let spots: &[&str] = match (ctx, key) {
+                ("filter", _) => &["filter"],
+                (_, "Enter" | "Esc") => &["addr", "filter"],
+                _ => &[""],
+            };
+            // "Ctrl+1 … Ctrl+9": both ends
+            for k in key.split('…').map(str::trim) {
+                for &at in spots {
+                    let r = route(at, k);
+                    assert!(!matches!(r, KeyRoute::Shell | KeyRoute::Typing | KeyRoute::BoxKey), "{cap} (focus {at:?}) goes to {r:?}");
+                    seen += 1;
+                }
+            }
+        }
+        assert!(seen >= 60, "only {seen} keys checked");
+    }
+
+    // The arms whose order or conditions decide a key: one moved or loosened sends it elsewhere without a compile error.
+    #[test]
+    fn key_routes() {
+        use KeyRoute::*;
+        let l = |k| route("", k);
+        assert_eq!(l("Ctrl+Shift+F"), Everything);
+        assert_eq!(l("Ctrl+F"), FocusFilter);
+        assert_eq!(route("filter", "Alt+↓"), KindMenu);
+        assert_eq!(l("Alt+↓"), Recent);
+        assert_eq!((l("F5"), route("addr", "F5")), (Refresh, Refresh));
+        assert_eq!((l("Ctrl+F3"), l("Ctrl+F5"), l("Ctrl+F6")), (Sort(0), Sort(1), Sort(2)));
+        assert_eq!(route_with("", "Ctrl+T", false, 9, None), Shell);
+        assert_eq!(route_with("", "Ctrl+Enter", false, 9, None), Shell);
+        assert_eq!((l("Ctrl+Enter"), l("Ctrl+Shift+Enter")), (OpenTabs(false), OpenTabs(true)));
+        assert_eq!((route_with("", "Ctrl+4", true, 4, None), route_with("", "Ctrl+5", true, 4, None)), (Pane(3), Shell));
+        for k in ["Alt+PgDn", "F3", "F7", "Insert"] {
+            assert_eq!(route("addr", k), BoxKey, "{k}");
+        }
+        assert_eq!(route("addr", "Ctrl+Alt+L"), Typing); // AltGr+L
+        assert_eq!((l("Ctrl+Alt+←"), l("Alt+Shift+←"), l("Ctrl+Alt+Shift+↓")), (Nudge(-1, 0), MovePane(-1, 0), Swap(0, 1)));
+        assert_eq!((l("Ctrl+Insert"), l("Ctrl+Num+")), (Shell, Shell));
+        assert_eq!(route_with("", "Space", true, 9, Some(Duration::from_millis(300))), Shell);
+        assert_eq!(l("Space"), Peek);
+        assert_eq!((l("Ctrl+Shift+S"), l("Ctrl+F4"), l("Shift+Num+"), l("Num\u{2212}")), (Save, FocusAddr, Match(false), Match(true)));
+        assert_eq!((l("Alt+1"), l("Alt+9"), l("Ctrl+Shift+Tab"), l("Ctrl+Shift+PgUp")), (NthTab(1), NthTab(9), CyclePane(-1), MoveTab(-1)));
+    }
+
+    // The file list / main window are asked only by the arms that need them (a shell view lookup per key otherwise).
+    #[test]
+    fn key_route_asks_lazily() {
+        let calls = Cell::new(0);
+        let ask = || {
+            calls.set(calls.get() + 1);
+            true
+        };
+        let ctx = KeyCtx { addr: false, filt: false, tabs: true, panes: 9, typed_ago: None, list: &ask, in_main: &ask };
+        for k in ["Ctrl+Tab", "Ctrl+T", "Alt+←", "Ctrl+L", "Ctrl+Shift+F", "F5", "Ctrl+1", "F1"] {
+            let (vk, ctrl, shift, alt) = cap_key(k);
+            key_route(vk, ctrl, shift, alt, &ctx);
+        }
+        assert_eq!(calls.get(), 0);
+        assert_eq!(key_route(VK_F6, false, false, false, &ctx), KeyRoute::FocusRing);
+        assert_eq!(calls.get(), 1);
+    }
 }
