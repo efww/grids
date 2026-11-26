@@ -181,6 +181,7 @@ fn main() -> Result<()> {
         }
 
         OleInitialize(None)?; // OLE (not just COM) for drag & drop
+        let shell_refs = hold_shell_refs(); // Windows' own copies count on it; waited for after the message loop
         // A grids.ini that is there but unreadable (locked, no access) must not be overwritten with defaults:
         // retry, or quit before anything could save. The language is not known yet, so both.
         let ini = loop {
@@ -470,6 +471,8 @@ fn main() -> Result<()> {
             _ = job.join();
         }
         restart_updated(); // an update was just put in place: the new exe takes over
+        // then Windows' own copies (cut + paste, drags between panes) run to the end, as Explorer's do
+        wait_shell_ops(shell_refs);
     }
     Ok(())
 }
@@ -954,6 +957,47 @@ mod tests {
         let hit = d.join("hit.txt").exists();
         _ = std::fs::remove_dir_all(&d);
         assert!(!hit, "the planted cmd.bat in the pane's folder ran");
+    }
+
+    #[test]
+    fn shell_ops_outlive_window() {
+        // restart / sign-out: refused only while a copy of ours runs (ours, or the shell's progress window in this process)
+        assert!(!block_shutdown(0, false));
+        assert!(block_shutdown(1, false));
+        assert!(block_shutdown(0, true));
+        // after the window: wait while a shell thread holds a reference, unless no window of ours showed for 30 s
+        assert!(keep_waiting(1, Duration::ZERO));
+        assert!(keep_waiting(1, Duration::from_secs(29)));
+        assert!(!keep_waiting(1, Duration::from_secs(30)));
+        assert!(!keep_waiting(0, Duration::ZERO));
+        assert!(!keep_waiting(-1, Duration::ZERO));
+
+        // the real thing: a shell thread made with CTF_PROCESS_REF (as the copy engine's are) holds the count up
+        // while it runs, and wait_shell_ops returns once it ends, with nothing left
+        unsafe extern "system" fn work(p: *mut std::ffi::c_void) -> u32 {
+            WaitForSingleObject(HANDLE(p), 10_000);
+            0
+        }
+        unsafe {
+            _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+            let held = hold_shell_refs().expect("SHCreateThreadRef");
+            let base = SHELL_REFS.load(Ordering::SeqCst);
+            assert!(base >= 1, "{base}");
+            let go = CreateEventW(None, true, false, None).unwrap();
+            SHCreateThread(Some(work), Some(go.0 as *const _), CTF_PROCESS_REF as u32, None).unwrap();
+            let t = Instant::now();
+            while SHELL_REFS.load(Ordering::SeqCst) <= base && t.elapsed() < Duration::from_secs(5) {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert!(SHELL_REFS.load(Ordering::SeqCst) > base, "the shell thread took no reference");
+            _ = SetEvent(go);
+            let t = Instant::now();
+            wait_shell_ops(Some(held));
+            assert_eq!(SHELL_REFS.load(Ordering::SeqCst), 0);
+            assert!(t.elapsed() < Duration::from_secs(10), "waited out the give-up instead: {:?}", t.elapsed());
+            _ = CloseHandle(go);
+            CoUninitialize();
+        }
     }
 
     #[test]

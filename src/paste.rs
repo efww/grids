@@ -2,7 +2,10 @@ use crate::*;
 use windows::Win32::Graphics::Imaging::*;
 use windows::Win32::System::DataExchange::IsClipboardFormatAvailable;
 use windows::Win32::System::Memory::GlobalSize;
+use windows::Win32::System::Shutdown::{ShutdownBlockReasonCreate, ShutdownBlockReasonDestroy};
 use windows::Win32::System::SystemInformation::GetLocalTime;
+use windows::Win32::System::Threading::GetCurrentProcessId;
+use std::sync::atomic::AtomicI32;
 
 // ---------- background paste ----------
 
@@ -21,6 +24,109 @@ impl Busy {
 impl Drop for Busy {
     fn drop(&mut self) {
         COPYING.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+// ---------- Windows' own file operations outlive the window ----------
+
+// Cut + paste, drags between panes and big deletes run on the shell's threads in this process, not on JOBS.
+// Each holds a reference on this count while it runs (SHSetInstanceExplorer, as Explorer does), and closing
+// Grids waits for it. A static, so a thread still running after the 30 s give-up never writes into a dead stack.
+pub(crate) static SHELL_REFS: AtomicI32 = AtomicI32::new(0);
+// A shutdown block reason is up on the main window (WM_QUERYENDSESSION said no).
+pub(crate) static BLOCKING: AtomicBool = AtomicBool::new(false);
+const GIVE_UP: Duration = Duration::from_secs(30);
+
+// Called once at start; the object is kept until wait_shell_ops.
+pub(crate) unsafe fn hold_shell_refs() -> Option<IUnknown> {
+    let mut unk = None;
+    SHCreateThreadRef(SHELL_REFS.as_ptr(), &mut unk).ok()?;
+    let unk = unk?;
+    SHSetInstanceExplorer(&unk);
+    Some(unk)
+}
+
+// After the message loop: our two references go, then whatever the shell still holds is waited out.
+// No window of this process seen for 30 s (not even a progress window) = a reference nobody gives back.
+pub(crate) fn keep_waiting(refs: i32, unseen: Duration) -> bool {
+    refs > 0 && unseen < GIVE_UP
+}
+
+pub(crate) unsafe fn wait_shell_ops(held: Option<IUnknown>) {
+    let Some(held) = held else { return };
+    SHSetInstanceExplorer(None::<&IUnknown>);
+    drop(held);
+    // a handle that never fires: CoWaitForMultipleHandles fails at once with none, and 200 ms is the poll
+    let Ok(ev) = CreateEventW(None, true, false, None) else { return };
+    let mut seen = Instant::now();
+    loop {
+        if own_windows().0 {
+            seen = Instant::now();
+        }
+        if !keep_waiting(SHELL_REFS.load(Ordering::Acquire), seen.elapsed()) {
+            break;
+        }
+        // RPC_S_CALLPENDING (the time-out) is the normal way out; COM calls and messages keep moving meanwhile
+        _ = CoWaitForMultipleHandles((COWAIT_DISPATCH_CALLS | COWAIT_DISPATCH_WINDOW_MESSAGES).0 as u32, 200, &[ev]);
+    }
+    _ = CloseHandle(ev);
+}
+
+// The shell's copy / move / delete progress window.
+pub(crate) unsafe fn is_progress_window(h: HWND) -> bool {
+    let mut cls = [0u16; 32];
+    let n = GetClassNameW(h, &mut cls) as usize;
+    String::from_utf16_lossy(&cls[..n]) == "OperationStatusWindow"
+}
+
+// (a visible top-level window of this process, a progress window of this process). Explorer's own copies
+// are not ours: they must not hold up a restart.
+pub(crate) unsafe fn own_windows() -> (bool, bool) {
+    unsafe extern "system" fn each(h: HWND, lp: LPARAM) -> BOOL {
+        let found = &mut *(lp.0 as *mut (bool, bool));
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(h, Some(&mut pid));
+        if pid == GetCurrentProcessId() && IsWindowVisible(h).as_bool() {
+            found.0 = true;
+            found.1 |= is_progress_window(h);
+        }
+        TRUE
+    }
+    let mut found = (false, false);
+    _ = EnumWindows(Some(each), LPARAM(&mut found as *mut (bool, bool) as isize));
+    found
+}
+
+// Restart / sign-out: say no while a copy of ours runs. Only then, so an open Properties window doesn't block it.
+pub(crate) fn block_shutdown(copying: usize, progress_window: bool) -> bool {
+    copying > 0 || progress_window
+}
+
+// WM_QUERYENDSESSION on the main window (the reason can only be set from the thread that made it).
+// A critical end (ENDSESSION_CRITICAL) can't be refused, so it isn't. Returns the answer: TRUE = go ahead.
+pub(crate) unsafe fn query_end_session(h: HWND, lp: LPARAM) -> LRESULT {
+    let critical = lp.0 as u32 & ENDSESSION_CRITICAL != 0;
+    if !critical && block_shutdown(COPYING.load(Ordering::Relaxed), own_windows().1) {
+        let why = tr("Copying or moving files — wait for it to finish", "파일 복사·이동 중 — 끝날 때까지 기다려 주세요");
+        if ShutdownBlockReasonCreate(h, &HSTRING::from(why)).is_ok() {
+            BLOCKING.store(true, Ordering::Relaxed);
+        }
+        return LRESULT(0);
+    }
+    release_shutdown(h);
+    LRESULT(1)
+}
+
+// The restart was cancelled, or the copy is over (TIMER_STATUS): an old reason must not block the next restart.
+pub(crate) unsafe fn release_shutdown(h: HWND) {
+    if BLOCKING.swap(false, Ordering::Relaxed) {
+        _ = ShutdownBlockReasonDestroy(h);
+    }
+}
+
+pub(crate) unsafe fn shutdown_tick(h: HWND) {
+    if BLOCKING.load(Ordering::Relaxed) && !block_shutdown(COPYING.load(Ordering::Relaxed), own_windows().1) {
+        release_shutdown(h);
     }
 }
 

@@ -474,9 +474,7 @@ const SETTLE_TIMER: usize = 2;
 // the preview takes it back, or closes if another app has it now.
 unsafe fn settle(h: HWND) {
     let fg = GetForegroundWindow();
-    let mut cls = [0u16; 32];
-    let n = GetClassNameW(fg, &mut cls) as usize;
-    if String::from_utf16_lossy(&cls[..n]) == "OperationStatusWindow" && view(|v| (v.settle < 50).then(|| v.settle += 1)).is_some() {
+    if is_progress_window(fg) && view(|v| (v.settle < 50).then(|| v.settle += 1)).is_some() {
         return;
     }
     _ = KillTimer(Some(h), SETTLE_TIMER);

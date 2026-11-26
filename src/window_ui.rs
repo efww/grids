@@ -184,6 +184,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 update_status();
                 check_dirty();
                 autosave();
+                shutdown_tick(h); // a refused restart's reason goes once the copy is over
                 // a menu's modal loop or Ctrl+Alt+Del can swallow the key release: Ctrl or Alt up ends the nudge anyway
                 let up = |k: VIRTUAL_KEY| GetAsyncKeyState(k.0 as i32) >= 0;
                 if app(|a| a.nudge.is_some()) && (up(VK_CONTROL) || up(VK_MENU)) {
@@ -372,8 +373,11 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 save_session();
                 _ = DestroyWindow(h);
             }
-            // Windows restart / sign-out: no WM_CLOSE comes. WM_QUERYENDSESSION stays with DefWindowProcW (never blocks).
+            // Windows restart / sign-out: no WM_CLOSE comes. Refused only while a copy or move of ours runs,
+            // with the reason on Windows' "this app is preventing restart" screen.
+            WM_QUERYENDSESSION => return query_end_session(h, lp),
             WM_ENDSESSION if wp.0 != 0 => save_session(),
+            WM_ENDSESSION => release_shutdown(h), // the restart was cancelled
             WM_TOUR => open_tour(),
             WM_HOTKEY if wp.0 == HOTKEY_ID as usize => hotkey_pressed(h),
             WM_HOTKEY if wp.0 == dialog_jump::DLG_HOTKEY_ID as usize => dialog_jump::on_hotkey(),
