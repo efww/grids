@@ -695,11 +695,7 @@ unsafe fn paint_ev(h: HWND) {
     }
     let (rows, sel, hot, waiting, failed, total, typed) =
         ev(|e| (e.hits[e.top.min(n)..(e.top + shown).min(n)].to_vec(), e.sel, e.hot, e.waiting, e.failed, e.total, !e.last.trim().is_empty()));
-    let ilist = app(|a| a.ilist.clone()).or_else(|| {
-        let l = SHGetImageList::<IImageList>(SHIL_SMALL as i32).ok();
-        app(|a| a.ilist = l.clone());
-        l
-    });
+    let ilist = small_ilist();
     let s = |v: i32| v * dpi / 96;
     buffered(h, |dc, rc| {
         fill(dc, rc, pal().card);

@@ -242,11 +242,14 @@ pub(crate) unsafe fn relayout() {
         }
         shown.push((tb(ID_TB_UPDATE), up));
         // drive buttons after them; in a narrow window the last letters hide rather than run into the theme toggle
+        // wide enough for a drive-kind icon before the letter when all of them fit, else letters only, as before
         x += s(6);
+        let n = a.drives.len() as i32;
+        let dw = if x + n * (s(46) + s(2)) - s(2) <= edge - s(12) { s(46) } else { s(32) };
         for &(_, _, h) in &a.drives {
-            moves.push((h, RECT { left: x, top: s(5), right: x + s(32), bottom: s(5) + s(24) }));
-            shown.push((h, x + s(32) <= edge - s(12)));
-            x += s(32) + s(2);
+            moves.push((h, RECT { left: x, top: s(5), right: x + dw, bottom: s(5) + s(24) }));
+            shown.push((h, x + dw <= edge - s(12)));
+            x += dw + s(2);
         }
         if !a.status_hwnd.0.is_null() {
             moves.push((a.status_hwnd, status_rect(&g)));

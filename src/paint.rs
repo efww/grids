@@ -113,6 +113,16 @@ pub(crate) enum Crumb {
     More(Vec<(String, String)>), // folded parents, nearest first
 }
 
+// The system small icon list, loaded on first use and kept: address bar, Everything results and drive buttons.
+// Called outside app(..), since the shell may send messages back.
+pub(crate) unsafe fn small_ilist() -> Option<IImageList> {
+    app(|a| a.ilist.clone()).or_else(|| {
+        let l = SHGetImageList::<IImageList>(SHIL_SMALL as i32).ok();
+        app(|a| a.ilist = l.clone());
+        l
+    })
+}
+
 // The folder icon's square at the front of the address pill, like Explorer's address bar; none in a narrow pill.
 // Fixed by the geometry alone, so crumbs and edit never shift when an icon arrives or goes.
 pub(crate) fn addr_icon(addr: RECT, dpi: i32) -> Option<RECT> {
@@ -513,14 +523,7 @@ pub(crate) unsafe fn paint_pane(h: HWND) {
         (active, i, a.dpi, a.icon_font, a.small_font, a.font, a.s.accent_now(), hot, hot_head, tint, folder, waiting)
     });
     let tabs = i.filter(|_| tabs_on()).map(|i| app(|a| (a.s.tab_list(i), a.s.tab[i])));
-    let ilist = match app(|a| a.ilist.clone()) {
-        None if folder >= 0 => {
-            let l = SHGetImageList::<IImageList>(SHIL_SMALL as i32).ok();
-            app(|a| a.ilist = l.clone());
-            l
-        }
-        l => l,
-    };
+    let ilist = if folder >= 0 { small_ilist() } else { app(|a| a.ilist.clone()) };
     let crumbs_on = GetDlgItem(Some(h), ID_EDIT).is_ok_and(|e| !IsWindowVisible(e).as_bool());
     let filtered = i.is_some_and(|i| FILTERS.lock().is_ok_and(|f| !f[i].is_empty()));
     let (head, ink) = header_colors(h);

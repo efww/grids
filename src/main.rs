@@ -629,6 +629,13 @@ mod tests {
         for p in [r"\\server\share", THIS_PC, "search-ms:query=x", ""] {
             assert_eq!(drive_of(p), None, "{p}");
         }
+        // GetDriveTypeW kinds: removable, fixed, remote, CD-ROM, RAM disk; unknown / no root / out of range = fixed
+        let icons = [2, 3, 4, 5, 6].map(drive_icon_id);
+        assert_eq!(icons, [SIID_DRIVEREMOVE, SIID_DRIVEFIXED, SIID_DRIVENET, SIID_DRIVECD, SIID_DRIVERAM]);
+        for k in [0, 1, 7, u32::MAX] {
+            assert_eq!(drive_icon_id(k), SIID_DRIVEFIXED, "{k}");
+            assert_eq!(drive_icon(k), -1, "{k}"); // never asked: no icon, the letter alone
+        }
     }
 
     #[test]

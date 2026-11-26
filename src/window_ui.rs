@@ -670,6 +670,43 @@ pub(crate) fn drive_tip(c: u8, kind: u32) -> String {
     format!("{name} ({}:) — {}", c as char, tr("open in the active pane", "지금 패널에서 열기"))
 }
 
+// The stock icon of a drive kind (GetDriveTypeW); unknown kinds look like a local disk, as in Explorer.
+pub(crate) fn drive_icon_id(kind: u32) -> SHSTOCKICONID {
+    match kind {
+        2 => SIID_DRIVEREMOVE,
+        4 => SIID_DRIVENET,
+        5 => SIID_DRIVECD,
+        6 => SIID_DRIVERAM,
+        _ => SIID_DRIVEFIXED,
+    }
+}
+
+// System image list index per drive kind 0..=6 (7 = anything else): i32::MIN = not asked yet, -1 = failed.
+// Filled by refresh_drives, so painting a button never calls the shell; nothing here touches a disk or a share.
+static DRIVE_ICONS: [std::sync::atomic::AtomicI32; 8] = [const { std::sync::atomic::AtomicI32::new(i32::MIN) }; 8];
+
+fn drive_icon_slot(kind: u32) -> &'static std::sync::atomic::AtomicI32 {
+    &DRIVE_ICONS[(kind as usize).min(7)]
+}
+
+// The cached system image list index of a drive kind's icon, or -1.
+pub(crate) fn drive_icon(kind: u32) -> i32 {
+    drive_icon_slot(kind).load(Ordering::Relaxed).max(-1)
+}
+
+unsafe fn cache_drive_icon(kind: u32) {
+    let slot = drive_icon_slot(kind);
+    if slot.load(Ordering::Relaxed) != i32::MIN {
+        return;
+    }
+    let mut info = SHSTOCKICONINFO { cbSize: size_of::<SHSTOCKICONINFO>() as u32, ..Default::default() };
+    let ix = match SHGetStockIconInfo(drive_icon_id(kind), SHGSI_SYSICONINDEX, &mut info) {
+        Ok(()) if info.iSysImageIndex >= 0 => info.iSysImageIndex,
+        _ => -1,
+    };
+    slot.store(ix, Ordering::Relaxed);
+}
+
 // Makes / removes the buttons of drive letters that came or went; true if any did. The caller lays them out.
 pub(crate) unsafe fn refresh_drives() -> bool {
     let mask = GetLogicalDrives();
@@ -693,6 +730,7 @@ pub(crate) unsafe fn refresh_drives() -> bool {
     }
     for c in added {
         let kind = GetDriveTypeW(&HSTRING::from(format!("{}:\\", c as char)));
+        cache_drive_icon(kind);
         let name = HSTRING::from(format!("{}:", c as char)); // also the accessible name
         let h = child(main, w!("BUTTON"), PCWSTR(name.as_ptr()), BS_OWNERDRAW as u32, WINDOW_EX_STYLE(0), ID_DRIVE + (c - b'A') as i32, HFONT::default());
         add_tip(h, &drive_tip(c, kind));

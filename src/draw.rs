@@ -131,7 +131,23 @@ pub(crate) unsafe fn draw_button(d: &DRAWITEMSTRUCT) {
         if marked {
             fill(dc, RECT { left: rc.left + s(7), top: rc.bottom - s(2), right: rc.right - s(7), bottom: rc.bottom }, accent);
         }
-        return text(dc, rc, &text_of(d.hwndItem), font, if marked { pal().text } else { fg }, DT_CENTER);
+        let (label, ink) = (text_of(d.hwndItem), if marked { pal().text } else { fg });
+        // the drive kind's icon before the letter on a wide button (panes.rs narrows them all when they don't fit);
+        // without the icon list or its index, or when the letter would be cut, the letter alone as before
+        let kind = app(|a| a.drives.iter().find(|x| x.2 == d.hwndItem).map(|x| x.1));
+        let ix = kind.map_or(-1, drive_icon);
+        if rc.right - rc.left >= s(40) && ix >= 0 {
+            let icon = RECT { left: rc.left + s(6), top: rc.top + (rc.bottom - rc.top - s(16)) / 2, right: rc.left + s(22), bottom: 0 };
+            let after = icon.right + s(4);
+            if let Some(il) = (after + text_w(dc, &label, font) <= rc.right).then(|| small_ilist()).flatten() {
+                if let Ok(hi) = il.GetIcon(ix, ILD_NORMAL.0) {
+                    _ = DrawIconEx(dc, icon.left, icon.top, hi, s(16), s(16), 0, None, DI_NORMAL);
+                    _ = DestroyIcon(hi);
+                    return text(dc, RECT { left: after, ..rc }, &label, font, ink, DT_LEFT);
+                }
+            }
+        }
+        return text(dc, rc, &label, font, ink, DT_CENTER);
     }
     // icon only, names live in the tooltips; save turns green with a dot while the layout differs
     if id == ID_TB_FAV {
