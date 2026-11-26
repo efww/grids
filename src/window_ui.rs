@@ -256,8 +256,8 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 }
                 return DefWindowProcW(h, msg, wp, lp);
             }
-            // system colours changed (another contrast theme picked)
-            WM_SYSCOLORCHANGE => {
+            // system colours changed (another contrast theme picked), or the window colour (Windows' accent)
+            WM_SYSCOLORCHANGE | WM_DWMCOLORIZATIONCOLORCHANGED => {
                 _ = PostMessageW(Some(h), WM_THEME_SYNC, WPARAM(0), LPARAM(0));
                 return DefWindowProcW(h, msg, wp, lp);
             }
@@ -445,6 +445,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 ID_STAR => star_clicked(h),
                 id @ ID_ACCENT..=1405 => set_accent(theme_pal(app(|a| a.s.dark)).accents[id - ID_ACCENT].1),
                 ID_ACCENT_PICK => pick_accent(),
+                ID_ACCENT_SYS => follow_sys_accent(),
                 ID_KEYS => open_keys(),
                 ID_TOUR => open_tour(),
                 ID_GATHER => gather_explorer(),
@@ -469,8 +470,11 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 check(ID_KEY_TIPS, app(|a| a.s.key_tips));
                 check(ID_LANG, KO.load(Ordering::Relaxed));
                 check(ID_STAR, starred());
+                // following Windows: only that item ticked (a preset of the same colour unticked too)
+                let sys = app(|a| a.s.accent_sys);
+                check(ID_ACCENT_SYS, sys);
                 for (k, (_, c)) in theme_pal(dark).accents.iter().enumerate() {
-                    check(ID_ACCENT + k, *c == accent);
+                    check(ID_ACCENT + k, !sys && *c == accent);
                 }
             }
             // right-click (or Shift+F10 / the menu key) on a drive button: that drive's shell menu
@@ -1131,6 +1135,8 @@ pub(crate) unsafe fn make_menus() -> Result<HMENU> {
         item(view, MF_STRING, id, tr(en, ko))?;
     }
     let colors = CreatePopupMenu()?;
+    item(colors, MF_STRING, ID_ACCENT_SYS, tr("Windows accent colour", "Windows 강조 색"))?;
+    AppendMenuW(colors, MF_SEPARATOR, 0, PCWSTR::null())?;
     for (k, (name, _)) in LIGHT.accents.iter().enumerate() {
         item(colors, MF_STRING, ID_ACCENT + k, tr(ACCENT_EN[k], name))?;
     }

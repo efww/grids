@@ -46,6 +46,7 @@ pub(crate) const ID_TRAY: usize = 1153; // view menu: minimize to the notificati
 pub(crate) const HOME: &str = "https://github.com/efww/grids";
 pub(crate) const ID_ACCENT: usize = 1400; // + preset index
 pub(crate) const ID_ACCENT_PICK: usize = 1410;
+pub(crate) const ID_ACCENT_SYS: usize = 1411; // selection colour: follow Windows' accent colour
 pub(crate) const EM_SETSEL: u32 = 0xB1;
 pub(crate) const EM_GETSEL: u32 = 0xB0;
 pub(crate) const EM_SCROLLCARET: u32 = 0xB7;
@@ -207,15 +208,72 @@ pub(crate) fn hc_palette(c: &SysColors) -> Palette {
 
 // WCAG 2 contrast ratio of two 0xRRGGBB colours.
 pub(crate) fn contrast(a: u32, b: u32) -> f64 {
-    let lum = |c: u32| {
-        let lin = |v: u32| {
-            let s = v as f64 / 255.0;
-            if s <= 0.04045 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
-        };
-        0.2126 * lin(c >> 16 & 0xFF) + 0.7152 * lin(c >> 8 & 0xFF) + 0.0722 * lin(c & 0xFF)
-    };
-    let (x, y) = (lum(a), lum(b));
+    let (x, y) = (rel_lum(a), rel_lum(b));
     (x.max(y) + 0.05) / (x.min(y) + 0.05)
+}
+
+// WCAG 2 relative luminance 0..1 of an 0xRRGGBB colour.
+pub(crate) fn rel_lum(c: u32) -> f64 {
+    let lin = |v: u32| {
+        let s = v as f64 / 255.0;
+        if s <= 0.04045 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
+    };
+    0.2126 * lin(c >> 16 & 0xFF) + 0.7152 * lin(c >> 8 & 0xFF) + 0.0722 * lin(c & 0xFF)
+}
+
+// Windows' accent colour (Settings > Personalization > Colors) as Grids shows it, light theme then dark;
+// NO_SYS until read, or where Windows gives none (black is a colour, so not 0).
+pub(crate) const NO_SYS: u32 = u32::MAX;
+static SYS_ACCENT: [AtomicU32; 2] = [const { AtomicU32::new(NO_SYS) }; 2];
+
+pub(crate) fn sys_accent(dark: bool) -> Option<u32> {
+    Some(SYS_ACCENT[dark as usize].load(Ordering::Relaxed)).filter(|&c| c != NO_SYS)
+}
+
+// Of Windows' shades of its accent, the one for a theme: among those whose text (on_color) reads at 4.5:1,
+// the nearest in lightness to the theme's Sky preset, so it sits with the pastel / muted presets. When none
+// reads, the most legible one.
+pub(crate) fn sys_accent_shade(shades: &[u32], dark: bool) -> Option<u32> {
+    let target = rel_lum(theme_pal(dark).accents[0].1);
+    let legibility = |c: u32| contrast(plain_on_color(c), c);
+    let near = shades.iter().copied().filter(|&c| legibility(c) >= 4.5).min_by(|&a, &b| (rel_lum(a) - target).abs().total_cmp(&(rel_lum(b) - target).abs()));
+    near.or_else(|| shades.iter().copied().max_by(|&a, &b| legibility(a).total_cmp(&legibility(b))))
+}
+
+// HKCU\...\Explorer\Accent\AccentPalette: 8 colours of 4 bytes R, G, B, A, lightest first. The 8th is a
+// colour of another hue (for alerts), so only the first 7. Anything but 32 bytes: not this format.
+pub(crate) fn accent_palette(bytes: &[u8]) -> Option<Vec<u32>> {
+    (bytes.len() == 32).then(|| bytes.chunks(4).take(7).map(|p| (p[0] as u32) << 16 | (p[1] as u32) << 8 | p[2] as u32).collect())
+}
+
+// One colour (DWM's colorization, where the palette is missing) spread into lighter and darker shades.
+pub(crate) fn shades_of(c: u32) -> Vec<u32> {
+    let mut v: Vec<u32> = [0.6, 0.4, 0.2].map(|t| blend(c, 0xFFFFFF, t)).into();
+    v.push(c);
+    v.extend([0.2, 0.4, 0.6].map(|t| blend(c, 0, t)));
+    v
+}
+
+// Reads Windows' accent colour again; true when the shade for either theme changed (the setting broadcast
+// comes in bursts, so only a real change repaints).
+pub(crate) unsafe fn refresh_sys_accent() -> bool {
+    use windows::Win32::Graphics::Dwm::DwmGetColorizationColor;
+    use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_BINARY};
+    let (mut buf, mut n) = ([0u8; 64], 64u32);
+    let key = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Accent");
+    let got = RegGetValueW(HKEY_CURRENT_USER, key, w!("AccentPalette"), RRF_RT_REG_BINARY, None, Some(buf.as_mut_ptr() as _), Some(&mut n)).is_ok();
+    let palette = buf.get(..n as usize).filter(|_| got).and_then(accent_palette);
+    let shades = palette.or_else(|| {
+        let (mut c, mut opaque) = (0u32, BOOL(0));
+        // 0xAARRGGBB: already red, green, blue in order (not a COLORREF)
+        DwmGetColorizationColor(&mut c, &mut opaque).ok().map(|_| shades_of(c & 0xFFFFFF))
+    });
+    let mut changed = false;
+    for (dark, slot) in [false, true].into_iter().zip(&SYS_ACCENT) {
+        let c = shades.as_deref().and_then(|s| sys_accent_shade(s, dark)).unwrap_or(NO_SYS);
+        changed |= slot.swap(c, Ordering::Relaxed) != c;
+    }
+    changed
 }
 
 // Status line note (and theme button tooltip) while a theme or colour pick only changes the saved setting.
@@ -251,6 +309,10 @@ pub(crate) fn on_color(bg: u32) -> u32 {
     if let Some(c) = hc_colors().filter(|c| c.hl == bg) {
         return c.hl_text;
     }
+    plain_on_color(bg)
+}
+
+fn plain_on_color(bg: u32) -> u32 {
     if luma(bg) > 160.0 {
         INK
     } else {

@@ -15,6 +15,7 @@ pub(crate) struct Session {
     pub(crate) views: Vec<(i32, i32)>, // (FOLDERVIEWMODE, icon size); 0 = shell default
     pub(crate) accent: u32,            // selection colour 0xRRGGBB, light theme
     pub(crate) accent_dark: u32,       // selection colour, dark theme
+    pub(crate) accent_sys: bool,       // shown instead: Windows' accent colour, in a shade for the theme (sys_accent)
     pub(crate) dark: bool,
     pub(crate) follow: bool,           // dark follows Windows' app light/dark setting (on for a new install)
     pub(crate) dblup: bool,            // double-click on empty space goes to the parent folder
@@ -55,6 +56,7 @@ impl Default for Session {
             views: vec![(0, 0); MAXP],
             accent: LIGHT.accents[1].1, // gray
             accent_dark: DARK.accents[1].1,
+            accent_sys: false,
             dark: false,
             follow: false,
             dblup: true,
@@ -152,14 +154,20 @@ pub(crate) fn layout_label(h: &[usize]) -> String {
     }
 }
 
+// High contrast's highlight, then Windows' accent colour (followed and read), then the saved colour.
+pub(crate) fn accent_pick(hc: Option<u32>, sys: Option<u32>, saved: u32) -> u32 {
+    hc.or(sys).unwrap_or(saved)
+}
+
 impl Session {
-    // The selection colour on screen: Windows' highlight under high contrast, else the saved one.
+    // The selection colour on screen: Windows' highlight under high contrast, else Windows' accent colour
+    // when followed (and read), else the saved one.
     pub(crate) fn accent_now(&self) -> u32 {
         self.accent_in(hc_colors().map(|c| c.hl))
     }
 
     pub(crate) fn accent_in(&self, hc: Option<u32>) -> u32 {
-        hc.unwrap_or_else(|| self.accent_saved())
+        accent_pick(hc, self.accent_sys.then(|| sys_accent(self.dark)).flatten(), self.accent_saved())
     }
 
     // The theme's own selection colour, as in grids.ini (menu ticks, the colour picker's start).
@@ -220,6 +228,7 @@ impl Session {
                 "active" => s.active = v.parse().unwrap_or(0),
                 "accent" => s.accent = u32::from_str_radix(v.trim().trim_start_matches('#'), 16).unwrap_or(s.accent) & 0xFFFFFF,
                 "accent_dark" => s.accent_dark = u32::from_str_radix(v.trim().trim_start_matches('#'), 16).unwrap_or(s.accent_dark) & 0xFFFFFF,
+                "accent_sys" => s.accent_sys = v.trim() == "1",
                 "dark" => s.dark = v.trim() == "1",
                 "follow_theme" => s.follow = v.trim() == "1",
                 "dblup" => s.dblup = v.trim() != "0",
@@ -294,7 +303,8 @@ impl Session {
         let rowr = self.rowr.iter().map(|r| join(r)).collect::<Vec<_>>().join("|");
         o += &format!("side={}\ncols={}\n", self.side, join(&self.heights));
         o += &format!("colr={}\nrowr={rowr}\nactive={}\n", join(&self.colr), self.active);
-        o += &format!("accent={:06X}\naccent_dark={:06X}\ndark={}\n", self.accent, self.accent_dark, self.dark as u8);
+        o += &format!("accent={:06X}\naccent_dark={:06X}\naccent_sys={}\n", self.accent, self.accent_dark, self.accent_sys as u8);
+        o += &format!("dark={}\n", self.dark as u8);
         o += &format!("follow_theme={}\n", self.follow as u8);
         o += &format!("dblup={}\ntree={}\nhotkey={}\n", self.dblup as u8, self.tree as u8, self.hotkey as u8);
         o += &format!("dialog_jump={}\n", self.dlgjump as u8);
@@ -968,6 +978,7 @@ mod tests {
             views: slots((0, 0), &[(0, (4, 48)), (2, (1, 96))]),
             accent: 0x02AB34, // leading zeros pin the 6-digit {:06X} form in ini_format_pinned
             accent_dark: 0x004C8D,
+            accent_sys: true,
             dark: true,
             follow: true,
             dblup: false,
@@ -1020,6 +1031,7 @@ mod tests {
             "active=4",
             "accent=02AB34",
             "accent_dark=004C8D",
+            "accent_sys=1",
             "dark=1",
             "follow_theme=1",
             "dblup=0",
@@ -1064,6 +1076,7 @@ mod tests {
             "active=0",
             "accent=C5C5C5",
             "accent_dark=4B4B4B",
+            "accent_sys=0",
             "dark=0",
             "follow_theme=0",
             "dblup=1",
@@ -1103,6 +1116,7 @@ mod tests {
         assert_eq!((s.follow, s.dblup, s.tree, s.hotkey, s.dlgjump, s.updates), (false, true, true, true, true, true));
         assert_eq!((s.tabs_on, s.ev_here, s.ev_sort, s.ev_cols, s.ko), (false, false, 1, None, false));
         assert_eq!((s.accent_dark, s.order.len(), s.tints.iter().all(|&t| t == 0)), (DARK.accents[1].1, 0, true));
+        assert!(!s.accent_sys); // before accent_sys=: the saved colour, as always
         assert_eq!((s.key_tips, s.key_tips_seen), (true, [0; TIP_N]));
         assert!(!s.tray); // before tray=: stays on the taskbar
     }
@@ -1221,6 +1235,7 @@ mod tests {
             views: slots((0, 0), &[(1, (3, 32))]),
             accent: 0x010203,
             accent_dark: 0x040506,
+            accent_sys: false,
             dark: false,
             follow: false,
             dblup: true,

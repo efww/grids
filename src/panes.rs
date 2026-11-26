@@ -430,6 +430,7 @@ pub(crate) unsafe fn repaint_header(pane: HWND) {
 // keeps Windows' highlight and the status line says why.
 pub(crate) unsafe fn set_accent(c: u32) {
     app(|a| {
+        a.s.accent_sys = false; // a colour of its own: Windows' accent no longer followed
         if a.s.dark {
             a.s.accent_dark = c;
         } else {
@@ -441,6 +442,24 @@ pub(crate) unsafe fn set_accent(c: u32) {
     } else {
         paint_accent(c);
     }
+}
+
+// View menu > Selection colour > Windows accent colour: followed from now on, read and painted now (under
+// high contrast only saved, as set_accent).
+pub(crate) unsafe fn follow_sys_accent() {
+    refresh_sys_accent();
+    app(|a| a.s.accent_sys = true);
+    if HC_ON.load(Ordering::Relaxed) {
+        set_note(hc_text().into());
+    } else {
+        repaint_accent();
+    }
+}
+
+// The selection colour on screen changed by itself (Windows' accent): every place it shows, open popups too.
+pub(crate) unsafe fn repaint_accent() {
+    paint_accent(app(|a| a.s.accent_now()));
+    redraw_popups();
 }
 
 // Paints the selection colour everywhere it shows, without saving it.
@@ -721,7 +740,7 @@ pub(crate) unsafe fn system_dark() -> Option<bool> {
 // High contrast shows light lists whatever the saved theme, so only a change of what is shown (dark or not)
 // needs that rebuild; a contrast theme switching on or off over the light theme is recoloured in place.
 pub(crate) unsafe fn retheme() {
-    let (panes, popups, dark) = app(|a| (a.panes.iter().flatten().map(|p| p.hwnd).collect::<Vec<_>>(), [a.fav_popup, a.load, a.grid, a.keys_popup, a.peek, a.matcher.as_ref().map_or(HWND::default(), |m| m.h), tour_hwnd()], a.s.dark));
+    let (panes, dark) = app(|a| (a.panes.iter().flatten().map(|p| p.hwnd).collect::<Vec<_>>(), a.s.dark));
     let shown_changed = DARK_ON.load(Ordering::Relaxed) != shown_dark(dark);
     if shown_changed && (0..MAXP).any(|i| unsafe { dui_list(i) }) {
         apply_theme();
@@ -736,7 +755,12 @@ pub(crate) unsafe fn retheme() {
         }
         redraw_all();
     }
-    // open popups are owned, not children: repainted as they are
+    redraw_popups();
+}
+
+// Open popups are owned, not children: repainted as they are.
+pub(crate) unsafe fn redraw_popups() {
+    let popups = app(|a| [a.fav_popup, a.load, a.grid, a.keys_popup, a.peek, a.matcher.as_ref().map_or(HWND::default(), |m| m.h), tour_hwnd()]);
     for h in popups.into_iter().filter(|h| IsWindow(Some(*h)).as_bool()) {
         _ = RedrawWindow(Some(h), None, None, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
     }
@@ -752,7 +776,8 @@ pub(crate) fn shown_dark(saved: bool) -> bool {
 // saved theme back (and Windows light/dark, when followed).
 pub(crate) unsafe fn theme_sync() {
     let hc = refresh_hc();
-    let (follow, cur, main) = app(|a| (a.s.follow, a.s.dark, a.main));
+    let sys_accent = refresh_sys_accent(); // Windows' accent colour, followed or not (picked from the menu later)
+    let (follow, cur, main, accent_sys) = app(|a| (a.s.follow, a.s.dark, a.main, a.s.accent_sys));
     let target = theme_target(follow, system_dark(), cur);
     if let Some(d) = target {
         app(|a| a.s.dark = d);
@@ -763,7 +788,9 @@ pub(crate) unsafe fn theme_sync() {
         }
     }
     if hc || target.is_some() {
-        retheme();
+        retheme(); // the accent with it
+    } else if sys_accent && accent_sys && !HC_ON.load(Ordering::Relaxed) {
+        repaint_accent();
     }
 }
 

@@ -208,6 +208,7 @@ fn main() -> Result<()> {
         if let Some(d) = theme_target(s.follow, system_dark(), s.dark) {
             s.dark = d;
         }
+        refresh_sys_accent(); // Windows' accent colour, when followed, from the first paint
         let bare = args.is_empty(); // no folder or session given
         // a session file becomes the save target; one that can't be read is named on the status line once the window is up
         let named = session_arg(&args).map(|f| Path::new(f).file_name().map_or(f.into(), |n| n.to_string_lossy().into_owned()));
@@ -563,7 +564,7 @@ mod tests {
         main.extend(VIEW_TOP.iter().chain(&VIEW_END).map(|v| v.0));
         main.push(ID_LANG);
         main.extend((0..LIGHT.accents.len()).map(|k| ID_ACCENT + k));
-        main.push(ID_ACCENT_PICK);
+        main.extend([ID_ACCENT_PICK, ID_ACCENT_SYS]);
         distinct("main WM_COMMAND", &main);
         // the view menu's copies of toolbar buttons send those buttons' commands, already counted once above
         assert!(VIEW_BUTTONS.iter().all(|v| main.iter().filter(|&&id| id == v.0).count() == 1));
@@ -2027,6 +2028,54 @@ mod tests {
             assert_eq!(s.accent_saved(), s.accent_in(None));
             assert_eq!(s.to_ini(), before);
         }
+    }
+
+    // Windows' accent colour: a shade per theme near the Sky preset whose text reads; high contrast still wins.
+    #[test]
+    fn windows_accent_shades() {
+        // Windows 10's default blue, R G B A per colour; the 8th (orange) is never a candidate
+        let blue = [0xA6, 0xD8, 0xFF, 0, 0x76, 0xB9, 0xED, 0, 0x42, 0x9C, 0xE3, 0, 0x00, 0x78, 0xD7, 0, 0x00, 0x5A, 0x9E, 0, 0x00, 0x42, 0x75, 0, 0x00, 0x26, 0x42, 0, 0xF7, 0x63, 0x0C, 0];
+        let shades = accent_palette(&blue).unwrap();
+        assert_eq!(shades, [0xA6D8FF, 0x76B9ED, 0x429CE3, 0x0078D7, 0x005A9E, 0x004275, 0x002642]);
+        assert_eq!(accent_palette(&blue[..28]), None);
+        let mut long = blue.to_vec();
+        long.extend([0; 4]);
+        assert_eq!(accent_palette(&long), None);
+        // a yellow and a green palette too (yellows are light, their middle shades read with neither ink)
+        let yellow = [0xFFF4B0, 0xFFE680, 0xFFD43B, 0xE6B800, 0xB38F00, 0x806600, 0x4D3D00];
+        let green = [0x9EF0B5, 0x6ADB8C, 0x3CC46A, 0x16A34A, 0x0F7A37, 0x0A5527, 0x053317];
+        for p in [&shades[..], &yellow, &green, &shades_of(0x0078D7), &shades_of(0xFFB900)] {
+            for dark in [false, true] {
+                let c = sys_accent_shade(p, dark).unwrap();
+                assert!(p.contains(&c));
+                assert!(contrast(on_color(c), c) >= 4.5, "{c:06X} dark={dark}");
+                // the nearest legible shade to Sky in lightness
+                let sky = rel_lum(theme_pal(dark).accents[0].1);
+                let gap = |x: u32| (rel_lum(x) - sky).abs();
+                assert!(p.iter().filter(|&&x| contrast(on_color(x), x) >= 4.5).all(|&x| gap(c) <= gap(x)));
+            }
+        }
+        assert_eq!(sys_accent_shade(&shades, false), Some(0x76B9ED));
+        assert_eq!(sys_accent_shade(&shades, true), Some(0x005A9E));
+        assert_eq!(sys_accent_shade(&[], false), None);
+        // none legible: the most legible one
+        assert_eq!(sys_accent_shade(&[0x808080, 0x8A8A8A], false), Some(0x808080));
+        assert_eq!(shades_of(0x0078D7)[3], 0x0078D7);
+        // high contrast, then Windows' accent, then the saved colour; turning it off brings the saved one back
+        assert_eq!(accent_pick(Some(0x1AEBFF), Some(0x76B9ED), 0x8DB5E8), 0x1AEBFF);
+        assert_eq!(accent_pick(None, Some(0x76B9ED), 0x8DB5E8), 0x76B9ED);
+        assert_eq!(accent_pick(None, Some(0x000000), 0x8DB5E8), 0x000000); // black is a colour
+        assert_eq!(accent_pick(None, None, 0x8DB5E8), 0x8DB5E8);
+        // saved as accent_sys=, read back; only 1 is on, an older file is off
+        let s = Session { accent_sys: true, ..Session::default() };
+        assert!(Session::parse(&s.to_ini()).accent_sys);
+        for v in ["accent_sys=0\n", "accent_sys=\n", "accent_sys=yes\n", "dark=1\n"] {
+            assert!(!Session::parse(v).accent_sys, "{v:?}");
+        }
+        // a session file carries it, but loading one keeps the app's own setting
+        let mut cur = Session::default();
+        cur.take_layout(&Session::parse(&s.snapshot()));
+        assert!(!cur.accent_sys);
     }
 
     #[test]
