@@ -191,6 +191,12 @@ pub(crate) unsafe fn layout_pane(h: HWND) {
 }
 
 pub(crate) unsafe fn relayout() {
+    // a pending Ctrl+Alt+arrow lands with this layout (key release, zoom, a session, DPI ...): its guide bar goes
+    if let Some(bars) = app(|a| a.nudge.take().map(|_| a.bars)) {
+        for b in bars {
+            _ = ShowWindow(b, SW_HIDE);
+        }
+    }
     sync_panes();
     let Some((main, moves, label, shown)) = app(|a| {
         a.gap_hot = None; // its splitter may be gone; the whole window is repainted below
@@ -263,7 +269,7 @@ pub(crate) unsafe fn relayout() {
 // Splitter drag shows translucent guide bars where the boundaries will land; the panes move once, on release.
 pub(crate) unsafe fn show_bars() {
     let Some((main, bars, rects)) = app(|a| {
-        let d = a.drag?;
+        let d = a.drag.or(a.nudge)?;
         let g = geo(a);
         let r = gap_line(&g, d, 3 * a.dpi / 96);
         let rects = if matches!(d, Hit::Row(..)) { [None, r] } else { [r, None] };
@@ -295,6 +301,48 @@ pub(crate) unsafe fn end_drag() {
     refresh_drives(); // one that came or went mid-drag
     relayout();
     redraw_all();
+}
+
+// Ctrl+Alt+arrow (tmux's resize-pane): the active pane's splitter moves 32 px that way, as if dragged; held, it keeps
+// going. As in a drag only the guide bar moves; the panes follow once the key is let go (end_nudge).
+pub(crate) unsafe fn nudge_split(dx: i32, dy: i32, repeat: bool) {
+    let moved = app(|a| {
+        if a.zoom.is_some() || a.drag.is_some() {
+            return false;
+        }
+        let Some((d, sign)) = nudge_target(&a.s.heights, a.s.active, dx, dy) else { return false };
+        let g = geo(a);
+        let (step, min) = (sign * 32 * a.dpi / 96, 60 * a.dpi / 96);
+        // the splitter's spot as the mouse hands it to drag_ratio: the gap's middle less half a gap = the cell's end
+        let (r, k, end, start, len) = match d {
+            Hit::Col(k) => (&mut a.s.colr, k, g.xs.get(k).map(|x| x.1), g.gx, g.w - g.pad - g.gx),
+            Hit::Row(c, k) => {
+                let Some(r) = a.s.rowr.get_mut(c) else { return false };
+                (r, k, g.ys.get(c).and_then(|y| y.get(k)).map(|y| y.1), g.top, g.bot - g.top)
+            }
+            Hit::Side => return false,
+        };
+        let Some(end) = end.filter(|_| k + 1 < r.len()) else { return false };
+        let old = r[k];
+        drag_ratio(r, k, end + step, start, len, g.gap, min);
+        if (r[k] - old).abs() < 1e-9 {
+            return false; // already at the 60 px minimum
+        }
+        a.nudge = Some(d);
+        true
+    });
+    if moved {
+        show_bars();
+    } else if !repeat {
+        _ = MessageBeep(MB_ICONWARNING);
+    }
+}
+
+pub(crate) unsafe fn end_nudge() {
+    if app(|a| a.nudge.is_some()) {
+        relayout();
+        redraw_all();
+    }
 }
 
 // Full repaint of everything once a drag/resize/layout change is over, so nothing stale survives.

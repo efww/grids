@@ -2730,7 +2730,7 @@ mod tests {
         // the shortcuts that stay: Ctrl+L, Alt+D, Ctrl+F, Ctrl+H, Ctrl+S
         assert!(!key_types(VK_L, true, false) && !key_types(VK_D, false, true) && !key_types(VK_F, true, false));
         assert!(!key_types(VK_H, true, false) && !key_types(VK_S, true, false));
-        // not characters even with Ctrl+Alt (Ctrl+Alt+Shift+arrows swaps panes)
+        // not characters even with Ctrl+Alt (Ctrl+Alt+arrows move splitters, Ctrl+Alt+Shift+arrows swap panes)
         for vk in [VK_LEFT, VK_RIGHT, VK_UP, VK_DOWN, VK_TAB, VK_F4, VK_RETURN, VK_SPACE] {
             assert!(!key_types(vk, true, true), "{:#x}", vk.0);
         }

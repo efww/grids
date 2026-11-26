@@ -108,6 +108,23 @@ pub(crate) fn slot(h: &[usize], mut i: usize) -> (usize, usize) {
     (h.len() - 1, h[h.len() - 1] - 1)
 }
 
+/// Ctrl+Alt+arrow, as tmux's resize-pane: the splitter of pane `active` that moves that way, and the sign (+ = right /
+/// down). Its right (lower) boundary; the last column (row) has none, so its left (upper) one. None: no splitter on that axis.
+pub(crate) fn nudge_target(h: &[usize], active: usize, dx: i32, dy: i32) -> Option<(Hit, i32)> {
+    if h.is_empty() {
+        return None;
+    }
+    let (c, r) = slot(h, active);
+    let edge = |i: usize, n: usize| (n >= 2).then(|| if i + 1 < n { i } else { i - 1 });
+    if dx != 0 {
+        edge(c, h.len()).map(|k| (Hit::Col(k), dx.signum()))
+    } else if dy != 0 {
+        edge(r, h[c]).map(|k| (Hit::Row(c, k), dy.signum()))
+    } else {
+        None
+    }
+}
+
 /// (column, row) of each slot off screen: the cell its pane last had (runtime only, never saved).
 pub(crate) type Homes = [Option<(usize, usize)>; MAXP];
 
@@ -276,6 +293,46 @@ pub(crate) fn hit(g: &Geo, x: i32, y: i32) -> Option<Hit> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nudge_targets() {
+        // columns of 2 and 1 rows: slots 0, 1 in column 0, slot 2 in column 1
+        let h = [2, 1];
+        assert_eq!(nudge_target(&h, 0, 1, 0), Some((Hit::Col(0), 1)));
+        assert_eq!(nudge_target(&h, 1, -1, 0), Some((Hit::Col(0), -1)));
+        // the last column moves its left boundary, the same way as the arrow
+        assert_eq!(nudge_target(&h, 2, 1, 0), Some((Hit::Col(0), 1)));
+        assert_eq!(nudge_target(&h, 2, -1, 0), Some((Hit::Col(0), -1)));
+        assert_eq!(nudge_target(&h, 0, 0, 1), Some((Hit::Row(0, 0), 1)));
+        assert_eq!(nudge_target(&h, 1, 0, -1), Some((Hit::Row(0, 0), -1)));
+        assert_eq!(nudge_target(&h, 2, 0, 1), None); // one row in column 1
+        // one pane: nothing to move
+        assert_eq!(nudge_target(&[1], 0, 1, 0), None);
+        assert_eq!(nudge_target(&[1], 0, 0, -1), None);
+        assert_eq!(nudge_target(&[], 0, 1, 0), None);
+        // 4x4: slot 6 = column 1, row 2; slot 15 = last column, last row
+        let g = [4, 4, 4, 4];
+        assert_eq!(nudge_target(&g, 6, 1, 0), Some((Hit::Col(1), 1)));
+        assert_eq!(nudge_target(&g, 6, 0, -1), Some((Hit::Row(1, 2), -1)));
+        assert_eq!(nudge_target(&g, 15, -1, 0), Some((Hit::Col(2), -1)));
+        assert_eq!(nudge_target(&g, 15, 0, 1), Some((Hit::Row(3, 2), 1)));
+        // columns of different heights: the row index is the pane's own column's
+        assert_eq!(nudge_target(&[1, 3], 3, 0, 1), Some((Hit::Row(1, 1), 1)));
+        assert_eq!(nudge_target(&[3, 2], 4, 0, 1), Some((Hit::Row(1, 0), 1)));
+    }
+
+    #[test]
+    fn drag_ratio_stops_at_the_limit() {
+        // 2 columns, 1000 px with an 8 px gap, 60 px minimum: past the edge the ratio stays where it is
+        let mut r = vec![0.5, 0.5];
+        drag_ratio(&mut r, 0, 5000, 0, 1000, 8, 60);
+        let end = r.clone();
+        drag_ratio(&mut r, 0, 5032, 0, 1000, 8, 60);
+        assert_eq!(r, end);
+        assert!((r[1] - 60.0 / 992.0).abs() < 1e-9);
+        drag_ratio(&mut r, 0, -500, 0, 1000, 8, 60);
+        assert!((r[0] - 60.0 / 992.0).abs() < 1e-9 && (r[0] + r[1] - 1.0).abs() < 1e-9);
+    }
 
     #[test]
     fn gap_lines() {

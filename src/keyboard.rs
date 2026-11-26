@@ -95,6 +95,15 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
             VK_UP => swap_dir(0, -1),
             _ => swap_dir(0, 1),
         },
+        k @ (VK_LEFT | VK_RIGHT | VK_UP | VK_DOWN) if alt && ctrl && !shift => {
+            let repeat = m.lParam.0 & (1 << 30) != 0;
+            match k {
+                VK_LEFT => nudge_split(-1, 0, repeat),
+                VK_RIGHT => nudge_split(1, 0, repeat),
+                VK_UP => nudge_split(0, -1, repeat),
+                _ => nudge_split(0, 1, repeat),
+            }
+        }
         VK_LEFT if alt => browse(a, SBSP_NAVIGATEBACK),
         VK_RIGHT if alt => browse(a, SBSP_NAVIGATEFORWARD),
         VK_UP if alt => browse(a, SBSP_PARENT),
@@ -289,6 +298,10 @@ pub(crate) unsafe fn pre_translate(m: &MSG) -> bool {
         }
         WM_KEYUP | WM_SYSKEYUP => {
             app(|a| a.held = a.held.filter(|&k| k != m.wParam.0 as u16));
+            // Ctrl+Alt+arrow: the panes take the moved splitter once the arrow, Ctrl or Alt is let go
+            if matches!(VIRTUAL_KEY(m.wParam.0 as u16), VK_LEFT | VK_RIGHT | VK_UP | VK_DOWN | VK_CONTROL | VK_MENU) {
+                end_nudge();
+            }
             false
         }
         _ => false,

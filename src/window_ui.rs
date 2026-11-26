@@ -59,6 +59,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             WM_ACTIVATE => {
                 let (state, min) = ((wp.0 & 0xffff) as u32, wp.0 >> 16 & 0xffff != 0);
                 if state == WA_INACTIVE {
+                    end_nudge(); // Alt+Tab mid Ctrl+Alt+arrow: that key release never comes here
                     keep_focus(h);
                 } else if state == WA_ACTIVE && !min {
                     restore_focus();
@@ -175,9 +176,20 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 update_status();
                 check_dirty();
                 autosave();
+                // a menu's modal loop or Ctrl+Alt+Del can swallow the key release: Ctrl or Alt up ends the nudge anyway
+                let up = |k: VIRTUAL_KEY| GetAsyncKeyState(k.0 as i32) >= 0;
+                if app(|a| a.nudge.is_some()) && (up(VK_CONTROL) || up(VK_MENU)) {
+                    end_nudge();
+                }
             }
             WM_SETCURSOR if wp.0 == h.0 as usize && (lp.0 & 0xffff) as u32 == HTCLIENT => {
-                let Some(d) = app(|a| a.drag).or_else(|| cursor_for(h)) else {
+                // mid-nudge the splitters on screen aren't where a.s says yet, so no hit test then
+                let d = match app(|a| (a.drag, a.nudge.is_some())) {
+                    (Some(d), _) => Some(d),
+                    (None, true) => None,
+                    (None, false) => cursor_for(h),
+                };
+                let Some(d) = d else {
                     return DefWindowProcW(h, msg, wp, lp);
                 };
                 let c = match d {
@@ -188,6 +200,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 return LRESULT(1);
             }
             WM_LBUTTONDOWN => {
+                end_nudge(); // a Ctrl+Alt+arrow still pending: the panes first, so the press finds the splitters on screen
                 let (x, y) = xy(lp);
                 if let Some(d) = app(|a| hit(&geo(a), x, y)) {
                     gap_hover(h, None);
@@ -198,7 +211,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             WM_MOUSELEAVE => gap_hover(h, None),
             WM_MOUSEMOVE => {
                 let (x, y) = xy(lp);
-                if let Some(d) = app(|a| a.drag.is_none().then(|| hit(&geo(a), x, y))) {
+                if let Some(d) = app(|a| (a.drag.is_none() && a.nudge.is_none()).then(|| hit(&geo(a), x, y))) {
                     gap_hover(h, d);
                 }
                 let moved = app(|a| {

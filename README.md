@@ -66,6 +66,7 @@ The exe is not code-signed, so Windows SmartScreen may warn the first time: choo
 | Ctrl+1 … Ctrl+9 | Go to pane 1–9 (the number at the left of each pane header; hidden in very narrow panes) |
 | Alt+Shift+← / → / ↑ / ↓ | Pane to the left / right / above / below |
 | Ctrl+Alt+Shift+← / → / ↑ / ↓ | Swap the active pane with the one to the left / right / above / below (its folder, history, selection, filter and columns stay; also in the ⇄ menu) |
+| Ctrl+Alt+← / → / ↑ / ↓ | Move the active pane's splitter that way, as if dragged (hold to keep going; the panes follow on release; the last column / row moves its left / upper one). Some older Intel graphics drivers take Ctrl+Alt+arrows for screen rotation: turn their hotkeys off to use these |
 | Alt+← / Alt+→ | Back / forward |
 | Alt+↑ | Parent folder |
 | Alt+↓ | Recent folders (all panes, newest first; right-click ← / → too) |

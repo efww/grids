@@ -6,7 +6,7 @@ use crate::*;
 pub(crate) unsafe fn paint_main(h: HWND) {
     let (g, status, font, dpi, hot) = app(|a| {
         let g = geo(a);
-        let hot = a.gap_hot.filter(|_| a.drag.is_none()).and_then(|d| gap_line(&g, d, 2 * a.dpi / 96));
+        let hot = a.gap_hot.filter(|_| a.drag.is_none() && a.nudge.is_none()).and_then(|d| gap_line(&g, d, 2 * a.dpi / 96));
         (g, a.status.clone(), a.font, a.dpi, hot.map(|r| (r, a.s.accent_now())))
     });
     buffered(h, |dc, rc| {
