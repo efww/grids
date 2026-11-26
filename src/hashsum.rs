@@ -322,7 +322,7 @@ unsafe fn clip_text() -> String {
     s
 }
 
-unsafe fn put_clip(text: &str) -> bool {
+pub(crate) unsafe fn put_clip(text: &str) -> bool {
     let text: Vec<u16> = text.encode_utf16().chain([0]).collect();
     let Ok(h) = GlobalAlloc(GMEM_MOVEABLE, text.len() * 2) else { return false };
     let mut ok = false;

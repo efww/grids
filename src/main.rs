@@ -84,6 +84,7 @@ mod autostart;
 mod tour;
 mod tray;
 mod usage;
+mod listing;
 
 use ui_defs::*;
 // explicit, so it wins over the same name glob-imported from windows (a glob clash would turn match patterns into bindings)
@@ -123,6 +124,7 @@ use autostart::*;
 use tour::*;
 use tray::*;
 use usage::*;
+use listing::*;
 
 /// Let a drive with no disk (empty card reader slot, DVD drive, pulled USB stick) just fail the file call,
 /// instead of Windows' "No Disk" system box freezing the calling thread until it is answered.
@@ -533,7 +535,7 @@ mod tests {
             assert_eq!(open_in_pick(ID_WM_PANE + k), OpenPick::Shell);
             menu.extend([ID_OPEN_TO + k, ID_COPY_TO + k, ID_MOVE_TO + k, ID_SWAP_TO + k, ID_WM_PANE + k]);
         }
-        let shell = [ID_INUSE, ID_WM_PAIR, ID_HASH, ID_GROUP, ID_ORG, ID_ORG + 1, ID_ORG + 2, ID_EMPTY, ID_USAGE];
+        let shell = [ID_INUSE, ID_WM_PAIR, ID_HASH, ID_GROUP, ID_ORG, ID_ORG + 1, ID_ORG + 2, ID_EMPTY, ID_USAGE, ID_LIST];
         for p in shell {
             assert_eq!(open_in_pick(p), OpenPick::Shell, "{p}");
         }
@@ -2366,7 +2368,7 @@ mod tests {
 
     // Every source file, compiled in: the test exe runs on the Windows runner without the source tree.
     // A new module must be listed here too (ui_text_pairs_match checks this against main.rs's `mod` lines).
-    const SOURCES: [(&str, &str); 40] = [
+    const SOURCES: [(&str, &str); 41] = [
         ("main.rs", include_str!("main.rs")),
         ("autostart.rs", include_str!("autostart.rs")),
         ("dialog_jump.rs", include_str!("dialog_jump.rs")),
@@ -2382,6 +2384,7 @@ mod tests {
         ("keyboard.rs", include_str!("keyboard.rs")),
         ("keys_window.rs", include_str!("keys_window.rs")),
         ("layout_picker.rs", include_str!("layout_picker.rs")),
+        ("listing.rs", include_str!("listing.rs")),
         ("load_popup.rs", include_str!("load_popup.rs")),
         ("nav.rs", include_str!("nav.rs")),
         ("organize.rs", include_str!("organize.rs")),
@@ -2736,8 +2739,8 @@ mod tests { tr("in", "안") }
 
     // Every ⇄ menu item that can show at the top level at the same time: one letter each, none a pane digit,
     // none the first letter of an unmarked item (the grey title, "Pane 10" …), in both languages.
-    fn menu_slots() -> [&'static [(&'static str, &'static str)]; 10] {
-        [&[M_SWAP], &[M_COPY], &[M_MOVE], &[M_INUSE], &[M_HASH, M_HASH_STOP], &[M_ORG], &[M_GROUP_N, M_GROUP], &[M_EMPTY], &[M_USAGE], &[M_WM_PAIR, M_WM_PANE]]
+    fn menu_slots() -> [&'static [(&'static str, &'static str)]; 11] {
+        [&[M_SWAP], &[M_COPY], &[M_MOVE], &[M_INUSE], &[M_HASH, M_HASH_STOP], &[M_ORG], &[M_GROUP_N, M_GROUP], &[M_EMPTY], &[M_USAGE], &[M_LIST_N, M_LIST], &[M_WM_PAIR, M_WM_PANE]]
     }
 
     #[test]
