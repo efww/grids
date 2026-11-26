@@ -529,16 +529,27 @@ pub(crate) fn keep_job(job: std::thread::JoinHandle<()>) {
 }
 
 // Copies (or, with `mv`, moves) `srcs` into `dst` on a worker thread. False = the thread didn't start.
+// Once it is done (not after an error or a cancel), the main window hears of it: WM_COPY_DONE.
 pub(crate) unsafe fn start_copy(srcs: Vec<String>, dst: String, rename: bool, mv: bool) -> bool {
     let busy = Busy::new();
+    // the worker can't use app(): the main window and the start time are taken here, on the UI thread
+    let (main, start) = (app(|x| x.main.0 as isize), Instant::now());
     let job = std::thread::Builder::new().spawn(move || {
         let _busy = busy;
         let com = CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok();
-        if let Err(e) = run_copy(&srcs, &dst, rename, mv) {
-            if e.code() != COPYENGINE_E_USER_CANCELLED && e.code() != ERROR_CANCELLED.to_hresult() {
-                let what = if mv { tr("Moving failed: ", "이동하지 못했습니다: ") } else { tr("Copying failed: ", "복사하지 못했습니다: ") };
-                let text = HSTRING::from(format!("{what}{}", e.message()));
-                MessageBoxW(None, &text, w!("Grids"), MB_ICONWARNING);
+        match run_copy(&srcs, &dst, rename, mv) {
+            Ok(aborted) => {
+                let done = CopyDone { mv, n: srcs.len(), to: short_name(&dst), aborted, took: start.elapsed() };
+                COPY_DONE.lock().unwrap_or_else(|e| e.into_inner()).push(done);
+                // Grids already closing: the post just fails (JOBS are joined after the message loop)
+                _ = PostMessageW(Some(HWND(main as _)), WM_COPY_DONE, WPARAM(0), LPARAM(0));
+            }
+            Err(e) => {
+                if e.code() != COPYENGINE_E_USER_CANCELLED && e.code() != ERROR_CANCELLED.to_hresult() {
+                    let what = if mv { tr("Moving failed: ", "이동하지 못했습니다: ") } else { tr("Copying failed: ", "복사하지 못했습니다: ") };
+                    let text = HSTRING::from(format!("{what}{}", e.message()));
+                    MessageBoxW(None, &text, w!("Grids"), MB_ICONWARNING);
+                }
             }
         }
         if com {
@@ -551,8 +562,105 @@ pub(crate) unsafe fn start_copy(srcs: Vec<String>, dst: String, rename: bool, mv
 }
 
 // No owner window: the progress and conflict dialogs belong to the worker thread.
-pub(crate) unsafe fn run_copy(srcs: &[String], dst: &str, rename: bool, mv: bool) -> Result<()> {
-    run_op(srcs, dst, rename, mv).map(|_| ())
+// Ok(true) = done, but something was skipped or cancelled on the way.
+pub(crate) unsafe fn run_copy(srcs: &[String], dst: &str, rename: bool, mv: bool) -> Result<bool> {
+    let op = run_op(srcs, dst, rename, mv)?;
+    Ok(op.GetAnyOperationsAborted().map_or(true, |b| b.as_bool()))
+}
+
+// ---------- a finished copy / move says so (TeraCopy, a browser's "download complete") ----------
+
+pub(crate) const WM_COPY_DONE: u32 = WM_APP + 56; // a start_copy is over; the details stay in COPY_DONE
+
+pub(crate) struct CopyDone {
+    pub(crate) mv: bool,
+    pub(crate) n: usize,     // items picked (not the files inside folders)
+    pub(crate) to: String,   // the folder's short name
+    pub(crate) aborted: bool, // some skipped, or the rest cancelled: no count is claimed then
+    pub(crate) took: Duration,
+}
+
+// a list, so two copies ending together both arrive (the last one is said)
+static COPY_DONE: Mutex<Vec<CopyDone>> = Mutex::new(Vec::new());
+// ended while another app was in front, or the main window minimized / hidden: said on the status line once
+// Grids is back (WM_ACTIVATEAPP) or the main window is shown again (WM_SIZE)
+static COPY_LATER: Mutex<Option<String>> = Mutex::new(None);
+
+// Short jobs end before anyone looks away: only these get the taskbar / Windows notification.
+pub(crate) const NOTICE_AFTER: Duration = Duration::from_secs(5);
+
+#[derive(Debug, PartialEq)]
+pub(crate) struct Notice {
+    pub(crate) now: bool,     // status line chip now (else kept until Grids is back in front)
+    pub(crate) flash: bool,   // taskbar button flashes until Grids is in front
+    pub(crate) balloon: bool, // a Windows notification from the notification area icon
+}
+
+// `hidden`: the window is off the taskbar (minimized to the notification area). The flash stays even with the
+// icon there, so a blocked notification (Focus, Do not disturb) still leaves something; never neither.
+pub(crate) fn done_notice(took: Duration, in_front: bool, hidden: bool, tray_on: bool) -> Notice {
+    let loud = !in_front && took > NOTICE_AFTER;
+    Notice { now: in_front, flash: loud && (!hidden || !tray_on), balloon: loud && tray_on }
+}
+
+pub(crate) fn done_text(ko: bool, d: &CopyDone) -> String {
+    let (n, to) = (d.n, &d.to);
+    match (ko, d.mv, d.aborted) {
+        (true, false, false) => format!("복사 끝: {n}개 → {to}"),
+        (true, true, false) => format!("이동 끝: {n}개 → {to}"),
+        (true, false, true) => format!("복사 끝 → {to} (일부 건너뜀 또는 취소)"),
+        (true, true, true) => format!("이동 끝 → {to} (일부 건너뜀 또는 취소)"),
+        (false, false, false) if n == 1 => format!("Copied 1 item to {to}"),
+        (false, true, false) if n == 1 => format!("Moved 1 item to {to}"),
+        (false, false, false) => format!("Copied {n} items to {to}"),
+        (false, true, false) => format!("Moved {n} items to {to}"),
+        (false, false, true) => format!("Copy to {to} ended (some skipped or cancelled)"),
+        (false, true, true) => format!("Move to {to} ended (some skipped or cancelled)"),
+    }
+}
+
+// At most `cap` - 1 UTF-16 units (room for the terminating 0), never half a surrogate pair.
+pub(crate) fn utf16_cut(s: &str, cap: usize) -> Vec<u16> {
+    let mut w: Vec<u16> = s.encode_utf16().take(cap.saturating_sub(1)).collect();
+    if w.last().is_some_and(|c| (0xD800..0xDC00).contains(c)) {
+        w.pop();
+    }
+    w
+}
+
+// WM_COPY_DONE on the main window.
+pub(crate) unsafe fn copy_done_msg(main: HWND) {
+    let done: Vec<CopyDone> = std::mem::take(&mut *COPY_DONE.lock().unwrap_or_else(|e| e.into_inner()));
+    let Some(d) = done.into_iter().last() else { return };
+    let text = done_text(KO.load(Ordering::Relaxed), &d);
+    let how = done_notice(d.took, app_in_front(), !IsWindowVisible(main).as_bool(), app(|a| a.tray_on));
+    // Grids in front, but by another of its windows (a progress window, the preview) while the main one is
+    // minimized or hidden: its status line is not seen, so keep the text for when it is shown again (WM_SIZE)
+    if how.now && (IsIconic(main).as_bool() || !IsWindowVisible(main).as_bool()) {
+        *COPY_LATER.lock().unwrap_or_else(|e| e.into_inner()) = Some(text);
+        return;
+    }
+    if how.now {
+        // the same way as a saved picture: the next status tick shows it
+        *SAVED.lock().unwrap_or_else(|e| e.into_inner()) = Some(text);
+        update_status();
+        return;
+    }
+    if how.balloon {
+        tray_balloon(main, &text);
+    }
+    *COPY_LATER.lock().unwrap_or_else(|e| e.into_inner()) = Some(text);
+    if how.flash {
+        let f = FLASHWINFO { cbSize: size_of::<FLASHWINFO>() as u32, hwnd: main, dwFlags: FLASHW_TRAY | FLASHW_TIMERNOFG, uCount: 0, dwTimeout: 0 };
+        _ = FlashWindowEx(&f);
+    }
+}
+
+// Grids is in front again (WM_ACTIVATEAPP): a copy that ended meanwhile is said once on the status line.
+pub(crate) unsafe fn copy_done_back() {
+    if let Some(text) = COPY_LATER.lock().unwrap_or_else(|e| e.into_inner()).take() {
+        *SAVED.lock().unwrap_or_else(|e| e.into_inner()) = Some(text);
+    }
 }
 
 // run_copy, handing back the operation so the caller can ask whether anything was skipped or cancelled.
@@ -691,4 +799,62 @@ pub(crate) unsafe fn choose_folder(owner: HWND, start: &str, mv: bool) -> Result
         r => r?,
     }
     Ok(Some(pwstr(dlg.GetResult()?.GetDisplayName(SIGDN_FILESYSPATH)?)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn done_notice_never_silent_in_back() {
+        let long = NOTICE_AFTER + Duration::from_secs(1);
+        for took in [Duration::from_secs(1), NOTICE_AFTER, long] {
+            for hidden in [false, true] {
+                for tray in [false, true] {
+                    // in front: the status line now, nothing else
+                    let n = done_notice(took, true, hidden, tray);
+                    assert_eq!(n, Notice { now: true, flash: false, balloon: false });
+                    let n = done_notice(took, false, hidden, tray);
+                    assert!(!n.now);
+                    if took > NOTICE_AFTER {
+                        // something always shows: the flash unless only the icon is left, the notification with an icon
+                        assert!(n.flash || n.balloon, "{hidden} {tray}");
+                        assert_eq!(n.balloon, tray);
+                        assert_eq!(n.flash, !hidden || !tray);
+                    } else {
+                        assert!(!n.flash && !n.balloon); // short: only said once Grids is back
+                    }
+                }
+            }
+        }
+        // on the taskbar with an icon too: both, so a blocked notification still leaves the flash
+        assert_eq!(done_notice(long, false, false, true), Notice { now: false, flash: true, balloon: true });
+    }
+
+    #[test]
+    fn done_texts() {
+        let d = |mv, n, aborted| CopyDone { mv, n, to: "Backup".into(), aborted, took: Duration::ZERO };
+        assert_eq!(done_text(false, &d(false, 12, false)), "Copied 12 items to Backup");
+        assert_eq!(done_text(false, &d(false, 1, false)), "Copied 1 item to Backup");
+        assert_eq!(done_text(false, &d(true, 3, false)), "Moved 3 items to Backup");
+        assert_eq!(done_text(true, &d(false, 12, false)), "복사 끝: 12개 → Backup");
+        assert_eq!(done_text(true, &d(true, 12, false)), "이동 끝: 12개 → Backup");
+        // skipped or cancelled: no count is claimed
+        for ko in [false, true] {
+            for mv in [false, true] {
+                let t = done_text(ko, &d(mv, 12, true));
+                assert!(!t.contains("12") && t.contains("Backup"), "{t}");
+            }
+        }
+    }
+
+    #[test]
+    fn utf16_cut_keeps_pairs() {
+        assert_eq!(utf16_cut("Grids", 64), "Grids".encode_utf16().collect::<Vec<_>>());
+        assert_eq!(utf16_cut("abcdef", 4), "abc".encode_utf16().collect::<Vec<_>>());
+        // "a😀": a, high, low; room for 2 units would end on the high half: dropped
+        assert_eq!(utf16_cut("a😀", 3), vec!['a' as u16]);
+        assert_eq!(utf16_cut("a😀", 4).len(), 3);
+        assert!(utf16_cut("x", 0).is_empty());
+    }
 }

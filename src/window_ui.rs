@@ -35,7 +35,7 @@ pub(crate) unsafe fn gap_hover(h: HWND, d: Option<Hit>) {
 }
 
 // Grids or one of its own windows (a popup, a dialog, the preview) is the foreground window.
-unsafe fn app_in_front() -> bool {
+pub(crate) unsafe fn app_in_front() -> bool {
     let fg = GetForegroundWindow();
     if fg.0.is_null() {
         return false;
@@ -119,6 +119,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 }
                 quiet_size(h, wp.0 as u32); // first shown after a minimized sign-in start
                 if wp.0 as u32 != SIZE_MINIMIZED {
+                    copy_done_back(); // restored while another Grids window had the front: no WM_ACTIVATEAPP
                     tick_wake(h); // back from minimized: the status tick fast again, one right away
                 }
                 // last: was_max, the minimized save and quiet_size above need this WM_SIZE as it was
@@ -232,6 +233,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                     repaint_header(p);
                 }
                 if wp.0 != 0 {
+                    copy_done_back(); // a copy that ended meanwhile: on the status line now
                     _ = PostMessageW(Some(h), WM_DRIVES, WPARAM(0), LPARAM(0));
                     update_nudge(); // and a release check an hour or more old is due again
                     if !IsIconic(h).as_bool() {
@@ -261,6 +263,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             WM_STAR => star_msg(wp.0 != 0),
             WM_HASH => hash_msg(h, wp.0, lp.0 != 0),
             WM_GROUPED => grouped_msg(),
+            WM_COPY_DONE => copy_done_msg(h),
             // mid-drag or mid-resize, end_drag / WM_EXITSIZEMOVE pick it up instead
             WM_DRIVES => {
                 if !app(|a| a.drag.is_some() || a.sizing) && refresh_drives() {

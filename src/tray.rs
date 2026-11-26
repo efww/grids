@@ -162,9 +162,26 @@ pub(crate) unsafe fn taskbar_created(main: HWND) {
     }
 }
 
+/// A Windows notification from the icon (a finished copy). NIF_INFO, plus NIF_SHOWTIP: with
+/// NOTIFYICON_VERSION_4 a modify without it can drop the icon's 'Grids' tip; the icon itself is left as it is.
+/// Quiet time (a new user's first hour) and Focus / Do not disturb are left to Windows.
+pub(crate) unsafe fn tray_balloon(main: HWND, text: &str) -> bool {
+    let mut d = nid(main);
+    d.uFlags = NIF_INFO | NIF_SHOWTIP;
+    d.dwInfoFlags = NIIF_INFO | NIIF_RESPECT_QUIET_TIME;
+    for (k, c) in utf16_cut("Grids", d.szInfoTitle.len()).into_iter().enumerate() {
+        d.szInfoTitle[k] = c;
+    }
+    for (k, c) in utf16_cut(text, d.szInfo.len()).into_iter().enumerate() {
+        d.szInfo[k] = c;
+    }
+    Shell_NotifyIconW(NIM_MODIFY, &d).as_bool()
+}
+
 pub(crate) unsafe fn tray_msg(main: HWND, wp: WPARAM, lp: LPARAM) {
     match (lp.0 & 0xffff) as u32 {
-        NIN_SELECT | NIN_KEYSELECT => bring_front(main),
+        // the notification itself was clicked: Grids, as from the icon
+        NIN_SELECT | NIN_KEYSELECT | NIN_BALLOONUSERCLICK => bring_front(main),
         // a save / colour / About box is up: no menu (Exit would close Grids under it), just that box
         WM_CONTEXTMENU if !IsWindowEnabled(main).as_bool() => bring_front(main),
         WM_CONTEXTMENU => {
