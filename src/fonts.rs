@@ -10,8 +10,22 @@ pub(crate) fn logfont(face: &str, px: i32) -> LOGFONTW {
     lf
 }
 
+const FLUENT_ICONS: &str = "Segoe Fluent Icons";
+const MDL2_ICONS: &str = "Segoe MDL2 Assets";
+
+// The icon font to keep, given the face GDI actually picked for a Segoe Fluent Icons request: GDI quietly
+// substitutes a missing font (Windows 10), and that one would draw boxes, so only an exact match counts.
+pub(crate) fn icon_face(found: &str) -> &'static str {
+    if found.trim_end_matches('\0').eq_ignore_ascii_case(FLUENT_ICONS) {
+        FLUENT_ICONS
+    } else {
+        MDL2_ICONS
+    }
+}
+
 // Windows' own UI font at this DPI (no custom fonts: they only reached our chrome and cost paint time),
-// plus the MDL2 icon font for the buttons. Pushed to every edit; also used on DPI change.
+// plus the icon font for the buttons: Segoe Fluent Icons where Windows 11 has it, so they match Explorer,
+// else Segoe MDL2 Assets (same code points). Pushed to every edit; also used on DPI change.
 pub(crate) unsafe fn apply_font() {
     let dpi = app(|a| a.dpi);
     let mut ncm = NONCLIENTMETRICSW { cbSize: size_of::<NONCLIENTMETRICSW>() as u32, ..Default::default() };
@@ -20,13 +34,24 @@ pub(crate) unsafe fn apply_font() {
     lf.lfFaceName = logfont("Segoe UI", 0).lfFaceName; // system size, but the Korean UI font draws '\\' in paths as '₩'
     let font = CreateFontIndirectW(&lf);
     let small = CreateFontIndirectW(&LOGFONTW { lfHeight: lf.lfHeight * 85 / 100, ..lf });
-    let icon_font = CreateFontIndirectW(&logfont("Segoe MDL2 Assets", 14 * dpi / 96));
     let dc = GetDC(None);
     let old = SelectObject(dc, font.into());
     let mut tm = TEXTMETRICW::default();
     _ = GetTextMetricsW(dc, &mut tm);
-    SelectObject(dc, old);
+    let fluent = CreateFontIndirectW(&logfont(FLUENT_ICONS, 14 * dpi / 96));
+    SelectObject(dc, fluent.into());
+    let mut face = [0u16; 32];
+    let n = GetTextFaceW(dc, Some(&mut face)).clamp(0, face.len() as i32) as usize;
+    SelectObject(dc, old); // deselect before deleting, or the delete fails and leaks on every DPI change
     ReleaseDC(None, dc);
+    let icon_font = if icon_face(&String::from_utf16_lossy(&face[..n])) == FLUENT_ICONS {
+        fluent
+    } else {
+        if !fluent.is_invalid() {
+            _ = DeleteObject(fluent.into());
+        }
+        CreateFontIndirectW(&logfont(MDL2_ICONS, 14 * dpi / 96))
+    };
     let (old, old_icon, panes, load_edit) = app(|a| {
         a.fh = tm.tmHeight;
         let old_small = std::mem::replace(&mut a.small_font, small);
@@ -53,4 +78,20 @@ pub(crate) unsafe fn apply_font() {
     }
     relayout();
     redraw_all();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn icon_face_pick() {
+        assert_eq!(icon_face("Segoe Fluent Icons"), "Segoe Fluent Icons");
+        assert_eq!(icon_face("segoe FLUENT icons"), "Segoe Fluent Icons"); // case
+        assert_eq!(icon_face("Segoe Fluent Icons\0"), "Segoe Fluent Icons"); // trailing NUL
+        assert_eq!(icon_face(""), "Segoe MDL2 Assets");
+        assert_eq!(icon_face("Arial"), "Segoe MDL2 Assets"); // GDI's substitute on Windows 10
+        assert_eq!(icon_face("Segoe MDL2 Assets"), "Segoe MDL2 Assets");
+        assert_eq!(icon_face("Segoe Fluent"), "Segoe MDL2 Assets");
+    }
 }

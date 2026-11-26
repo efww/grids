@@ -257,7 +257,7 @@ pub(crate) fn on_color(bg: u32) -> u32 {
         0xFFFFFF
     }
 }
-// Segoe Fluent Icons / MDL2 Assets code points
+// Icon code points, the same in Segoe Fluent Icons (used on Windows 11) and Segoe MDL2 Assets (fallback); see fonts.rs
 pub(crate) const ICON_SEARCH: &str = "\u{E721}";
 pub(crate) const ICON_FILTER: &str = "\u{E71C}";
 pub(crate) const ICON_CLOSE: &str = "\u{E711}";
