@@ -1,6 +1,6 @@
 use crate::*;
 use crate::rename_rules::*;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::os::windows::fs::MetadataExt;
 use windows::Win32::Storage::FileSystem::{CreateFileW, DELETE, FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING};
 use windows::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime};
@@ -53,12 +53,14 @@ struct Rn {
     undo: Vec<(String, String, String)>, // last batch: folder, old name, new name
     loading: bool,                  // fields being filled from a rule: their EN_CHANGE is not an edit
     focus: HWND,
+    running: Option<Run>,           // a batch (or its undo) on the worker thread: the window is locked
 }
 
 thread_local! {
     static RN: RefCell<Rn> = RefCell::new(Rn {
         h: HWND::default(), pane: 0, rules: vec![Rule::new(Kind::Replace)], cur: 0, ext: false, dirs: Vec::new(), items: Vec::new(),
         existing: Vec::new(), rows: Vec::new(), err: None, note: String::new(), undo: Vec::new(), loading: false, focus: HWND::default(),
+        running: None,
     });
 }
 
@@ -344,6 +346,13 @@ unsafe fn gather(i: usize) -> Option<(Vec<String>, Vec<(usize, Src)>)> {
 }
 
 pub(crate) unsafe fn open_rename(i: usize) {
+    // a batch still running: its files stay, the window only comes to the front
+    if let Some(h) = rn(|r| r.running.as_ref().map(|_| r.h)) {
+        if !h.0.is_null() {
+            _ = SetForegroundWindow(h);
+        }
+        return;
+    }
     let Some((dirs, items)) = gather(i) else {
         _ = MessageBeep(MB_ICONWARNING);
         return;
@@ -507,7 +516,8 @@ unsafe fn update_preview() {
             }
         }
         let ok = r.err.is_none() && !r.rows.iter().any(|(_, s)| s.blocks()) && r.rows.iter().any(|(_, s)| *s == Status::Ok);
-        (r.h, r.rows.len(), ok, !r.undo.is_empty())
+        let idle = r.running.is_none(); // both stay off while a batch runs, whoever calls this
+        (r.h, r.rows.len(), ok && idle, !r.undo.is_empty() && idle)
     });
     let lv = item(h, ID_LIST);
     SendMessageW(lv, LVM_SETITEMCOUNT, Some(WPARAM(n)), Some(LPARAM(2))); // LVSICF_NOSCROLL
@@ -530,6 +540,7 @@ unsafe fn paint(h: HWND) {
     let g = geo_now(h);
     let (font, small) = app(|a| (a.font, a.small_font));
     let (rule, (n, changed, bad), err, note) = rn(|r| (r.rules.get(r.cur).cloned(), counts(r), r.err.clone(), r.note.clone()));
+    let run = rn(|r| r.running.as_ref().map(|x| (x.undo, x.prog.done.load(Ordering::Relaxed), x.prog.total.load(Ordering::Relaxed))));
     let ko = KO.load(Ordering::Relaxed);
     buffered(h, |dc, rc| {
         fill(dc, rc, pal().card);
@@ -539,12 +550,13 @@ unsafe fn paint(h: HWND) {
             text(dc, g.titles[k], if k == 1 { edit_title.as_str() } else { *t }, small, pal().sub, DT_LEFT);
         }
         let sum = match (&err, ko) {
+            _ if run.is_some() => run.map_or(String::new(), |(undo, done, total)| progress_text(undo, done, total, ko)),
             (Some(e), false) => format!("Bad regular expression: {}", e.lines().last().unwrap_or("")),
             (Some(e), true) => format!("정규식 오류: {}", e.lines().last().unwrap_or("")),
             (None, false) => format!("{n} items · {changed} to rename · {bad} problems"),
             (None, true) => format!("{n}개 · 바꿀 것 {changed} · 문제 {bad}"),
         };
-        let warn = err.is_some() || bad > 0;
+        let warn = run.is_none() && (err.is_some() || bad > 0);
         text(dc, g.summary, &sum, small, if warn { red() } else { pal().sub }, DT_RIGHT);
         for r in g.lists {
             frame(dc, r, 1, pal().line);
@@ -747,8 +759,9 @@ pub(crate) fn api_path(dir: &str, name: &str) -> String {
 }
 
 // The steps in order; if one fails, the ones done are moved back (newest first), so a batch is all or nothing.
-unsafe fn run_steps(dirs: &[String], steps: &[Move]) -> std::result::Result<(), (String, String)> {
+unsafe fn run_steps(dirs: &[String], steps: &[Move], done: &AtomicUsize) -> std::result::Result<(), (String, String)> {
     for (k, (d, from, to)) in steps.iter().enumerate() {
+        done.fetch_add(1, Ordering::Relaxed);
         if let Err(e) = MoveFileExW(&HSTRING::from(api_path(&dirs[*d], from)), &HSTRING::from(api_path(&dirs[*d], to)), MOVE_FILE_FLAGS(0)) {
             for (d, from, to) in steps[..k].iter().rev() {
                 _ = MoveFileExW(&HSTRING::from(api_path(&dirs[*d], to)), &HSTRING::from(api_path(&dirs[*d], from)), MOVE_FILE_FLAGS(0));
@@ -807,98 +820,292 @@ unsafe fn do_rename(h: HWND) {
         _ = MessageBeep(MB_ICONWARNING);
         return;
     }
-    let busy: Vec<String> = moves.iter().filter_map(|(d, o, _)| in_use(&api_path(&dirs[*d], o)).map(|e| format!("{o}: {}", e.trim()))).collect();
-    let ko = KO.load(Ordering::Relaxed);
-    if !busy.is_empty() {
-        let head = if ko { format!("아무것도 바꾸지 않았음: 지금 바꿀 수 없는 파일 {}개", busy.len()) } else { format!("Nothing renamed: can't rename {} of the files now", busy.len()) };
-        return report(h, head.clone(), Some(listing(&head, &busy)));
-    }
     let steps = plan(&moves, &tmp_name(nonce()));
-    if let Err((name, e)) = run_steps(&dirs, &steps) {
-        let head = if ko { "아무것도 바꾸지 않았음 (모두 원래대로)".to_string() } else { "Nothing renamed (all put back)".to_string() };
-        return report(h, format!("{head}: {name}: {}", e.trim()), Some(listing(&head, &[format!("{name}: {}", e.trim())])));
-    }
-    let items = rn(|r| r.items.clone());
-    notify(&dirs, &moves, &items);
-    let n = moves.len();
-    rn(|r| {
-        for ((_, s), (new, st)) in r.items.iter_mut().zip(&r.rows) {
-            if *st == Status::Ok {
-                s.name = new.clone();
-            }
-        }
-        r.undo = moves.iter().map(|(d, o, n)| (dirs[*d].clone(), o.clone(), n.clone())).collect();
-        r.existing = dirs.iter().map(|d| folder_names(d)).collect();
-    });
-    set_note(if ko { format!("{n}개 이름 바꿈") } else { format!("Renamed {n}") });
-    report(h, if ko { format!("{n}개 이름을 바꿨음. 되돌리기로 원래 이름으로.") } else { format!("Renamed {n}. Undo puts the old names back.") }, None);
+    let total = moves.len() + steps.len(); // the in-use checks, then the steps
+    start(h, Job::Rename { dirs, moves, steps }, total, Vec::new());
 }
 
-// Last batch back to the old names. Items renamed or removed since are skipped and listed, as are
-// old names another file has taken in the meantime.
+// Last batch back to the old names (what is skipped and why: run_job).
 unsafe fn do_undo(h: HWND) {
     let undo = rn(|r| std::mem::take(&mut r.undo));
     if undo.is_empty() {
         _ = MessageBeep(MB_ICONWARNING);
         return;
     }
-    let mut dirs: Vec<String> = Vec::new();
-    let mut moves: Vec<Move> = Vec::new();
-    let mut skipped: Vec<String> = Vec::new();
-    for (dir, old, new) in &undo {
-        if std::fs::symlink_metadata(join_path(dir, new)).is_err() {
-            skipped.push(format!("{new}: {}", tr("no longer there", "더 이상 없음")));
-            continue;
+    start(h, Job::Undo(undo.clone()), undo.len(), undo);
+}
+
+// ---------- a batch runs on a worker thread: thousands of files on a share or a slow USB stick don't freeze Grids ----------
+// Like the copies (Busy, keep_job): the status line says files are moving, and closing Grids or a restart waits for
+// the batch, so it is never cut off half-way with ~grids-rename-….tmp names left behind.
+
+const WM_RENAMED: u32 = WM_APP + 55; // to the rename window: run wParam is over, its outcome is in DONE
+const TIMER_RUN: usize = 1; // the progress line, every 100 ms
+
+#[derive(Default)]
+struct Prog {
+    done: AtomicUsize,
+    total: AtomicUsize, // checks + steps; an undo adds its share once it knows what it can put back
+}
+
+struct Run {
+    id: usize,
+    undo: bool,
+    prog: Arc<Prog>,
+    back: Vec<(String, String, String)>, // an undo's list: r.undo again when nothing was put back
+}
+
+enum Job {
+    Rename { dirs: Vec<String>, moves: Vec<Move>, steps: Vec<Move> },
+    Undo(Vec<(String, String, String)>),
+}
+
+enum Outcome {
+    InUse(Vec<String>),     // nothing moved: these can't be renamed now
+    Failed(String, String), // a step failed (name, why): the ones done were put back
+    Done { dirs: Vec<String>, moves: Vec<Move>, skipped: Vec<String>, existing: Vec<HashSet<String>> },
+}
+
+// The worker's outcome, tagged with its run.
+static DONE: Mutex<Option<(usize, Outcome)>> = Mutex::new(None);
+
+// Only the run the window waits for; an outcome left from another one is dropped, never applied.
+fn take_outcome(slot: &mut Option<(usize, Outcome)>, id: usize) -> Option<Outcome> {
+    match slot.take() {
+        Some((k, o)) if k == id => Some(o),
+        _ => None,
+    }
+}
+
+// A second batch while one runs is refused (and handed back).
+fn begin(slot: &mut Option<Run>, run: Run) -> std::result::Result<(), Run> {
+    if slot.is_some() {
+        return Err(run);
+    }
+    *slot = Some(run);
+    Ok(())
+}
+
+fn end(slot: &mut Option<Run>, id: usize) -> Option<Run> {
+    if slot.as_ref().is_some_and(|r| r.id == id) { slot.take() } else { None }
+}
+
+// While a batch runs: the keys that would close the window, rename, undo, save a preset or edit the rules.
+// Tab, the arrows in the preview and Ctrl+/ still work.
+fn refused_key(k: VIRTUAL_KEY, ctrl: bool, in_edit: bool, on_rules: bool) -> bool {
+    matches!(k, VK_ESCAPE | VK_RETURN) || (k == VK_Z && ctrl && !in_edit) || on_rules
+}
+
+fn progress_text(undo: bool, done: usize, total: usize, ko: bool) -> String {
+    let (d, t) = (group_digits(done.min(total) as u64), group_digits(total as u64));
+    match (undo, ko) {
+        (false, false) => format!("Renaming… {d} / {t}"),
+        (false, true) => format!("이름 바꾸는 중… {d} / {t}"),
+        (true, false) => format!("Putting back… {d} / {t}"),
+        (true, true) => format!("되돌리는 중… {d} / {t}"),
+    }
+}
+
+// Dropped last on the worker, after a panic too: the window always hears the run is over and unlocks.
+// A window already gone (Grids closed meanwhile) makes the post fail, which is fine.
+struct Post(isize, usize);
+
+impl Drop for Post {
+    fn drop(&mut self) {
+        unsafe {
+            _ = PostMessageW(Some(HWND(self.0 as _)), WM_RENAMED, WPARAM(self.1), LPARAM(0));
         }
-        let d = dirs.iter().position(|x| x == dir).unwrap_or_else(|| {
-            dirs.push(dir.clone());
-            dirs.len() - 1
-        });
-        moves.push((d, new.clone(), old.clone()));
     }
-    let existing: Vec<HashSet<String>> = dirs.iter().map(|d| folder_names(d)).collect();
-    let st = check(&moves, &|d, n| existing[d].contains(n));
-    let mut ok = Vec::new();
-    for (m, s) in moves.into_iter().zip(st) {
-        if s.blocks() {
-            skipped.push(format!("{}: {}", m.1, status_text(s)));
-        } else {
-            ok.push(m);
-        }
-    }
-    let ko = KO.load(Ordering::Relaxed);
-    if let Some(busy) = ok.iter().find_map(|(d, o, _)| in_use(&api_path(&dirs[*d], o)).map(|e| format!("{o}: {}", e.trim()))) {
-        rn(|r| r.undo = undo);
-        let head = tr("Nothing put back", "되돌리지 않았음");
-        return report(h, format!("{head}: {busy}"), Some(listing(head, &[busy])));
-    }
-    if let Err((name, e)) = run_steps(&dirs, &plan(&ok, &tmp_name(nonce()))) {
-        rn(|r| r.undo = undo);
-        let head = tr("Nothing put back", "되돌리지 않았음");
-        return report(h, format!("{head}: {name}: {}", e.trim()), Some(listing(head, &[format!("{name}: {}", e.trim())])));
-    }
-    let items = rn(|r| r.items.clone());
-    notify(&dirs, &ok, &items);
-    // the window's files follow
-    rn(|r| {
-        for (idir, s) in r.items.iter_mut() {
-            let dir = &r.dirs[*idir];
-            if let Some((_, _, old)) = ok.iter().find(|(d, now, _)| dirs[*d] == *dir && *now == s.name) {
-                s.name = old.clone();
-            }
-        }
-        r.existing = r.dirs.iter().map(|d| folder_names(d)).collect();
-    });
-    let n = ok.len();
-    let note = match (ko, skipped.len()) {
-        (true, 0) => format!("{n}개를 원래 이름으로 되돌림"),
-        (false, 0) => format!("Put back {n} names"),
-        (true, k) => format!("{n}개를 되돌림, {k}개는 건너뜀"),
-        (false, k) => format!("Put back {n} names, skipped {k}"),
+}
+
+// Everything that touches the disk, in the old order: every check first, then the steps (all or nothing),
+// the shell told, the folders read again. No RN here (the worker's is empty): all of it comes in.
+// `items` and `wdirs` are the window's files and folders.
+unsafe fn run_job(job: Job, items: &[(usize, Src)], wdirs: &[String], p: &Prog) -> Outcome {
+    let tick = || {
+        p.done.fetch_add(1, Ordering::Relaxed);
     };
-    set_note(note.clone());
-    let details = (!skipped.is_empty()).then(|| listing(&note, &skipped));
-    report(h, note, details);
+    let busy = |dirs: &[String], (d, o, _): &Move| in_use(&api_path(&dirs[*d], o)).map(|e| format!("{o}: {}", e.trim()));
+    let (dirs, moves, steps, skipped) = match job {
+        Job::Rename { dirs, moves, steps } => {
+            let held: Vec<String> = moves
+                .iter()
+                .filter_map(|m| {
+                    tick();
+                    busy(&dirs, m)
+                })
+                .collect();
+            if !held.is_empty() {
+                return Outcome::InUse(held);
+            }
+            (dirs, moves, steps, Vec::new())
+        }
+        // Items renamed or removed since are skipped and listed, as are old names another file has taken.
+        Job::Undo(undo) => {
+            let mut dirs: Vec<String> = Vec::new();
+            let mut moves: Vec<Move> = Vec::new();
+            let mut skipped: Vec<String> = Vec::new();
+            for (dir, old, new) in &undo {
+                tick();
+                if std::fs::symlink_metadata(join_path(dir, new)).is_err() {
+                    skipped.push(format!("{new}: {}", tr("no longer there", "더 이상 없음")));
+                    continue;
+                }
+                let d = dirs.iter().position(|x| x == dir).unwrap_or_else(|| {
+                    dirs.push(dir.clone());
+                    dirs.len() - 1
+                });
+                moves.push((d, new.clone(), old.clone()));
+            }
+            let existing: Vec<HashSet<String>> = dirs.iter().map(|d| folder_names(d)).collect();
+            let st = check(&moves, &|d, n| existing[d].contains(n));
+            let mut ok = Vec::new();
+            for (m, s) in moves.into_iter().zip(st) {
+                if s.blocks() {
+                    skipped.push(format!("{}: {}", m.1, status_text(s)));
+                } else {
+                    ok.push(m);
+                }
+            }
+            let steps = plan(&ok, &tmp_name(nonce()));
+            p.total.fetch_add(ok.len() + steps.len(), Ordering::Relaxed);
+            for m in &ok {
+                tick();
+                if let Some(b) = busy(&dirs, m) {
+                    return Outcome::InUse(vec![b]);
+                }
+            }
+            (dirs, ok, steps, skipped)
+        }
+    };
+    if let Err((name, e)) = run_steps(&dirs, &steps, &p.done) {
+        return Outcome::Failed(name, e);
+    }
+    notify(&dirs, &moves, items);
+    Outcome::Done { existing: wdirs.iter().map(|d| folder_names(d)).collect(), dirs, moves, skipped }
+}
+
+// Everything that would change the batch goes off while it runs; the preview list and Close stay (Close only beeps).
+unsafe fn lock(h: HWND, on: bool) {
+    if on {
+        _ = SetFocus(Some(item(h, ID_LIST))); // a disabled field would leave the keyboard nowhere
+    }
+    let ids = [ID_RULES, ID_ADD, ID_DEL, ID_RUP, ID_RDOWN, ID_ONOFF, ID_F0, ID_F0 + 1, ID_F0 + 2, ID_F0 + 3, ID_MODE, ID_FX, ID_FY];
+    for id in ids.into_iter().chain([ID_EXTOK, ID_PNAME, ID_PSAVE, ID_PMENU, ID_UNDO, ID_GO]) {
+        _ = EnableWindow(item(h, id), !on);
+    }
+    if !on {
+        load_editor(); // Delete / Up / Down / On-off by the rules, Rename / Undo by the preview
+        update_preview();
+    }
+    _ = InvalidateRect(Some(h), None, false);
+}
+
+// Locks the window and hands the job to a worker thread; with no thread, it runs right here as it always did.
+unsafe fn start(h: HWND, job: Job, total: usize, back: Vec<(String, String, String)>) {
+    static RUNS: AtomicUsize = AtomicUsize::new(0);
+    let id = RUNS.fetch_add(1, Ordering::Relaxed) + 1;
+    let prog = Arc::new(Prog { done: AtomicUsize::new(0), total: AtomicUsize::new(total) });
+    let run = Run { id, undo: matches!(job, Job::Undo(_)), prog: prog.clone(), back };
+    if let Err(run) = rn(|r| begin(&mut r.running, run)) {
+        if run.undo {
+            rn(|r| r.undo = run.back);
+        }
+        _ = MessageBeep(MB_ICONWARNING);
+        return;
+    }
+    let (items, wdirs) = rn(|r| {
+        r.note = String::new();
+        (r.items.clone(), r.dirs.clone())
+    });
+    lock(h, true);
+    SetTimer(Some(h), TIMER_RUN, 100, None);
+    // the worker takes the job from here; if it never starts, this thread does
+    let work = Arc::new(Mutex::new(Some((job, items, wdirs))));
+    let (w2, p2, hw, busy) = (work.clone(), prog.clone(), h.0 as isize, Busy::new());
+    let spawned = std::thread::Builder::new().spawn(move || {
+        let _post = Post(hw, id);
+        let _busy = busy;
+        let taken = w2.lock().unwrap_or_else(|e| e.into_inner()).take();
+        if let Some((job, items, wdirs)) = taken {
+            let out = run_job(job, &items, &wdirs, &p2);
+            *DONE.lock().unwrap_or_else(|e| e.into_inner()) = Some((id, out));
+        }
+    });
+    match spawned {
+        Ok(j) => keep_job(j),
+        Err(_) => {
+            let taken = work.lock().unwrap_or_else(|e| e.into_inner()).take();
+            if let Some((job, items, wdirs)) = taken {
+                let out = run_job(job, &items, &wdirs, &prog);
+                *DONE.lock().unwrap_or_else(|e| e.into_inner()) = Some((id, out));
+            }
+            finished(h, id);
+        }
+    }
+}
+
+// WM_RENAMED: the window unlocks and shows the outcome the way the batch always did.
+unsafe fn finished(h: HWND, id: usize) {
+    let Some(run) = rn(|r| end(&mut r.running, id)) else { return };
+    _ = KillTimer(Some(h), TIMER_RUN);
+    let out = take_outcome(&mut DONE.lock().unwrap_or_else(|e| e.into_inner()), id);
+    lock(h, false);
+    let ko = KO.load(Ordering::Relaxed);
+    let put_back = tr("Nothing put back", "되돌리지 않았음");
+    if run.undo && !matches!(out, Some(Outcome::Done { .. })) {
+        rn(|r| r.undo = run.back);
+    }
+    match out {
+        // the worker stopped without an outcome (a panic)
+        None => report(h, tr("Batch rename stopped unexpectedly: check the files", "일괄 이름 바꾸기가 예기치 않게 멈춤: 파일을 확인하세요").into(), None),
+        Some(Outcome::InUse(busy)) if run.undo => {
+            let first = busy.first().cloned().unwrap_or_default();
+            report(h, format!("{put_back}: {first}"), Some(listing(put_back, &busy)))
+        }
+        Some(Outcome::InUse(busy)) => {
+            let head = if ko { format!("아무것도 바꾸지 않았음: 지금 바꿀 수 없는 파일 {}개", busy.len()) } else { format!("Nothing renamed: can't rename {} of the files now", busy.len()) };
+            report(h, head.clone(), Some(listing(&head, &busy)))
+        }
+        Some(Outcome::Failed(name, e)) => {
+            let line = format!("{name}: {}", e.trim());
+            let head = match (run.undo, ko) {
+                (true, _) => put_back.to_string(),
+                (false, true) => "아무것도 바꾸지 않았음 (모두 원래대로)".to_string(),
+                (false, false) => "Nothing renamed (all put back)".to_string(),
+            };
+            report(h, format!("{head}: {line}"), Some(listing(&head, &[line])))
+        }
+        Some(Outcome::Done { dirs, moves, skipped, existing }) => {
+            // the window's files follow: each looked up once, by the name it had when the batch started
+            let to: HashMap<(&str, &str), &str> = moves.iter().map(|(d, from, new)| ((dirs[*d].as_str(), from.as_str()), new.as_str())).collect();
+            rn(|r| {
+                for (d, s) in r.items.iter_mut() {
+                    if let Some(new) = r.dirs.get(*d).and_then(|dir| to.get(&(dir.as_str(), s.name.as_str()))) {
+                        s.name = new.to_string();
+                    }
+                }
+                if !run.undo {
+                    r.undo = moves.iter().map(|(d, o, n)| (dirs[*d].clone(), o.clone(), n.clone())).collect();
+                }
+                r.existing = existing;
+            });
+            let n = moves.len();
+            if !run.undo {
+                set_note(if ko { format!("{n}개 이름 바꿈") } else { format!("Renamed {n}") });
+                return report(h, if ko { format!("{n}개 이름을 바꿨음. 되돌리기로 원래 이름으로.") } else { format!("Renamed {n}. Undo puts the old names back.") }, None);
+            }
+            let note = match (ko, skipped.len()) {
+                (true, 0) => format!("{n}개를 원래 이름으로 되돌림"),
+                (false, 0) => format!("Put back {n} names"),
+                (true, k) => format!("{n}개를 되돌림, {k}개는 건너뜀"),
+                (false, k) => format!("Put back {n} names, skipped {k}"),
+            };
+            set_note(note.clone());
+            let details = (!skipped.is_empty()).then(|| listing(&note, &skipped));
+            report(h, note, details);
+        }
+    }
 }
 
 unsafe fn save_preset(h: HWND) {
@@ -957,6 +1164,13 @@ unsafe fn preset_menu(h: HWND) {
 }
 
 unsafe fn command(h: HWND, id: i32, code: u32) {
+    // a batch running: nothing changes it and the window stays (keys come here too, as Delete does)
+    if rn(|r| r.running.is_some()) {
+        if code == BN_CLICKED {
+            _ = MessageBeep(MB_ICONWARNING);
+        }
+        return;
+    }
     match (id, code) {
         (ID_RULES, LBN_SELCHANGE) => {
             let k = SendMessageW(item(h, ID_RULES), LB_GETCURSEL, None, None).0;
@@ -1021,6 +1235,7 @@ unsafe fn toggle_rule() {
 /// Ctrl+Z undoes (outside a text field); in the rule list Space switches a rule on/off, Del removes it,
 /// Ins adds one and Alt+↑/↓ moves it. Tab and the rest go the dialog way. Some(_) always: key() and its pane
 /// shortcuts (Ctrl+1…9, Ctrl+Tab, Ctrl+Shift+M, Alt+arrows ...) never see a key meant for this window.
+/// While a batch runs, the ones that would close, rename, undo or edit only beep (refused_key).
 pub(crate) unsafe fn rename_key(m: &MSG) -> Option<bool> {
     let h = rn(|r| r.h);
     if h.0.is_null() || !(m.hwnd == h || IsChild(h, m.hwnd).as_bool()) {
@@ -1033,6 +1248,10 @@ pub(crate) unsafe fn rename_key(m: &MSG) -> Option<bool> {
         let mut class = [0u16; 16];
         let n = GetClassNameW(m.hwnd, &mut class) as usize;
         let class = String::from_utf16_lossy(&class[..n]).to_ascii_lowercase();
+        if rn(|r| r.running.is_some()) && refused_key(VIRTUAL_KEY(m.wParam.0 as u16), ctrl, class == "edit", id == ID_RULES) {
+            _ = MessageBeep(MB_ICONWARNING);
+            return Some(true);
+        }
         let handled = match VIRTUAL_KEY(m.wParam.0 as u16) {
             VK_ESCAPE => {
                 _ = DestroyWindow(h);
@@ -1165,19 +1384,26 @@ pub(crate) extern "system" fn rename_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPA
                         rn(|r| r.focus = f);
                     }
                 } else {
-                    let f = rn(|r| r.focus);
-                    if IsWindow(Some(f)).as_bool() && IsWindowVisible(f).as_bool() {
+                    let (f, running) = rn(|r| (r.focus, r.running.is_some()));
+                    if IsWindow(Some(f)).as_bool() && IsWindowVisible(f).as_bool() && IsWindowEnabled(f).as_bool() {
                         _ = SetFocus(Some(f));
                     } else {
-                        _ = SetFocus(Some(item(h, ID_RULES)));
+                        _ = SetFocus(Some(item(h, if running { ID_LIST } else { ID_RULES })));
                     }
                 }
                 return LRESULT(0);
             }
+            // Esc, Close and Alt+F4 wait for a running batch (closing Grids doesn't: the batch finishes after it)
+            WM_CLOSE if rn(|r| r.running.is_some()) => _ = MessageBeep(MB_ICONWARNING),
             WM_CLOSE => _ = DestroyWindow(h),
+            WM_TIMER if wp.0 == TIMER_RUN => _ = InvalidateRect(Some(h), None, false),
+            WM_RENAMED => finished(h, wp.0),
+            WM_CTLCOLORSTATIC => return edit_colors(wp), // a field switched off while a batch runs
             WM_DESTROY => {
+                _ = KillTimer(Some(h), TIMER_RUN);
                 let pane = rn(|r| {
                     (r.h, r.focus) = (HWND::default(), HWND::default());
+                    r.running = None; // Grids is closing: the outcome has no window left to go to
                     (r.items, r.rows, r.existing) = (Vec::new(), Vec::new(), Vec::new());
                     r.pane
                 });
@@ -1201,6 +1427,42 @@ mod tests {
         assert_eq!(api_path(r"C:\", "a b "), r"\\?\C:\a b ");
         assert_eq!(api_path(r"\\srv\share\d", "x."), r"\\?\UNC\srv\share\d\x.");
         assert_eq!(api_path(r"\\?\C:\d", "x"), r"\\?\C:\d\x");
+    }
+
+    #[test]
+    fn rename_run_states() {
+        let run = |id| Run { id, undo: false, prog: Arc::new(Prog::default()), back: Vec::new() };
+        let mut slot = None;
+        assert!(begin(&mut slot, run(1)).is_ok());
+        assert_eq!(begin(&mut slot, run(2)).err().map(|r| r.id), Some(2)); // a second batch while one runs: refused
+        assert!(end(&mut slot, 2).is_none() && slot.is_some()); // not the run the window waits for
+        assert_eq!(end(&mut slot, 1).map(|r| r.id), Some(1));
+        assert!(slot.is_none() && end(&mut slot, 1).is_none());
+        assert!(begin(&mut slot, run(3)).is_ok());
+        // the outcome: only the waited-for run's is applied, a stale one is dropped
+        let mut done = Some((2, Outcome::InUse(vec!["a".into()])));
+        assert!(take_outcome(&mut done, 3).is_none() && done.is_none());
+        let mut done = Some((3, Outcome::Failed("a".into(), "x".into())));
+        assert!(matches!(take_outcome(&mut done, 3), Some(Outcome::Failed(..))) && done.is_none());
+    }
+
+    #[test]
+    fn rename_run_keys() {
+        assert!(refused_key(VK_ESCAPE, false, false, false)); // close
+        assert!(refused_key(VK_RETURN, true, false, false)); // Ctrl+Enter
+        assert!(refused_key(VK_RETURN, false, false, false)); // a button, Save preset
+        assert!(refused_key(VK_Z, true, false, false) && !refused_key(VK_Z, true, true, false));
+        assert!(refused_key(VK_SPACE, false, false, true) && refused_key(VK_DELETE, false, false, true));
+        assert!(!refused_key(VK_TAB, false, false, false) && !refused_key(VK_DOWN, false, false, false));
+        assert!(!refused_key(VK_OEM_2, true, false, false)); // the shortcut list
+    }
+
+    #[test]
+    fn rename_progress_text() {
+        assert_eq!(progress_text(false, 1234, 5000, false), "Renaming… 1,234 / 5,000");
+        assert_eq!(progress_text(false, 1234, 5000, true), "이름 바꾸는 중… 1,234 / 5,000");
+        assert_eq!(progress_text(true, 0, 12, false), "Putting back… 0 / 12");
+        assert_eq!(progress_text(true, 9, 3, true), "되돌리는 중… 3 / 3");
     }
 
     #[test]
