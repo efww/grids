@@ -19,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from pid_io import cable, jb as JB, plot as plotmod, tray as TR          # noqa: E402
+from pid_io import cable, jb as JB, plot as plotmod, tray as TR, support as SP, threed as T3  # noqa: E402
 from pid_io.app import server as S                           # noqa: E402
 
 FAILS: list[str] = []
@@ -160,6 +160,8 @@ def check_res(where, rows, s, res, layout=None):
                 if not (h - 8 <= seglen[c["no"]] <= max(h * 1.12, h + 3 + 2 * hw * max(1, runs) * 1.5)):
                     fail(where, f"{c['no']} 트레이 구간 길이 {seglen[c['no']]} m != 경로 {h:.0f} m")
                     break
+    # STEP 9 supports
+    check_support(where, t, v, layout, res, s)
     # plot: slots, stations
     g = res.get("geo")
     if g and layout is not None:
@@ -185,6 +187,77 @@ def check_res(where, rows, s, res, layout=None):
             nos_ = [j[0] for j in g["jbs"] if not j[4]]
             if nos_:
                 NOTES.append(f"[{where}] 자리 없이 계기 중심에 둔 JB {len(nos_)} {nos_[:3]}")
+
+
+def check_support(where, t, v, layout, res, s):
+    m = layout.m_per_pt if (layout is not None and res.get("geo")) else None
+    sp = SP.build(t, v, m)
+    if len(sp["pt"]) != len(t["pt"]):
+        fail(where, "Perforated 서포트 행 수 != Perforated 트레이 수")
+    span = SP.span_of(v["sp_pt_span"])
+    for p in sp["pt"]:
+        if p["count"] != max(1, math.ceil(p["length"] / span - 1e-9)):
+            fail(where, f"{p['tag']} Perforated 브래킷 {p['count']} != 길이 {p['length']} / {span}")
+            break
+    nos = [x["no"] for x in sp["supports"]]
+    if len(nos) != len(set(nos)):
+        fail(where, "서포트 번호 중복")
+    segs = {x["no"]: x for x in t["segments"]}
+    by_no = {x["no"]: x for x in sp["supports"]}
+    for g_ in sp["segments"]:
+        sg = segs[g_["seg"]]
+        if sg["kind"] == "UG":
+            ut = v["sp_ug_type"]
+            sp_ = float(v["sp_ug_span"]) if ut.startswith("콘크리트") else float(v["sp_marker"]) if ut.startswith("직매설") else float(v["sp_pit"])
+        elif sg["kind"] == "랙":
+            sp_ = float(v["sp_bay"])
+        else:
+            sp_ = float(v["sp_span"])
+        sp_ = SP.span_of(sp_)
+        need = max(1, math.ceil(sg["length"] / sp_ - 1e-9)) + 1
+        if g_["count"] != need:
+            fail(where, f"{g_['seg']} 서포트 {g_['count']} != 필요 {need} (길이 {sg['length']} / 간격 {sp_})")
+            break
+        n = max((x["tiers"] for x in sg["trays"]), default=1)
+        tys = {by_no[k]["type"] for k in g_["nos"]}
+        if sg["kind"] == "랙":
+            want = "RT" if (n > 1 and v["sp_rack_stack"] == "T 서포트") else "RC"
+            if want == "RT" and "RT" not in tys:
+                fail(where, f"{g_['seg']} 적층 {n}단인데 랙 위 T 서포트 없음")
+                break
+            if want == "RC" and any(by_no[k]["type"] == "RT" and by_no[k]["segs"] == [g_["seg"]] for k in g_["nos"]):
+                fail(where, f"{g_['seg']} 1단(또는 끔)인데 랙 위 T 서포트")
+                break
+        elif sg["kind"] == "AG":
+            wsum = sum(x["width"] for x in sg["trays"]) + 100 * max(0, len(sg["trays"]) - 1)
+            req = SP.ag_type(wsum, n, v)
+            own = [by_no[k]["type"] for k in g_["nos"] if by_no[k]["type"] in SP.RANK]
+            if not own or min(SP.RANK[x] for x in own) < SP.RANK[req]:
+                fail(where, f"{g_['seg']} 서포트 형식 {set(own)} < 필요 {req} (폭 {wsum}, {n}단)")
+                break
+        if m:                                       # spacing along the segment never above the span
+            a, b = sg["poly"]
+            pts = sorted(((by_no[k]["x"] - a[0]) ** 2 + (by_no[k]["y"] - a[1]) ** 2) ** .5 * m for k in g_["nos"])
+            gaps = [q - p for p, q in zip(pts, pts[1:])]
+            if gaps and max(gaps) > sp_ + 0.6:
+                fail(where, f"{g_['seg']} 서포트 간격 {max(gaps):.1f} m > {sp_} m")
+                break
+    if m:
+        try:
+            d3 = T3.build("check", res, layout, t, sp, s, layout.plot)
+        except Exception as e:
+            fail(where, f"3D 데이터 예외 {type(e).__name__}: {e}")
+            return
+        for k in ("instruments", "jbs", "supports"):
+            for x in d3[k]:
+                if abs(x["m"][0] - x["pt"][0] * m) > 0.06 or abs(x["m"][1] - x["pt"][1] * m) > 0.06:
+                    fail(where, f"3D {k} 좌표 m != pt × 축척")
+                    return
+        if len(d3["supports"]) != len(sp["supports"]) or len(d3["perforated"]) != len(t["pt"]):
+            fail(where, "3D 데이터 서포트/Perforated 수 다름")
+        trunk_paths = sum(1 for c in d3["cables"] if c["kind"] != "분기" and c.get("path"))
+        if trunk_paths != len(t.get("by_cable") or {}):
+            fail(where, f"3D 간선 경로 {trunk_paths} != 트레이 표 케이블 {len(t.get('by_cable') or {})}")
 
 
 def build(rows, s, name, layout):
@@ -310,7 +383,7 @@ def main(name):
         fail("스페어 30%", "인덱스 멀티 사양이 결과와 다름")
 
     # 4. every option, one at a time, with and without the plot
-    items = [it for g_ in cable.SCHEMA + JB.SCHEMA + TR.SCHEMA for it in g_["items"]]
+    items = [it for g_ in cable.SCHEMA + JB.SCHEMA + TR.SCHEMA + SP.SCHEMA for it in g_["items"]]
     runs = 0
     for plot_on in (True, False):
         L = lay if plot_on else None

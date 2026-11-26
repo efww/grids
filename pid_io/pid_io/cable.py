@@ -114,8 +114,9 @@ SCHEMA = [
 ]
 from . import jb as JB  # noqa: E402  (STEP 7 settings live in the same cable.json)
 from . import tray as TR  # noqa: E402  (STEP 8 too)
+from . import support as SP  # noqa: E402  (and STEP 9)
 
-ITEMS = {it["id"]: it for g in SCHEMA + JB.SCHEMA + TR.SCHEMA for it in g["items"]}
+ITEMS = {it["id"]: it for g in SCHEMA + JB.SCHEMA + TR.SCHEMA + SP.SCHEMA for it in g["items"]}
 DEFAULTS = {k: v["default"] for k, v in ITEMS.items()}
 
 
@@ -640,7 +641,7 @@ def summarize(cables, jbs, skipped):
 
 
 # ------------------------------------------------------------------ excel
-def write_xlsx(res: dict, s: dict, out: Path, project: str = "", tray: dict | None = None):
+def write_xlsx(res: dict, s: dict, out: Path, project: str = "", tray: dict | None = None, sup: dict | None = None):
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font, PatternFill
     from openpyxl.utils import get_column_letter
@@ -733,6 +734,8 @@ def write_xlsx(res: dict, s: dict, out: Path, project: str = "", tray: dict | No
           [26, 30, 26, 26, 8, 70])
     if tray is not None:
         TR.write_sheets(wb, tray, s["values"], sheet)
+    if sup is not None:
+        SP.write_sheets(wb, sup, s["values"], sheet)
     out.parent.mkdir(parents=True, exist_ok=True)
     wb.save(out)
     return out

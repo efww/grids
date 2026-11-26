@@ -174,6 +174,7 @@ details summary::marker{color:var(--green)}
     <div class="st ext" data-s="cable"><i>6</i>케이블<span class="chip" style="margin-left:auto;font-size:10.5px;padding:0 6px">확장</span></div>
     <div class="st ext" data-s="jb"><i>7</i>JB<span class="chip" style="margin-left:auto;font-size:10.5px;padding:0 6px">확장</span></div>
     <div class="st ext" data-s="tray"><i>8</i>트레이<span class="chip" style="margin-left:auto;font-size:10.5px;padding:0 6px">확장</span></div>
+    <div class="st ext" data-s="support"><i>9</i>서포트<span class="chip" style="margin-left:auto;font-size:10.5px;padding:0 6px">확장</span></div>
     <div class="st" data-s="ai" style="margin-top:14px;border-top:1px solid var(--line-l)"><i>AI</i>AI 연결 설정</div>
     <div class="foot">도면 인식은 한 번,<br>체크리스트를 바꾸면 IO가<br>즉시 다시 계산됩니다.<br><br><span class="mono">IO 1점 = 인덱스 1행</span><br><br><span id="fontst"></span></div>
   </nav>
@@ -199,7 +200,7 @@ const post = (path, data) => api(path, {method:"POST", headers:{"Content-Type":"
 const P = p => `p/${encodeURIComponent(S.project)}/${p}`;
 function toast(msg, err) { const t=$("#toast"); t.textContent=msg; t.className="toast"+(err?" err":""); t.style.display="block"; clearTimeout(t._h); t._h=setTimeout(()=>t.style.display="none", err?6000:2500); }
 
-function go(screen) { S.tok++; S.screen = screen; if (["cable","jb","tray"].includes(screen)) CK.data = null; $("#main").className = ""; render(); }
+function go(screen) { S.tok++; S.screen = screen; if (["cable","jb","tray","support"].includes(screen)) CK.data = null; $("#main").className = ""; render(); }
 document.querySelectorAll("#nav .st").forEach(el => el.onclick = () => go(el.dataset.s));
 
 function navState() {
@@ -207,7 +208,7 @@ function navState() {
   document.querySelectorAll("#nav .st").forEach(el => {
     const s = el.dataset.s;
     el.classList.toggle("on", s === S.screen);
-    el.classList.toggle("dis", (!S.project && !["projects","ai"].includes(s)) || (!ex && ["concept","review","output","cable","jb","tray"].includes(s)));
+    el.classList.toggle("dis", (!S.project && !["projects","ai"].includes(s)) || (!ex && ["concept","review","output","cable","jb","tray","support"].includes(s)));
     el.classList.toggle("done", (s==="projects" && S.project) || (s==="extract" && ex));
   });
   $("#pname").textContent = S.project || "선택 안 됨";
@@ -230,6 +231,7 @@ async function render() {
     if (S.screen === "cable") return await renderCable(m);
     if (S.screen === "jb") return await renderJB(m);
     if (S.screen === "tray") return await renderTray(m);
+    if (S.screen === "support") return await renderSupport(m);
   } catch (e) { toast(e.message, true); }
 }
 
@@ -1404,6 +1406,96 @@ async function renderTray(m) {
     for (const [cls, [w, n]] of ch) { try { CK.data = await post(P("plot"), {tray_size: {seg: s.id, cls, w, n}}); CK.data._p = S.project; } catch(e) { return toast(e.message, true); } }
     TM.edit = {}; renderTray(m); };
   if ($("#trreset")) $("#trreset").onclick = () => plotUpd({tray_reset: s.id});
+}
+
+/* ---------------------------------------------------------------- 9 support */
+const SPM = {tab:99, view:"type", sel:null};
+const SP_COL = {L:"#15ad60", T:"#2c7fc0", H:"#7e66cb", RT:"#d1335d", RC:"#9db3c8", UB:"#8a6d00", UM:"#8a6d00", UP:"#8a6d00"};
+function supOverlay(d) {
+  const pp = d.plot, [W,H] = pp.size, k = Math.max(W,H)/700, sp = d.sup;
+  const racks = (pp.racks||[]).filter(r=>!r[6]).map(r => `<rect x="${r[0]}" y="${r[1]}" width="${r[2]-r[0]}" height="${r[3]-r[1]}" fill="#2c7fc0" opacity=".08"/>`).join("");
+  const segs = d.tray.segments.map(s => { const [a,b] = s.poly, on = s.no === SPM.sel;
+    return `<line x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}" stroke="${on?"#e0002a":s.kind==="UG"?"#c9b46a":"#9fc3e6"}" stroke-width="${(on?2.6:1.4)*k}" ${s.kind==="UG"?`stroke-dasharray="${4*k} ${2.5*k}"`:""}/>`; }).join("");
+  const pts = sp.supports.map(x => { const on = SPM.sel && x.segs.includes(SPM.sel), r = (x.type==="RC"||x.type==="UB"?1.5:2.6)*k*(on?1.5:1);
+    const sh = ["L","T","H","RT"].includes(x.type) ? `<rect x="${x.x-r}" y="${x.y-r}" width="${2*r}" height="${2*r}" fill="${SP_COL[x.type]}"/>` : `<circle cx="${x.x}" cy="${x.y}" r="${r}" fill="${SP_COL[x.type]}"/>`;
+    return sh.replace("/>", `><title>${esc(x.no)} · ${esc(x.name)}${x.typical?" · "+esc(x.typical):""} · ${esc(x.segs.join(", "))} · EL ${x.el}</title></${sh.startsWith("<rect")?"rect":"circle"}>`); }).join("");
+  const hits = d.tray.segments.map(s => { const [a,b] = s.poly;
+    return `<line x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}" stroke="transparent" stroke-width="${9*k}" data-spseg="${esc(s.no)}" style="cursor:pointer"/>`; }).join("");
+  return `<svg viewBox="0 0 ${W} ${H}" style="position:absolute;inset:0;width:100%;height:100%" id="spsvg">${racks}${segs}${hits}${pts}</svg>`;
+}
+function supSide(d) {
+  const sm = d.sup.summary;
+  return `<div class="panel">
+    <div style="font-size:12.5px;color:var(--sub)">서포트 (AG · 랙 위 T)</div>
+    <div style="font-size:46px;font-weight:300;line-height:1.05;letter-spacing:-.03em"><span class="uline">${fmt(sm.supports)}</span><small style="font-size:16px;color:var(--sub)"> 개</small></div>
+    <div style="font-size:12.5px;color:var(--sub);margin:8px 0 10px">강재 ${fmt(sm.kg)} kg → 할증 ${fmt(sm.kg_order)} kg · 클램프 ${fmt(sm.clamps)}</div>
+    ${sm.rows.map(x=>`<div class="kv"><span>${esc(x.name)}${x.typical?` <span class="def">${esc(x.typical)}</span>`:""}</span><b>${fmt(x.count)}</b></div>`).join("")}
+    <p class="xnote" style="margin-top:8px">일반값 기준. 타피컬 드로잉은 나중에 '자재 · 타피컬' 탭에 넣으면 바로 다시 계산됩니다.</p></div>
+  <div class="panel" style="font-size:12px;color:var(--sub);line-height:1.6"><b style="color:var(--ink)">STEP 8에서 내려오는 것</b><br>
+    구간(종류·폭·단·길이), Perforated(계기 태그별 길이). 랙 밖 간선 = <b>${esc(d.values.trunk_off)}</b>, AG 서포트 EL ${esc(d.values.sup_el)} m, 랙 EL ${esc(d.values.rack_el)} m.<br>
+    <a data-go="tray" style="cursor:pointer">STEP 8 트레이 크기 바꾸기 →</a> · <a data-go="cable" style="cursor:pointer">STEP 6 경로 · 높이 →</a></div>`;
+}
+function supTable(d) {
+  const sp = d.sup, T = d.sup_types;
+  const vt = (k, lab) => `<a class="${SPM.view===k?"on":""}" data-spv="${k}">${lab}</a>`;
+  let body = "";
+  if (SPM.view === "type") body = `<table class="nw"><tr><th>형식</th><th>타피컬</th><th style="text-align:right">개수</th><th style="text-align:right">주 부재 m</th><th style="text-align:right">kg</th><th style="text-align:right">할증 kg</th><th style="text-align:right">베이스</th><th style="text-align:right">앵커</th><th style="text-align:right">클램프</th></tr>
+    ${sp.summary.rows.map(x=>`<tr><td><b>${esc(x.name)}</b></td><td>${esc(x.typical)}</td><td style="text-align:right">${fmt(x.count)}</td><td style="text-align:right">${fmt(x.steel_m)}</td><td style="text-align:right">${fmt(x.kg)}</td><td style="text-align:right">${fmt(x.kg_order)}</td><td style="text-align:right">${fmt(x.base)}</td><td style="text-align:right">${fmt(x.anchors)}</td><td style="text-align:right">${fmt(x.clamps)}</td></tr>`).join("")}</table>`;
+  if (SPM.view === "seg") body = `<table class="nw"><tr><th>구간</th><th>종류</th><th>트레이</th><th style="text-align:right">m</th><th style="text-align:right">서포트</th><th>형식</th><th>번호</th></tr>
+    ${sp.segments.map(g=>`<tr data-sprow="${esc(g.seg)}" style="cursor:pointer;${g.seg===SPM.sel?"background:#eef5fc":""}"><td class="mono">${esc(g.seg)}</td><td>${esc(g.kind)}</td><td class="mono" style="font-size:12px">${esc(g.trays.join(", "))}</td><td style="text-align:right">${g.length}</td><td style="text-align:right">${g.count}</td><td style="font-size:12px">${Object.entries(g.types).map(([k,n])=>esc(T[k])+" "+n).join(", ")}</td><td class="mono" style="font-size:12px">${esc(g.range)}</td></tr>`).join("")}</table>`;
+  if (SPM.view === "list") body = `<table class="nw"><tr><th>Support No</th><th>형식</th><th>타피컬</th><th>구간</th><th style="text-align:right">폭</th><th style="text-align:right">단</th><th style="text-align:right">EL</th><th style="text-align:right">X m</th><th style="text-align:right">Y m</th><th style="text-align:right">kg</th></tr>
+    ${sp.supports.filter(x=>!SPM.sel||x.segs.includes(SPM.sel)).slice(0,500).map(x=>`<tr><td class="mono">${esc(x.no)}</td><td>${esc(x.name)}</td><td style="font-size:12px">${esc(x.typical)}</td><td class="mono" style="font-size:12px">${esc(x.segs.join(", "))}</td><td style="text-align:right">${x.width||""}</td><td style="text-align:right">${x.tiers||""}</td><td style="text-align:right">${x.el}</td><td style="text-align:right">${x.x_m??""}</td><td style="text-align:right">${x.y_m??""}</td><td style="text-align:right">${x.kg}</td></tr>`).join("")}</table>`;
+  if (SPM.view === "pt") body = `<p class="xnote">Perforated는 물량만 냅니다. 계기 태그마다 길이 ÷ 간격 = 브래킷 수.</p><table class="nw"><tr><th>Tag</th><th>PT No</th><th>From (JB)</th><th style="text-align:right">m</th><th style="text-align:right">브래킷</th><th style="text-align:right">kg</th></tr>
+    ${sp.pt.slice(0,500).map(p=>`<tr><td class="mono"><b>${esc(p.tag)}</b></td><td class="mono">${esc(p.pt)}</td><td class="mono">${esc(p.jb)}</td><td style="text-align:right">${p.length}</td><td style="text-align:right">${p.count}</td><td style="text-align:right">${p.kg}</td></tr>`).join("")}</table>`;
+  return `<div class="panel" style="margin-top:16px"><div class="tabs" style="margin-bottom:10px">${vt("type","형식별")}${vt("seg",`구간별 (${sp.segments.length})`)}${vt("list",`서포트 목록 (${sp.supports.length})`)}${vt("pt",`Perforated 태그별 (${sp.pt.length})`)}</div>${body}</div>`;
+}
+async function renderSupport(m) {
+  const t = S.tok;
+  if (!CK.data || CK.data._p !== S.project) { CK.data = await api(P("cable")); CK.data._p = S.project; }
+  if (t !== S.tok) return;
+  const d = CK.data, G = d.sup_schema, V = d.values, NT = G.length;
+  if (SPM.tab > NT + 1 || SPM.tab < 0) SPM.tab = NT;
+  m.className = "ext-page";
+  const tabs = `<a class="${SPM.tab===NT?"on":""}" data-spt="${NT}">PLOT 서포트</a>` + G.map((x,i)=>`<a class="${i===SPM.tab?"on":""}" data-spt="${i}">${esc(x.title)}</a>`).join("")
+    + `<a class="${SPM.tab===NT+1?"on":""}" data-spt="${NT+1}">체크리스트</a>`;
+  const T = d.sup_types;
+  let body;
+  if (SPM.tab === NT) body = !d.plot ? `<div class="empty" style="margin-top:12px">STEP 6에서 PLOT PLAN을 올리면 트레이 구간을 따라 서포트를 놓습니다. 지금은 Perforated 브래킷(계기 태그별)만 냅니다.</div>`
+    : `<div style="display:flex;gap:16px;align-items:flex-start;margin-top:12px">
+      <div style="width:300px;flex:none">
+        <div class="legend">${["L","T","H","RT","RC","UB"].map(k=>`<span><i style="background:${SP_COL[k]}"></i>${esc(T[k])}</span>`).join("")}</div>
+        <p class="xnote">■ = 서포트(포스트), ● = 클램프·브래킷. 구간 양 끝을 포함해 간격마다 놓으므로 꺾임·분기점에는 항상 하나가 있고, 이웃 구간과 한 개를 같이 씁니다.<br>
+        <b>랙 위</b>: 1단이면 랙 빔(${esc(V.sp_bay)} m)마다 클램프만, 단을 쌓으면 T 서포트.<br><b>랙 밖 AG</b>: ${esc(V.sp_span)} m마다, 형식 ${esc(V.sp_type)}.<br><b>UG</b>: ${esc(V.sp_ug_type)}.</p>
+        ${SPM.sel?`<p class="xnote">선택: <b class="mono">${esc(SPM.sel)}</b> <a id="spsx" style="cursor:pointer">선택 해제</a></p>`:`<p class="xnote">구간 선을 누르면 그 구간 서포트만 목록에 보여 줍니다.</p>`}</div>
+      <div class="viewer" style="flex:1;height:calc(100vh - 260px)"><div style="position:relative;width:100%;max-width:${Math.round(d.plot.size[0]*50/72)*2}px"><img src="/api/${P("plot_png")}?v=${encodeURIComponent(d.plot.file)}" style="width:100%;display:block">${supOverlay(d)}</div></div></div>`;
+  else if (SPM.tab === NT+1) body = `<p class="xnote" style="margin-top:10px">서포트 설계 가정 체크리스트입니다. 엑셀 Support_Checklist 시트에도 들어갑니다.</p>
+    <table class="mini"><tr><th>No</th><th>구분</th><th>항목</th><th>적용값</th><th>기본값</th><th>설명</th></tr>
+    ${d.sup_checklist.map(c=>`<tr style="${c.changed?"background:var(--chg)":""}"><td class="mono">${esc(c.code)}</td><td>${esc(c.group)}</td><td><b>${esc(c.name)}</b></td><td>${esc(typeof c.value==="number"&&c.value>0&&c.value<1?Math.round(c.value*100)+"%":c.value)}</td><td style="color:var(--sub)">${esc(typeof c.default==="number"&&c.default>0&&c.default<1?Math.round(c.default*100)+"%":c.default)}</td><td style="font-size:11.5px;color:var(--sub)">${esc(c.help)}</td></tr>`).join("")}</table>`;
+  else body = `<p class="xnote" style="margin-top:10px">${esc(G[SPM.tab].lead)}</p>${ckItems(G[SPM.tab], V, d)}`;
+  m.innerHTML = `
+  <div class="head"><div><div class="eyebrow">STEP 9</div><h1>서포트</h1>
+    <p class="lead">STEP 8 트레이·트렌치 구간을 따라 서포트를 놓고 형식별 물량(개수·강재·앵커·클램프)을 냅니다. 간격·형식·자재는 일반값이고, 타피컬 드로잉이 오면 그 값으로 바꿉니다.</p></div>
+    <div style="display:flex;gap:8px"><button class="btn" id="spmk">케이블 · JB · 트레이 · 서포트 엑셀</button><button class="btn line" id="sp3d">3D 데이터 (JSON)</button></div></div>
+  <div style="display:flex;gap:20px;align-items:flex-start">
+    <div style="flex:1;min-width:0"><div class="panel"><div class="tabs">${tabs}</div>${body}</div>${supTable(d)}</div>
+    <div class="side">${supSide(d)}</div>
+  </div>`;
+  const upd = async body => { try { CK.data = await post(P("cable"), body); CK.data._p = S.project; if (S.screen==="support") renderSupport(m); } catch(e) { toast(e.message, true); } };
+  m.querySelectorAll("[data-spt]").forEach(a => a.onclick = () => { SPM.tab = +a.dataset.spt; renderSupport(m); });
+  m.querySelectorAll("[data-spv]").forEach(a => a.onclick = () => { SPM.view = a.dataset.spv; renderSupport(m); });
+  m.querySelectorAll("[data-go]").forEach(a => a.onclick = () => go(a.dataset.go));
+  m.querySelectorAll("[data-ck]").forEach(el => el.onchange = () => upd({set:{[el.dataset.ck]: el.value}}));
+  m.querySelectorAll("[data-cktog]").forEach(el => el.onclick = () => { const it = G.flatMap(x=>x.items).find(x=>x.id===el.dataset.cktog);
+    upd({set:{[it.id]: el.classList.contains("on") ? it.options.find(o=>o!==it.on) : it.on}}); });
+  m.querySelectorAll("[data-sprow]").forEach(r => r.onclick = () => { SPM.sel = r.dataset.sprow; SPM.tab = NT; SPM.view = "list"; renderSupport(m); window.scrollTo(0,0); });
+  const svg = $("#spsvg");
+  if (svg) svg.querySelectorAll("[data-spseg]").forEach(el => el.onclick = () => { SPM.sel = SPM.sel === el.dataset.spseg ? null : el.dataset.spseg; if (SPM.sel) SPM.view = "list"; renderSupport(m); });
+  if ($("#spsx")) $("#spsx").onclick = () => { SPM.sel = null; renderSupport(m); };
+  const btn = (id, path, lab) => { $(id).onclick = async () => { const b = $(id); b.disabled = true; b.textContent = "만드는 중…";
+    try { const r = await post(P(path), {}); toast(r.files.join(", ") + " 생성 · 5 출력 화면에서 받을 수 있습니다"); } catch(e) { toast(e.message, true); }
+    if ($(id)) { $(id).disabled = false; $(id).textContent = lab; } }; };
+  btn("#spmk", "cable_export", "케이블 · JB · 트레이 · 서포트 엑셀");
+  btn("#sp3d", "export_3d", "3D 데이터 (JSON)");
 }
 
 api("font").then(f => { const k = Object.keys(f.found||{}); $("#fontst").innerHTML = k.length

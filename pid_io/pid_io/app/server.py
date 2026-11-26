@@ -843,6 +843,7 @@ def plot_view(name: str, lay, res):
 
 def cable_view(name: str):
     s, res, lay = cable_result(name)
+    tr = cable.TR.build(res, lay, s, _plot_dec(name))
     trunk_areas = sorted({j["area"] for j in res["jbs"] if j["kind"] == "필드"}
                          | {c.get("unit") or "00" for c in res["cables"] if c["kind"] in ("패키지", "통신")})
     return {"schema": cable.SCHEMA, "values": s["values"], "trunk": s["trunk"], "preset": s.get("preset", ""),
@@ -852,8 +853,10 @@ def cable_view(name: str):
                                            "multi_size", "dwgs", "slot", "place", "moved", "material", "ex", "ip",
                                            "terminals", "gl_branch", "gl_multi", "fill", "tags")} for j in res["jbs"]],
             "jb_schema": cable.JB.SCHEMA, "size_table": cable.JB.size_table(s["values"]),
-            "tray_schema": cable.TR.SCHEMA, "tray": cable.TR.build(res, lay, s, _plot_dec(name)),
+            "tray_schema": cable.TR.SCHEMA, "tray": tr,
             "tray_checklist": cable.TR.checklist(s["values"]),
+            "sup_schema": cable.SP.SCHEMA, "sup": cable.SP.build(tr, s["values"], lay.m_per_pt if lay else None),
+            "sup_checklist": cable.SP.checklist(s["values"]), "sup_types": cable.SP.TYPES,
             "checklist": cable.JB.checklist(s["values"]),
             "cables": res["cables"][:400], "cables_total": len(res["cables"]),
             "plot": plot_view(name, lay, res)}
@@ -884,8 +887,21 @@ def cable_update(name: str, b: dict):
 def cable_export(name: str):
     s, res, lay = cable_result(name)
     out = pdir(name) / "output" / f"Cable_Schedule_{safe_name(name)}_{time.strftime('%Y%m%d_%H%M')}.xlsx"
-    cable.write_xlsx(res, s, out, name, cable.TR.build(res, lay, s, _plot_dec(name)))
+    tr = cable.TR.build(res, lay, s, _plot_dec(name))
+    sup = cable.SP.build(tr, s["values"], lay.m_per_pt if lay else None)
+    cable.write_xlsx(res, s, out, name, tr, sup)
     return {"files": [out.name]}
+
+
+def export_3d(name: str):
+    from .. import threed
+    s, res, lay = cable_result(name)
+    tr = cable.TR.build(res, lay, s, _plot_dec(name))
+    sup = cable.SP.build(tr, s["values"], lay.m_per_pt if lay else None)
+    data = threed.build(name, res, lay, tr, sup, s, plot_read(name))
+    out = pdir(name) / "output" / f"3D_{safe_name(name)}_{time.strftime('%Y%m%d_%H%M')}.json"
+    threed.write(data, out)
+    return {"files": [out.name], "counts": data["counts"]}
 
 
 def export(name: str, body: dict):
@@ -1289,6 +1305,9 @@ class H(BaseHTTPRequestHandler):
             if act == "cable_export" and method == "POST":
                 with CALC:
                     return self._send(200, cable_export(name))
+            if act == "export_3d" and method == "POST":
+                with CALC:
+                    return self._send(200, export_3d(name))
             if act == "outputs":
                 d = pdir(name) / "output"
                 fl = sorted(d.iterdir(), key=lambda p: -p.stat().st_mtime) if d.exists() else []
@@ -1298,8 +1317,9 @@ class H(BaseHTTPRequestHandler):
                 f = (pdir(name) / "output" / Path(parts[4]).name)
                 if not f.exists():
                     return self._send(404, {"error": "no file"})
-                ctype = "application/pdf" if f.suffix == ".pdf" else \
-                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                ctype = {".pdf": "application/pdf", ".json": "application/json", ".txt": "text/plain; charset=utf-8",
+                         ".jpg": "image/jpeg", ".png": "image/png"}.get(
+                    f.suffix.lower(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
                 from urllib.parse import quote
                 return self._send(200, f.read_bytes(), ctype,
                                   {"Content-Disposition": f"attachment; filename*=UTF-8''{quote(f.name)}"})
