@@ -1402,6 +1402,28 @@ mod tests {
         assert_eq!((short_name(r"C:\Users\x\"), short_name("C:\\"), short_name(THIS_PC)), ("x".into(), "C:".into(), "This PC".into()));
     }
 
+    // What a screen reader hears on Ctrl+Tab, Ctrl+1 … 9, Alt+Shift+arrows and the tab keys
+    #[test]
+    fn pane_speech_words() {
+        assert_eq!(pane_speech(false, 2, 4, "Documents", 1, 3, true), "Pane 3 of 4 · Documents · tab 2 of 3");
+        assert_eq!(pane_speech(true, 2, 4, "문서", 1, 3, true), "패널 3/4 · 문서 · 탭 2/3");
+        // one tab, or tabs off: no tab part
+        assert_eq!(pane_speech(false, 0, 2, "Downloads", 0, 1, true), "Pane 1 of 2 · Downloads");
+        assert_eq!(pane_speech(true, 0, 2, "Downloads", 2, 3, false), "패널 1/2 · Downloads");
+        // no folder yet: no folder part
+        assert_eq!(pane_speech(false, 1, 2, "", 0, 2, true), "Pane 2 of 2 · tab 1 of 2");
+        assert_eq!(pane_speech(true, 1, 2, "", 0, 1, true), "패널 2/2");
+        // ten panes and more count in full
+        assert_eq!(pane_speech(false, 11, 16, "x", 9, 12, true), "Pane 12 of 16 · x · tab 10 of 12");
+        assert_eq!(pane_speech(true, 15, 16, "x", 0, 1, true), "패널 16/16 · x");
+        // a drive root and shell places by their tab strip names, not "::{GUID}"
+        assert_eq!(pane_speech(false, 0, 1, &short_name("C:\\"), 0, 1, true), "Pane 1 of 1 · C:");
+        let bin = "::{645FF040-5081-101B-9F08-00AA002F954E}";
+        assert_eq!(pane_speech(true, 0, 3, &shell_place(bin, true).unwrap(), 0, 1, true), "패널 1/3 · 휴지통");
+        assert_eq!(pane_speech(false, 0, 3, &shell_place(bin, false).unwrap(), 1, 2, true), "Pane 1 of 3 · Recycle Bin · tab 2 of 2");
+        assert_eq!(pane_speech(false, 0, 1, &short_name(THIS_PC), 0, 1, true), "Pane 1 of 1 · This PC");
+    }
+
     #[test]
     fn shell_place_names() {
         let lib = "::{031E4825-7B94-4DC3-B131-E946B44C8DD5}";

@@ -88,19 +88,23 @@ pub(crate) fn tab_icons_of(a: &App, i: usize, list: &[String], cur: usize) -> Ve
 }
 
 // A tab change that browses: undone when the folder can't be opened (go_near already tried its parent).
-unsafe fn tab_go(i: usize, change: impl FnOnce(&mut Session) -> Option<String>) {
+// True when a browse was started (its folder opens in on_nav, maybe already inside it).
+unsafe fn tab_go(i: usize, change: impl FnOnce(&mut Session) -> Option<String>) -> bool {
     let (before, to) = app(|a| {
         let before = (a.s.tabs[i].clone(), a.s.tab[i]);
         (before, change(&mut a.s))
     });
+    let mut went = false;
     if let Some(to) = to {
-        if !go_near(i, &to) {
+        went = go_near(i, &to);
+        if !went {
             app(|a| (a.s.tabs[i], a.s.tab[i]) = before);
             _ = MessageBeep(MB_ICONWARNING);
         }
     }
     repaint_tabs(i);
     rehover_pane(i);
+    went
 }
 
 pub(crate) unsafe fn new_tab(i: usize) {
@@ -116,12 +120,12 @@ unsafe fn rehover_pane(i: usize) {
     }
 }
 
-pub(crate) unsafe fn pick_tab(i: usize, k: usize) {
-    tab_go(i, |s| s.pick_tab(i, k));
+pub(crate) unsafe fn pick_tab(i: usize, k: usize) -> bool {
+    tab_go(i, |s| s.pick_tab(i, k))
 }
 
-pub(crate) unsafe fn dup_tab(i: usize, k: usize) {
-    tab_go(i, |s| s.dup_tab(i, k));
+pub(crate) unsafe fn dup_tab(i: usize, k: usize) -> bool {
+    tab_go(i, |s| s.dup_tab(i, k))
 }
 
 // Tab k one place left (d = -1) or right (1); the folder on display stays. At either end: nothing (no wrap).
@@ -138,12 +142,10 @@ pub(crate) unsafe fn move_cur_tab(i: usize, d: i32) {
 }
 
 // Alt+1 … Alt+8: the nth tab, Alt+9: the last one. No such tab: nothing.
-pub(crate) unsafe fn pick_nth_tab(i: usize, n: usize) {
+pub(crate) unsafe fn pick_nth_tab(i: usize, n: usize) -> bool {
     let len = app(|a| a.s.tab_list(i).len());
     let k = if n >= 9 { len - 1 } else { n - 1 };
-    if k < len {
-        pick_tab(i, k);
-    }
+    k < len && pick_tab(i, k)
 }
 
 // Right-click on a tab: duplicate, move or close that tab.
@@ -160,8 +162,8 @@ pub(crate) unsafe fn tab_menu(h: HWND, i: usize, k: usize, at: POINT) {
     let pick = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN, at.x, at.y, None, h, None).0;
     _ = DestroyMenu(menu);
     match pick {
-        1 => dup_tab(i, k),
-        2 => close_tab(i, k),
+        1 => _ = dup_tab(i, k),
+        2 => _ = close_tab(i, k),
         3 => move_tab(i, k, -1),
         4 => move_tab(i, k, 1),
         _ => {}
@@ -169,20 +171,18 @@ pub(crate) unsafe fn tab_menu(h: HWND, i: usize, k: usize, at: POINT) {
     focus_view(i);
 }
 
-pub(crate) unsafe fn close_tab(i: usize, k: usize) {
+pub(crate) unsafe fn close_tab(i: usize, k: usize) -> bool {
     if app(|a| a.s.tab_list(i).len()) < 2 {
         _ = MessageBeep(MB_ICONWARNING); // the last tab stays
-        return;
+        return false;
     }
-    tab_go(i, |s| s.close_tab(i, k));
+    tab_go(i, |s| s.close_tab(i, k))
 }
 
 // Ctrl+PgDn / Ctrl+PgUp, wrapping around.
-pub(crate) unsafe fn step_tab(i: usize, d: i32) {
+pub(crate) unsafe fn step_tab(i: usize, d: i32) -> bool {
     let (n, cur) = app(|a| (a.s.tab_list(i).len() as i32, a.s.tab[i] as i32));
-    if n > 1 {
-        pick_tab(i, (cur + d).rem_euclid(n) as usize);
-    }
+    n > 1 && pick_tab(i, (cur + d).rem_euclid(n) as usize)
 }
 
 // A header-window mouse message landing in the tab strip.
@@ -283,8 +283,8 @@ pub(crate) unsafe fn tab_mouse(h: HWND, i: usize, x: i32, y: i32, click: TabClic
     set_active(i);
     let act = tab_action(hit, click);
     match act {
-        TabAct::Pick(k) => pick_tab(i, k),
-        TabAct::Close(k) => close_tab(i, k),
+        TabAct::Pick(k) => _ = pick_tab(i, k),
+        TabAct::Close(k) => _ = close_tab(i, k),
         TabAct::New => new_tab(i),
         TabAct::Nothing => {}
     }

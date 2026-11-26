@@ -1271,6 +1271,11 @@ pub(crate) unsafe fn on_nav(i: usize, pidl: *const ITEMIDLIST) {
             focus_view(i);
         }
     }
+    // a tab key that browsed (keyboard.rs tab_said): read out now that the new view has the focus, so the
+    // focus change doesn't cut it off. Only while that pane is still the active one; otherwise just drop it.
+    if app(|a| a.say_nav == Some(i) && a.say_nav.take().is_some() && a.s.active == i) {
+        say_pane(i);
+    }
 }
 
 // ---------- address bar folder icon ----------
@@ -1393,7 +1398,9 @@ impl IExplorerBrowserEvents_Impl for Events_Impl {
     }
     fn OnNavigationFailed(&self, pidl: *const ITEMIDLIST) -> Result<()> {
         NAV_GEN.fetch_add(1, Ordering::SeqCst);
-        unsafe { rec_event(self.0.load(Ordering::SeqCst), Nav::Failed, pidl) };
+        let i = self.0.load(Ordering::SeqCst);
+        unsafe { rec_event(i, Nav::Failed, pidl) };
+        app(|a| a.say_nav = a.say_nav.filter(|&p| p != i)); // the tab key's words go with its browse
         Ok(())
     }
 }

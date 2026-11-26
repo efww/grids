@@ -987,6 +987,33 @@ pub(crate) unsafe fn up_candidate(m: &MSG) -> Option<(usize, usize, isize)> {
     up.then(|| (i, g0, svh.get().0 as isize))
 }
 
+// What a screen reader hears on moving to a pane or tab by key, as Windows Terminal / VS Code read "tab 2 of 3":
+// "Pane 3 of 4 · Documents · tab 2 of 3". i and tab_k count from 0. No folder yet: no folder part; tabs off or
+// only one: no tab part.
+pub(crate) fn pane_speech(ko: bool, i: usize, panes: usize, folder: &str, tab_k: usize, tab_n: usize, tabs_on: bool) -> String {
+    let pick = |en: &str, k: &str| if ko { k } else { en }.to_string();
+    let mut s = pick("Pane {n} of {all}", "패널 {n}/{all}").replace("{n}", &(i + 1).to_string()).replace("{all}", &panes.to_string());
+    if !folder.is_empty() {
+        s += " · ";
+        s += folder;
+    }
+    if tabs_on && tab_n > 1 {
+        s += " · ";
+        s += &pick("tab {n} of {all}", "탭 {n}/{all}").replace("{n}", &(tab_k + 1).to_string()).replace("{all}", &tab_n.to_string());
+    }
+    s
+}
+
+// Pane i as it is now (its folder by the tab strip's name, place_label), read out by itself (say_only).
+pub(crate) unsafe fn say_pane(i: usize) {
+    let text = app(|a| {
+        let t = a.s.tab_list(i);
+        let folder = place_label(&a.s.paths[i]);
+        pane_speech(KO.load(Ordering::Relaxed), i, a.s.panes(), &folder, a.s.tab[i].min(t.len() - 1), t.len(), a.s.tabs_on)
+    });
+    say_only(&text);
+}
+
 pub(crate) unsafe fn cycle(d: i32) {
     let (a, n) = app(|a| (a.s.active as i32, a.s.panes() as i32));
     let i = (a + d).rem_euclid(n) as usize;
@@ -1071,6 +1098,9 @@ pub(crate) unsafe fn swap_panes(i: usize, j: usize) {
             to(&mut k.i);
         }
         to(&mut a.peek_pane);
+        if let Some(p) = a.say_nav.as_mut() {
+            to(p);
+        }
         a.status_key.clear();
         a.dirty = session_dirty(&a.s, a.base.as_ref());
     });

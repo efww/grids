@@ -266,6 +266,18 @@ pub(crate) unsafe fn update_status() {
     }
 }
 
+// Words for screen readers only (pane / tab moved by key): the live region's text, nothing drawn. The status line,
+// a.note and a.said stay as they are, so a note showing is neither hidden nor read out again. Called outside app():
+// the event may call straight back in. No live region (the status line failed): nothing.
+pub(crate) unsafe fn say_only(text: &str) {
+    let live = app(|a| a.note_hwnd);
+    if live.0.is_null() {
+        return;
+    }
+    _ = SetWindowTextW(live, &HSTRING::from(text));
+    NotifyWinEvent(EVENT_OBJECT_LIVEREGIONCHANGED, live, OBJID_CLIENT.0, CHILDID_SELF as i32);
+}
+
 // Shortcut tips (Key Promoter): the mouse just did something a key also does. Its key shows on the status line for
 // 4 seconds, once per run and at most TIP_MAX times in all; never over another note (path copied, missing folder,
 // Everything not running) still showing or waiting to show.

@@ -2,6 +2,44 @@ use crate::*;
 
 // ---------- keyboard ----------
 
+// Screen readers hear where a pane key went ("Pane 2 of 4 · Downloads"), after the list's own item: only when the
+// active pane did change (not on a held key's repeats, nor with no pane that way). The mouse says nothing: it is seen.
+unsafe fn pane_said(before: usize, repeat: bool) {
+    let now = app(|a| a.s.active);
+    if !repeat && now != before {
+        say_pane(now);
+    }
+}
+
+// A tab key on pane i (change: true when it started a browse). Read out only when the tab number or count changed
+// (not one tab, the last tab's beep, a failed browse, no such tab, an end): a browse is read when its folder has
+// opened (on_nav: the new view takes the focus, which would cut the words off), anything else at once.
+unsafe fn tab_said(i: usize, repeat: bool, change: impl FnOnce() -> bool) {
+    let state = || {
+        app(|a| {
+            let n = a.s.tab_list(i).len();
+            (a.s.tab[i].min(n - 1), n)
+        })
+    };
+    if repeat {
+        change();
+        return;
+    }
+    let before = state();
+    app(|a| a.say_nav = Some(i)); // set first: a folder may open inside the browse call itself
+    let browsed = change();
+    // on_nav has read it out already
+    if !app(|a| a.say_nav == Some(i)) {
+        return;
+    }
+    if state() == before || !browsed {
+        app(|a| a.say_nav = None);
+        if state() != before {
+            say_pane(i);
+        }
+    }
+}
+
 pub(crate) unsafe fn key(m: &MSG) -> bool {
     // the preview takes its own keys; pane shortcuts must not act behind it
     if let Some(used) = peek_key(m) {
@@ -71,6 +109,7 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
     let list = || view_of::<IShellView>(a).and_then(|v| v.GetWindow().ok()).is_some_and(|v| in_view_list(v, m.hwnd));
     // Explorer's type-to-find takes a space inside a name: a Space soon after typing stays the list's
     let vk = VIRTUAL_KEY(m.wParam.0 as u16);
+    let repeat = m.lParam.0 & (1 << 30) != 0; // a held key's auto-repeat: still acts, but isn't read out
     let typed_ago = LAST_TYPED.get().map(|t| t.elapsed());
     if key_types(vk, ctrl, alt) && list() {
         LAST_TYPED.set(Some(Instant::now()));
@@ -84,32 +123,45 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
                 open_peek(a);
             }
         }
-        VK_TAB if ctrl => cycle(if shift { -1 } else { 1 }),
+        VK_TAB if ctrl => {
+            cycle(if shift { -1 } else { 1 });
+            pane_said(a, repeat);
+        }
         // the keys that have a mouse tip (mouse_tip) mark it learned
         VK_T if ctrl && !shift && !alt && tabs_on() => {
             key_used(TIP_NEW_TAB);
-            new_tab(a);
+            tab_said(a, repeat, || {
+                new_tab(a);
+                false
+            });
         }
         VK_W if ctrl && !shift && !alt && tabs_on() => {
             key_used(TIP_CLOSE_TAB);
-            close_tab(a, app(|x| x.s.tab[a]));
+            tab_said(a, repeat, || close_tab(a, app(|x| x.s.tab[a])));
         }
-        VK_K if ctrl && !shift && !alt && tabs_on() => dup_tab(a, app(|x| x.s.tab[a])),
-        k @ (VK_NEXT | VK_PRIOR) if ctrl && !shift && !alt && tabs_on() => step_tab(a, if k == VK_NEXT { 1 } else { -1 }),
-        k @ (VK_NEXT | VK_PRIOR) if ctrl && shift && !alt && tabs_on() => move_cur_tab(a, if k == VK_NEXT { 1 } else { -1 }),
+        VK_K if ctrl && !shift && !alt && tabs_on() => tab_said(a, repeat, || dup_tab(a, app(|x| x.s.tab[a]))),
+        k @ (VK_NEXT | VK_PRIOR) if ctrl && !shift && !alt && tabs_on() => tab_said(a, repeat, || step_tab(a, if k == VK_NEXT { 1 } else { -1 })),
+        k @ (VK_NEXT | VK_PRIOR) if ctrl && shift && !alt && tabs_on() => tab_said(a, repeat, || {
+            move_cur_tab(a, if k == VK_NEXT { 1 } else { -1 });
+            false
+        }),
         // Alt+1 … Alt+9: the nth tab, 9 the last (as a browser's Ctrl+1 … 9; Ctrl+digits are the panes). Number pad keys stay out.
-        k if alt && !ctrl && !shift && tabs_on() && (VK_1.0..=VK_9.0).contains(&k.0) => pick_nth_tab(a, (k.0 - VK_1.0 + 1) as usize),
+        k if alt && !ctrl && !shift && tabs_on() && (VK_1.0..=VK_9.0).contains(&k.0) => tab_said(a, repeat, || pick_nth_tab(a, (k.0 - VK_1.0 + 1) as usize)),
         k if ctrl && !shift && !alt && (VK_1.0..=VK_9.0).contains(&k.0) && ((k.0 - VK_1.0) as usize) < app(|x| x.s.panes()) => {
             let i = (k.0 - VK_1.0) as usize;
             set_active(i);
             focus_view(i);
+            pane_said(a, repeat);
         }
-        k @ (VK_LEFT | VK_RIGHT | VK_UP | VK_DOWN) if alt && shift && !ctrl => match k {
-            VK_LEFT => move_pane(-1, 0),
-            VK_RIGHT => move_pane(1, 0),
-            VK_UP => move_pane(0, -1),
-            _ => move_pane(0, 1),
-        },
+        k @ (VK_LEFT | VK_RIGHT | VK_UP | VK_DOWN) if alt && shift && !ctrl => {
+            match k {
+                VK_LEFT => move_pane(-1, 0),
+                VK_RIGHT => move_pane(1, 0),
+                VK_UP => move_pane(0, -1),
+                _ => move_pane(0, 1),
+            }
+            pane_said(a, repeat);
+        }
         k @ (VK_LEFT | VK_RIGHT | VK_UP | VK_DOWN) if alt && shift && ctrl => match k {
             VK_LEFT => swap_dir(-1, 0),
             VK_RIGHT => swap_dir(1, 0),
