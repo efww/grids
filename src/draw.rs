@@ -67,11 +67,24 @@ pub(crate) fn header_colors(pane: HWND) -> (u32, u32) {
     app(|a| {
         let active = a.panes.get(a.s.active).and_then(|p| p.as_ref()).is_some_and(|p| p.hwnd == pane);
         if active || a.drop_hover == pane {
-            (a.s.accent_now(), on_color(a.s.accent_now()))
+            let c = focus_accent(a, pane);
+            (c, on_color(c))
         } else {
             (pal().card, pal().text)
         }
     })
+}
+
+// The active pane's focus colour (header, border, current tab edge): quieted while another app has the
+// keyboard. High contrast keeps Windows' highlight (on_color knows only that one), and a pane something is
+// being dragged onto from that other app keeps the full colour.
+pub(crate) fn focus_accent(a: &App, pane: HWND) -> u32 {
+    let c = a.s.accent_now();
+    if !a.app_away || hc_colors().is_some() || a.drop_hover == pane {
+        c
+    } else {
+        quiet_accent(c, pal().card)
+    }
 }
 
 // How far a hot/pressed button's fill moves toward its ink; the palette_contrast test reads it too.

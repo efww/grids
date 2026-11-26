@@ -596,7 +596,7 @@ pub(crate) unsafe fn head_rehover(h: HWND) {
 
 // One white plate per pane: a single accent border when active, flat fields in the top bar.
 pub(crate) unsafe fn paint_pane(h: HWND) {
-    let (active, i, dpi, icon_font, small_font, font, accent, hot, hot_head, tint, folder, waiting) = app(|a| {
+    let (active, i, dpi, icon_font, small_font, font, accent, focus_c, hot, hot_head, tint, folder, waiting) = app(|a| {
         let i = a.panes.iter().position(|p| p.as_ref().is_some_and(|p| p.hwnd == h));
         // a drop target-to-be looks active too
         let active = a.panes[a.s.active].as_ref().is_some_and(|p| p.hwnd == h) || a.drop_hover == h;
@@ -605,7 +605,12 @@ pub(crate) unsafe fn paint_pane(h: HWND) {
         let tint = i.and_then(|i| tint_color(a.s.tints[i]));
         let folder = i.and_then(|i| a.panes[i].as_ref()).map_or(-1, |p| p.icon);
         let waiting = a.kids.as_ref().filter(|k| k.hwnd == h && k.step == 0).map(|k| k.dir.clone());
-        (active, i, a.dpi, a.icon_font, a.small_font, a.font, a.s.accent_now(), hot, hot_head, tint, folder, waiting)
+        // border and current tab edge follow the header; the filter badge, '…' wait shade and field ring keep the colour.
+        // Only the active (or drop target) pane quiets: the others' tab edge keeps the colour, since app_away
+        // changes repaint just the active pane
+        let accent = a.s.accent_now();
+        let focus_c = if active { focus_accent(a, h) } else { accent };
+        (active, i, a.dpi, a.icon_font, a.small_font, a.font, accent, focus_c, hot, hot_head, tint, folder, waiting)
     });
     let tabs = i.filter(|_| tabs_on()).map(|i| {
         app(|a| {
@@ -628,7 +633,7 @@ pub(crate) unsafe fn paint_pane(h: HWND) {
         // active: header bar in the selection colour, same colour as the border
         fill(dc, RECT { bottom: pg.view.top, ..rc }, head);
         if active {
-            frame(dc, rc, s(2), accent);
+            frame(dc, rc, s(2), focus_c);
         } else {
             frame(dc, rc, 1, pal().line);
             fill(dc, RECT { left: pg.view.left, top: pg.view.top - 1, right: pg.view.right, bottom: pg.view.top }, pal().line);
@@ -680,7 +685,7 @@ pub(crate) unsafe fn paint_pane(h: HWND) {
             }
         }
         if let Some((list, cur, icons)) = &tabs {
-            paint_tabs(dc, &pg, list, *cur, dpi, font, accent, hot_head, ilist.as_ref().map(|il| (il, icons.as_slice())));
+            paint_tabs(dc, &pg, list, *cur, dpi, font, focus_c, hot_head, ilist.as_ref().map(|il| (il, icons.as_slice())));
         }
         // the icon opens the file-type menu: under the mouse its slot is shaded (inside the pill and its focus frame),
         // a ring round the filter badge, whose own colour stays

@@ -221,6 +221,16 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             }
             // network drives and subst send no device message: look again whenever Grids comes to the front
             WM_ACTIVATEAPP => {
+                // the active pane's header, border and tab edge go quiet while another app has the keyboard
+                // (Grids' own popups share this thread and send nothing here); repainted only on a change
+                let away = wp.0 == 0;
+                let pane = app(|a| {
+                    let was = std::mem::replace(&mut a.app_away, away);
+                    a.panes.get(a.s.active).and_then(|p| p.as_ref()).map(|p| p.hwnd).filter(|_| was != away)
+                });
+                if let Some(p) = pane {
+                    repaint_header(p);
+                }
                 if wp.0 != 0 {
                     _ = PostMessageW(Some(h), WM_DRIVES, WPARAM(0), LPARAM(0));
                     update_nudge(); // and a release check an hour or more old is due again

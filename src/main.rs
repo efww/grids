@@ -1891,6 +1891,20 @@ mod tests {
         assert_eq!(blend(0x123456, 0xABCDEF, 1.0), 0xABCDEF);
     }
 
+    // While another app has the keyboard the active header takes a quiet grey: its ink still reads, it still
+    // stands apart from an inactive header (card), and it differs from the selection colour (Gray included).
+    #[test]
+    fn quiet_accent_reads() {
+        for (theme, p) in [("light", &LIGHT), ("dark", &DARK)] {
+            for (name, c) in p.accents {
+                let q = quiet_accent(c, p.card);
+                assert!(contrast(on_color(q), q) >= 4.5, "{theme} {name}: ink {:.2}", contrast(on_color(q), q));
+                assert!(contrast(q, p.card) >= 1.2, "{theme} {name}: card {:.2}", contrast(q, p.card));
+                assert_ne!(q, c, "{theme} {name}");
+            }
+        }
+    }
+
     // Windows' contrast themes (white and black ground among them): every text in Grids' own chrome reads
     // at 4.5:1 or better, and every selection colour is the theme's highlight.
     #[test]

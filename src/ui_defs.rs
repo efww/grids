@@ -233,14 +233,25 @@ pub(crate) fn blend(a: u32, b: u32, t: f32) -> u32 {
     ch(16) | ch(8) | ch(0)
 }
 
+// Lightness 0..255 of an 0xRRGGBB colour (Rec. 709 weights on the stored values).
+fn luma(c: u32) -> f32 {
+    0.2126 * (c >> 16 & 0xFF) as f32 + 0.7152 * (c >> 8 & 0xFF) as f32 + 0.0722 * (c & 0xFF) as f32
+}
+
+// The selection colour while another app has the keyboard: its hue drained to a grey of the same lightness,
+// then 30% toward the plate, so the active pane still shows but no longer looks typed into (also for Gray).
+pub(crate) fn quiet_accent(accent: u32, card: u32) -> u32 {
+    let grey = luma(accent).round() as u32 * 0x010101;
+    blend(blend(accent, grey, 0.75), card, 0.3)
+}
+
 // Text/icons on a coloured fill: near-black on light colours, white on dark ones (black accent -> white text).
 // Under high contrast the highlight takes the theme's own highlight text.
 pub(crate) fn on_color(bg: u32) -> u32 {
     if let Some(c) = hc_colors().filter(|c| c.hl == bg) {
         return c.hl_text;
     }
-    let l = 0.2126 * (bg >> 16 & 0xFF) as f32 + 0.7152 * (bg >> 8 & 0xFF) as f32 + 0.0722 * (bg & 0xFF) as f32;
-    if l > 160.0 {
+    if luma(bg) > 160.0 {
         INK
     } else {
         0xFFFFFF

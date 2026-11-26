@@ -84,6 +84,7 @@ pub(crate) struct App {
     pub(crate) status_hwnd: HWND,               // the status line control (screen readers); null = the main window paints it
     pub(crate) note_hwnd: HWND,                 // the note's live region (zero size, nothing drawn); null = no announcements
     pub(crate) drop_hover: HWND,                         // pane whose top bar something openable is being dragged over
+    pub(crate) app_away: bool,                           // another app has the keyboard (WM_ACTIVATEAPP; runtime only)
     pub(crate) drop_open: Option<(HWND, usize, IShellItem)>, // folder dropped on a top bar, opened by WM_DROP_OPEN
     pub(crate) crumb_hot: Option<(HWND, usize)>,             // address bar crumb under the mouse (pane, crumb_layout index)
     pub(crate) head_hot: Option<(HWND, HeadHot)>,            // tab, its ×, '+' or the filter icon under the mouse (runtime only)
@@ -184,6 +185,7 @@ thread_local! {
         status_hwnd: HWND::default(),
         note_hwnd: HWND::default(),
         drop_hover: HWND::default(),
+        app_away: false,
         drop_open: None,
         crumb_hot: None,
         head_hot: None,
