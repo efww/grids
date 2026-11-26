@@ -1072,24 +1072,40 @@ pub(crate) unsafe fn set_language(ko: bool) {
     apply_theme();
 }
 
+// The view menu's plain items, in menu order: (command, English, Korean). VIEW_TOP comes before the
+// Selection colour submenu, VIEW_END after the language item. The README test (view_menu_names_in_readmes)
+// and the WM_COMMAND collision test read these, so a new item is checked against both READMEs.
+pub(crate) const VIEW_TOP: [(usize, &str, &str); 12] = [
+    (ID_TREE, "Folder tree\tCtrl+Shift+E", "폴더 트리\tCtrl+Shift+E"),
+    (ID_TABS, "Tabs in panes", "패널 탭"),
+    (ID_HIDDEN, "Show hidden files\tCtrl+H", "숨김 파일 표시\tCtrl+H"),
+    (ID_GATHER, "Open folders from Explorer windows\tCtrl+Shift+O", "탐색기 창의 폴더 가져오기\tCtrl+Shift+O"),
+    (ID_EXT, "Show file name extensions", "파일 확장명 표시"),
+    (ID_DBLUP, "Double-click empty space: parent folder", "빈 곳 더블클릭: 위 폴더로"),
+    (ID_HOTKEY, "Bring Grids to front from anywhere\tWin+Alt+E", "어디서나 Grids 불러오기\tWin+Alt+E"),
+    (ID_AUTOSTART, "Start with Windows (minimized)", "Windows 시작 시 실행 (최소화)"),
+    (ID_TRAY, "Minimize to the notification area", "최소화하면 알림 영역으로"),
+    (ID_DLGJUMP, "Jump to Grids folders from file dialogs\tCtrl+Alt+G", "파일 대화 상자에서 Grids 폴더로 이동\tCtrl+Alt+G"),
+    (ID_CTXMENU, "Add \"Open in Grids\" to Explorer's right-click menu", "탐색기 오른쪽 클릭 메뉴에 \"Grids에서 열기\" 추가"),
+    (ID_FOLLOW, "Follow Windows light/dark", "Windows 라이트·다크 따르기"),
+];
+pub(crate) const VIEW_END: [(usize, &str, &str); 7] = [
+    (ID_TOUR, "Getting started tour", "처음 사용 안내"),
+    (ID_KEY_TIPS, "Show shortcut tips on the status line", "상태줄에 단축키 팁 표시"),
+    (ID_KEYS, "Keyboard shortcuts\tCtrl+/", "단축키\tCtrl+/"),
+    (ID_HELP, "Help (online)\tF1", "도움말 (온라인)\tF1"),
+    (ID_UPDATES, "Check for updates", "업데이트 확인"),
+    (ID_ABOUT, "About Grids", "Grids 정보"),
+    (ID_STAR, "★ Star Grids on GitHub", "★ GitHub에 별 주기"),
+];
+
 // The view popup opened from the top toolbar (no classic menu bar).
 pub(crate) unsafe fn make_menus() -> Result<HMENU> {
     let view = CreatePopupMenu()?;
     let item = |menu: HMENU, flags: MENU_ITEM_FLAGS, id: usize, text: &str| AppendMenuW(menu, flags, id, &HSTRING::from(text));
-    item(view, MF_STRING, ID_TREE, tr("Folder tree\tCtrl+Shift+E", "폴더 트리\tCtrl+Shift+E"))?;
-    item(view, MF_STRING, ID_TABS, tr("Tabs in panes", "패널 탭"))?;
-    item(view, MF_STRING, ID_HIDDEN, tr("Show hidden files\tCtrl+H", "숨김 파일 표시\tCtrl+H"))?;
-    item(view, MF_STRING, ID_GATHER, tr("Open folders from Explorer windows\tCtrl+Shift+O", "탐색기 창의 폴더 가져오기\tCtrl+Shift+O"))?;
-    item(view, MF_STRING, ID_EXT, tr("Show file name extensions", "파일 확장명 표시"))?;
-    item(view, MF_STRING, ID_DBLUP, tr("Double-click empty space: parent folder", "빈 곳 더블클릭: 위 폴더로"))?;
-    item(view, MF_STRING, ID_HOTKEY, tr("Bring Grids to front from anywhere\tWin+Alt+E", "어디서나 Grids 불러오기\tWin+Alt+E"))?;
-    item(view, MF_STRING, ID_AUTOSTART, tr("Start with Windows (minimized)", "Windows 시작 시 실행 (최소화)"))?;
-    item(view, MF_STRING, ID_TRAY, tr("Minimize to the notification area", "최소화하면 알림 영역으로"))?;
-    let jump = tr("Jump to Grids folders from file dialogs\tCtrl+Alt+G", "파일 대화 상자에서 Grids 폴더로 이동\tCtrl+Alt+G");
-    item(view, MF_STRING, ID_DLGJUMP, jump)?;
-    let ctx = tr("Add \"Open in Grids\" to Explorer's right-click menu", "탐색기 오른쪽 클릭 메뉴에 \"Grids에서 열기\" 추가");
-    item(view, MF_STRING, ID_CTXMENU, ctx)?;
-    item(view, MF_STRING, ID_FOLLOW, tr("Follow Windows light/dark", "Windows 라이트·다크 따르기"))?;
+    for (id, en, ko) in VIEW_TOP {
+        item(view, MF_STRING, id, tr(en, ko))?;
+    }
     let colors = CreatePopupMenu()?;
     for (k, (name, _)) in LIGHT.accents.iter().enumerate() {
         item(colors, MF_STRING, ID_ACCENT + k, tr(ACCENT_EN[k], name))?;
@@ -1100,13 +1116,9 @@ pub(crate) unsafe fn make_menus() -> Result<HMENU> {
     AppendMenuW(view, MF_SEPARATOR, 0, PCWSTR::null())?;
     item(view, MF_STRING, ID_LANG, "한국어 (Korean)")?;
     AppendMenuW(view, MF_SEPARATOR, 0, PCWSTR::null())?;
-    item(view, MF_STRING, ID_TOUR, tr("Getting started tour", "처음 사용 안내"))?;
-    item(view, MF_STRING, ID_KEY_TIPS, tr("Show shortcut tips on the status line", "상태줄에 단축키 팁 표시"))?;
-    item(view, MF_STRING, ID_KEYS, tr("Keyboard shortcuts\tCtrl+/", "단축키\tCtrl+/"))?;
-    item(view, MF_STRING, ID_HELP, tr("Help (online)\tF1", "도움말 (온라인)\tF1"))?;
-    item(view, MF_STRING, ID_UPDATES, tr("Check for updates", "업데이트 확인"))?;
-    item(view, MF_STRING, ID_ABOUT, tr("About Grids", "Grids 정보"))?;
-    item(view, MF_STRING, ID_STAR, tr("★ Star Grids on GitHub", "★ GitHub에 별 주기"))?;
+    for (id, en, ko) in VIEW_END {
+        item(view, MF_STRING, id, tr(en, ko))?;
+    }
     Ok(view)
 }
 

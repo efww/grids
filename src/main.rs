@@ -550,10 +550,8 @@ mod tests {
             .map(|id| id as usize)
             .to_vec();
         main.extend((0..26).map(|d| ID_DRIVE as usize + d));
-        main.extend([
-            ID_HIDDEN, ID_KEYS, ID_GATHER, ID_DBLUP, ID_LANG, ID_HELP, ID_ABOUT, ID_TREE, ID_EXT, ID_HOTKEY, ID_FOLLOW, ID_TABS, ID_KEY_TIPS,
-            ID_DLGJUMP, ID_CTXMENU, ID_AUTOSTART, ID_UPDATES, ID_STAR, ID_TOUR, ID_TRAY,
-        ]);
+        main.extend(VIEW_TOP.iter().chain(&VIEW_END).map(|v| v.0));
+        main.push(ID_LANG);
         main.extend((0..LIGHT.accents.len()).map(|k| ID_ACCENT + k));
         main.push(ID_ACCENT_PICK);
         distinct("main WM_COMMAND", &main);
@@ -2164,6 +2162,30 @@ mod tests {
         for k in [":F1", ":Ctrl+S", "filter:Alt+↓", "preview:F2", "preview:Del", ":Ctrl+Alt+Shift+→", ":Ctrl+C/X/V"] {
             assert!(app.contains(k), "{k}");
         }
+    }
+
+    // Every view menu item is named in README.md / README.ko.md as "View > <its name>" / "보기 > <이름>",
+    // word for word as on the menu, so a reader can find it there (and a renamed item can't leave the docs behind).
+    #[test]
+    fn view_menu_names_in_readmes() {
+        let (md, md_ko) = (include_str!("../README.md"), include_str!("../README.ko.md"));
+        // Help is the F1 row of the shortcut table and About only shows the version: neither is a setting to find.
+        // The language item ("한국어 (Korean)") is not in these tables; the READMEs name it as English or Korean.
+        let skip = [ID_HELP, ID_ABOUT];
+        let mut names: Vec<(&str, &str)> = VIEW_TOP.iter().chain(&VIEW_END).filter(|v| !skip.contains(&v.0)).map(|v| (v.1, v.2)).collect();
+        names.push(("Selection colour", "선택 색"));
+        let name = |s: &'static str| s.split('\t').next().unwrap();
+        let missing: Vec<String> = names
+            .iter()
+            .flat_map(|&(en, ko)| {
+                let en = format!("View > {}", name(en));
+                let ko = format!("보기 > {}", name(ko));
+                [(md, en, "README.md"), (md_ko, ko, "README.ko.md")]
+            })
+            .filter(|(doc, want, _)| !doc.contains(want.as_str()))
+            .map(|(_, want, file)| format!("{file}: {want:?}"))
+            .collect();
+        assert!(missing.is_empty(), "view menu items the READMEs don't name as on the menu:\n{}", missing.join("\n"));
     }
 
     // ---------- English / Korean UI text pairs ----------
