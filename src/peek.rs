@@ -962,6 +962,27 @@ pub(crate) fn md_lines(text: &str) -> Vec<(String, Style)> {
     out
 }
 
+// The UI font was just replaced (Windows' text size, or the DPI): drop the fonts made from the old one and the
+// line heights measured with them, and move an open name box onto the new font. apply_font calls this
+// before it deletes the old font.
+pub(crate) unsafe fn refont() {
+    let (old, rename) = view(|v| (v.fonts.take(), v.rename.map(|r| r.0)));
+    view(|v| v.layout = None);
+    for x in old.map(|(_, f)| f).into_iter().flatten() {
+        _ = DeleteObject(x.into());
+    }
+    let (h, font, fh, dpi) = app(|a| (a.peek, a.font, a.fh, a.dpi));
+    if h.0.is_null() {
+        return;
+    }
+    if let Some(edit) = rename {
+        SendMessageW(edit, WM_SETFONT, Some(WPARAM(font.0 as usize)), Some(LPARAM(1)));
+        let (_, r) = rename_rects(geo_of(h).title, fh, dpi);
+        _ = SetWindowPos(edit, None, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER);
+    }
+    _ = InvalidateRect(Some(h), None, false);
+}
+
 unsafe fn fonts(dpi: i32, base: HFONT) -> [HFONT; 4] {
     if let Some((d, f)) = view(|v| v.fonts) {
         if d == dpi {

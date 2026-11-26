@@ -250,11 +250,29 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             // Windows light/dark (or the accent), or high contrast, changed. Only queued: nothing is drawn
             // inside the broadcast.
             WM_SETTINGCHANGE => {
-                let immersive = lp.0 != 0 && PCWSTR(lp.0 as *const u16).to_string().is_ok_and(|s| s == "ImmersiveColorSet");
+                let area = if lp.0 != 0 { PCWSTR(lp.0 as *const u16).to_string().ok() } else { None };
+                let immersive = area.as_deref() == Some("ImmersiveColorSet");
                 if immersive || wp.0 == SPI_SETHIGHCONTRAST.0 as usize {
                     _ = PostMessageW(Some(h), WM_THEME_SYNC, WPARAM(0), LPARAM(0));
                 }
+                // Windows' text size may have moved: checked (and acted on) after the broadcast
+                if metrics_note(wp.0, area.as_deref()) {
+                    _ = PostMessageW(Some(h), WM_FONT_SYNC, WPARAM(0), LPARAM(0));
+                }
                 return DefWindowProcW(h, msg, wp, lp);
+            }
+            // refont only when the UI font itself changed (not for a scrollbar width), the same steps as a DPI
+            // change minus the DPI and window size; repeats of the note find the same font and do nothing
+            WM_FONT_SYNC => {
+                let (dpi, font) = app(|a| (a.dpi, a.font));
+                let mut old = LOGFONTW::default();
+                let got = GetObjectW(font.into(), size_of::<LOGFONTW>() as i32, Some(&mut old as *mut _ as _));
+                if got == 0 || font_changed(&old, &ui_logfont(dpi)) {
+                    kids_cancel();
+                    close_tour(false); // measured for the old font
+                    apply_font();
+                    fit_load();
+                }
             }
             // system colours changed (another contrast theme picked), or the window colour (Windows' accent)
             WM_SYSCOLORCHANGE | WM_DWMCOLORIZATIONCOLORCHANGED => {

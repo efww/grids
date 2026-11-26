@@ -23,15 +23,35 @@ pub(crate) fn icon_face(found: &str) -> &'static str {
     }
 }
 
+// The UI font as Windows' settings make it now at this DPI: the message font's size and weight (Settings >
+// Accessibility > Text size moves it), the face always Segoe UI.
+pub(crate) unsafe fn ui_logfont(dpi: i32) -> LOGFONTW {
+    let mut ncm = NONCLIENTMETRICSW { cbSize: size_of::<NONCLIENTMETRICSW>() as u32, ..Default::default() };
+    let sys = SystemParametersInfoForDpi(SPI_GETNONCLIENTMETRICS.0, ncm.cbSize, Some(&mut ncm as *mut _ as _), 0, dpi as u32);
+    let mut lf = if sys.is_ok() { ncm.lfMessageFont } else { logfont("Segoe UI", 12 * dpi / 96) };
+    lf.lfFaceName = logfont("Segoe UI", 0).lfFaceName; // system size, but the Korean UI font draws '\\' in paths as '₩'
+    lf
+}
+
+// Whether the font in use (old) and the one Windows' settings now ask for (new) draw differently. Compared
+// after ui_logfont's face override, so a Korean message font named Malgun Gothic doesn't count as a change.
+pub(crate) fn font_changed(old: &LOGFONTW, new: &LOGFONTW) -> bool {
+    let face = |lf: &LOGFONTW| lf.lfFaceName.iter().take_while(|&&c| c != 0).copied().collect::<Vec<u16>>();
+    old.lfHeight != new.lfHeight || old.lfWeight != new.lfWeight || old.lfItalic != new.lfItalic || face(old) != face(new)
+}
+
+// A WM_SETTINGCHANGE that may carry a new UI font size: the window metrics (Text size, "Make text bigger")
+// or the icon title font. Light/dark ("ImmersiveColorSet") and the rest are not ours to refont for.
+pub(crate) fn metrics_note(wp: usize, area: Option<&str>) -> bool {
+    wp == SPI_SETNONCLIENTMETRICS.0 as usize || wp == SPI_SETICONTITLELOGFONT.0 as usize || area == Some("WindowMetrics")
+}
+
 // Windows' own UI font at this DPI (no custom fonts: they only reached our chrome and cost paint time),
 // plus the icon font for the buttons: Segoe Fluent Icons where Windows 11 has it, so they match Explorer,
 // else Segoe MDL2 Assets (same code points). Pushed to every edit; also used on DPI change.
 pub(crate) unsafe fn apply_font() {
     let dpi = app(|a| a.dpi);
-    let mut ncm = NONCLIENTMETRICSW { cbSize: size_of::<NONCLIENTMETRICSW>() as u32, ..Default::default() };
-    let sys = SystemParametersInfoForDpi(SPI_GETNONCLIENTMETRICS.0, ncm.cbSize, Some(&mut ncm as *mut _ as _), 0, dpi as u32);
-    let mut lf = if sys.is_ok() { ncm.lfMessageFont } else { logfont("Segoe UI", 12 * dpi / 96) };
-    lf.lfFaceName = logfont("Segoe UI", 0).lfFaceName; // system size, but the Korean UI font draws '\\' in paths as '₩'
+    let lf = ui_logfont(dpi);
     let font = CreateFontIndirectW(&lf);
     let small = CreateFontIndirectW(&LOGFONTW { lfHeight: lf.lfHeight * 85 / 100, ..lf });
     let dc = GetDC(None);
@@ -73,6 +93,7 @@ pub(crate) unsafe fn apply_font() {
         }
     }
     rename_refont(); // the batch rename window stays open while the main window moves: off the old font first
+    peek::refont(); // and the preview: its bold / code / title fonts come from the old one
     for f in [old, old_icon].into_iter().filter(|f| !f.is_invalid()) {
         _ = DeleteObject(f.into());
     }
@@ -93,5 +114,29 @@ mod tests {
         assert_eq!(icon_face("Arial"), "Segoe MDL2 Assets"); // GDI's substitute on Windows 10
         assert_eq!(icon_face("Segoe MDL2 Assets"), "Segoe MDL2 Assets");
         assert_eq!(icon_face("Segoe Fluent"), "Segoe MDL2 Assets");
+    }
+
+    #[test]
+    fn font_change_seen() {
+        let base = logfont("Segoe UI", 12);
+        assert!(!font_changed(&base, &base)); // same font: another metric (scrollbar width) moved
+        assert!(font_changed(&base, &logfont("Segoe UI", 15))); // Text size raised
+        assert!(font_changed(&base, &logfont("Arial", 12))); // another face
+        assert!(font_changed(&base, &LOGFONTW { lfWeight: 700, ..base }));
+        let mut junk = base; // garbage past the terminating NUL is not a different face
+        junk.lfFaceName[20] = b'x' as u16;
+        assert!(!font_changed(&base, &junk));
+    }
+
+    #[test]
+    fn metrics_note_pick() {
+        assert!(metrics_note(SPI_SETNONCLIENTMETRICS.0 as usize, None));
+        assert!(metrics_note(SPI_SETNONCLIENTMETRICS.0 as usize, Some("WindowMetrics")));
+        assert!(metrics_note(SPI_SETICONTITLELOGFONT.0 as usize, None));
+        assert!(metrics_note(0, Some("WindowMetrics")));
+        assert!(!metrics_note(0, Some("ImmersiveColorSet")));
+        assert!(!metrics_note(SPI_SETHIGHCONTRAST.0 as usize, None));
+        assert!(!metrics_note(0, Some("intl")));
+        assert!(!metrics_note(0, None));
     }
 }
