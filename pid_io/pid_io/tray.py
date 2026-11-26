@@ -10,8 +10,7 @@ is 900 wide near the control room and narrows (600, 300) where cables branch off
   instrument -> JB branch  -> perforated tray, length = branch cable length, numbered only
 
 Sizing: sum of cable areas (pi/4 x OD^2) <= width x height x fill. Smallest width that holds it;
-beyond the widest, more tiers of the widest (whether they stack or run side by side is decided
-later). The user can set any segment's width / tiers; the fill is shown at once.
+beyond the widest, tiers of the widest are stacked (user decision 2026-11-26). The user can set any segment's width / tiers; the fill is shown at once.
 """
 from __future__ import annotations
 
@@ -29,8 +28,8 @@ def _code(d, code):
 
 SCHEMA = [
     {"id": "tray", "title": "사다리 트레이",
-     "lead": "랙 위 간선 케이블(JB→룸 멀티, 패키지·IRP 멀티, 통신)이 지나가는 구간마다 케이블 단면적 합으로 폭을 정합니다. "
-             "단면적 합 ≤ 폭 × 높이 × Fill ratio인 가장 작은 폭, 가장 넓은 폭으로도 넘치면 단 수를 늘립니다.",
+     "lead": "랙 최상단 위 간선 케이블(JB→룸 멀티, 패키지·IRP 멀티, 통신)이 지나가는 구간마다 케이블 단면적 합으로 폭을 정합니다. "
+             "단면적 합 ≤ 폭 × 높이 × Fill ratio인 가장 작은 폭, 가장 넓은 폭(900)으로도 넘치면 단을 쌓습니다 (900 × n단).",
      "items": [
          _code(_txt("tray_widths", "트레이 폭 (mm)", "300,600,900", "쉼표로 구분. 높이는 아래 값"), "T01"),
          _code(_num("tray_height", "트레이 높이 (레일)", 150, "mm"), "T02"),
@@ -292,7 +291,7 @@ def build(res, layout, s, dec=None):
                     tr = next((x for x in sg["trays"] if x["cls"] == cls), None)
                     if tr:
                         legs.append({"no": tr["no"], "kind": "사다리", "size": f"{tr['width']}×{int(v['tray_height'])}"
-                                     + (f"×{tr['tiers']}단" if tr["tiers"] > 1 else ""), "m": run})
+                                     + (f" {tr['tiers']}단 적층" if tr["tiers"] > 1 else ""), "m": run})
             out["by_cable"][c["no"]] = {"cable": c["no"], "kind": c["kind"], "frm": c["frm"], "to": c["to"],
                                         "spec": c["spec"], "od": round(od(c["spec"], v), 1), "cls": cls,
                                         "ladder_m": sum(x["m"] for x in legs if x["kind"] == "사다리"),
@@ -392,6 +391,7 @@ def checklist(v):
 def write_sheets(wb, t, v, sheet):
     sm = t["summary"]
     data = [["사다리 트레이", f"{x['cls']} {x['width']}×{int(v['tray_height'])}", x["length"], x["order"]] for x in sm["ladder"]]
+    data += [["", "(900으로 넘치는 구간은 단을 쌓아 단 수만큼 길이에 더함)", "", ""]]
     data += [["UG 트렌치", "랙 밖 간선", sm["ug_m"], sm["ug_order"]],
              ["Perforated 트레이", f"{v['pt_width']} (계기 분기 {sm['pt_n']}가닥)", sm["pt_m"], sm["pt_m"]]]
     sheet(wb.create_sheet("Tray_Summary"), ["구분", "규격", "길이 (m)", "물량 (할증 포함, m)"], data, [18, 30, 12, 20])

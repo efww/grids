@@ -1298,9 +1298,9 @@ function trayOverlay(d) {
     return `<line x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}" stroke="transparent" stroke-width="${9*k}" data-seg="${s.id}" style="cursor:pointer"><title>${esc(s.no)} · ${s.length}m · 케이블 ${s.cables.length}${s.trays.map(x=>` · ${x.cls} ${x.width}${x.tiers>1?"×"+x.tiers+"단":""} ${Math.round(x.fill*100)}%`).join("")}</title></line>`; }).join("");
   const mark = room ? `<circle cx="${room[0]}" cy="${room[1]}" r="${11*k}" fill="none" stroke="#2c7fc0" stroke-width="${3*k}"/><text x="${room[0]+14*k}" y="${room[1]+5*k}" font-size="${15*k}" font-weight="700" fill="#2c7fc0">제어실</text>` : "";
   const mpt = d.plot.m_per_pt || .155;
-  const labels = t.segments.filter(s => s.kind !== "UG" && s.length >= 10).map(s => { const [a,b] = s.poly, vert = Math.abs(a[0]-b[0]) < Math.abs(a[1]-b[1]);
-    const x = (a[0]+b[0])/2 + (vert ? 6*k : 0), y = (a[1]+b[1])/2 - (vert ? 0 : 5*k), tr = s.trays[0];
-    return `<text x="${x}" y="${y}" font-size="${7.5*k}" fill="#0b3d91" font-weight="700" ${vert?`transform="rotate(90 ${x} ${y})"`:""} style="pointer-events:none;paint-order:stroke" stroke="#fff" stroke-width="${2.2*k}">${esc(s.no)} ${tr.width}${tr.tiers>1?"×"+tr.tiers:""}</text>`; }).join("");
+  const labels = t.segments.filter(s => s.length >= 10).map(s => { const [a,b] = s.poly, vert = Math.abs(a[0]-b[0]) < Math.abs(a[1]-b[1]);
+    const x = (a[0]+b[0])/2 + (vert ? 6*k : 0), y = (a[1]+b[1])/2 - (vert ? 0 : 5*k), tr = s.trays[0], ug = s.kind === "UG";
+    return `<text x="${x}" y="${y}" font-size="${7.5*k}" fill="${ug?"#8a6d00":"#0b3d91"}" font-weight="700" ${vert?`transform="rotate(90 ${x} ${y})"`:""} style="pointer-events:none;paint-order:stroke" stroke="#fff" stroke-width="${2.2*k}">${esc(s.no)}${ug?"":` ${tr.width}${tr.tiers>1?" "+tr.tiers+"단":""}`}</text>`; }).join("");
   const jbs = ((d.plot.geo||{}).stations||[]).map(x => `<rect x="${x.x-3.5*k}" y="${x.y-3.5*k}" width="${7*k}" height="${7*k}" fill="#f08a24" opacity=".85"><title>JB ${esc(x.jbs.join(", "))}</title></rect>`).join("");
   return `<svg viewBox="0 0 ${W} ${H}" style="position:absolute;inset:0;width:100%;height:100%" id="trsvg">${racks}${segs}${jbs}${mark}${labels}${hits}</svg>`;
 }
@@ -1313,7 +1313,7 @@ function traySegCard(d) {
   const rows = s.trays.map((x, i) => { const e = TM.edit[x.cls] || [x.width, x.tiers]; const f = trFill(x.area, e[0], e[1], V);
     return `<tr><td style="min-width:110px"><b class="mono" style="white-space:nowrap">${esc(x.no)}</b><br><span style="font-size:11px;color:var(--sub);white-space:nowrap">${esc(x.cls)} · ${x.count}가닥</span><br><span style="font-size:11px;color:var(--sub)">${fmt(x.area)} mm²</span></td>
       <td><select data-trw="${esc(x.cls)}">${ws.map(w=>`<option ${w===e[0]?"selected":""}>${w}</option>`).join("")}</select></td>
-      <td><input type="number" min="1" max="6" value="${e[1]}" data-trn="${esc(x.cls)}" style="width:52px"></td>
+      <td><input type="number" min="1" max="6" title="단 수 (쌓기)" value="${e[1]}" data-trn="${esc(x.cls)}" style="width:52px"></td>
       <td style="font-weight:700;color:${f > +V.tray_fill + 1e-9 ? "#e0002a" : "#15ad60"}" id="trf-${i}">${Math.round(f*100)}%</td>
       <td style="font-size:11px;color:var(--sub)">자동 ${x.auto[0]}${x.auto[1]>1?"×"+x.auto[1]:""}${x.user?' <span class="chip b" style="font-size:10px;padding:0 4px">변경</span>':""}</td></tr>`; }).join("");
   return `<div class="ritem on" style="cursor:default"><div class="a"><b>${esc(s.no)}</b><span class="chip">${s.kind==="랙"?"사다리 (랙)":"사다리 (AG)"}</span></div>
