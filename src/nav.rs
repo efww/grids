@@ -571,6 +571,8 @@ pub(crate) unsafe fn open_in(src: usize, dst: usize) {
 pub(crate) const M_SWAP: (&str, &str) = ("&Swap places with  (Ctrl+Alt+Shift+arrows)", "자리 바꾸기(&S)  (Ctrl+Alt+Shift+방향키)");
 pub(crate) const M_COPY: (&str, &str) = ("&Copy {n} selected items to", "선택한 {n}개 복사(&C)");
 pub(crate) const M_MOVE: (&str, &str) = ("&Move {n} selected items to", "선택한 {n}개 이동(&M)");
+// last in the copy / move submenus, under the pane digits and folder names
+pub(crate) const M_CHOOSE: (&str, &str) = ("Choose an&other folder…", "다른 폴더 고르기…(&O)");
 pub(crate) const M_INUSE: (&str, &str) = ("&Which program is using this?", "어떤 프로그램이 쓰고 있나요?(&W)");
 pub(crate) const M_HASH: (&str, &str) = ("Chec&ksum (SHA-256) of the selected files", "선택한 파일의 체크섬(SHA-256)(&K)");
 pub(crate) const M_HASH_STOP: (&str, &str) = ("Stop the chec&ksum ({p}%)", "체크섬 계산 중지(&K) ({p}%)");
@@ -597,6 +599,12 @@ pub(crate) unsafe fn open_in_menu(h: HWND, src: usize) {
         let live = a.panes.iter().enumerate().take(a.s.panes());
         let live = live.filter(|(k, _)| *k != src);
         live.filter_map(|(k, p)| Some((k, p.as_ref()?.disp.clone(), a.s.paths[k].clone(), a.s.tints[k]))).collect::<Vec<_>>()
+    });
+    // favourite and recent folders the copy / move submenus offer besides the panes (menu numbers 401… / 501…)
+    let (here, targets) = app(|a| {
+        let mut shown: Vec<String> = items.iter().map(|(_, _, path, _)| path.clone()).collect();
+        shown.push(a.s.paths[src].clone());
+        (a.s.paths[src].clone(), send_targets(&shown, &a.s.favs, &a.s.recent))
     });
     // "Pane &3 (Sage)    C:\work"
     let label = |k: usize, t: u8, disp: &str| HSTRING::from(pane_label(tr("Pane", "패널"), k, if t == 0 { "" } else { tint_name(t) }, disp));
@@ -627,6 +635,7 @@ pub(crate) unsafe fn open_in_menu(h: HWND, src: usize) {
     match &picked {
         Ok(srcs) => {
             let n = srcs.len();
+            let keys = src_keys(srcs);
             let titles = [
                 (false, 101, tr2(M_COPY).replace("{n}", &n.to_string())),
                 (true, 201, tr2(M_MOVE).replace("{n}", &n.to_string())),
@@ -638,6 +647,24 @@ pub(crate) unsafe fn open_in_menu(h: HWND, src: usize) {
                     let flags = if ok { MF_STRING } else { MF_STRING | MF_GRAYED };
                     _ = AppendMenuW(sub, flags, base + k, &label(*k, *t, disp));
                 }
+                // then folders no pane shows: favourites, recent folders, any other
+                if !items.is_empty() {
+                    _ = AppendMenuW(sub, MF_SEPARATOR, 0, PCWSTR::null());
+                }
+                let first = if mv { ID_SEND_MOVE } else { ID_SEND_COPY };
+                for (n, (fav, path)) in targets.iter().enumerate() {
+                    if n == 0 || (!fav && targets[n - 1].0) {
+                        let head = if *fav { tr("Favourites", "즐겨찾기") } else { tr("Recent folders", "최근 폴더") };
+                        _ = AppendMenuW(sub, MF_STRING | MF_GRAYED, 0, &HSTRING::from(head));
+                    }
+                    let flags = if send_check(srcs, &keys, path, mv).is_some() { MF_STRING } else { MF_STRING | MF_GRAYED };
+                    _ = AppendMenuW(sub, flags, first + n, &HSTRING::from(folder_label(path)));
+                }
+                if !targets.is_empty() {
+                    _ = AppendMenuW(sub, MF_SEPARATOR, 0, PCWSTR::null());
+                }
+                let choose = if mv { ID_CHOOSE_MOVE } else { ID_CHOOSE_COPY };
+                _ = AppendMenuW(sub, MF_STRING, choose, &HSTRING::from(tr2(M_CHOOSE)));
                 _ = AppendMenuW(menu, MF_POPUP, sub.0 as usize, &HSTRING::from(title));
             }
         }
@@ -667,6 +694,28 @@ pub(crate) unsafe fn open_in_menu(h: HWND, src: usize) {
         (p @ 1..=100, _) => open_in(src, p - 1),
         (p @ 301..=316, _) => swap_panes(src, p - 301),
         (p, picked) if is_shell_pick(p) => shell_pick(h, src, p, picked, wm, &others),
+        // before the pane rows below: their p > 200 would take a move number for a pane
+        (p, picked) if send_pick(p).is_some() => {
+            let sent = match (send_pick(p), picked) {
+                (Some(SendPick::To(mv, n)), Ok(srcs)) => targets.get(n).is_some_and(|(_, dst)| send_elsewhere(srcs, dst, mv)),
+                (Some(SendPick::Choose(mv)), Ok(srcs)) => {
+                    let owner = app(|a| a.main);
+                    let sent = match choose_folder(owner, &here, mv) {
+                        Ok(None) => true, // cancelled
+                        // the picker opens at this folder: confirming it at once (or an Enter repeat) would
+                        // copy a "- Copy" beside the originals
+                        Ok(Some(dst)) => !same_dir(&dst, &here) && send_elsewhere(srcs, &dst, mv),
+                        Err(_) => false,
+                    };
+                    focus_view(src);
+                    sent
+                }
+                _ => false,
+            };
+            if !sent {
+                _ = MessageBeep(MB_ICONWARNING);
+            }
+        }
         (p, Ok(srcs)) => {
             // only to the folder the menu showed, and only the whole selection it counted
             let (mv, k) = (p > 200, (p - 1) % 100);
@@ -713,12 +762,7 @@ pub(crate) unsafe fn recent_menu(i: usize) {
     }
     for (k, p) in items.iter().enumerate() {
         // "name<tab>parent"; drive roots and share roots show whole
-        let path = std::path::Path::new(p);
-        let (leaf, parent) = match (path.file_name(), path.parent()) {
-            (Some(n), Some(d)) => (n.to_string_lossy().into_owned(), d.display().to_string()),
-            _ => (p.clone(), String::new()),
-        };
-        _ = AppendMenuW(menu, MF_STRING, k + 1, &HSTRING::from(format!("{leaf}\t{parent}").replace('&', "&&")));
+        _ = AppendMenuW(menu, MF_STRING, k + 1, &HSTRING::from(folder_label(p)));
     }
     let mut rc = RECT::default();
     if let Some(b) = pane_ctl(i, ID_BACK) {

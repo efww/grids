@@ -465,3 +465,123 @@ pub(crate) unsafe fn run_op(srcs: &[String], dst: &str, rename: bool, mv: bool) 
     op.PerformOperations()?;
     Ok(op)
 }
+
+// ---------- ⇄ menu: copy / move to a folder no pane shows ----------
+
+// Menu numbers under "Copy / Move N selected items to": 401… / 501… the favourite and recent folders listed
+// (an index into send_targets), 450 / 550 "Choose another folder…". Clear of 1–100, 101–116, 201–216, 301–316,
+// 1130+ and 3100+.
+pub(crate) const ID_SEND_COPY: usize = 401;
+pub(crate) const ID_SEND_MOVE: usize = 501;
+pub(crate) const ID_CHOOSE_COPY: usize = 450;
+pub(crate) const ID_CHOOSE_MOVE: usize = 550;
+pub(crate) const SEND_SLOTS: usize = 40;
+// Favourites have no cap of their own; the rest are a "Choose another folder…" away.
+pub(crate) const SEND_FAVS: usize = 12;
+pub(crate) const SEND_RECENT: usize = 8;
+
+#[derive(Debug, PartialEq)]
+pub(crate) enum SendPick {
+    To(bool, usize), // (move, index into send_targets)
+    Choose(bool),    // move
+}
+
+pub(crate) fn send_pick(p: usize) -> Option<SendPick> {
+    match p {
+        ID_CHOOSE_COPY => Some(SendPick::Choose(false)),
+        ID_CHOOSE_MOVE => Some(SendPick::Choose(true)),
+        p if (ID_SEND_COPY..ID_SEND_COPY + SEND_SLOTS).contains(&p) => Some(SendPick::To(false, p - ID_SEND_COPY)),
+        p if (ID_SEND_MOVE..ID_SEND_MOVE + SEND_SLOTS).contains(&p) => Some(SendPick::To(true, p - ID_SEND_MOVE)),
+        _ => None,
+    }
+}
+
+fn dir_key(p: &str) -> String {
+    p.trim_end_matches('\\').to_lowercase()
+}
+
+// (favourite, folder): favourites then recent folders, file system paths only, none a pane shows now
+// (`shown`, the source pane's folder among them) and none twice. Strings only: no disk call, so an
+// unreachable share can't stall the menu.
+pub(crate) fn send_targets(shown: &[String], favs: &[String], recent: &[String]) -> Vec<(bool, String)> {
+    let mut seen: Vec<String> = shown.iter().map(|p| dir_key(p)).collect();
+    let mut out = Vec::new();
+    for (fav, list, cap) in [(true, favs, SEND_FAVS), (false, recent, SEND_RECENT)] {
+        let mut n = 0;
+        for p in list.iter().map(|p| p.trim()).filter(|p| is_fs(p)) {
+            if n == cap {
+                break;
+            }
+            let key = dir_key(p);
+            if !seen.contains(&key) {
+                seen.push(key);
+                out.push((fav, p.to_string()));
+                n += 1;
+            }
+        }
+    }
+    out
+}
+
+// The selection's paths as into_itself compares them: worked out once per menu, not once per target row.
+pub(crate) fn src_keys(srcs: &[String]) -> Vec<String> {
+    srcs.iter().map(|s| dir_key(s)).collect()
+}
+
+// A selected folder (`keys`, from src_keys) sent into itself or below it: Windows would only say it can't.
+pub(crate) fn into_itself(keys: &[String], dst: &str) -> bool {
+    let dst = dir_key(dst);
+    keys.iter().any(|s| dst.strip_prefix(s.as_str()).is_some_and(|rest| rest.is_empty() || rest.starts_with('\\')))
+}
+
+// Some(rename) when the selection can go to `dst`: a file system folder, not into itself, not a move into
+// the folder it already sits in. `keys` = src_keys(srcs).
+pub(crate) fn send_check(srcs: &[String], keys: &[String], dst: &str, mv: bool) -> Option<bool> {
+    if !is_fs(dst) || into_itself(keys, dst) {
+        return None;
+    }
+    send_mode(srcs, dst, mv)
+}
+
+// "name<tab>parent", as the recent folders menu shows them; drive and share roots whole. '&' stays a letter.
+pub(crate) fn folder_label(p: &str) -> String {
+    let path = std::path::Path::new(p);
+    let (leaf, parent) = match (path.file_name(), path.parent()) {
+        (Some(n), Some(d)) => (n.to_string_lossy().into_owned(), d.display().to_string()),
+        _ => (p.to_string(), String::new()),
+    };
+    format!("{leaf}\t{parent}").replace('&', "&&")
+}
+
+// Starts the copy / move and says where in the status line. False = not sent (the caller beeps).
+pub(crate) unsafe fn send_elsewhere(srcs: Vec<String>, dst: &str, mv: bool) -> bool {
+    let Some(rename) = send_check(&srcs, &src_keys(&srcs), dst, mv) else { return false };
+    let n = srcs.len().to_string();
+    if !start_copy(srcs, dst.to_string(), rename, mv) {
+        return false;
+    }
+    let text = if mv { tr("Moving {n} items to {to}", "{n}개 이동 시작 → {to}") } else { tr("Copying {n} items to {to}", "{n}개 복사 시작 → {to}") };
+    let text = text.replace("{n}", &n).replace("{to}", &short_name(dst));
+    app(|a| a.note = Some((text, Instant::now() + Duration::from_secs(3))));
+    update_status();
+    true
+}
+
+// "Choose another folder…": Windows' folder picker over the main window, opening at `start`.
+// Ok(None) = cancelled.
+pub(crate) unsafe fn choose_folder(owner: HWND, start: &str, mv: bool) -> Result<Option<String>> {
+    let dlg: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER)?;
+    dlg.SetOptions(dlg.GetOptions()? | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST)?;
+    let title = if mv { tr("Choose the folder to move to", "이동할 폴더 고르기") } else { tr("Choose the folder to copy to", "복사할 폴더 고르기") };
+    _ = dlg.SetTitle(&HSTRING::from(title));
+    if is_fs(start) {
+        if let Ok(at) = SHCreateItemFromParsingName::<_, _, IShellItem>(&HSTRING::from(start), None) {
+            _ = dlg.SetFolder(&at);
+        }
+    }
+    match dlg.Show(Some(owner)) {
+        Err(e) if e.code() == ERROR_CANCELLED.to_hresult() => return Ok(None),
+        r => r?,
+    }
+    Ok(Some(pwstr(dlg.GetResult()?.GetDisplayName(SIGDN_FILESYSPATH)?)))
+}

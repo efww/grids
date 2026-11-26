@@ -1060,6 +1060,48 @@ mod tests {
         assert_eq!(send_mode(&v(&[r"C:\x\a.txt"]), r"D:\y", true), Some(false));
         assert_eq!(send_mode(&v(&[r"C:\x\a.txt", r"D:\y\b.txt"]), r"D:\y", false), None);
 
+        // ⇄ copy / move to a favourite or recent folder: menu numbers never reach the pane rows' ranges
+        for p in 0..5000 {
+            let pane_row = (1..=100).contains(&p) || (101..=116).contains(&p) || (201..=216).contains(&p) || (301..=316).contains(&p);
+            assert!(!(pane_row || is_shell_pick(p)) || send_pick(p).is_none(), "{p}");
+        }
+        assert_eq!(send_pick(401), Some(SendPick::To(false, 0)));
+        assert_eq!(send_pick(440), Some(SendPick::To(false, 39)));
+        assert_eq!(send_pick(501), Some(SendPick::To(true, 0)));
+        assert_eq!(send_pick(540), Some(SendPick::To(true, 39)));
+        assert_eq!(send_pick(450), Some(SendPick::Choose(false)));
+        assert_eq!(send_pick(550), Some(SendPick::Choose(true)));
+        assert_eq!(send_pick(441), None);
+        assert_eq!(send_pick(216), None);
+        assert!(SEND_FAVS + SEND_RECENT <= SEND_SLOTS && ID_SEND_COPY + SEND_SLOTS <= ID_CHOOSE_COPY && ID_SEND_MOVE + SEND_SLOTS <= ID_CHOOSE_MOVE);
+        // favourites first, then recent; no shell places, nothing a pane shows, nothing twice (any case, trailing \)
+        let shown = v(&[r"C:\Here", r"D:\pane2"]);
+        let favs = v(&[r"c:\here\", r"E:\Backup", "::{20D04FE0-3AEA-1069-A2D8-08002B30309D}", r"\\nas\share"]);
+        let recent = v(&[r"e:\backup", r"D:\PANE2", r"F:\Photos", r"C:\"]);
+        let want = vec![(true, r"E:\Backup".to_string()), (true, r"\\nas\share".to_string()), (false, r"F:\Photos".to_string()), (false, r"C:\".to_string())];
+        assert_eq!(send_targets(&shown, &favs, &recent), want);
+        // capped: 12 favourites, 8 recent
+        let many = |c: char| (0..30).map(|k| format!(r"{c}:\f{k}")).collect::<Vec<_>>();
+        let got = send_targets(&[], &many('E'), &many('F'));
+        assert_eq!((got.iter().filter(|t| t.0).count(), got.iter().filter(|t| !t.0).count()), (SEND_FAVS, SEND_RECENT));
+        assert_eq!(got[SEND_FAVS].1, r"F:\f0");
+        // a selected folder into itself or below it is refused; a sibling with the same start is not
+        let sel = v(&[r"C:\x\Docs", r"C:\x\a.txt"]);
+        let keys = src_keys(&sel);
+        assert_eq!(send_check(&sel, &keys, r"c:\x\docs", false), None);
+        assert_eq!(send_check(&sel, &keys, r"C:\x\Docs\sub", true), None);
+        assert_eq!(send_check(&sel, &keys, r"C:\x\Docs2", false), Some(false));
+        assert_eq!(send_check(&sel, &keys, r"C:\x", true), None); // a move where they already are
+        assert_eq!(send_check(&sel, &keys, r"C:\x", false), Some(true));
+        assert_eq!(send_check(&sel, &keys, "::{20D04FE0-3AEA-1069-A2D8-08002B30309D}", false), None);
+        // the folder picker answering with its starting folder is not sent
+        assert!(same_dir(r"C:\x\", r"c:\X") && !same_dir(r"C:\x", r"C:\x2"));
+        // shown as the recent folders menu does
+        assert_eq!(folder_label(r"D:\R&D\Specs"), "Specs\tD:\\R&&D");
+        assert_eq!(folder_label(r"D:\"), "D:\\\t");
+        assert_eq!(mnemonic(M_CHOOSE.0), Some('O'));
+        assert!(M_CHOOSE.1.contains("(&O)"));
+
         // the whole selection or nothing
         let mut calls = 0;
         let all = collect_all(10_000, |k| {
