@@ -1,0 +1,31 @@
+{
+ "name": "서남해 200MW 수전해-2",
+ "created": "2026-11-26 13:10",
+ "files": {
+  "pdf": "200MW PEM 수전해 플랜트 PID_Rev.A 1.pdf",
+  "template": "Instrument_Index_Template.xlsx",
+  "ref": "(서남해 수전해) Instrument Index_Rev.A_26.03.20_Metering IO 삭제.xlsx",
+  "plot": "Plot_plan_261109_r2.pdf",
+  "plotref": "Plot_Plan_Rev.2_260202.pdf"
+ },
+ "scenarios": [],
+ "file_info": {
+  "pdf": {
+   "size": 25288751,
+   "time": "11-26 13:16"
+  },
+  "template": {
+   "size": 187392,
+   "time": "11-26 13:17"
+  },
+  "ref": {
+   "size": 241152,
+   "time": "11-26 13:17"
+  }
+ },
+ "pdf_info": {
+  "pages": 39,
+  "vector": true
+ },
+ "extracted": "2026-11-26 13:21"
+}

@@ -1,10 +1,6 @@
-# project drawings / indexes are confidential - never commit them
-*.pdf
-*.xlsx
-*.zip
+# Reference data (drawings, indexes, plot plans, outputs) IS kept in the repo - user decision 2026-11-26.
 __pycache__/
-!protocols/concept_default.xlsx
-projects/
+*.pyc
 
 # company fonts are not redistributed
 fonts/*.ttf

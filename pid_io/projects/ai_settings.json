@@ -1,0 +1,11 @@
+{
+ "provider": "copilot_cli",
+ "command": [
+  "copilot",
+  "-p",
+  "{prompt}"
+ ],
+ "stdin": false,
+ "model": "",
+ "timeout": 300
+}

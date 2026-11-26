@@ -1,0 +1,12 @@
+$ C:\Users\HDEC\AppData\Local\GitHubCopilotCLI\copilot.EXE -p ...
+--- stdout ---
+{"rules":[{"func":"TRAIN","desc":"process train/equipment package","io":[],"system":"-","confidence":0.55,"reason":"TRAIN identifies a process or equipment train boundary, not an individual field instrument."},{"func":"EH","desc":"electric heater","io":["AI","DI","DO"],"system":"DCS","confidence":0.74,"reason":"Typically uses temperature feedback, heater status/trip inputs, and start/stop or control output."},{"func":"PUMPS","desc":"pump package","io":["DI","DO"],"system":"DCS","confidence":0.82,"reason":"A basic pump needs run/trip status indications and a remote start/stop output; VFD-controlled pumps may additionally need AO."}]}
+
+
+--- stderr ---
+
+
+Changes    +0 -0
+AI Credits 0.2 (14s)
+Tokens     ↑ 22.2k (6.7k cached) • ↓ 795 (632 reasoning)
+Resume     copilot --resume=e8fc08ce-becd-41be-b94a-665d3b860b19
