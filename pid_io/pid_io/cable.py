@@ -25,8 +25,12 @@ SHIELD = ["OS (전체 차폐)", "IS+OS (개별+전체 차폐)", "비차폐"]
 SHIELD_CODE = {"OS (전체 차폐)": "OS", "IS+OS (개별+전체 차폐)": "IS-OS", "비차폐": ""}
 
 
-def _sel(id, name, options, default, help=""):
-    return {"id": id, "name": name, "type": "select", "options": options, "default": default, "help": help}
+def _sel(id, name, options, default, help="", on=None):
+    """on: the option a toggle switch means when it is ON (two-option items shown as switches)."""
+    d = {"id": id, "name": name, "type": "select", "options": options, "default": default, "help": help}
+    if on:
+        d["on"] = on
+    return d
 
 
 def _num(id, name, default, unit="", help="", step=1):
@@ -71,12 +75,13 @@ SCHEMA = [
      "items": [
          _sel("group_by", "JB 묶는 단위", ["유닛(트레인)별", "P&ID 시트별", "Area 매핑표"], "유닛(트레인)별",
               "같은 단위 안에서 도면 순서(시트·위치)대로 채웁니다. Area 매핑표가 없으면 유닛별로 묶습니다"),
-         _sel("seg_system", "시스템 분리 (DCS / ESD / F&G)", ["분리", "혼합"], "분리"),
-         _sel("seg_ad", "아날로그 / 디지털 분리", ["분리", "혼합"], "분리"),
-         _sel("seg_do", "DO 별도 JB", ["DI와 같이", "별도"], "DI와 같이", "솔레노이드 24VDC 전원선을 분리할 때"),
-         _sel("rtd_mode", "RTD", ["별도 JB (Triad)", "아날로그 JB에 포함"], "별도 JB (Triad)"),
+         _sel("seg_system", "시스템 분리 (DCS / ESD / F&G)", ["분리", "혼합"], "분리", "끄면 시스템을 섞어 한 JB에 담습니다", on="분리"),
+         _sel("seg_ad", "아날로그 / 디지털 분리", ["분리", "혼합"], "분리", "끄면 AI·AO·DI·DO를 한 JB에 담습니다", on="분리"),
+         _sel("seg_do", "DO 별도 JB", ["DI와 같이", "별도"], "DI와 같이", "솔레노이드 24VDC 전원선을 분리할 때", on="별도"),
+         _sel("rtd_mode", "RTD 별도 JB (Triad)", ["별도 JB (Triad)", "아날로그 JB에 포함"], "별도 JB (Triad)",
+              "끄면 RTD를 아날로그 JB에 넣습니다", on="별도 JB (Triad)"),
          _sel("is_rule", "IS / Non-IS", ["전부 Non-IS", "아날로그(AI·AO·RTD)는 IS", "전부 IS"], "전부 Non-IS",
-              "인덱스 결정사항 7번이 정해지면 그 기준으로 바꿉니다. IS는 JB와 케이블을 따로 씁니다"),
+              "인덱스 결정사항 7번: IS 열은 만들지 않기로 함. 프로젝트에서 IS를 나눌 때만 바꾸세요 (IS는 JB·케이블을 따로 씀)"),
          _sel("pkg_if", "패키지 인터페이스 신호 (운전·Trip 등)", ["제어반(UCP) → 룸 직결", "Skid JB 경유"],
               "제어반(UCP) → 룸 직결", "체크리스트 패키지 Typical로 생긴 행. 직결이면 패키지·시스템마다 멀티 1가닥"),
          _sel("pkg_route", "패키지(벤더 경계) 안 계기", ["패키지마다 Skid JB", "일반 필드 JB에 포함"],

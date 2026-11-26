@@ -34,6 +34,17 @@ nav .st.on{color:var(--ink);font-weight:700;border-left-color:var(--green);backg
 nav .st.on i{background:var(--green);color:#fff;border-color:var(--green)}
 nav .st.done i{border-color:var(--green);color:var(--green)}
 nav .st.dis{opacity:.45;pointer-events:none}
+/* STEP 6+ : extension modules (cable ...) in blue */
+nav .st.ext{margin-top:10px;border-top:1px dashed var(--line);color:#2c7fc0}
+nav .st.ext i{border-color:var(--blue);color:#2c7fc0}
+nav .st.ext.on{border-left-color:var(--blue);background:#eaf4fc;color:#111}
+nav .st.ext.on i{background:var(--blue);border-color:var(--blue);color:#fff}
+.ext-page .eyebrow{color:#2c7fc0}
+.ext-page .uline{border-bottom-color:var(--blue)}
+.ext-page .tabs a.on{border-bottom-color:var(--blue)}
+.ext-page .btn:not(.line){background:var(--blue);border-color:var(--blue)}
+.ext-page .btn:not(.line):hover{background:#2c7fc0;border-color:#2c7fc0}
+.ext-page .tog.on{background:var(--blue)}
 nav .foot{margin:26px 24px 0;padding-top:16px;border-top:1px solid var(--line-l);font-size:12px;color:var(--mute);line-height:1.7}
 main{flex:1;padding:30px 34px 60px;min-width:0}
 .head{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:22px;gap:20px}
@@ -160,7 +171,7 @@ details summary::marker{color:var(--green)}
     <div class="st" data-s="concept"><i>3</i>개념 체크리스트</div>
     <div class="st" data-s="review"><i>4</i>검토</div>
     <div class="st" data-s="output"><i>5</i>출력</div>
-    <div class="st" data-s="cable"><i>6</i>케이블 · JB</div>
+    <div class="st ext" data-s="cable"><i>6</i>케이블 · JB<span class="chip" style="margin-left:auto;font-size:10.5px;padding:0 6px">확장</span></div>
     <div class="st" data-s="ai" style="margin-top:14px;border-top:1px solid var(--line-l)"><i>AI</i>AI 연결 설정</div>
     <div class="foot">도면 인식은 한 번,<br>체크리스트를 바꾸면 IO가<br>즉시 다시 계산됩니다.<br><br><span class="mono">IO 1점 = 인덱스 1행</span><br><br><span id="fontst"></span></div>
   </nav>
@@ -186,7 +197,7 @@ const post = (path, data) => api(path, {method:"POST", headers:{"Content-Type":"
 const P = p => `p/${encodeURIComponent(S.project)}/${p}`;
 function toast(msg, err) { const t=$("#toast"); t.textContent=msg; t.className="toast"+(err?" err":""); t.style.display="block"; clearTimeout(t._h); t._h=setTimeout(()=>t.style.display="none", err?6000:2500); }
 
-function go(screen) { S.tok++; S.screen = screen; if (screen === "cable") CK.data = null; render(); }
+function go(screen) { S.tok++; S.screen = screen; if (screen === "cable") CK.data = null; $("#main").className = ""; render(); }
 document.querySelectorAll("#nav .st").forEach(el => el.onclick = () => go(el.dataset.s));
 
 function navState() {
@@ -857,6 +868,7 @@ async function renderOutput(m) {
 /* ---------------------------------------------------------------- 6 cable */
 const CK = {tab:0, view:"spec", data:null};
 function ckCtl(it, v) {
+  if (it.on) return `<button class="tog ${String(v)===it.on?"on":""}" data-cktog="${it.id}"></button><span class="def" style="width:84px">${esc(v)}</span>`;
   if (it.type === "select") return `<select data-ck="${it.id}">${it.options.map(o=>`<option ${o===String(v)?"selected":""}>${esc(o)}</option>`).join("")}</select>`;
   if (it.type === "text") return `<input type="text" data-ck="${it.id}" value="${esc(v)}" style="width:230px">`;
   const pct = it.step < 1;
@@ -926,6 +938,7 @@ async function renderCable(m) {
   const d = CK.data, G = d.schema, V = d.values;
   if (CK.tab >= G.length) CK.tab = 0;
   const g = G[CK.tab];
+  m.className = "ext-page";
   m.innerHTML = `
   <div class="head"><div><div class="eyebrow">STEP 6</div><h1>케이블 · JB</h1>
     <p class="lead">만들어진 인덱스의 IO로 분기 케이블, JB, 멀티 케이블을 뽑습니다. PLOT PLAN 전이라 길이는 가정입니다. (변경 ${d.changed}건)</p></div>
@@ -945,6 +958,8 @@ async function renderCable(m) {
   m.querySelectorAll("[data-ckt]").forEach(a => a.onclick = () => { CK.tab = +a.dataset.ckt; renderCable(m); });
   m.querySelectorAll("[data-ckv]").forEach(a => a.onclick = () => { CK.view = a.dataset.ckv; renderCable(m); });
   m.querySelectorAll("[data-ck]").forEach(el => el.onchange = () => upd({set:{[el.dataset.ck]: el.value}}));
+  m.querySelectorAll("[data-cktog]").forEach(el => el.onclick = () => { const it = G.flatMap(x=>x.items).find(x=>x.id===el.dataset.cktog);
+    upd({set:{[it.id]: el.classList.contains("on") ? it.options.find(o=>o!==it.on) : it.on}}); });
   m.querySelectorAll("[data-trunk]").forEach(el => el.onchange = () => upd({trunk:{[el.dataset.trunk]: el.value}}));
   $("#ckreset").onclick = () => { if (confirm("케이블 설정을 모두 기본값으로 되돌릴까요?")) upd({reset:true}); };
   if ($("#ckload")) $("#ckload").onclick = () => { if (confirm(`'${$("#ckpre").value}' 프리셋으로 설정을 바꿀까요? (유닛별 길이는 유지)`)) upd({preset_load: $("#ckpre").value}); };
