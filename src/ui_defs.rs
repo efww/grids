@@ -117,7 +117,7 @@ pub(crate) const DARK: Palette = Palette {
 
 pub(crate) static DARK_ON: AtomicBool = AtomicBool::new(false);
 pub(crate) static KO: AtomicBool = AtomicBool::new(false);
-pub(crate) static TABS_ON: AtomicBool = AtomicBool::new(false); // copy of Session::tabs_on for pane_geo
+pub(crate) static TABS_ON: AtomicBool = AtomicBool::new(true); // copy of Session::tabs_on for pane_geo
 
 /// UI text: English unless Korean is picked in the view menu (the Explorer parts follow Windows).
 pub(crate) fn tr(en: &'static str, ko: &'static str) -> &'static str {

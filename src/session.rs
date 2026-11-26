@@ -63,7 +63,7 @@ impl Default for Session {
             cols: vec![String::new(); MAXP],
             tints: vec![0; MAXP],
             order: Vec::new(),
-            tabs_on: false,
+            tabs_on: true, // a new install shows the tab strips; an ini without tabs= keeps them off (parse)
             tabs: vec![Vec::new(); MAXP],
             tab: vec![0; MAXP],
             rn_presets: Vec::new(),
@@ -136,7 +136,8 @@ impl Session {
     }
 
     pub(crate) fn parse(text: &str) -> Session {
-        let mut s = Session::default();
+        // tabs= came later: a file without it reads as off, as it always did (the new-install default is on)
+        let mut s = Session { tabs_on: false, ..Session::default() };
         let mut rowr: Vec<Vec<f64>> = Vec::new();
         // Notepad's "UTF-8 with BOM" (or PowerShell 5's -Encoding UTF8) would otherwise hide the first key (win=)
         let text = text.strip_prefix('\u{feff}').unwrap_or(text);
@@ -863,7 +864,7 @@ mod tests {
         assert_eq!(Session::parse(&s.to_ini()), s);
         let d = Session::default();
         assert_eq!(Session::parse(&d.to_ini()), d);
-        assert_eq!(Session::parse(""), d);
+        assert_eq!(Session::parse(""), Session { tabs_on: false, ..d }); // no tabs= : an older ini, strips off
     }
 
     #[test]
@@ -926,7 +927,7 @@ mod tests {
             "tree=1",
             "hotkey=1",
             "dialog_jump=1",
-            "tabs=0",
+            "tabs=1",
             "ev_here=0",
             "ev_sort=1",
             "update_check=1",
@@ -949,6 +950,7 @@ mod tests {
             accent: 0x8DB5E8,
             dark: true,
             paths: slots(String::new(), &[(0, r"C:\".into()), (1, r"D:\Data".into())]),
+            tabs_on: false,
             ..Default::default()
         };
         assert_eq!(s, want);
@@ -967,6 +969,7 @@ mod tests {
             colr: even(2),
             rowr: vec![even(2), even(1)],
             paths: slots(String::new(), &[(0, r"C:\A".into()), (1, r"C:\B".into())]),
+            tabs_on: false,
             ..Default::default()
         };
         assert_eq!(Session::parse(text), want);

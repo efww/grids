@@ -2427,6 +2427,10 @@ mod tests {
         assert!(Session::parse("p0=C:\\a\nb0=0|C:\\a\nb1=9|x|y\n").tabs[0].is_empty());
         assert_eq!(Session::parse("b1=9|x|y\n").tab[1], 1);
         assert!(!Session::parse("side=300\n").tabs_on);
+        // a new install (no grids.ini) starts with the strips on; a saved tabs=0 stays off
+        assert!(Session::default().tabs_on);
+        assert!(!Session::parse("tabs=0\n").tabs_on && Session::parse("tabs=1\n").tabs_on);
+        assert!(!Session::parse(&Session { tabs_on: false, ..Session::default() }.to_ini()).tabs_on);
         // tabs move with their pane
         let mut m = back.clone();
         m.swap_slots(2, 0);
