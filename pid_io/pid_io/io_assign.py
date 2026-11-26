@@ -339,15 +339,15 @@ def assign(symbols: list[Symbol], io_proto: dict, concept: Concept, notes: dict 
     # ------------------------------------------------ spares
     counts = {}
     for r in rows:
-        if r.kind == "instrument" and r.io in HW_IO and r.system not in ("-", "?"):
+        if r.kind == "instrument" and (r.io in HW_IO or r.io == "TC/RTD") and r.system not in ("-", "?"):
             counts[(r.system, r.io)] = counts.get((r.system, r.io), 0) + 1
     for (sys_, io), n in sorted(counts.items()):
-        rate = concept.num(SPARE_IDS[io], 0)
+        rate = concept.num(SPARE_IDS.get(io, "H01"), 0)      # RTD channels take the AI spare rate
         k = math.ceil(n * rate - 1e-9)
         for i in range(k):
             rows.append(Row("", f"{sys_}-{io}-SPARE-{i + 1:03d}", "", "SPARE", f"Spare {io}", "", "", "", sys_, io,
                             "", 0, "", 1.0, "확정", [], "SPARE", origin="스페어",
-                            basis=f"{SPARE_IDS[io]} {rate:.0%} × {n}"))
+                            basis=f"{SPARE_IDS.get(io, 'H01')} {rate:.0%} × {n}" + (" (RTD = AI 스페어율)" if io == "TC/RTD" else "")))
     _number_xxxx(rows)
     for r in rows:
         if r.kind != "instrument" or r.io in ("-", "", None) or r.origin == "스페어":

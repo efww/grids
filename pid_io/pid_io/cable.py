@@ -597,23 +597,53 @@ def build(rows, s: dict, area_map: dict | None = None, layout=None):
     return res
 
 
-def index_map(res):
-    """tag -> {jb, multi, multi_spec, cable, cable_spec} for the index columns.
+INDEX_COLS = [  # (column, header, key, width) - index columns after the template (decision 8: appended)
+    (34, "Junction Box", "jb", 16), (35, "Multi Cable Number", "multi", 18), (36, "Multi Cable Spec.", "multi_spec", 24),
+    (37, "Field Cable No", "cable", 18), (38, "Field Cable Spec.", "cable_spec", 20),
+    (39, "Field Cable Length (m)", "cable_len", 10), (40, "Multi Cable Length (m)", "multi_len", 10),
+    (41, "Perforated Tray", "pt", 16), (42, "Perforated Bracket (개)", "pt_br", 10),
+    (43, "Ladder Tray (멀티 경로)", "ladder", 40), (44, "UG Trench (멀티 경로)", "trench", 30),
+    (45, "Ladder m / UG m", "lad_ug", 12), (46, "케이블 산출 근거", "basis", 70),
+]
+
+
+def index_map(res, tray=None, sup=None):
+    """tag -> index columns 34-46: JB, multi, field cable, lengths, perforated tray + brackets,
+    the ladder trays / trench runs its multi rides (in order JB -> room) and the cable basis.
     Field instruments: their JB and its multi. Package interface / MCC rows: no JB, their multi.
-    Comm ports: their home-run cable."""
+    Comm ports: their home-run cable (and its trays)."""
     multi = {c["frm"]: c for c in res["cables"] if c["kind"] == "멀티"}
+    by_cable = (tray or {}).get("by_cable") or {}
+    pt = {p["cable"]: p for p in (tray or {}).get("pt") or []}
+    br = {p["pt"]: p["count"] for p in (sup or {}).get("pt") or []}
+
+    def route(no):
+        bc = by_cable.get(no)
+        if not bc:
+            return {"ladder": "", "trench": "", "lad_ug": ""}
+        lad = [f"{x['no']} ({x['size']}) {x['m']}m" for x in bc["legs"] if x["kind"] == "사다리"]
+        ug = [f"{x['no']} {x['m']}m" for x in bc["legs"] if x["kind"] == "UG"]
+        return {"ladder": " → ".join(lad), "trench": " → ".join(ug), "lad_ug": f"{bc['ladder_m']} / {bc['ug_m']}"}
     out = {}
     for c in res["cables"]:
         if c["kind"] == "분기":
             m = multi.get(c["to"]) or {}
+            p = pt.get(c["no"]) or {}
             out.setdefault(c["frm"], {"jb": c["to"], "multi": m.get("no", ""), "multi_spec": m.get("spec", ""),
-                                      "cable": c["no"], "cable_spec": c["spec"]})
+                                      "cable": c["no"], "cable_spec": c["spec"], "cable_len": c["length"],
+                                      "multi_len": m.get("length", ""), "pt": f"{p['no']} ({p['width']})" if p else "",
+                                      "pt_br": br.get(p.get("no"), "") if p else "", **route(m.get("no", "")),
+                                      "basis": f"[분기] {c['basis']}" + (f" / [멀티] {m['basis']}" if m else "")})
         elif c["kind"] in ("패키지", "MCC"):
             for t in c.get("tags") or []:
-                out.setdefault(t, {"jb": "-", "multi": c["no"], "multi_spec": c["spec"], "cable": "", "cable_spec": ""})
+                out.setdefault(t, {"jb": "-", "multi": c["no"], "multi_spec": c["spec"], "cable": "", "cable_spec": "",
+                                   "cable_len": "", "multi_len": c["length"], "pt": "", "pt_br": "", **route(c["no"]),
+                                   "basis": f"[{c['kind']}] {c['basis']}"})
         elif c["kind"] == "통신":
             for t in c.get("tags") or []:
-                out.setdefault(t, {"jb": "-", "multi": "", "multi_spec": "", "cable": c["no"], "cable_spec": c["spec"]})
+                out.setdefault(t, {"jb": "-", "multi": "", "multi_spec": "", "cable": c["no"], "cable_spec": c["spec"],
+                                   "cable_len": c["length"], "multi_len": "", "pt": "", "pt_br": "", **route(c["no"]),
+                                   "basis": f"[통신] {c['basis']}"})
     return out
 
 

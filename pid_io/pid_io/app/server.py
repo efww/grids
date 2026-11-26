@@ -953,6 +953,31 @@ def cable_export(name: str):
     return {"files": [out.name]}
 
 
+def export_basis(name: str, sensitivity: bool = True):
+    """산출근거 workbook (audit, relations, formulas with numbers, checklist sensitivity, findings)."""
+    from .. import basis
+    from ..pipeline import apply_overrides as _ao
+    c = computed(name)
+    if not c:
+        raise ValueError("먼저 추출을 실행해 주세요")
+    data, syms, notes, con, rows, log = c
+    s, res, lay = cable_result(name)
+    dd, am, ob = _plot_dec(name), _area_map(name), _obstacles(lay)
+    tr = cable.TR.build(res, lay, s, dd)
+    sp = cable.SP.build(tr, s["values"], lay.m_per_pt if lay else None, dd, ob)
+    imap = cable.index_map(res, tr, sp)
+    sc = sk = None
+    if sensitivity:
+        ov = overrides(name)
+        ps, proto = _ao(syms, load_protocol(PROTO / "io_rules.yaml"), ov)
+        con2 = concept(name)
+        sc = basis.concept_sensitivity(ps, proto, con2, notes, (ov or {}).get("decisions"), s, am, lay, dd, ob)
+        sk = basis.cable_sensitivity(rows, s, am, lay, dd, ob, con)
+    out = pdir(name) / "output" / f"산출근거_{safe_name(name)}_{time.strftime('%Y%m%d_%H%M')}.xlsx"
+    r = basis.write(out, name, rows, con, s, res, tr, sp, imap, sc, sk)
+    return {"files": [out.name], **r}
+
+
 def data_3d(name: str):
     from .. import threed
     s, res, lay = cable_result(name)
@@ -991,8 +1016,10 @@ def export(name: str, body: dict):
     with CALC:
         imp = impact(syms_ov, notes, con, top=None, decisions=dec.load(d))
     try:                                             # STEP 6/7 -> index Junction Box / multi columns
-        _, cres, _ = cable_result(name)
-        cmap = cable.index_map(cres)
+        cs, cres, clay = cable_result(name)
+        ctr = cable.TR.build(cres, clay, cs, _plot_dec(name))
+        csp = cable.SP.build(ctr, cs["values"], clay.m_per_pt if clay else None, _plot_dec(name), _obstacles(clay))
+        cmap = cable.index_map(cres, ctr, csp)
     except Exception:
         cmap = None
     write_template(rows, d / "input" / files["template"], out, files["pdf"], data.get("sheets"), con, log,
@@ -1399,6 +1426,9 @@ class H(BaseHTTPRequestHandler):
             if act == "cable_export" and method == "POST":
                 with CALC:
                     return self._send(200, cable_export(name))
+            if act == "basis_export" and method == "POST":
+                with CALC:
+                    return self._send(200, export_basis(name, not self._json().get("quick")))
             if act == "data3d":
                 with CALC:
                     return self._send(200, data_3d(name))

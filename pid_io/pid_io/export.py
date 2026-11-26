@@ -85,12 +85,13 @@ def write_template(all_rows: list[Row], template: Path, out: Path, source_file: 
         pass
     ws.cell(1, 28, "산출 근거")._style = copy(ws.cell(1, 19)._style)
     if cable_map is not None:                          # STEP 6 cable / STEP 7 JB results
-        for c, h in ((34, "Junction Box"), (35, "Multi Cable Number"), (36, "Multi Cable Spec."),
-                     (37, "Field Cable No"), (38, "Field Cable Spec.")):
+        from .cable import INDEX_COLS
+        for c, h, _, w in INDEX_COLS:
             cell = ws.cell(2, c, h)
             cell._style = copy(ws.cell(2, 27)._style)
-            ws.column_dimensions[cell.column_letter].width = (16, 18, 24, 18, 20)[c - 34]
+            ws.column_dimensions[cell.column_letter].width = w
         ws.cell(1, 34, "케이블 · JB (STEP 6·7)")._style = copy(ws.cell(1, 19)._style)
+        ws.cell(1, 39, "길이 · 트레이 · 서포트 (STEP 6·8·9)")._style = copy(ws.cell(1, 19)._style)
     for i, row in enumerate(rows):
         r = first + i
         sh = sheets.get(str(row.page), {}) if row.page else {}
@@ -107,10 +108,9 @@ def write_template(all_rows: list[Row], template: Path, out: Path, source_file: 
         }
         if cable_map is not None:
             cm = cable_map.get(row.tag) or cable_map.get(f"{row.unit}-{row.tag}")
-            if cm:
-                vals.update({34: cm["jb"], 35: cm["multi"], 36: cm["multi_spec"], 37: cm["cable"], 38: cm["cable_spec"]})
-            else:
-                vals.update({34: "-", 35: "-", 36: "-", 37: "-", 38: "-"})
+            from .cable import INDEX_COLS
+            for c, _, k, _w in INDEX_COLS:
+                vals[c] = (cm.get(k, "") if cm else ("-" if c <= 38 else ""))
         for c, v in vals.items():
             cell = ws.cell(r, c)
             cell.value = v
@@ -126,7 +126,7 @@ def write_template(all_rows: list[Row], template: Path, out: Path, source_file: 
             for c in line:
                 if isinstance(c.value, str) and "502" in c.value:
                     c.value = c.value.replace("502", str(n_last))
-    ws.auto_filter.ref = f"A2:{'AL' if cable_map is not None else 'AG'}{max(n_last, 502)}"
+    ws.auto_filter.ref = f"A2:{'AT' if cable_map is not None else 'AG'}{max(n_last, 502)}"
     _restore_rules(ws, max(n_last, 502))
     _io_summary(wb, max(n_last, 502), concept, spares)
     if "Settings" in wb.sheetnames:                    # decision 19

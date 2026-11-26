@@ -855,6 +855,8 @@ async function renderOutput(m) {
       <div class="kv"><label style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" id="ov" ${S.concept&&S.concept.overlay_default?"checked":""}> 검토용 오버레이 PDF (몇 분 소요, I03)</label><span></span></div>
       <div class="kv"><span>레퍼런스 채점 시트</span><span>${(S.state.meta.files||{}).ref?"레퍼런스 있음 → 포함":"레퍼런스 없음"}</span></div>
       <div style="margin-top:16px"><button class="btn" id="mk">엑셀 만들기</button></div>
+      <div class="kv" style="margin-top:18px"><span><b>산출근거 엑셀</b> - 누락·관계 점검, IO·케이블·JB·트레이·서포트 산출식(숫자 대입), 자재, 체크리스트·설정을 하나씩 바꿨을 때 무엇이 얼마나 바뀌는지, 검토 의견, Tag_Chain·Tray_Chain</span><span></span></div>
+      <div style="margin-top:8px;display:flex;gap:8px"><button class="btn line" id="mkb">산출근거 만들기 (약 1~2분)</button><button class="btn sm line" id="mkbq" title="체크리스트 영향 계산 없이 빠르게">빠르게 (영향 계산 없이)</button></div>
     </div>
     <div class="panel"><h2>만든 파일</h2>
       ${outs.length?`<table><tr><th>파일</th><th>시각</th><th>크기</th><th></th></tr>${outs.map(f=>`<tr><td class="mono">${esc(f.name)}</td><td>${esc(f.time)}</td><td>${(f.size/1024/1024).toFixed(1)}MB</td>
@@ -864,6 +866,10 @@ async function renderOutput(m) {
   <div class="panel" style="margin-top:16px"><h2>시스템별 IO</h2>
     <table><tr><th>System</th><th>AI</th><th>AO</th><th>DI</th><th>DO</th><th>TC/RTD</th><th>합계</th><th>카드</th></tr>
     ${Object.entries(s.per_system).map(([k,v])=>`<tr><td><b>${esc(k)}</b></td><td>${v.AI}</td><td>${v.AO}</td><td>${v.DI}</td><td>${v.DO}</td><td>${v["TC/RTD"]||0}</td><td><b>${v.AI+v.AO+v.DI+v.DO+(v["TC/RTD"]||0)}</b></td><td>${s.cards[k]}</td></tr>`).join("")}</table></div>`;
+  const basisBtn = (id, quick, lab) => $(id).onclick = async () => { const b = $(id); b.disabled = true; b.textContent = "만드는 중… (체크리스트 하나씩 계산)";
+    try { const r = await post(P("basis_export"), {quick}); toast(`${r.files.join(", ")} 생성 · 점검 NG ${r.ng} · 주의 ${r.warn}`, r.ng > 0); if (S.screen === "output") renderOutput(m); }
+    catch(e) { toast(e.message, true); } if ($(id)) { $(id).disabled = false; $(id).textContent = lab; } };
+  basisBtn("#mkb", false, "산출근거 만들기 (약 1~2분)"); basisBtn("#mkbq", true, "빠르게 (영향 계산 없이)");
   $("#mk").onclick = async () => {
     const b = $("#mk"); b.disabled = true; b.textContent = "만드는 중…";
     try { const r = await post(P("export"), {overlay: $("#ov").checked}); toast(r.files.join(", ") + " 생성" + ((r.warnings||[]).length ? " · " + r.warnings.join(" ") : ""), !!(r.warnings||[]).length); if (S.screen === "output") renderOutput(m); }
