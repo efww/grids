@@ -58,7 +58,14 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                     restore_focus();
                 }
                 quiet_size(h, wp.0 as u32); // first shown after a minimized sign-in start
+                // last: was_max, the minimized save and quiet_size above need this WM_SIZE as it was
+                if wp.0 as u32 == SIZE_MINIMIZED {
+                    hide_if_min(h);
+                }
             }
+            WM_TRAY => tray_msg(h, wp, lp),
+            WM_TIMER if wp.0 == TIMER_TRAY => tray_retry(h),
+            m if m != 0 && m == taskbar_msg() => taskbar_created(h),
             // WA_ACTIVE (Alt+Tab, taskbar, a popup closing, a second grids.exe): focus back where it was.
             // WA_CLICKACTIVE: as before, so the click lands on what was under it (crumbs stay crumbs); TIMER_FOCUS
             // looks again once that click is handled.
@@ -323,6 +330,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 }
                 ID_CTXMENU => toggle_ctx_menu(),
                 ID_AUTOSTART => toggle_autostart(),
+                ID_TRAY => toggle_tray(h),
                 ID_LANG => set_language(!KO.load(Ordering::Relaxed)),
                 ID_HELP => open_help(),
                 ID_ABOUT => about(h),
@@ -346,6 +354,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 check(ID_TABS, TABS_ON.load(Ordering::Relaxed));
                 check(ID_HOTKEY, hot);
                 check(ID_AUTOSTART, autostart_on()); // the Run value and Task Manager's switch, not a setting
+                check(ID_TRAY, app(|a| a.tray_on)); // the icon really there, as Win+Alt+E above
                 check(ID_DLGJUMP, jump);
                 check(ID_CTXMENU, ctx_menu_on()); // read from the registry, not a setting
                 check(ID_UPDATES, app(|a| a.s.updates));
@@ -420,6 +429,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                     destroy_pane(i);
                 }
                 app(|a| a.tree = None);
+                tray_remove(h, false); // before the loop ends: no icon left behind
                 PostQuitMessage(0);
             }
             _ => return DefWindowProcW(h, msg, wp, lp),
@@ -655,22 +665,25 @@ pub(crate) unsafe fn set_hotkey(main: HWND, on: bool) -> bool {
 // Front with the list ready for the keyboard; pressed while Grids is already in front: minimize.
 // A modal dialog owned by main (save, colour, About) has disabled it: bring that forward, never minimize.
 pub(crate) unsafe fn hotkey_pressed(main: HWND) {
-    let iconic = IsIconic(main).as_bool();
+    if IsWindowEnabled(main).as_bool() && GetAncestor(GetForegroundWindow(), GA_ROOTOWNER) == main && !IsIconic(main).as_bool() {
+        keep_focus(main);
+        _ = ShowWindow(main, SW_MINIMIZE);
+    } else {
+        bring_front(main);
+    }
+}
+
+// Win+Alt+E and the notification area icon: restored (shown too, if it was hidden there) and in front.
+pub(crate) unsafe fn bring_front(main: HWND) {
+    if IsIconic(main).as_bool() || !IsWindowVisible(main).as_bool() {
+        _ = ShowWindow(main, SW_RESTORE);
+    }
     if !IsWindowEnabled(main).as_bool() {
-        if iconic {
-            _ = ShowWindow(main, SW_RESTORE);
-        }
         let p = GetLastActivePopup(main);
         if p != main {
             _ = SetForegroundWindow(p);
         }
-    } else if GetAncestor(GetForegroundWindow(), GA_ROOTOWNER) == main && !iconic {
-        keep_focus(main);
-        _ = ShowWindow(main, SW_MINIMIZE);
     } else {
-        if iconic {
-            _ = ShowWindow(main, SW_RESTORE);
-        }
         // refused (the taskbar button flashes instead): leave focus where it is
         if SetForegroundWindow(main).as_bool() && GetForegroundWindow() == main {
             focus_view(app(|a| a.s.active));
@@ -975,6 +988,7 @@ pub(crate) unsafe fn make_menus() -> Result<HMENU> {
     item(view, MF_STRING, ID_DBLUP, tr("Double-click empty space: parent folder", "빈 곳 더블클릭: 위 폴더로"))?;
     item(view, MF_STRING, ID_HOTKEY, tr("Bring Grids to front from anywhere\tWin+Alt+E", "어디서나 Grids 불러오기\tWin+Alt+E"))?;
     item(view, MF_STRING, ID_AUTOSTART, tr("Start with Windows (minimized)", "Windows 시작 시 실행 (최소화)"))?;
+    item(view, MF_STRING, ID_TRAY, tr("Minimize to the notification area", "최소화하면 알림 영역으로"))?;
     let jump = tr("Jump to Grids folders from file dialogs\tCtrl+Alt+G", "파일 대화 상자에서 Grids 폴더로 이동\tCtrl+Alt+G");
     item(view, MF_STRING, ID_DLGJUMP, jump)?;
     let ctx = tr("Add \"Open in Grids\" to Explorer's right-click menu", "탐색기 오른쪽 클릭 메뉴에 \"Grids에서 열기\" 추가");

@@ -309,6 +309,11 @@ pub(crate) unsafe fn pre_translate(m: &MSG) -> bool {
             false
         }
         WM_KEYDOWN | WM_SYSKEYDOWN => {
+            // hidden in the notification area but still the foreground window (its menu closed with Esc): no shortcuts
+            let main = app(|a| a.main);
+            if !IsWindowVisible(main).as_bool() && (m.hwnd == main || IsChild(main, m.hwnd).as_bool()) {
+                return false;
+            }
             // a held Alt+PgDn's repeats leave its folder list coming (a slow share would never get to answer)
             let repeat = m.lParam.0 & (1 << 30) != 0;
             if !(repeat && app(|a| a.kids.as_ref().is_some_and(|k| k.step != 0))) {

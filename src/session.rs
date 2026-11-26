@@ -20,6 +20,7 @@ pub(crate) struct Session {
     pub(crate) tree: bool,             // folder tree shown (side keeps its width while hidden)
     pub(crate) hotkey: bool,           // Win+Alt+E brings Grids to the front, app-wide (not part of a layout)
     pub(crate) dlgjump: bool,          // Ctrl+Alt+G in other apps' file dialogs lists Grids' folders (dialog_jump.rs)
+    pub(crate) tray: bool,             // minimized, Grids leaves the taskbar for a notification area icon (tray.rs), app-wide
     pub(crate) file: String,          // named session (.grids) the layout was last loaded from / saved to
     pub(crate) favs: Vec<String>,      // favourite folders (parsing names), app-wide
     pub(crate) recent: Vec<String>,    // recently visited folders from every pane, newest first, app-wide
@@ -58,6 +59,7 @@ impl Default for Session {
             tree: true,
             hotkey: true,
             dlgjump: true,
+            tray: false,
             file: String::new(),
             favs: Vec::new(),
             recent: Vec::new(),
@@ -205,6 +207,7 @@ impl Session {
                 "tree" => s.tree = v.trim() != "0",
                 "hotkey" => s.hotkey = v.trim() != "0",
                 "dialog_jump" => s.dlgjump = v.trim() != "0",
+                "tray" => s.tray = v.trim() == "1",
                 "tabs" => s.tabs_on = v.trim() == "1",
                 "ev_here" => s.ev_here = v.trim() == "1",
                 "ev_sort" => s.ev_sort = ev_sort_ok(v.trim().parse().unwrap_or(1)),
@@ -273,6 +276,7 @@ impl Session {
         o += &format!("follow_theme={}\n", self.follow as u8);
         o += &format!("dblup={}\ntree={}\nhotkey={}\n", self.dblup as u8, self.tree as u8, self.hotkey as u8);
         o += &format!("dialog_jump={}\n", self.dlgjump as u8);
+        o += &format!("tray={}\n", self.tray as u8);
         o += &format!("tabs={}\n", self.tabs_on as u8);
         o += &format!("ev_here={}\nev_sort={}\nupdate_check={}\n", self.ev_here as u8, self.ev_sort, self.updates as u8);
         if let Some(c) = self.ev_cols {
@@ -898,6 +902,7 @@ mod tests {
             tree: false,
             hotkey: false,
             dlgjump: false,
+            tray: true,
             file: r"C:\Grids\sessions\일.grids".into(),
             favs: strs(&[r"C:\Users\홍길동", r"\\nas\share"]),
             recent: strs(&[r"D:\a=b", r"C:\Temp"]),
@@ -947,6 +952,7 @@ mod tests {
             "tree=0",
             "hotkey=0",
             "dialog_jump=0",
+            "tray=1",
             "tabs=1",
             "ev_here=1",
             "ev_sort=13",
@@ -990,6 +996,7 @@ mod tests {
             "tree=1",
             "hotkey=1",
             "dialog_jump=1",
+            "tray=0",
             "tabs=1",
             "ev_here=0",
             "ev_sort=1",
@@ -1023,6 +1030,17 @@ mod tests {
         assert_eq!((s.tabs_on, s.ev_here, s.ev_sort, s.ev_cols, s.ko), (false, false, 1, None, false));
         assert_eq!((s.accent_dark, s.order.len(), s.tints.iter().all(|&t| t == 0)), (DARK.accents[1].1, 0, true));
         assert_eq!((s.key_tips, s.key_tips_seen), (true, [0; TIP_N]));
+        assert!(!s.tray); // before tray=: stays on the taskbar
+    }
+
+    #[test]
+    fn tray_reads_only_one_as_on() {
+        assert!(Session::parse("tray=1\n").tray);
+        for v in ["tray=0\n", "tray=\n", "tray=yes\n", ""] {
+            assert!(!Session::parse(v).tray, "{v:?}");
+        }
+        assert!(Session { tray: true, ..Session::default() }.to_ini().contains("\ntray=1\n"));
+        assert!(Session::default().to_ini().contains("\ntray=0\n"));
     }
 
     #[test]
@@ -1111,6 +1129,7 @@ mod tests {
             tree: true,
             hotkey: true,
             dlgjump: true,
+            tray: false,
             file: r"F:\a.grids".into(),
             favs: strs(&[r"F:\fav"]),
             recent: strs(&[r"F:\r"]),

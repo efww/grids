@@ -82,6 +82,7 @@ mod organize;
 mod jumplist;
 mod autostart;
 mod tour;
+mod tray;
 
 use ui_defs::*;
 // explicit, so it wins over the same name glob-imported from windows (a glob clash would turn match patterns into bindings)
@@ -119,6 +120,7 @@ use organize::*;
 use jumplist::*;
 use autostart::*;
 use tour::*;
+use tray::*;
 
 /// Let a drive with no disk (empty card reader slot, DVD drive, pulled USB stick) just fail the file call,
 /// instead of Windows' "No Disk" system box freezing the calling thread until it is answered.
@@ -443,6 +445,11 @@ fn main() -> Result<()> {
         if app(|a| a.s.dlgjump) {
             dialog_jump::enable(true);
         }
+        // no taskbar yet at sign-in: s.tray stays on, a few timed retries and TaskbarCreated try again
+        tray_init(main);
+        if app(|a| a.s.tray) {
+            tray_start(main); // a minimized sign-in start leaves the taskbar once the icon is there
+        }
         refresh_jump_list(true); // taskbar / Start jump list: sessions, favourites, recent folders
         start.release(); // panes are up: the next start finds this window and hands it its folders
 
@@ -538,7 +545,7 @@ mod tests {
         main.extend((0..26).map(|d| ID_DRIVE as usize + d));
         main.extend([
             ID_HIDDEN, ID_KEYS, ID_GATHER, ID_DBLUP, ID_LANG, ID_HELP, ID_ABOUT, ID_TREE, ID_EXT, ID_HOTKEY, ID_FOLLOW, ID_TABS, ID_KEY_TIPS,
-            ID_DLGJUMP, ID_CTXMENU, ID_AUTOSTART, ID_UPDATES, ID_STAR, ID_TOUR,
+            ID_DLGJUMP, ID_CTXMENU, ID_AUTOSTART, ID_UPDATES, ID_STAR, ID_TOUR, ID_TRAY,
         ]);
         main.extend((0..LIGHT.accents.len()).map(|k| ID_ACCENT + k));
         main.push(ID_ACCENT_PICK);

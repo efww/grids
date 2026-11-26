@@ -97,6 +97,7 @@ pub(crate) struct App {
     pub(crate) drive_mask: u32,              // GetLogicalDrives() they were made for
     pub(crate) drive_mark: Option<u8>,       // the active pane's drive (underlined)
     pub(crate) hot_on: bool,                 // Win+Alt+E actually registered (s.hotkey is only the wish)
+    pub(crate) tray_on: bool,                // the notification area icon is really there (s.tray is only the wish)
     pub(crate) focus_keep: HWND,             // focus when Grids last went to the back; coming back puts it there again
     pub(crate) click_nc: bool,               // the click that is bringing Grids back is outside the client area (title bar)
     pub(crate) focus_wait: bool,             // TIMER_FOCUS running
@@ -193,6 +194,7 @@ thread_local! {
         drive_mask: 0,
         drive_mark: None,
         hot_on: false,
+        tray_on: false,
         focus_keep: HWND::default(),
         click_nc: false,
         focus_wait: false,
