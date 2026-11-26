@@ -11,7 +11,7 @@ impl INameSpaceTreeControlEvents_Impl for TreeEvents_Impl {
         let on_item = hit & NSTCEHT_ONITEM.0 as u32 != 0 && click & NSTCECT_LBUTTON.0 as u32 != 0;
         if let (true, Some(si), Some(t)) = (on_item, psi.as_ref(), app(|a| a.tree.clone())) {
             if unsafe { t.GetItemState(si, NSTCIS_SELECTED.0 as u32) }.unwrap_or(0) != 0 {
-                unsafe { browse_item(app(|a| a.s.active), si) };
+                unsafe { browse_item(app(|a| a.s.active), &real_item(si)) };
             }
         }
         Err(S_FALSE.into()) // let the tree do its default handling
@@ -21,7 +21,7 @@ impl INameSpaceTreeControlEvents_Impl for TreeEvents_Impl {
         // (Focus is no good here: on a click the selection changes before the tree takes focus.)
         let user = app(|a| std::mem::take(&mut a.tree_input));
         if let Some(item) = sel.as_ref().filter(|_| user).and_then(|s| unsafe { s.GetItemAt(0) }.ok()) {
-            unsafe { browse_item(app(|a| a.s.active), &item) };
+            unsafe { browse_item(app(|a| a.s.active), &real_item(&item)) };
         }
         Ok(())
     }
@@ -88,10 +88,80 @@ pub(crate) unsafe fn create_tree(main: HWND) -> Result<(INameSpaceTreeControl, H
     t.Initialize(main, &RECT::default(), style as u32)?;
     let root: IShellItem = SHGetKnownFolderItem(&FOLDERID_Desktop, KF_FLAG_DEFAULT, None)?;
     t.AppendRoot(&root, SHCONTF_FOLDERS.0 as u32, NSTCRS_EXPANDED.0 as u32, None)?;
+    let quick = if app(|a| a.s.tree_quick) { add_quick(&t) } else { None };
+    app(|a| a.quick_root = quick);
     let ev: INameSpaceTreeControlEvents = TreeEvents.into();
     t.TreeAdvise(&ev)?;
     let h = t.cast::<IOleWindow>()?.GetWindow()?;
     Ok((t, h))
+}
+
+// ---------- Explorer's Quick access atop the tree: the folders pinned there (and, as Explorer is set, frequent ones) ----------
+
+const QUICK_ACCESS: PCWSTR = w!("shell:::{679f85cb-0220-4080-b29b-5540cc05aab6}");
+
+// Quick access as the tree's first root, expanded. None when it can't be had (switched off by policy, say):
+// the tree keeps just the Desktop, as before.
+unsafe fn add_quick(t: &INameSpaceTreeControl) -> Option<IShellItem> {
+    let q: IShellItem = SHCreateItemFromParsingName(QUICK_ACCESS, None).ok()?;
+    let flags = (SHCONTF_FOLDERS.0 | SHCONTF_NAVIGATION_ENUM.0) as u32;
+    t.InsertRoot(0, &q, flags, NSTCRS_EXPANDED.0 as u32, None).ok()?;
+    Some(q)
+}
+
+// View > Show Explorer Quick access in the folder tree: only that root goes in or out, the rest of the tree
+// (what is expanded, the selection) stays. With no tree only the setting changes.
+pub(crate) unsafe fn toggle_tree_quick() {
+    let on = app(|a| {
+        a.s.tree_quick ^= true;
+        a.s.tree_quick
+    });
+    let Some(t) = app(|a| a.tree.clone()) else { return };
+    if on {
+        if app(|a| a.quick_root.is_none()) {
+            let q = add_quick(&t);
+            app(|a| a.quick_root = q);
+        }
+    } else if let Some(q) = app(|a| a.quick_root.take()) {
+        // the selection may sit under the root going away: the tree then drops it or moves it to a
+        // neighbour, which must not navigate; put it back on the active pane's folder instead
+        app(|a| a.tree_input = false);
+        _ = t.RemoveRoot(&q);
+        let i = app(|a| a.s.active);
+        if let Some(item) = view_of::<IFolderView2>(i).and_then(|fv| fv.GetFolder::<IShellItem>().ok()) {
+            sync_tree(&item);
+            return;
+        }
+    }
+    reveal_tree_selection();
+}
+
+/// "C:\..." : a folder on a drive letter. Only these are reopened by path from Quick access; a pinned share
+/// that is offline would hold the window up while its path is parsed again.
+pub(crate) fn drive_path(p: &str) -> bool {
+    let b = p.as_bytes();
+    b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] == b'\\'
+}
+
+// The real path of an item somewhere below the Quick access root (not the root itself), when it is a drive
+// path. None for anything else: the Desktop side, Quick access itself, shares, shell places.
+unsafe fn quick_path(si: &IShellItem) -> Option<String> {
+    let root = app(|a| a.quick_root.clone())?;
+    let r = SHGetIDListFromObject(&root).ok()?;
+    let path = SHGetIDListFromObject(si).ok().map(|p| {
+        let below = ILIsParent(r, p, false).as_bool() && !ILIsEqual(r, p).as_bool();
+        let path = if below { name(p, SIGDN_DESKTOPABSOLUTEPARSING) } else { String::new() };
+        CoTaskMemFree(Some(p as _));
+        path
+    });
+    CoTaskMemFree(Some(r as _));
+    path.filter(|p| drive_path(p))
+}
+
+// What a tree pick opens: a folder under Quick access by its real path, so the pane's address, tab and
+// Recent hold that path rather than a Quick access item. Anything else (or a path that won't parse) as it is.
+unsafe fn real_item(si: &IShellItem) -> IShellItem {
+    quick_path(si).and_then(|p| SHCreateItemFromParsingName::<_, _, IShellItem>(&HSTRING::from(p), None).ok()).unwrap_or_else(|| si.clone())
 }
 
 
@@ -101,6 +171,16 @@ pub(crate) unsafe fn sync_tree(item: &IShellItem) {
     let Some((t, main, th)) = app(|a| a.tree.clone().map(|t| (t, a.main, a.tree_hwnd))) else { return };
     // Grids picks this selection itself: a mark left by a tree click that changed nothing must not navigate
     app(|a| a.tree_input = false);
+    // a folder picked under Quick access opened by its real path: that row stays selected (and scrolled to),
+    // rather than the selection jumping to the same folder on the Desktop side
+    if let Ok(sel) = t.GetSelectedItems().and_then(|s| s.GetItemAt(0)) {
+        if let Some(q) = quick_path(&sel) {
+            let here = item.GetDisplayName(SIGDN_DESKTOPABSOLUTEPARSING).map(|p| pwstr(p)).unwrap_or_default();
+            if q.eq_ignore_ascii_case(&here) {
+                return;
+            }
+        }
+    }
     // the tree scrolls on its own when it selects; hide that and paint once, after the reveal
     let tv = FindWindowExW(Some(th), None, w!("SysTreeView32"), PCWSTR::null()).ok();
     if let Some(tv) = tv {
@@ -166,4 +246,20 @@ pub(crate) unsafe fn reveal_tree_selection() {
 pub(crate) unsafe fn start_reveal(main: HWND) {
     app(|a| a.reveal_tries = 3);
     SetTimer(Some(main), TIMER_REVEAL, 120, None);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quick_access_reopens_drive_paths_only() {
+        for p in [r"C:\", r"C:\Users\홍길동\Downloads", r"z:\a b"] {
+            assert!(drive_path(p), "{p}");
+        }
+        // shares, shell places, Quick access itself and odd text keep the Quick access item as it is
+        for p in [r"\\nas\share", r"::{679F85CB-0220-4080-B29B-5540CC05AAB6}", r"::{20D04FE0-3AEA-1069-A2D8-08002B30309D}\::{x}", "C:", "C:relative", "", "1:\\x", "가:\\"] {
+            assert!(!drive_path(p), "{p}");
+        }
+    }
 }

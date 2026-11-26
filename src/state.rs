@@ -24,6 +24,7 @@ pub(crate) struct App {
     pub(crate) tree: Option<INameSpaceTreeControl>,
     pub(crate) tree_hwnd: HWND,
     pub(crate) tree_input: bool, // a click/key reached the tree since its last selection change
+    pub(crate) quick_root: Option<IShellItem>, // Explorer's Quick access as the tree's first root, while shown
     pub(crate) font: HFONT,
     pub(crate) icon_font: HFONT,
     pub(crate) fh: i32, // UI font line height in px
@@ -135,6 +136,7 @@ thread_local! {
         tree: None,
         tree_hwnd: HWND::default(),
         tree_input: false,
+        quick_root: None,
         font: HFONT::default(),
         icon_font: HFONT::default(),
         fh: 16,

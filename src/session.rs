@@ -20,7 +20,8 @@ pub(crate) struct Session {
     pub(crate) follow: bool,           // dark follows Windows' app light/dark setting (on for a new install)
     pub(crate) dblup: bool,            // double-click on empty space goes to the parent folder
     pub(crate) tree: bool,             // folder tree shown (side keeps its width while hidden)
-    pub(crate) hotkey: bool,           // Win+Alt+E brings Grids to the front, app-wide (not part of a layout)
+    pub(crate) tree_quick: bool,       // Explorer's Quick access (its pinned folders) as the tree's first root
+    pub(crate) hotkey: bool,          // Win+Alt+E brings Grids to the front, app-wide (not part of a layout)
     pub(crate) dlgjump: bool,          // Ctrl+Alt+G in other apps' file dialogs lists Grids' folders (dialog_jump.rs)
     pub(crate) tray: bool,             // minimized, Grids leaves the taskbar for a notification area icon (tray.rs), app-wide
     pub(crate) file: String,          // named session (.grids) the layout was last loaded from / saved to
@@ -61,6 +62,7 @@ impl Default for Session {
             follow: false,
             dblup: true,
             tree: true,
+            tree_quick: true,
             hotkey: true,
             dlgjump: true,
             tray: false,
@@ -233,6 +235,7 @@ impl Session {
                 "follow_theme" => s.follow = v.trim() == "1",
                 "dblup" => s.dblup = v.trim() != "0",
                 "tree" => s.tree = v.trim() != "0",
+                "tree_quick" => s.tree_quick = v.trim() != "0",
                 "hotkey" => s.hotkey = v.trim() != "0",
                 "dialog_jump" => s.dlgjump = v.trim() != "0",
                 "tray" => s.tray = v.trim() == "1",
@@ -306,7 +309,8 @@ impl Session {
         o += &format!("accent={:06X}\naccent_dark={:06X}\naccent_sys={}\n", self.accent, self.accent_dark, self.accent_sys as u8);
         o += &format!("dark={}\n", self.dark as u8);
         o += &format!("follow_theme={}\n", self.follow as u8);
-        o += &format!("dblup={}\ntree={}\nhotkey={}\n", self.dblup as u8, self.tree as u8, self.hotkey as u8);
+        o += &format!("dblup={}\ntree={}\ntree_quick={}\n", self.dblup as u8, self.tree as u8, self.tree_quick as u8);
+        o += &format!("hotkey={}\n", self.hotkey as u8);
         o += &format!("dialog_jump={}\n", self.dlgjump as u8);
         o += &format!("tray={}\n", self.tray as u8);
         o += &format!("tabs={}\n", self.tabs_on as u8);
@@ -983,6 +987,7 @@ mod tests {
             follow: true,
             dblup: false,
             tree: false,
+            tree_quick: false,
             hotkey: false,
             dlgjump: false,
             tray: true,
@@ -1036,6 +1041,7 @@ mod tests {
             "follow_theme=1",
             "dblup=0",
             "tree=0",
+            "tree_quick=0",
             "hotkey=0",
             "dialog_jump=0",
             "tray=1",
@@ -1081,6 +1087,7 @@ mod tests {
             "follow_theme=0",
             "dblup=1",
             "tree=1",
+            "tree_quick=1",
             "hotkey=1",
             "dialog_jump=1",
             "tray=0",
@@ -1119,6 +1126,18 @@ mod tests {
         assert!(!s.accent_sys); // before accent_sys=: the saved colour, as always
         assert_eq!((s.key_tips, s.key_tips_seen), (true, [0; TIP_N]));
         assert!(!s.tray); // before tray=: stays on the taskbar
+        assert!(s.tree_quick); // before tree_quick=: Quick access shown atop the tree
+    }
+
+    #[test]
+    fn tree_quick_reads_only_zero_as_off() {
+        assert!(!Session::parse("tree_quick=0\n").tree_quick);
+        for v in ["tree_quick=1\n", "tree_quick=\n", ""] {
+            assert!(Session::parse(v).tree_quick, "{v:?}");
+        }
+        let off = Session { tree_quick: false, ..Session::default() };
+        assert!(off.to_ini().contains("\ntree_quick=0\n"));
+        assert_eq!(Session::parse(&off.to_ini()), off);
     }
 
     #[test]
@@ -1240,6 +1259,7 @@ mod tests {
             follow: false,
             dblup: true,
             tree: true,
+            tree_quick: true,
             hotkey: true,
             dlgjump: true,
             tray: false,

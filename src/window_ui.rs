@@ -404,6 +404,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 id if id == ID_TB_VIEW as usize => popup_menu(app(|a| a.view_menu), ID_TB_VIEW),
                 id if (ID_DRIVE as usize..ID_DRIVE as usize + 26).contains(&id) => open_drive(b'A' + (id - ID_DRIVE as usize) as u8),
                 ID_TREE => toggle_tree(),
+                ID_TREE_QUICK => toggle_tree_quick(),
                 ID_HIDDEN => toggle_hidden(),
                 ID_EXT => toggle_extensions(),
                 ID_DBLUP => app(|a| a.s.dblup ^= true),
@@ -456,6 +457,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                     app(|a| (a.view_menu, a.s.dblup, a.s.tree, a.s.accent_saved(), a.hot_on, a.s.follow, a.s.dlgjump, a.s.dark));
                 let check = |id: usize, on: bool| CheckMenuItem(menu, id as u32, (MF_BYCOMMAND | if on { MF_CHECKED } else { MF_UNCHECKED }).0);
                 check(ID_TREE, tree);
+                check(ID_TREE_QUICK, app(|a| a.s.tree_quick));
                 check(ID_FOLLOW, follow);
                 check(ID_HIDDEN, hidden());
                 check(ID_EXT, extensions());
@@ -540,7 +542,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 for i in 0..MAXP {
                     destroy_pane(i);
                 }
-                app(|a| a.tree = None);
+                app(|a| (a.tree, a.quick_root) = (None, None));
                 tray_remove(h, false); // before the loop ends: no icon left behind
                 PostQuitMessage(0);
             }
@@ -1091,8 +1093,9 @@ pub(crate) unsafe fn set_language(ko: bool) {
 // The view menu's plain items, in menu order: (command, English, Korean). VIEW_TOP comes before the
 // Selection colour submenu, VIEW_END after the language item. The README test (view_menu_names_in_readmes)
 // and the WM_COMMAND collision test read these, so a new item is checked against both READMEs.
-pub(crate) const VIEW_TOP: [(usize, &str, &str); 12] = [
+pub(crate) const VIEW_TOP: [(usize, &str, &str); 13] = [
     (ID_TREE, "Folder tree\tCtrl+Shift+E", "폴더 트리\tCtrl+Shift+E"),
+    (ID_TREE_QUICK, "Show Explorer Quick access in the folder tree", "폴더 트리에 탐색기 빠른 액세스 표시"),
     (ID_TABS, "Tabs in panes", "패널 탭"),
     (ID_HIDDEN, "Show hidden files\tCtrl+H", "숨김 파일 표시\tCtrl+H"),
     (ID_GATHER, "Open folders from Explorer windows\tCtrl+Shift+O", "탐색기 창의 폴더 가져오기\tCtrl+Shift+O"),
