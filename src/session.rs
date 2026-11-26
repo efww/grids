@@ -672,6 +672,22 @@ pub(crate) fn apply_args(s: &mut Session, args: Vec<String>) {
     s.active = 0;
 }
 
+// The first start's command line. A lone session file brings its layout and becomes the file Ctrl+S saves to,
+// as when a running Grids is handed one (load_session_file). One that can't be read changes nothing: false.
+pub(crate) fn startup_args(s: &mut Session, mut args: Vec<String>, read: impl Fn(&str) -> Option<String>) -> bool {
+    let folders = take_folder_flag(&mut args); // a jump-list folder link: folders only, even one named like a session file
+    if let Some(f) = session_arg(&args).filter(|_| !folders) {
+        let Some(t) = read(f) else {
+            return false;
+        };
+        s.take_layout(&Session::parse(&t));
+        s.file = f.to_string();
+        return true;
+    }
+    apply_args(s, args);
+    true
+}
+
 // The theme to switch to when following Windows: only when on, Windows says, and it differs from now.
 pub(crate) fn theme_target(follow: bool, sys: Option<bool>, cur: bool) -> Option<bool> {
     sys.filter(|&d| follow && d != cur)
@@ -1135,5 +1151,72 @@ mod tests {
             ..a
         };
         assert_eq!(got, want);
+    }
+
+    #[test]
+    fn startup_session_arg() {
+        let (home, work) = (r"F:\s\home.grids".to_string(), r"F:\s\work.grids".to_string());
+        let ini = Session { file: home.clone(), ..every() };
+        let mut w = Session::default();
+        w.set_heights(vec![1, 2]);
+        (w.paths[0], w.paths[1], w.paths[2], w.active) = (r"F:\w0".into(), r"F:\w1".into(), r"F:\w2".into(), 1);
+        w.views[2] = (4, 48);
+        let text = w.snapshot();
+        let parsed = Session::parse(&text);
+        let read = |f: &str| (f == work).then(|| text.clone());
+        let layout = |file: &str| Session {
+            heights: parsed.heights.clone(),
+            colr: parsed.colr.clone(),
+            rowr: parsed.rowr.clone(),
+            active: parsed.active,
+            paths: parsed.paths.clone(),
+            views: parsed.views.clone(),
+            cols: parsed.cols.clone(),
+            tints: parsed.tints.clone(),
+            tabs: parsed.tabs.clone(),
+            tab: parsed.tab.clone(),
+            order: Vec::new(),
+            file: file.into(),
+            ..ini.clone()
+        };
+
+        // ① the session given becomes the save target; favourites, recent, window and theme stay grids.ini's
+        let mut s = ini.clone();
+        assert!(startup_args(&mut s, vec![work.clone()], read));
+        assert_eq!(s, layout(&work));
+        // ② the green dot's baseline is that file: nothing unsaved on opening
+        let base = startup_base(&s, read(&s.file).as_deref());
+        assert!(!layout_differs(&s, &base) && !session_dirty(&s, Some(&base)));
+
+        // ⑥ the session grids.ini already points at: the same, panes back in their own slots
+        let mut s = Session { file: work.clone(), ..ini.clone() };
+        assert!(startup_args(&mut s, vec![work.clone()], read));
+        assert_eq!(s, layout(&work));
+        let base = startup_base(&s, read(&s.file).as_deref());
+        assert!(!session_dirty(&s, Some(&base)));
+
+        // ③ unreadable (deleted, locked): grids.ini's state untouched, no session path as pane 1's folder
+        let mut s = ini.clone();
+        assert!(!startup_args(&mut s, strs(&[r"F:\s\gone.grids"]), read));
+        assert_eq!(s, ini);
+
+        // ④ a jump-list folder link: a folder even when named like a session file
+        let mut s = ini.clone();
+        assert!(startup_args(&mut s, vec![FOLDER_FLAG.into(), work.clone()], |_| unreachable!()));
+        let mut want = ini.clone();
+        apply_args(&mut want, vec![work.clone()]);
+        assert_eq!((&s, s.paths[0].as_str(), s.file.as_str()), (&want, work.as_str(), home.as_str()));
+
+        // ⑤ several folders: as before
+        let many = strs(&[r"F:\a", r"F:\b.grids", r"F:\c"]);
+        let mut s = ini.clone();
+        assert!(startup_args(&mut s, many.clone(), |_| unreachable!()));
+        let mut want = ini.clone();
+        apply_args(&mut want, many);
+        assert_eq!(s, want);
+        // no arguments: grids.ini as it is
+        let mut s = ini.clone();
+        assert!(startup_args(&mut s, Vec::new(), |_| unreachable!()));
+        assert_eq!(s, ini);
     }
 }

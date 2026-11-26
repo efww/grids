@@ -204,14 +204,11 @@ fn main() -> Result<()> {
         if let Some(d) = theme_target(s.follow, system_dark(), s.dark) {
             s.dark = d;
         }
-        // a jump-list folder link: folders only, even one named like a session file
-        let mut args = args;
-        let folders = take_folder_flag(&mut args);
-        let bare = args.is_empty() && !folders; // no folder or session given
-        match session_arg(&args).filter(|_| !folders).and_then(|f| std::fs::read_to_string(f).ok()) {
-            Some(t) => s.take_layout(&Session::parse(&t)),
-            None => apply_args(&mut s, args),
-        }
+        let bare = args.is_empty(); // no folder or session given
+        // a session file becomes the save target; one that can't be read is named on the status line once the window is up
+        let named = session_arg(&args).map(|f| Path::new(f).file_name().map_or(f.into(), |n| n.to_string_lossy().into_owned()));
+        let opened = startup_args(&mut s, args, |f| std::fs::read_to_string(f).ok());
+        let unread = named.filter(|_| !opened);
 
         _ = BufferedPaintInit();
 
@@ -430,6 +427,11 @@ fn main() -> Result<()> {
         let saved = std::fs::read_to_string(&file).ok();
         app(|a| a.base = Some(startup_base(&a.s, saved.as_deref())));
         refresh_save_button();
+        if let Some(name) = unread {
+            let text = if KO.load(Ordering::Relaxed) { format!("세션 파일을 열지 못했습니다: {name}") } else { format!("Couldn't open session file: {name}") };
+            app(|a| a.note = Some((text, Instant::now() + Duration::from_secs(5))));
+            _ = MessageBeep(MB_ICONWARNING);
+        }
         SetTimer(Some(main), TIMER_STATUS, 300, None);
         watch_folders(main); // folders renamed / removed elsewhere (shell_change)
         // taken by another app: the menu shows it off, s.hotkey stays on so the next start tries again
