@@ -35,6 +35,9 @@ pub(crate) struct App {
     pub(crate) sizing: bool, // inside the window's own move/size loop
     pub(crate) was_max: bool, // maximized when last not minimized (saved as such while minimized)
     pub(crate) arranged: Option<RECT>, // snapped to a half or quarter when last shown: that rect (workspace coordinates)
+    pub(crate) place_sig: String, // monitor setup (mon_sig) at the last save; set at start to the one Grids opened on
+    pub(crate) place_hold: Option<[i32; 5]>, // where Windows left the window when that setup appeared (remember_place)
+    pub(crate) place_settle: Option<Instant>, // until then the hold follows the window: Windows may move it in steps
     pub(crate) saved_ini: String, // grids.ini text last written
     pub(crate) save_after: Option<Instant>, // a failed write: autosave waits until then
     pub(crate) status: StatusLine,
@@ -138,6 +141,9 @@ thread_local! {
         sizing: false,
         was_max: false,
         arranged: None,
+        place_sig: String::new(),
+        place_hold: None,
+        place_settle: None,
         saved_ini: String::new(),
         save_after: None,
         status: StatusLine::default(),

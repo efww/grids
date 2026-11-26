@@ -53,6 +53,41 @@ pub(crate) fn placed_rect(actual: RECT, mon: RECT, work: RECT) -> RECT {
     RECT { left: actual.left - dx, top: actual.top - dy, right: actual.right - dx, bottom: actual.bottom - dy }
 }
 
+// ---------- window place per monitor setup (grids.ini win_at=) ----------
+
+/// Monitor setups remembered, newest first; one pushed out falls back to win=.
+pub(crate) const WIN_PLACES: usize = 4;
+
+/// A monitor setup as text: every monitor's rcMonitor (physical px, l,t,r,b), sorted, joined by ';'.
+/// The same setup gives the same text whatever order Windows lists the monitors in.
+pub(crate) fn mon_sig(rects: &[[i32; 4]]) -> String {
+    let mut r = rects.to_vec();
+    r.sort();
+    r.iter().map(|m| join(m)).collect::<Vec<_>>().join(";")
+}
+
+/// Notes `pos` (win= form) as setup `sig`'s place: its entry moves to the front, the oldest past WIN_PLACES goes.
+/// `hold`: where the window was when this setup appeared. While the window is still there the setup's existing
+/// entry stays as it is (Windows moved it, not the user); a setup seen for the first time is noted at once.
+/// Returns the hold still in force (None once the window has moved away from it).
+pub(crate) fn remember_place(places: &mut Vec<(String, [i32; 5])>, sig: &str, pos: [i32; 5], hold: Option<[i32; 5]>) -> Option<[i32; 5]> {
+    let at = places.iter().position(|(g, _)| g == sig);
+    if at.is_some() && hold == Some(pos) {
+        return hold;
+    }
+    if let Some(i) = at {
+        places.remove(i);
+    }
+    places.insert(0, (sig.to_string(), pos));
+    places.truncate(WIN_PLACES);
+    None
+}
+
+/// Where to open: the place noted for the setup there is now, else the last place (win=) as before.
+pub(crate) fn pick_place(places: &[(String, [i32; 5])], sig: Option<&str>, win: Option<[i32; 5]>) -> Option<[i32; 5]> {
+    sig.and_then(|g| places.iter().find(|(h, _)| h == g)).map(|p| p.1).or(win)
+}
+
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub(crate) enum Hit {
     Side,
@@ -318,6 +353,54 @@ pub(crate) fn hit(g: &Geo, x: i32, y: i32) -> Option<Hit> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn monitor_setup_places() {
+        // listed in any order, the same setup gives the same text; negative corners (a screen left of / above the main one)
+        let (lap, desk) = ([0, 0, 1920, 1080], [-2560, -360, 0, 1080]);
+        assert_eq!(mon_sig(&[lap, desk]), "-2560,-360,0,1080;0,0,1920,1080");
+        assert_eq!(mon_sig(&[desk, lap]), mon_sig(&[lap, desk]));
+        assert_eq!(mon_sig(&[lap]), "0,0,1920,1080");
+        let (office, home) = (mon_sig(&[lap, desk]), mon_sig(&[lap]));
+        let (big, small, moved) = ([-2500, 0, -100, 1000, 1], [100, 100, 1100, 800, 0], [200, 100, 1200, 800, 0]);
+
+        // a new setup is noted at once, at the front; the same one already in front stays put (same ini text)
+        let mut p = Vec::new();
+        assert_eq!(remember_place(&mut p, &office, big, None), None);
+        assert_eq!(remember_place(&mut p, &home, small, Some(small)), None); // first time seen: noted despite the hold
+        assert_eq!(p, vec![(home.clone(), small), (office.clone(), big)]);
+        let before = p.clone();
+        remember_place(&mut p, &home, small, None);
+        assert_eq!(p, before);
+
+        // back at the office: where Windows put the window does not overwrite the office place ...
+        let squeezed = [0, 0, 1900, 1000, 0];
+        assert_eq!(remember_place(&mut p, &office, squeezed, Some(squeezed)), Some(squeezed));
+        assert_eq!(p, before);
+        // ... until the window moves away from there: then it is noted and goes to the front
+        assert_eq!(remember_place(&mut p, &office, big, Some(squeezed)), None);
+        assert_eq!(p, vec![(office.clone(), big), (home.clone(), small)]);
+        remember_place(&mut p, &home, moved, None);
+        assert_eq!(p[0], (home.clone(), moved));
+
+        // WIN_PLACES at most: the setup used longest ago goes
+        let sigs: Vec<String> = (1..=WIN_PLACES as i32 + 1).map(|i| mon_sig(&[[0, 0, 1000 + i, 800]])).collect();
+        let mut q = Vec::new();
+        for (i, g) in sigs.iter().enumerate() {
+            remember_place(&mut q, g, [i as i32, 0, 10, 10, 0], None);
+        }
+        assert_eq!(q.len(), WIN_PLACES);
+        assert_eq!(q[0].0, sigs[WIN_PLACES]);
+        assert!(!q.iter().any(|(g, _)| *g == sigs[0]));
+
+        // opening: this setup's place, else win= (also with no monitor list at all)
+        let win = Some([1, 2, 3, 4, 0]);
+        assert_eq!(pick_place(&p, Some(office.as_str()), win), Some(big));
+        assert_eq!(pick_place(&p, Some(home.as_str()), None), Some(moved));
+        assert_eq!(pick_place(&p, Some("0,0,800,600"), win), win);
+        assert_eq!(pick_place(&p, None, win), win);
+        assert_eq!(pick_place(&[], Some(home.as_str()), None), None);
+    }
 
     #[test]
     fn nudge_targets() {

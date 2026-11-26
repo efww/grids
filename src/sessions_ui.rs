@@ -10,16 +10,44 @@ unsafe fn ini_now() -> String {
     }
     let mut wp = WINDOWPLACEMENT { length: size_of::<WINDOWPLACEMENT>() as u32, ..Default::default() };
     _ = GetWindowPlacement(main, &mut wp);
+    let sig = monitor_sig();
     app(|a| {
         // the restore rectangle, also while minimized; snapped to a half or quarter, the rect it showed (as Chrome does)
         let r = if a.was_max { wp.rcNormalPosition } else { a.arranged.unwrap_or(wp.rcNormalPosition) };
-        a.s.win = Some([r.left, r.top, r.right, r.bottom, a.was_max as i32]);
+        let pos = [r.left, r.top, r.right, r.bottom, a.was_max as i32];
+        a.s.win = Some(pos);
+        // only the setup connected now is noted; no monitor list (a failed call): win_at= stays as it is
+        if let Some(sig) = sig {
+            let now = Instant::now();
+            if a.place_sig != sig {
+                // a new setup while running: where the window is now is Windows' doing
+                // (place_sig starts as the setup Grids opened on, so the first saves after start are not held)
+                (a.place_sig, a.place_settle) = (sig.clone(), Some(now + Duration::from_secs(5)));
+            }
+            if a.place_settle.is_some_and(|t| now < t) {
+                a.place_hold = Some(pos);
+            }
+            a.place_hold = remember_place(&mut a.s.places, &sig, pos, a.place_hold);
+        }
         if a.late.is_empty() {
             a.s.to_ini()
         } else {
             keep_late(&a.s, &a.late).to_ini() // not shown since a sign-in start: folders still to retry
         }
     })
+}
+
+/// The monitor setup connected now (mon_sig); None when Windows lists no monitor.
+pub(crate) unsafe fn monitor_sig() -> Option<String> {
+    unsafe extern "system" fn each(_: HMONITOR, _: HDC, r: *mut RECT, lp: LPARAM) -> BOOL {
+        if let Some(r) = r.as_ref() {
+            (*(lp.0 as *mut Vec<[i32; 4]>)).push([r.left, r.top, r.right, r.bottom]);
+        }
+        TRUE
+    }
+    let mut rects: Vec<[i32; 4]> = Vec::new();
+    let ok = EnumDisplayMonitors(None, None, Some(each), LPARAM(&mut rects as *mut _ as isize)).as_bool();
+    (ok && !rects.is_empty()).then(|| mon_sig(&rects))
 }
 
 // On failure the old grids.ini stays and autosave tries again in 5 seconds.

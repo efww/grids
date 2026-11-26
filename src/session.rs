@@ -5,6 +5,7 @@ use crate::*;
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) struct Session {
     pub(crate) win: Option<[i32; 5]>, // normal rect l,t,r,b + maximized flag
+    pub(crate) places: Vec<(String, [i32; 5])>, // per monitor setup (mon_sig): its last `win`, newest first, WIN_PLACES at most
     pub(crate) side: i32,             // sidebar width in px
     pub(crate) heights: Vec<usize>,   // panes per column, left to right (1..=4 columns of 1..=4)
     pub(crate) colr: Vec<f64>,        // column width ratios
@@ -44,6 +45,7 @@ impl Default for Session {
     fn default() -> Self {
         Session {
             win: None,
+            places: Vec::new(),
             side: 0,
             heights: vec![2, 2],
             colr: even(2),
@@ -120,6 +122,14 @@ pub(crate) fn nums<T: std::str::FromStr>(v: &str) -> Vec<T> {
     v.split(',').filter_map(|x| x.trim().parse().ok()).collect()
 }
 
+/// One win_at= value: "<mon_sig>|l,t,r,b,max". The setup is digits, '-', ',' and ';' only; exactly five numbers.
+pub(crate) fn place_parse(v: &str) -> Option<(String, [i32; 5])> {
+    let (g, w) = v.trim().split_once('|')?;
+    let ok = !g.is_empty() && g.chars().all(|c| c.is_ascii_digit() || matches!(c, '-' | ',' | ';'));
+    let n: Vec<i32> = w.split(',').map(|x| x.trim().parse().ok()).collect::<Option<_>>()?;
+    Some((g.to_string(), n.try_into().ok()?)).filter(|_| ok)
+}
+
 pub(crate) fn join<T: Display>(v: &[T]) -> String {
     v.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(",")
 }
@@ -183,6 +193,14 @@ impl Session {
             let slot = |p: char| k.strip_prefix(p).and_then(|n| n.parse::<usize>().ok()).filter(|&i| i < MAXP);
             match k {
                 "win" => s.win = nums(v).try_into().ok(),
+                // win_at=<mon_sig>|l,t,r,b,max ; a damaged line, a repeated setup or one past WIN_PLACES is dropped
+                "win_at" => {
+                    if let Some((g, w)) = place_parse(v) {
+                        if s.places.len() < WIN_PLACES && !s.places.iter().any(|(h, _)| *h == g) {
+                            s.places.push((g, w));
+                        }
+                    }
+                }
                 "side" => s.side = v.parse().unwrap_or(0),
                 "cols" => {
                     let h: Vec<usize> = nums::<usize>(v).into_iter().take(4).map(|n| n.clamp(1, 4)).collect();
@@ -269,6 +287,9 @@ impl Session {
         if let Some(w) = self.win {
             o += &format!("win={}\n", join(&w));
         }
+        for (g, w) in &self.places {
+            o += &format!("win_at={g}|{}\n", join(w));
+        }
         let rowr = self.rowr.iter().map(|r| join(r)).collect::<Vec<_>>().join("|");
         o += &format!("side={}\ncols={}\n", self.side, join(&self.heights));
         o += &format!("colr={}\nrowr={rowr}\nactive={}\n", join(&self.colr), self.active);
@@ -331,7 +352,7 @@ impl Session {
     pub(crate) fn snapshot(&self) -> String {
         // shortcut tips are app-wide: a session file carries the default switch and no counts
         let (key_tips, key_tips_seen) = (true, [0; TIP_N]);
-        Session { win: None, file: String::new(), favs: Vec::new(), recent: Vec::new(), order: Vec::new(), rn_presets: Vec::new(), key_tips, key_tips_seen, ..self.clone() }.to_ini()
+        Session { win: None, places: Vec::new(), file: String::new(), favs: Vec::new(), recent: Vec::new(), order: Vec::new(), rn_presets: Vec::new(), key_tips, key_tips_seen, ..self.clone() }.to_ini()
     }
 
     /// Takes grid + folders from a named session; window position and sidebar width stay as they are.
@@ -936,6 +957,7 @@ mod tests {
     fn every() -> Session {
         Session {
             win: Some([100, 50, 1300, 850, 1]),
+            places: vec![("-1920,0,0,1080;0,0,2560,1440".into(), [100, 50, 1300, 850, 1]), ("0,0,1920,1080".into(), [-8, 0, 968, 1040, 0])],
             side: 280,
             heights: vec![1, 3, 2],
             colr: vec![0.25, 0.5, 0.25],
@@ -988,6 +1010,8 @@ mod tests {
         let (preset, cols0, p3) = (format!("rename_preset={PRESET}"), format!("c0={COLS0}"), format!("p3={THIS_PC}"));
         let want = [
             "win=100,50,1300,850,1",
+            "win_at=-1920,0,0,1080;0,0,2560,1440|100,50,1300,850,1",
+            "win_at=0,0,1920,1080|-8,0,968,1040,0",
             "side=280",
             "cols=1,3,2",
             "colr=0.25,0.5,0.25",
@@ -1083,6 +1107,28 @@ mod tests {
     }
 
     #[test]
+    fn win_at_lines() {
+        // an older ini (no win_at=) opens where win= says, as before
+        let old = Session::parse("win=10,20,810,620,1\n");
+        assert_eq!((old.win, old.places.len()), (Some([10, 20, 810, 620, 1]), 0));
+        assert!(!Session::default().to_ini().contains("win_at="));
+        // damaged lines are dropped one by one, the good ones kept in order; a repeated setup keeps its first
+        let text = "win_at=0,0,1920,1080|1,2,3,4,0\nwin_at=0,0,1920,1080\nwin_at=|1,2,3,4,0\nwin_at=0,0,9,9|1,2,3,4\n\
+                    win_at=0,0,9,9|1,2,3,4,5,6\nwin_at=0,0,9,9|1,x,3,4,0\nwin_at=0,0,9|9|1,2,3,4,0\nwin_at=a,b|1,2,3,4,0\n\
+                    win_at=-1920,-200,0,880;0,0,1920,1080| -5, 6,7,8,1\nwin_at=0,0,1920,1080|9,9,9,9,1\n";
+        let s = Session::parse(text);
+        let want = vec![("0,0,1920,1080".to_string(), [1, 2, 3, 4, 0]), ("-1920,-200,0,880;0,0,1920,1080".to_string(), [-5, 6, 7, 8, 1])];
+        assert_eq!((s.places.clone(), s.win), (want, None));
+        assert_eq!(Session::parse(&s.to_ini()).places, s.places);
+        // at most WIN_PLACES are read
+        let many: String = (0..9).map(|i| format!("win_at=0,0,{i},1|0,0,1,1,0\n")).collect();
+        assert_eq!(Session::parse(&many).places.len(), WIN_PLACES);
+        // a named session file carries no window place of any setup
+        assert!(!every().snapshot().contains("win_at=") && !every().snapshot().contains("win="));
+        assert_eq!(Session::parse(&every().snapshot()).places, Vec::new());
+    }
+
+    #[test]
     fn tray_reads_only_one_as_on() {
         assert!(Session::parse("tray=1\n").tray);
         for v in ["tray=0\n", "tray=\n", "tray=yes\n", ""] {
@@ -1163,6 +1209,7 @@ mod tests {
         let b = every();
         let a = Session {
             win: Some([1, 2, 3, 4, 0]),
+            places: vec![("0,0,800,600".into(), [5, 6, 7, 8, 1])],
             side: 150,
             heights: vec![4],
             colr: vec![1.0],
@@ -1198,7 +1245,7 @@ mod tests {
             key_tips_seen: [1, 1, 1, 1, 0, 0, 0, 0],
         };
         let snap = b.snapshot();
-        for key in ["win=", "session=", "fav=", "recent=", "order=", "rename_preset=", "key_tips_seen=", "key_tips=0"] {
+        for key in ["win=", "win_at=", "session=", "fav=", "recent=", "order=", "rename_preset=", "key_tips_seen=", "key_tips=0"] {
             assert!(!snap.lines().any(|l| l.starts_with(key)), "{key} in a session file");
         }
         let mut got = a.clone();

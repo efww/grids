@@ -343,10 +343,14 @@ fn main() -> Result<()> {
         if s.side <= 0 {
             s.side = 240 * dpi / 96;
         }
-        let win = s.win;
+        // the place last used with the monitors connected now, else the last place; either goes through fit_saved below
+        let sig = monitor_sig();
+        let win = pick_place(&s.places, sig.as_deref(), s.win);
         let tip_style = WS_POPUP | WINDOW_STYLE(0x01 | 0x02); // TTS_ALWAYSTIP | TTS_NOPREFIX
         let tip = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, None, tip_style, 0, 0, 0, 0, Some(main), None, None, None)?;
         app(|a| (a.s, a.main, a.dpi, a.view_menu, a.tip) = (s, main, dpi, view_menu, tip));
+        // Grids places the window itself below, so the first save is not a setup change to hold for
+        app(|a| a.place_sig = sig.unwrap_or_default());
         if startup {
             // from here panes whose folder is not reachable yet are noted for a retry (sync_panes)
             app(|a| (a.quiet, a.quiet_max) = (Quiet::Placing, matches!(win, Some([.., m]) if m != 0)));
