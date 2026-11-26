@@ -52,6 +52,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 if wp.0 as u32 != SIZE_MINIMIZED && !app(|a| a.focus_wait) && GetActiveWindow() == h && (f.is_invalid() || f == h) {
                     restore_focus();
                 }
+                quiet_size(h, wp.0 as u32); // first shown after a minimized sign-in start
             }
             // WA_ACTIVE (Alt+Tab, taskbar, a popup closing, a second grids.exe): focus back where it was.
             // WA_CLICKACTIVE: as before, so the click lands on what was under it (crumbs stay crumbs); TIMER_FOCUS
@@ -309,6 +310,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                     dialog_jump::enable(on);
                 }
                 ID_CTXMENU => toggle_ctx_menu(),
+                ID_AUTOSTART => toggle_autostart(),
                 ID_LANG => set_language(!KO.load(Ordering::Relaxed)),
                 ID_HELP => open_help(),
                 ID_ABOUT => about(h),
@@ -330,6 +332,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 check(ID_DBLUP, dblup);
                 check(ID_TABS, TABS_ON.load(Ordering::Relaxed));
                 check(ID_HOTKEY, hot);
+                check(ID_AUTOSTART, autostart_on()); // the Run value and Task Manager's switch, not a setting
                 check(ID_DLGJUMP, jump);
                 check(ID_CTXMENU, ctx_menu_on()); // read from the registry, not a setting
                 check(ID_UPDATES, app(|a| a.s.updates));
@@ -759,6 +762,7 @@ pub(crate) unsafe fn make_menus() -> Result<HMENU> {
     item(view, MF_STRING, ID_EXT, tr("Show file name extensions", "파일 확장명 표시"))?;
     item(view, MF_STRING, ID_DBLUP, tr("Double-click empty space: parent folder", "빈 곳 더블클릭: 위 폴더로"))?;
     item(view, MF_STRING, ID_HOTKEY, tr("Bring Grids to front from anywhere\tWin+Alt+E", "어디서나 Grids 불러오기\tWin+Alt+E"))?;
+    item(view, MF_STRING, ID_AUTOSTART, tr("Start with Windows (minimized)", "Windows 시작 시 실행 (최소화)"))?;
     let jump = tr("Jump to Grids folders from file dialogs\tCtrl+Alt+G", "파일 대화 상자에서 Grids 폴더로 이동\tCtrl+Alt+G");
     item(view, MF_STRING, ID_DLGJUMP, jump)?;
     let ctx = tr("Add \"Open in Grids\" to Explorer's right-click menu", "탐색기 오른쪽 클릭 메뉴에 \"Grids에서 열기\" 추가");

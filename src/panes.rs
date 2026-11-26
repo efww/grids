@@ -141,7 +141,16 @@ pub(crate) unsafe fn sync_panes() {
             let Ok(p) = create_pane(i) else { continue };
             app(|a| a.panes[i] = Some(p));
             let path = app(|a| a.s.paths[i].clone());
+            // minimized sign-in start: a network or USB drive may just not be there yet
+            let recent = app(|a| (a.quiet != Quiet::No).then(|| a.s.recent.clone()));
             if path.is_empty() || !go_near(i, &path) {
+                if let Some(recent) = recent.filter(|_| !path.is_empty()) {
+                    // kept as it was, and the folder is tried again when the window is first shown
+                    app(|a| {
+                        a.s.recent = recent;
+                        a.late.push((i, path.clone()));
+                    });
+                }
                 navigate(i, THIS_PC);
             }
         } else if i >= n && has {

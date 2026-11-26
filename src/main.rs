@@ -79,6 +79,7 @@ mod update;
 mod star;
 mod hashsum;
 mod jumplist;
+mod autostart;
 
 use ui_defs::*;
 // explicit, so it wins over the same name glob-imported from windows (a glob clash would turn match patterns into bindings)
@@ -113,6 +114,7 @@ use update::*;
 use star::*;
 use hashsum::*;
 use jumplist::*;
+use autostart::*;
 
 /// Let a drive with no disk (empty card reader slot, DVD drive, pulled USB stick) just fail the file call,
 /// instead of Windows' "No Disk" system box freezing the calling thread until it is answered.
@@ -127,10 +129,16 @@ fn quiet_critical_errors() {
 fn main() -> Result<()> {
     quiet_critical_errors();
     unsafe {
-        let args: Vec<String> = menu_args(std::env::args().skip(1).collect()).into_iter().map(resolve).collect();
+        let mut raw: Vec<String> = std::env::args().skip(1).collect();
+        let startup = take_startup_flag(&mut raw); // the Run value at sign-in: minimized, no focus taken
+        let args: Vec<String> = menu_args(raw).into_iter().map(resolve).collect();
         // One start at a time, held until the message loop runs (released there, or on any early return).
         let Some(mut start) = StartLock::take() else {
-            // another start has held it for 10 s (slow drive, a dialog): going on would open a second window
+            // another start has held it for 10 s (slow drive, a dialog): going on would open a second window.
+            // At sign-in (--startup) leave quietly: no box popping up on the fresh desktop.
+            if startup {
+                return Ok(());
+            }
             MessageBoxW(
                 None,
                 w!("Grids is still starting. Try again once its window is open.\n\nGrids가 아직 시작하는 중입니다. 창이 열린 뒤 다시 실행해 주세요."),
@@ -157,6 +165,9 @@ fn main() -> Result<()> {
                     ));
                     MessageBoxW(None, &text, w!("Grids"), MB_OK | MB_ICONWARNING);
                 }
+            }
+            if startup && args.is_empty() {
+                return Ok(()); // sign-in start with Grids already open: leave it where it is
             }
             if IsIconic(prev).as_bool() {
                 _ = ShowWindow(prev, SW_RESTORE);
@@ -322,6 +333,10 @@ fn main() -> Result<()> {
         let tip_style = WS_POPUP | WINDOW_STYLE(0x01 | 0x02); // TTS_ALWAYSTIP | TTS_NOPREFIX
         let tip = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, None, tip_style, 0, 0, 0, 0, Some(main), None, None, None)?;
         app(|a| (a.s, a.main, a.dpi, a.view_menu, a.tip) = (s, main, dpi, view_menu, tip));
+        if startup {
+            // from here panes whose folder is not reachable yet are noted for a retry (sync_panes)
+            app(|a| (a.quiet, a.quiet_max) = (Quiet::Placing, matches!(win, Some([.., m]) if m != 0)));
+        }
         let bar_ex = WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
         let mut bars = [HWND::default(); 2];
         for b in &mut bars {
@@ -357,13 +372,24 @@ fn main() -> Result<()> {
                     let (w, h) = (fixed.right - fixed.left, fixed.bottom - fixed.top);
                     _ = SetWindowPos(main, None, fixed.left + dx, fixed.top + dy, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
                 }
-                let wp = WINDOWPLACEMENT {
+                let mut wp = WINDOWPLACEMENT {
                     length: size_of::<WINDOWPLACEMENT>() as u32,
                     showCmd: if max != 0 { SW_SHOWMAXIMIZED.0 as u32 } else { SW_SHOWNORMAL.0 as u32 },
                     rcNormalPosition: fixed,
                     ..Default::default()
                 };
+                if startup {
+                    // minimized without taking the focus; restored, it comes back maximized if it was
+                    // (quiet_wake maximizes it should Windows ignore the flag with this showCmd)
+                    wp.showCmd = SW_SHOWMINNOACTIVE.0 as u32;
+                    if max != 0 {
+                        wp.flags = WPF_RESTORETOMAXIMIZED;
+                    }
+                }
                 _ = SetWindowPlacement(main, &wp);
+                if startup {
+                    app(|a| a.was_max = max != 0); // no WM_SIZE says so while minimized; autosave keeps it
+                }
             }
             None => {
                 let mut r = RECT::default();
@@ -373,11 +399,15 @@ fn main() -> Result<()> {
                 if ok && f != r {
                     _ = SetWindowPos(main, None, f.left, f.top, f.right - f.left, f.bottom - f.top, SWP_NOZORDER | SWP_NOACTIVATE);
                 }
-                _ = ShowWindow(main, SW_SHOWNORMAL);
+                _ = ShowWindow(main, if startup { SW_SHOWMINNOACTIVE } else { SW_SHOWNORMAL });
             }
         }
         relayout();
-        focus_view(app(|a| a.s.active));
+        if startup {
+            quiet_placed(main); // focus comes with the first restore (WM_SIZE → restore_focus)
+        } else {
+            focus_view(app(|a| a.s.active));
+        }
         let file = app(|a| a.s.file.clone());
         let saved = std::fs::read_to_string(&file).ok();
         app(|a| a.base = Some(startup_base(&a.s, saved.as_deref())));

@@ -9,7 +9,11 @@ unsafe fn ini_now() -> String {
     app(|a| {
         let r = wp.rcNormalPosition; // the restore rectangle, also while minimized
         a.s.win = Some([r.left, r.top, r.right, r.bottom, a.was_max as i32]);
-        a.s.to_ini()
+        if a.late.is_empty() {
+            a.s.to_ini()
+        } else {
+            keep_late(&a.s, &a.late).to_ini() // not shown since a sign-in start: folders still to retry
+        }
     })
 }
 
@@ -117,6 +121,7 @@ pub(crate) unsafe fn load_session_file(path: &Path) {
 pub(crate) unsafe fn open_args(mut args: Vec<String>) {
     let folders = take_folder_flag(&mut args); // a jump-list folder link
     if let Some(f) = session_arg(&args).filter(|_| !folders) {
+        app(|x| x.late.clear()); // another session's folders now
         return load_session_file(Path::new(f));
     }
     if app(|x| x.zoom.take()).is_some() {
@@ -124,6 +129,8 @@ pub(crate) unsafe fn open_args(mut args: Vec<String>) {
         redraw_all();
     }
     let (a, n) = app(|x| (x.s.active, x.s.panes()));
+    // panes given a folder here no longer wait for a sign-in retry
+    app(|x| x.late.retain(|(i, _)| (0..args.len().min(n)).all(|k| (a + k) % n != *i)));
     for (k, p) in args.iter().take(n).enumerate() {
         go_near((a + k) % n, p);
     }

@@ -37,6 +37,7 @@ pub(crate) const ID_FOLLOW: usize = 1110;
 pub(crate) const ID_TABS: usize = 1111;
 pub(crate) const ID_DLGJUMP: usize = 1140;
 pub(crate) const ID_CTXMENU: usize = 1145; // view menu: "Open in Grids" in Explorer's right-click menu
+pub(crate) const ID_AUTOSTART: usize = 1146; // view menu: start with Windows, minimized
 pub(crate) const ID_UPDATES: usize = 1150; // view menu: check for updates
 pub(crate) const ID_STAR: usize = 1151; // view menu: star on GitHub
 pub(crate) const HOME: &str = "https://github.com/efww/grids";

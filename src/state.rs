@@ -99,6 +99,9 @@ pub(crate) struct App {
     pub(crate) click_nc: bool,               // the click that is bringing Grids back is outside the client area (title bar)
     pub(crate) focus_wait: bool,             // TIMER_FOCUS running
     pub(crate) shell_q: Vec<Change>,         // folder renames / removals from the shell, waiting for TIMER_SHELL
+    pub(crate) quiet: Quiet,                 // started minimized at sign-in, not yet shown (runtime only)
+    pub(crate) quiet_max: bool,              // that start was saved maximized: shown maximized
+    pub(crate) late: Vec<(usize, String)>,   // panes whose folder could not open at that start, retried when shown
 }
 
 // The Num+ / Num− box: popup, its edit, the pane it acts on, that pane's folder when it opened, deselect mode.
@@ -190,6 +193,9 @@ thread_local! {
         click_nc: false,
         focus_wait: false,
         shell_q: Vec::new(),
+        quiet: Quiet::No,
+        quiet_max: false,
+        late: Vec::new(),
     });
 }
 
