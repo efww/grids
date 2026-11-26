@@ -537,7 +537,7 @@ mod tests {
             assert_eq!(open_in_pick(ID_WM_PANE + k), OpenPick::Shell);
             menu.extend([ID_OPEN_TO + k, ID_COPY_TO + k, ID_MOVE_TO + k, ID_SWAP_TO + k, ID_WM_PANE + k]);
         }
-        let shell = [ID_INUSE, ID_WM_PAIR, ID_HASH, ID_GROUP, ID_ORG, ID_ORG + 1, ID_ORG + 2, ID_EMPTY, ID_USAGE, ID_LIST];
+        let shell = [ID_INUSE, ID_WM_PAIR, ID_HASH, ID_GROUP, ID_STAMP, ID_ORG, ID_ORG + 1, ID_ORG + 2, ID_EMPTY, ID_USAGE, ID_LIST];
         for p in shell {
             assert_eq!(open_in_pick(p), OpenPick::Shell, "{p}");
         }
@@ -2779,8 +2779,8 @@ mod tests { tr("in", "안") }
 
     // Every ⇄ menu item that can show at the top level at the same time: one letter each, none a pane digit,
     // none the first letter of an unmarked item (the grey title, "Pane 10" …), in both languages.
-    fn menu_slots() -> [&'static [(&'static str, &'static str)]; 11] {
-        [&[M_SWAP], &[M_COPY], &[M_MOVE], &[M_INUSE], &[M_HASH, M_HASH_STOP], &[M_ORG], &[M_GROUP_N, M_GROUP], &[M_EMPTY], &[M_USAGE], &[M_LIST_N, M_LIST], &[M_WM_PAIR, M_WM_PANE]]
+    fn menu_slots() -> [&'static [(&'static str, &'static str)]; 12] {
+        [&[M_SWAP], &[M_COPY], &[M_MOVE], &[M_INUSE], &[M_HASH, M_HASH_STOP], &[M_ORG], &[M_GROUP_N, M_GROUP], &[M_STAMP_N, M_STAMP], &[M_EMPTY], &[M_USAGE], &[M_LIST_N, M_LIST], &[M_WM_PAIR, M_WM_PANE]]
     }
 
     #[test]
@@ -4448,6 +4448,7 @@ mod tests { tr("in", "안") }
         assert_eq!(route("filter", "Alt+↓"), KindMenu);
         assert_eq!(l("Alt+↓"), Recent);
         assert_eq!((l("F5"), route("addr", "F5")), (Refresh, Refresh));
+        assert_eq!((l("Shift+F5"), route("addr", "Shift+F5"), l("Ctrl+Shift+F5")), (Stamp, BoxKey, Shell));
         assert_eq!((l("Ctrl+F3"), l("Ctrl+F5"), l("Ctrl+F6")), (Sort(0), Sort(1), Sort(2)));
         assert_eq!(route_with("", "Ctrl+T", false, 9, None), Shell);
         assert_eq!(route_with("", "Ctrl+Enter", false, 9, None), Shell);

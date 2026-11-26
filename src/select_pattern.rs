@@ -134,14 +134,18 @@ pub(crate) enum Fail {
     SendChanged,
     SendCant,
     PatternEmpty,
+    StampEmpty,
+    StampTooMany,
+    StampCant,
+    StampBusy,
 }
 
 #[cfg(test)] // every kind, for the fail_texts test
-pub(crate) const FAILS: [Fail; 18] = {
+pub(crate) const FAILS: [Fail; 22] = {
     use Fail::*;
     [
         AddrNotFound, AddrQuotes, AddrCantOpen, FolderCantOpen, LastTab, DriveCantOpen, SortHere, PaneMin, NoBorder, GroupEmpty, GroupTooMany,
-        GroupCant, GroupBusy, NewFileHere, NewFolder, SendChanged, SendCant, PatternEmpty,
+        GroupCant, GroupBusy, NewFileHere, NewFolder, SendChanged, SendCant, PatternEmpty, StampEmpty, StampTooMany, StampCant, StampBusy,
     ]
 };
 
@@ -166,6 +170,10 @@ pub(crate) fn fail_pair(kind: Fail) -> (&'static str, &'static str) {
         Fail::SendChanged => ("Not sent · that pane now shows another folder", "보내지 않음 · 그 패널이 다른 폴더로 바뀌었음"),
         Fail::SendCant => ("Can't send there", "그곳으로는 보낼 수 없음"),
         Fail::PatternEmpty => ("Type a pattern first, e.g. *.jpg", "패턴을 먼저 입력하세요 (예: *.jpg)"),
+        Fail::StampEmpty => ("Select the items to make dated copies of first", "날짜 붙인 사본을 만들 항목을 먼저 고르세요"),
+        Fail::StampTooMany => ("Too many items to copy (over 10,000)", "사본을 만들 항목이 너무 많음 (1만 개 초과)"),
+        Fail::StampCant => ("Dated copies can't be made of these items here", "이 항목들은 여기서 날짜 붙인 사본을 만들 수 없음"),
+        Fail::StampBusy => ("Already making dated copies · wait until it's done", "이미 사본을 만드는 중 · 끝날 때까지 기다리세요"),
     }
 }
 

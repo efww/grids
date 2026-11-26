@@ -663,6 +663,12 @@ pub(crate) unsafe fn copy_done_back() {
     }
 }
 
+// Another finished job the main window may not show now (Grids behind, minimized or hidden): said the same way,
+// once Grids is back in front.
+pub(crate) fn say_when_back(text: String) {
+    *COPY_LATER.lock().unwrap_or_else(|e| e.into_inner()) = Some(text);
+}
+
 // run_copy, handing back the operation so the caller can ask whether anything was skipped or cancelled.
 pub(crate) unsafe fn run_op(srcs: &[String], dst: &str, rename: bool, mv: bool) -> Result<IFileOperation> {
     let op: IFileOperation = CoCreateInstance(&FileOperation, None, CLSCTX_ALL)?;

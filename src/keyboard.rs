@@ -314,6 +314,12 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
                 group_key(a);
             }
         }
+        // held, it copies once
+        KeyRoute::Stamp => {
+            if !repeat {
+                stamp_key(a);
+            }
+        }
         KeyRoute::Paste => {
             if !paste_key(repeat, || try_paste(a)) {
                 return shell();
@@ -380,6 +386,7 @@ pub(crate) enum KeyRoute {
     NewFolder,
     NewText,
     Group,
+    Stamp,
     Paste,
     Shell,
 }
@@ -485,6 +492,8 @@ pub(crate) fn key_route(vk: VIRTUAL_KEY, ctrl: bool, shift: bool, alt: bool, c: 
         VK_F7 if !ctrl && !shift && !alt && list() => NewFolder,
         VK_F7 if !ctrl && shift && !alt && list() => NewText,
         VK_F7 if ctrl && !shift && !alt && list() => Group,
+        // Shift+F5: dated copies next to the selected items (Total Commander's copy-in-place); plain F5 is Refresh above
+        VK_F5 if !ctrl && shift && !alt && list() => Stamp,
         VK_V if ctrl && !shift && !alt && list() => Paste,
         _ => Shell,
     }

@@ -755,6 +755,8 @@ pub(crate) const M_HASH_STOP: (&str, &str) = ("Stop the chec&ksum ({p}%)", "체�
 pub(crate) const M_ORG: (&str, &str) = ("Sort the selected files into &date folders", "선택한 파일을 날짜별 폴더로 정리(&D)");
 pub(crate) const M_GROUP_N: (&str, &str) = ("Move {n} selected items into a &new folder  (Ctrl+F7)", "선택한 {n}개를 새 폴더로 묶기(&N)  (Ctrl+F7)");
 pub(crate) const M_GROUP: (&str, &str) = ("Move the selected items into a &new folder  (Ctrl+F7)", "선택한 항목을 새 폴더로 묶기(&N)  (Ctrl+F7)");
+pub(crate) const M_STAMP_N: (&str, &str) = ("Make a dated &backup copy of {n} selected items  (Shift+F5)", "선택한 {n}개의 날짜 붙인 사본 만들기(&B)  (Shift+F5)");
+pub(crate) const M_STAMP: (&str, &str) = ("Make a dated &backup copy of the selected items  (Shift+F5)", "선택한 항목의 날짜 붙인 사본 만들기(&B)  (Shift+F5)");
 pub(crate) const M_EMPTY: (&str, &str) = ("Remove &empty folders in this folder…", "이 폴더 안의 빈 폴더 지우기…(&E)");
 pub(crate) const M_LIST_N: (&str, &str) = ("Copy the &list of {n} selected items as a table", "선택한 {n}개 목록을 표로 복사(&L)");
 pub(crate) const M_LIST: (&str, &str) = ("Copy this folder's file &list as a table (for Excel)", "이 폴더 파일 목록을 표로 복사(&L) (엑셀용)");
@@ -1341,6 +1343,7 @@ pub(crate) const WM_THEME_SYNC: u32 = WM_APP + 47; // Windows light/dark may hav
 pub(crate) const WM_PEEK_HOSTED: u32 = WM_APP + 49; // wParam = preview generation, lParam = 1 shown / 0 failed
 pub(crate) const WM_PEEK_LOST: u32 = WM_APP + 48; // the preview went inactive: close it unless it is active again
 pub(crate) const WM_GROUPED: u32 = WM_APP + 52; // Ctrl+F7 moved everything in; the details stay in GROUPED
+pub(crate) const WM_STAMPED: u32 = WM_APP + 61; // Shift+F5's dated copies are done; the details stay in STAMPED
 pub(crate) const WM_FONT_SYNC: u32 = WM_APP + 58; // Windows' text size may have changed: refont if the UI font did
 pub(crate) static NARROWING: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(-1); // column << 32 | width
 

@@ -3,6 +3,7 @@ use windows::Win32::System::Registry::{
     RegCloseKey, RegDeleteTreeW, RegGetValueW, RegOpenKeyExW, RegSetKeyValueW, HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, REG_SZ, RRF_RT_REG_SZ,
 };
 use windows::Win32::System::RestartManager::*;
+use windows::Win32::System::SystemInformation::GetLocalTime;
 use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::UI::Controls::{
     TASKDIALOGCONFIG, TASKDIALOG_BUTTON, TDCBF_CANCEL_BUTTON, TDCBF_CLOSE_BUTTON, TDF_ALLOW_DIALOG_CANCELLATION, TDF_POSITION_RELATIVE_TO_WINDOW,
@@ -257,6 +258,139 @@ pub(crate) unsafe fn grouped_msg() {
     set_note(note.replace("{n}", &g.n.to_string()).replace("{name}", base_of(&g.new)));
     if rename_ok(g.pane, &g.dir) && view_id(g.pane) == g.view {
         rename_soon((g.pane, g.new, 40, Some((g.dir, g.view))));
+    }
+}
+
+// ---------- Shift+F5: dated copies of the selected items, next to them ----------
+// (Total Commander's Shift+F5 copy under a new name in the same folder, XYplorer's "duplicate with date stamp")
+
+pub(crate) const ID_STAMP: usize = 1143; // ⇄ menu (1141 / 1142 are dialog jump timers, 1138 stays unused)
+
+// "Report.docx" → "Report (2026-11-27 14.30).docx"; k ≥ 2 → "Report (2026-11-27 14.30) (2).docx". A folder,
+// or a name with no '.', only a leading one (".gitignore") or a space / ')' after the last one ("README (… 14.30)"
+// stamped again, "Meeting 3.5 notes"), takes it all at the end. '.' stands in for ':'.
+pub(crate) fn stamp_name(name: &str, is_dir: bool, t: &SYSTEMTIME, k: u32) -> String {
+    let (stem, ext) = match name.rsplit_once('.') {
+        Some((s, e)) if !is_dir && !s.is_empty() && !e.contains([' ', ')']) => (s, format!(".{e}")),
+        _ => (name, String::new()),
+    };
+    let stamp = format!("{stem} ({:04}-{:02}-{:02} {:02}.{:02})", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute);
+    format!("{}{ext}", group_name(&stamp, k))
+}
+
+// The first stamp_name not taken; None when 999 are.
+pub(crate) fn stamp_free(name: &str, is_dir: bool, t: &SYSTEMTIME, taken: impl Fn(&str) -> bool) -> Option<String> {
+    (1..1000).map(|k| stamp_name(name, is_dir, t, k)).find(|n| !taken(n))
+}
+
+// a dated copy is under way: a second Shift+F5 meanwhile only beeps (both would pick the same free names)
+static STAMPING: AtomicBool = AtomicBool::new(false);
+
+struct StampingDone;
+impl Drop for StampingDone {
+    fn drop(&mut self) {
+        STAMPING.store(false, Ordering::SeqCst);
+    }
+}
+
+// a finished run, for the UI thread (WM_STAMPED): items picked, the copy's name when there was one,
+// and whether anything was skipped or cancelled (then no count is claimed)
+static STAMPED: Mutex<Option<(usize, String, bool)>> = Mutex::new(None);
+
+// Shift+F5 in a file list: the pane's whole selection, as the ⇄ menu counts it.
+pub(crate) unsafe fn stamp_key(i: usize) {
+    let arr = view_of::<IFolderView2>(i).and_then(|fv| fv.GetSelection(false).ok());
+    let count = arr.as_ref().and_then(|a| a.GetCount().ok()).unwrap_or(0);
+    let picked = collect_all(count, |k| unsafe { arr.as_ref()?.GetItemAt(k).ok()?.GetDisplayName(SIGDN_FILESYSPATH).ok().map(|p| pwstr(p)) });
+    start_stamp_copy(i, picked);
+}
+
+// Copies the items into their own folder under dated names, on a worker thread: one undoable shell copy that
+// never replaces anything. The selection stays on the originals. Shift+F5 and the ⇄ menu both end up here.
+pub(crate) unsafe fn start_stamp_copy(i: usize, picked: std::result::Result<Vec<String>, Pick>) {
+    let (dir, main) = app(|a| (a.s.paths[i].clone(), a.main.0 as usize));
+    let srcs = match picked {
+        Ok(s) if group_ok(&s, &dir) => s,
+        Err(Pick::Empty) => return fail(Fail::StampEmpty, ""),
+        Err(Pick::TooMany) => return fail(Fail::StampTooMany, ""),
+        _ => return fail(Fail::StampCant, ""),
+    };
+    if STAMPING.swap(true, Ordering::SeqCst) {
+        return fail(Fail::StampBusy, "");
+    }
+    let done = StampingDone;
+    let busy = Busy::new();
+    let job = std::thread::Builder::new().spawn(move || {
+        let _busy = busy;
+        let _done = done;
+        let com = CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok();
+        match stamp_work(&srcs, &dir) {
+            Ok((first, aborted)) => {
+                *STAMPED.lock().unwrap_or_else(|e| e.into_inner()) = Some((srcs.len(), first, aborted));
+                _ = PostMessageW(Some(HWND(main as _)), WM_STAMPED, WPARAM(0), LPARAM(0));
+            }
+            Err(e) => {
+                if e.code() != COPYENGINE_E_USER_CANCELLED && e.code() != ERROR_CANCELLED.to_hresult() {
+                    let text = HSTRING::from(format!("{}{}", tr("Copying failed: ", "복사하지 못했습니다: "), e.message()));
+                    MessageBoxW(None, &text, w!("Grids"), MB_ICONWARNING);
+                }
+            }
+        }
+        if com {
+            CoUninitialize();
+        }
+    });
+    match job {
+        Ok(job) => keep_job(job),
+        Err(_) => _ = MessageBeep(MB_ICONWARNING),
+    }
+}
+
+// Worker thread: names picked here (the disk is asked off the UI thread), all with the same minute.
+// Ok((first new name, anything skipped or cancelled)).
+unsafe fn stamp_work(srcs: &[String], dir: &str) -> Result<(String, bool)> {
+    let t = GetLocalTime();
+    let op: IFileOperation = CoCreateInstance(&FileOperation, None, CLSCTX_ALL)?;
+    // FOF_RENAMEONCOLLISION: a name that turns up meanwhile is never replaced, the copy gets Windows' own name
+    op.SetOperationFlags(FOF_ALLOWUNDO | FOF_NOCONFIRMMKDIR | FOFX_ADDUNDORECORD | FOF_RENAMEONCOLLISION)?;
+    let to: IShellItem = SHCreateItemFromParsingName(&HSTRING::from(dir), None)?;
+    let mut picked: Vec<String> = Vec::new();
+    for s in srcs {
+        let is_dir = std::fs::metadata(s).or_else(|_| std::fs::symlink_metadata(s)).is_ok_and(|m| m.is_dir());
+        // symlink_metadata: a broken link still holds its name
+        let taken = |n: &str| picked.iter().any(|p| p.eq_ignore_ascii_case(n)) || std::fs::symlink_metadata(Path::new(dir).join(n)).is_ok();
+        let Some(new) = stamp_free(base_of(s), is_dir, &t, taken) else { return Err(ERROR_FILE_EXISTS.to_hresult().into()) };
+        let item: IShellItem = SHCreateItemFromParsingName(&HSTRING::from(s), None)?;
+        op.CopyItem(&item, &to, &HSTRING::from(new.as_str()), None)?;
+        picked.push(new);
+    }
+    op.PerformOperations()?;
+    let aborted = op.GetAnyOperationsAborted().map_or(true, |b| b.as_bool());
+    Ok((picked.into_iter().next().unwrap_or_default(), aborted))
+}
+
+// WM_STAMPED on the main window: said on the status line; the selection stays on the originals, so the next
+// Enter opens the original to work on, with the dated copy kept aside.
+pub(crate) unsafe fn stamped_msg() {
+    let Some((n, first, aborted)) = STAMPED.lock().unwrap_or_else(|e| e.into_inner()).take() else { return };
+    let note = stamped_note(KO.load(Ordering::Relaxed), n, &first, aborted);
+    // a big folder may end with Grids behind or minimized: said once it is back, as a finished copy is
+    let main = app(|a| a.main);
+    if !app_in_front() || IsIconic(main).as_bool() || !IsWindowVisible(main).as_bool() {
+        say_when_back(note);
+    } else {
+        set_note(note);
+    }
+}
+
+pub(crate) fn stamped_note(ko: bool, n: usize, first: &str, aborted: bool) -> String {
+    match (ko, aborted, n) {
+        (true, true, _) => "날짜 붙인 사본 만들기 끝 (일부 건너뜀 또는 취소)".into(),
+        (false, true, _) => "Dated copies ended (some skipped or cancelled)".into(),
+        (true, false, 1) => format!("날짜 붙인 사본 만듦: {first}"),
+        (false, false, 1) => format!("Made a dated copy: {first}"),
+        (true, false, _) => format!("날짜 붙인 사본 {n}개 만듦"),
+        (false, false, _) => format!("Made {n} dated copies"),
     }
 }
 
@@ -709,6 +843,11 @@ pub(crate) unsafe fn shell_menu(menu: HMENU, src: usize, picked: &std::result::R
         _ => (MF_STRING | MF_GRAYED, tr2(M_GROUP).to_string()),
     };
     _ = AppendMenuW(menu, label.0, ID_GROUP, &HSTRING::from(label.1));
+    let label = match picked {
+        Ok(p) if group_ok(p, &here) => (MF_STRING, tr2(M_STAMP_N).replace("{n}", &p.len().to_string())),
+        _ => (MF_STRING | MF_GRAYED, tr2(M_STAMP).to_string()),
+    };
+    _ = AppendMenuW(menu, label.0, ID_STAMP, &HSTRING::from(label.1));
     empty_menu(menu, is_fs(&here)); // whatever is selected
     let flags = if is_fs(&here) { MF_STRING } else { MF_STRING | MF_GRAYED };
     _ = AppendMenuW(menu, flags, ID_USAGE, &HSTRING::from(tr2(M_USAGE)));
@@ -734,7 +873,7 @@ pub(crate) unsafe fn shell_menu(menu: HMENU, src: usize, picked: &std::result::R
 }
 
 pub(crate) fn is_shell_pick(p: usize) -> bool {
-    p == ID_INUSE || p == ID_WM_PAIR || p == ID_HASH || p == ID_GROUP || p == ID_EMPTY || p == ID_USAGE || p == ID_LIST || is_org_pick(p) || (ID_WM_PANE..ID_WM_PANE + MAXP).contains(&p)
+    p == ID_INUSE || p == ID_WM_PAIR || p == ID_HASH || p == ID_GROUP || p == ID_STAMP || p == ID_EMPTY || p == ID_USAGE || p == ID_LIST || is_org_pick(p) || (ID_WM_PANE..ID_WM_PANE + MAXP).contains(&p)
 }
 
 pub(crate) unsafe fn shell_pick(h: HWND, src: usize, p: usize, picked: std::result::Result<Vec<String>, Pick>, exe: Option<String>, others: &[(usize, HSTRING, String)]) {
@@ -743,6 +882,7 @@ pub(crate) unsafe fn shell_pick(h: HWND, src: usize, p: usize, picked: std::resu
         (ID_HASH, picked, _) => hash_pick(picked),
         // the selection the menu counted, checked again against the folder the pane shows now
         (ID_GROUP, picked, _) => group_into_folder(src, picked),
+        (ID_STAMP, picked, _) => start_stamp_copy(src, picked),
         (p, picked, _) if is_org_pick(p) => organize(src, p - ID_ORG, picked),
         // no selection needed: the folder the pane shows now, checked again there
         (ID_EMPTY, _, _) => remove_empty(src),
@@ -827,6 +967,46 @@ mod tests {
         assert!(group_ok(&srcs, r"C:\w") && group_ok(&srcs, r"c:\W\"));
         assert!(!group_ok(&srcs, r"C:\x") && !group_ok(&[r"C:\w\a.txt".into(), r"C:\x\b.txt".into()], r"C:\w") && !group_ok(&[], r"C:\w"));
         assert!(is_shell_pick(ID_GROUP));
+    }
+
+    #[test]
+    fn dated_copy_names() {
+        let t = SYSTEMTIME { wYear: 2026, wMonth: 11, wDay: 27, wHour: 14, wMinute: 30, wSecond: 59, ..Default::default() };
+        assert_eq!(stamp_name("Report.docx", false, &t, 1), "Report (2026-11-27 14.30).docx");
+        assert_eq!(stamp_name("보고서.hwp", false, &t, 1), "보고서 (2026-11-27 14.30).hwp");
+        assert_eq!(stamp_name("archive.tar.gz", false, &t, 1), "archive.tar (2026-11-27 14.30).gz");
+        assert_eq!(stamp_name("README", false, &t, 1), "README (2026-11-27 14.30)");
+        assert_eq!(stamp_name(".gitignore", false, &t, 1), ".gitignore (2026-11-27 14.30)");
+        assert_eq!(stamp_name("v1.2", true, &t, 1), "v1.2 (2026-11-27 14.30)"); // a folder's '.' is no extension
+        // a dated copy stamped again, or a '.' followed by a space: never into the middle of the time
+        let again = "README (2026-11-27 14.30) (2026-11-27 14.30)";
+        assert_eq!(stamp_name("README (2026-11-27 14.30)", false, &t, 1), again);
+        assert_eq!(stamp_name(".gitignore (2026-11-27 14.30)", false, &t, 1), ".gitignore (2026-11-27 14.30) (2026-11-27 14.30)");
+        assert_eq!(stamp_name("Report (2026-11-27 14.30).docx", false, &t, 1), "Report (2026-11-27 14.30) (2026-11-27 14.30).docx");
+        assert_eq!(stamp_name("회의 3.5 메모", false, &t, 1), "회의 3.5 메모 (2026-11-27 14.30)");
+        assert_eq!(stamp_free("README (2026-11-27 14.30)", false, &t, |n| n == again).as_deref(), Some("README (2026-11-27 14.30) (2026-11-27 14.30) (2)"));
+        // one-digit month, day, hour and minute padded; midnight is 00.00
+        let early = SYSTEMTIME { wYear: 2027, wMonth: 1, wDay: 5, wHour: 0, wMinute: 0, ..Default::default() };
+        assert_eq!(stamp_name("a.txt", false, &early, 1), "a (2027-01-05 00.00).txt");
+        assert!(!stamp_name("a.txt", false, &t, 1).contains(':'));
+        // again within the minute: the number after the stamp, before the extension; at the end otherwise
+        for (name, dir, first, second) in [
+            ("Report.docx", false, "Report (2026-11-27 14.30).docx", "Report (2026-11-27 14.30) (2).docx"),
+            ("v1.2", true, "v1.2 (2026-11-27 14.30)", "v1.2 (2026-11-27 14.30) (2)"),
+            ("README", false, "README (2026-11-27 14.30)", "README (2026-11-27 14.30) (2)"),
+            (".gitignore", false, ".gitignore (2026-11-27 14.30)", ".gitignore (2026-11-27 14.30) (2)"),
+        ] {
+            assert_eq!(stamp_free(name, dir, &t, |n| n == first).as_deref(), Some(second), "{name}");
+        }
+        let two = ["a (2026-11-27 14.30).txt", "a (2026-11-27 14.30) (2).txt"];
+        assert_eq!(stamp_free("a.txt", false, &t, |n| two.contains(&n)).as_deref(), Some("a (2026-11-27 14.30) (3).txt"));
+        assert_eq!(stamp_free("a.txt", false, &t, |_| true), None); // all taken: nothing, never an existing name
+        // the status line counts only a run with nothing skipped
+        assert_eq!(stamped_note(false, 1, "a (2026-11-27 14.30).txt", false), "Made a dated copy: a (2026-11-27 14.30).txt");
+        assert_eq!(stamped_note(false, 3, "x", false), "Made 3 dated copies");
+        assert_eq!(stamped_note(true, 3, "x", false), "날짜 붙인 사본 3개 만듦");
+        assert!(!stamped_note(false, 3, "x", true).contains('3') && !stamped_note(true, 3, "x", true).contains('3'));
+        assert!(is_shell_pick(ID_STAMP) && open_in_pick(ID_STAMP) == OpenPick::Shell);
     }
 
     #[test]

@@ -294,6 +294,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             WM_STAR => star_msg(wp.0 != 0),
             WM_HASH => hash_msg(h, wp.0, lp.0 != 0),
             WM_GROUPED => grouped_msg(),
+            WM_STAMPED => stamped_msg(),
             WM_COPY_DONE => copy_done_msg(h),
             WM_USAGE => usage_msg(),
             // mid-drag or mid-resize, end_drag / WM_EXITSIZEMOVE pick it up instead
