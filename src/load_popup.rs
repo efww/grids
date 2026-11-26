@@ -204,6 +204,7 @@ pub(crate) unsafe fn delete_session(path: &Path) -> bool {
     }
     if deleted {
         update_status();
+        refresh_jump_list(true);
     }
     deleted
 }
@@ -262,6 +263,7 @@ pub(crate) unsafe fn commit_rename() {
     if new == old {
         return;
     }
+    refresh_jump_list(true);
     let relinked = app(|a| file_after_rename(&before, &a.s.file, was_cur, &new.to_string_lossy()).map(|f| a.s.file = f).is_some());
     if relinked {
         refresh_save_button();

@@ -43,6 +43,7 @@ pub(crate) unsafe fn autosave() {
     if app(|a| a.saved_ini != ini) {
         store_ini(ini);
     }
+    refresh_jump_list(false); // favourites, recent folders or the language changed: the jump list follows
 }
 
 // Save button / Ctrl+S: overwrite the current session file; the first time, ask for a name.
@@ -69,6 +70,7 @@ pub(crate) unsafe fn write_session(path: &Path) {
         (a.base, a.dirty) = (Some(a.s.clone()), false);
     });
     refresh_save_button();
+    refresh_jump_list(true);
 }
 
 // "New name": the save dialog does naming, overwrite prompts, rename and delete for us.
@@ -112,8 +114,9 @@ pub(crate) unsafe fn load_session_file(path: &Path) {
 }
 
 // Paths from the command line or a second instance: a session file loads, folders fill panes from the active one on.
-pub(crate) unsafe fn open_args(args: Vec<String>) {
-    if let Some(f) = session_arg(&args) {
+pub(crate) unsafe fn open_args(mut args: Vec<String>) {
+    let folders = take_folder_flag(&mut args); // a jump-list folder link
+    if let Some(f) = session_arg(&args).filter(|_| !folders) {
         return load_session_file(Path::new(f));
     }
     if app(|x| x.zoom.take()).is_some() {

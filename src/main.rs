@@ -75,6 +75,7 @@ mod everything;
 mod update;
 mod star;
 mod hashsum;
+mod jumplist;
 
 use ui_defs::*;
 // explicit, so it wins over the same name glob-imported from windows (a glob clash would turn match patterns into bindings)
@@ -108,6 +109,7 @@ use everything::*;
 use update::*;
 use star::*;
 use hashsum::*;
+use jumplist::*;
 
 /// Let a drive with no disk (empty card reader slot, DVD drive, pulled USB stick) just fail the file call,
 /// instead of Windows' "No Disk" system box freezing the calling thread until it is answered.
@@ -160,7 +162,10 @@ fn main() -> Result<()> {
         if let Some(d) = theme_target(s.follow, system_dark(), s.dark) {
             s.dark = d;
         }
-        match session_arg(&args).and_then(|f| std::fs::read_to_string(f).ok()) {
+        // a jump-list folder link: folders only, even one named like a session file
+        let mut args = args;
+        let folders = take_folder_flag(&mut args);
+        match session_arg(&args).filter(|_| !folders).and_then(|f| std::fs::read_to_string(f).ok()) {
             Some(t) => s.take_layout(&Session::parse(&t)),
             None => apply_args(&mut s, args),
         }
@@ -361,6 +366,7 @@ fn main() -> Result<()> {
         if app(|a| a.s.dlgjump) {
             dialog_jump::enable(true);
         }
+        refresh_jump_list(true); // taskbar / Start jump list: sessions, favourites, recent folders
 
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
