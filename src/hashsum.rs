@@ -350,7 +350,8 @@ fn drop_note(mine: &str) {
 }
 
 /// The ⇄ menu item: starts a checksum of the selection, or stops the one running.
-pub(crate) unsafe fn hash_pick(h: HWND, picked: std::result::Result<Vec<String>, Pick>) {
+/// The worker reports to the main window (only main_proc handles WM_HASH), never to the pane the menu came from.
+pub(crate) unsafe fn hash_pick(picked: std::result::Result<Vec<String>, Pick>) {
     if hash_busy().is_some() {
         let mine = {
             let mut j = job();
@@ -374,7 +375,7 @@ pub(crate) unsafe fn hash_pick(h: HWND, picked: std::result::Result<Vec<String>,
         HASH_GEN.store(j.gen, Ordering::Relaxed);
         j.gen
     };
-    if !submit((h.0 as isize, gen, paths)) {
+    if !submit((app(|a| a.main).0 as isize, gen, paths)) {
         let mut j = job();
         if j.gen == gen {
             j.busy = false;
@@ -386,24 +387,41 @@ pub(crate) unsafe fn hash_pick(h: HWND, picked: std::result::Result<Vec<String>,
 
 /// WM_HASH on the main window; messages from a stopped or replaced run are dropped.
 pub(crate) unsafe fn hash_msg(h: HWND, gen: usize, fin: bool) {
-    let mut j = job();
-    if j.gen != gen || !j.busy {
-        return;
-    }
     if !fin {
-        let pct = (j.done * 100 / j.total.max(1)).min(99);
-        j.note = format!("{} {pct}% · {}", tr("SHA-256 in progress", "SHA-256 계산 중"), j.name);
-        let note = j.note.clone();
-        drop(j);
+        let note = {
+            let mut j = job();
+            if j.gen != gen || !j.busy {
+                return;
+            }
+            let pct = (j.done * 100 / j.total.max(1)).min(99);
+            j.note = format!("{} {pct}% · {}", tr("SHA-256 in progress", "SHA-256 계산 중"), j.name);
+            j.note.clone()
+        };
         set_progress_note(note);
         return;
     }
-    j.busy = false;
-    let (paths, rows, clip, mine) = (std::mem::take(&mut j.paths), std::mem::take(&mut j.rows), std::mem::take(&mut j.clip), std::mem::take(&mut j.note));
-    drop(j);
+    let Some(Done { paths, rows, clip, mine }) = finish(gen) else { return };
     drop_note(&mine);
     update_status();
     show_result(h, &paths, &rows, &clip);
+}
+
+struct Done {
+    paths: Vec<String>,
+    rows: Vec<Got>,
+    clip: String,
+    mine: String, // the progress note to take down
+}
+
+// The run `gen` has finished: no longer busy, and what the result box needs taken out. The lock is let go here,
+// before any note or the modal box. None: a stopped or replaced run.
+fn finish(gen: usize) -> Option<Done> {
+    let mut j = job();
+    if j.gen != gen || !j.busy {
+        return None;
+    }
+    j.busy = false;
+    Some(Done { paths: std::mem::take(&mut j.paths), rows: std::mem::take(&mut j.rows), clip: std::mem::take(&mut j.clip), mine: std::mem::take(&mut j.note) })
 }
 
 unsafe fn show_result(h: HWND, paths: &[String], rows: &[Got], clip: &str) {
@@ -542,6 +560,44 @@ mod tests {
         let ms = marks(&same, &[Got::Sum(ABC.into()), Got::Sum(ABC.into()), Got::Sum(EMPTY.into())], &list);
         assert_eq!(ms, [Mark::Clash, Mark::Clash, Mark::Same]);
         assert!(verdict(&same, &ms).starts_with("✓ 1 of 3"));
+    }
+
+    // The worker's WM_HASH goes to the main window (the only one that handles it), not to the pane whose ⇄ menu
+    // started it, and the finishing step frees the ⇄ menu. The result box itself is not shown here.
+    #[test]
+    fn checksum_reports_to_the_main_window() {
+        unsafe {
+            let hidden = || CreateWindowExW(WINDOW_EX_STYLE(0), w!("STATIC"), w!(""), WS_POPUP, 0, 0, 1, 1, None, None, None, None).unwrap();
+            let (main, pane) = (hidden(), hidden());
+            let old = app(|a| std::mem::replace(&mut a.main, main));
+            let file = std::env::temp_dir().join(format!("grids-hash-test-{}.txt", std::process::id()));
+            std::fs::write(&file, b"abc").unwrap();
+            assert!(hash_busy().is_none());
+            hash_pick(Ok(vec![file.to_string_lossy().into_owned()]));
+            assert!(hash_busy().is_some());
+            let gen = job().gen;
+            let (mut to, mut fin, until) = (Vec::new(), false, Instant::now() + Duration::from_secs(5));
+            while !fin && Instant::now() < until {
+                let mut m = MSG::default();
+                if PeekMessageW(&mut m, None, WM_HASH, WM_HASH, PM_REMOVE).as_bool() {
+                    to.push(m.hwnd);
+                    fin = m.wParam.0 == gen && m.lParam.0 == 1; // progress notes (0) may come first
+                } else {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            }
+            let done = finish(gen);
+            app(|a| a.main = old);
+            _ = std::fs::remove_file(&file);
+            _ = DestroyWindow(main);
+            _ = DestroyWindow(pane);
+            assert!(fin, "no finished WM_HASH within 5 s");
+            assert!(to.iter().all(|&h| h == main) && !to.contains(&pane));
+            let done = done.expect("the run that finished");
+            assert_eq!(done.rows, [Got::Sum(ABC.into())]);
+            assert!(hash_busy().is_none(), "the ⇄ menu is free again");
+            assert!(finish(gen).is_none(), "a second finish is ignored");
+        }
     }
 
     #[test]

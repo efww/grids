@@ -740,7 +740,7 @@ pub(crate) fn is_shell_pick(p: usize) -> bool {
 pub(crate) unsafe fn shell_pick(h: HWND, src: usize, p: usize, picked: std::result::Result<Vec<String>, Pick>, exe: Option<String>, others: &[(usize, HSTRING, String)]) {
     match (p, picked, exe) {
         (ID_INUSE, Ok(paths), _) => _ = who_uses(h, &paths),
-        (ID_HASH, picked, _) => hash_pick(h, picked),
+        (ID_HASH, picked, _) => hash_pick(picked),
         // the selection the menu counted, checked again against the folder the pane shows now
         (ID_GROUP, picked, _) => group_into_folder(src, picked),
         (p, picked, _) if is_org_pick(p) => organize(src, p - ID_ORG, picked),
