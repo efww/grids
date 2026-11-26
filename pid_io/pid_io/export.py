@@ -21,6 +21,27 @@ SYSTEMS = ["DCS", "ESD", "F&G", "PKG PLC"]
 HW = ["AI", "AO", "DI", "DO"]
 
 
+# The index template's row-2 headers (A..AA). The program writes by column position, so an
+# upload whose headers differ would put values in the wrong columns: refuse it instead.
+TEMPLATE_HEADERS = ["No", "Area", "Unit", "Tag No", "Loop No", "Func. Code", "Instrument Type", "Service Description",
+                    "P&ID No", "P&ID Rev", "Line No", "Equipment No", "Line Size", "Inst. Location", "System",
+                    "I/O Type", "I/O Location", "Vendor PKG", "Source File", "Page", "Coordination", "OCR Conf.",
+                    "Status", "Inform 사유", "Reviewer", "Review Date", "Remarks"]
+
+
+def template_problems(ws) -> list[str]:
+    """[] when row 2 of the Instrument_Index sheet matches the standard template, else what differs."""
+    from openpyxl.utils import get_column_letter
+    norm = lambda x: re.sub(r"\s+", " ", str(x or "")).strip().lower()
+    row = next(ws.iter_rows(min_row=2, max_row=2, values_only=True), ())
+    row = list(row) + [None] * (len(TEMPLATE_HEADERS) - len(row))
+    out = []
+    for i, want in enumerate(TEMPLATE_HEADERS):
+        if norm(row[i]) != norm(want):
+            out.append(f"{get_column_letter(i + 1)}열이 '{want}'여야 하는데 '{row[i] or '(빈 칸)'}'입니다")
+    return out
+
+
 def write_template(all_rows: list[Row], template: Path, out: Path, source_file: str, sheets: dict | None = None,
                    concept=None, log=None, scenarios=None, impact=None, area_map: dict | None = None,
                    cable_map: dict | None = None):
@@ -41,6 +62,10 @@ def write_template(all_rows: list[Row], template: Path, out: Path, source_file: 
         funcs = None
     wb = load_workbook(template)
     ws = wb["Instrument_Index"]
+    bad = template_problems(ws)
+    if bad:
+        raise ValueError("인덱스 양식이 표준과 다릅니다 (" + "; ".join(bad[:4]) + (" …" if len(bad) > 4 else "")
+                         + "). 2 입력 화면의 '표준 양식 받기'로 받은 양식에 맞춰 다시 올려 주세요")
     first = 3
     style_row = [copy(c._style) for c in ws[first + 3]]      # blank formatted row
     last = max(ws.max_row, first + len(rows) - 1)

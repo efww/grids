@@ -19,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from pid_io import cable, jb as JB, plot as plotmod          # noqa: E402
+from pid_io import cable, jb as JB, plot as plotmod, tray as TR          # noqa: E402
 from pid_io.app import server as S                           # noqa: E402
 
 FAILS: list[str] = []
@@ -110,6 +110,44 @@ def check_res(where, rows, s, res, layout=None):
     miss = [r.tag for r in rows if cable.classify(r, v)[0] is not None and r.tag not in im]
     if miss:
         fail(where, f"인덱스 케이블 열이 빌 IO 행 {len(miss)} (예: {miss[:4]})")
+    # STEP 8 trays
+    t = TR.build(res, layout, s, {})
+    br = {c["no"]: c["length"] for c in branch}
+    if len(t["pt"]) != len(branch) or any(br[p["cable"]] != p["length"] for p in t["pt"]):
+        fail(where, "Perforated 트레이 수/길이 != 분기 케이블")
+    tnos = [p["no"] for p in t["pt"]] + [s_["no"] for s_ in t["segments"]] + [x["no"] for s_ in t["segments"] for x in s_["trays"] if x["cls"] != "신호"]
+    if len(tnos) != len(set(tnos)):
+        fail(where, "트레이 번호 중복")
+    lim = TR.eff_fill(v)
+    for s_ in t["segments"]:
+        if s_["length"] <= 0:
+            fail(where, f"{s_['no']} 길이 0")
+        for x in s_["trays"]:
+            if x["fill"] > lim + 1e-9 and not x["user"]:
+                fail(where, f"{x['no']} 자동 크기인데 Fill {x['fill']:.0%} > {lim:.0%}")
+            if x["width"] not in TR.widths(v):
+                fail(where, f"{x['no']} 폭 {x['width']} 목록 밖")
+    if res.get("geo") and layout is not None:
+        on = {c for s_ in t["segments"] for c in s_["cables"]}
+        routed = {r["rid"] for r in res["geo"]["routes"]}
+        miss_t = [c["no"] for c in cables if c["kind"] in ("멀티", "패키지", "MCC", "통신") and TR.rid_of(c) in routed
+                  and c["no"] not in on]
+        if miss_t:
+            fail(where, f"경로가 있는데 트레이/UG 구간에 없는 케이블 {len(miss_t)} {miss_t[:3]}")
+        # each routed cable's metres on trays+UG ~ its route's horizontal length
+        seglen = {}
+        for s_ in t["segments"]:
+            for c in s_["cables"]:
+                seglen[c] = seglen.get(c, 0) + s_["length"]
+        rl = {r["rid"]: r for r in res["geo"]["routes"]}
+        for c in cables:
+            rid = TR.rid_of(c)
+            if rid in rl and c["no"] in seglen:
+                poly = rl[rid]["poly"]
+                h = sum(abs(b[0] - a[0]) + abs(b[1] - a[1]) for a, b in zip(poly, poly[1:])) * layout.m_per_pt
+                if abs(seglen[c["no"]] - h) > max(3, 0.05 * h):
+                    fail(where, f"{c['no']} 트레이 구간 길이 {seglen[c['no']]} m != 경로 {h:.0f} m")
+                    break
     # plot: slots, stations
     g = res.get("geo")
     if g and layout is not None:
@@ -233,6 +271,19 @@ def main(name):
             print(f"경로 수정 {rt['rid']}: 멀티 {m1['length']}→{m3['length']} m")
         if r3["summary"]["length"] == res["summary"]["length"]:
             fail("경로 수정", "총 길이가 안 바뀜")
+        # tray size override
+        t0 = TR.build(res, lay, s0, {})
+        sg = max((x for x in t0["segments"] if x["trays"]), key=lambda x: x["trays"][0]["area"])
+        tr0 = sg["trays"][0]
+        t1 = TR.build(res, lay, s0, {"tray_size": {sg["id"]: {tr0["cls"]: [TR.widths(s0["values"])[0], 1]}}})
+        tr1 = next(x for x in t1["segments"] if x["id"] == sg["id"])["trays"][0]
+        if not tr1["user"] or tr1["width"] != TR.widths(s0["values"])[0] or abs(tr1["fill"] - TR.fill(tr0["area"], tr1["width"], 1, s0["values"])) > 1e-3:
+            fail("트레이 크기 변경", "사용자 폭이 반영 안 됨")
+        print(f"트레이 {tr0['no']} {tr0['width']}×{tr0['tiers']} Fill {tr0['fill']:.0%} → {tr1['width']} Fill {tr1['fill']:.0%}, "
+              f"초과 구간 {t0['summary']['overfill']}→{t1['summary']['overfill']}, 사다리 {t0['summary']['ladder_m']} m · UG {t0['summary']['ug_m']} m")
+        t2 = TR.build(r2, lay2, s0, {})
+        if t2["summary"] == t0["summary"]:
+            fail("JB 이동", "트레이 물량이 안 바뀜")
     # sizes / spare change -> index columns follow
     s2 = copy.deepcopy(s0)
     s2["values"]["jb_spare"] = 0.3
@@ -246,7 +297,7 @@ def main(name):
         fail("스페어 30%", "인덱스 멀티 사양이 결과와 다름")
 
     # 4. every option, one at a time, with and without the plot
-    items = [it for g_ in cable.SCHEMA + JB.SCHEMA for it in g_["items"]]
+    items = [it for g_ in cable.SCHEMA + JB.SCHEMA + TR.SCHEMA for it in g_["items"]]
     runs = 0
     for plot_on in (True, False):
         L = lay if plot_on else None
@@ -259,7 +310,8 @@ def main(name):
                 if it.get("pct"):
                     vals = [0.0, 0.5]
             else:
-                vals = {"jb_sizes": ["24,48", "80", "12,24,36,48,60,80"], "multi_std": ["24,48"]}.get(it["id"], [])
+                vals = {"jb_sizes": ["24,48", "80", "12,24,36,48,60,80"], "multi_std": ["24,48"],
+                        "tray_widths": ["300", "150,300,450,600,900"], "od_multi": ["24:20"], "od_single": ["1P:12"]}.get(it["id"], [])
             for val in vals:
                 s3 = copy.deepcopy(s0)
                 s3["values"][it["id"]] = val

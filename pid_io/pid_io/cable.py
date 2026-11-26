@@ -87,6 +87,8 @@ SCHEMA = [
          _num("rack_el", "랙 높이 (EL)", 6.0, "m", "케이블 트레이가 놓이는 랙 단 높이", 0.5),
          _sel("no_rack", "랙 없는 구간 (계기 → JB)", ["AG 서포트", "UG 트렌치"], "AG 서포트",
               "분기 케이블. 수소 등 가스 체류 우려가 있으면 보통 AG"),
+         _sel("trunk_off", "랙 없는 구간 (간선: JB·패키지·IRP → 룸)", ["UG 트렌치", "AG 서포트"], "UG 트렌치",
+              "랙을 타지 않는 간선 구간. UG면 STEP 8에 UG(트렌치) 물량으로, AG면 사다리 트레이로 잡힙니다"),
          _num("sup_el", "AG 서포트 높이 (EL)", 3.0, "m", "", 0.5),
          _num("ug_depth", "UG 매설 깊이", 0.8, "m", "", 0.1),
          _num("inst_el", "계기 높이 (EL)", 1.5, "m", "", 0.1),
@@ -111,8 +113,9 @@ SCHEMA = [
      ]},
 ]
 from . import jb as JB  # noqa: E402  (STEP 7 settings live in the same cable.json)
+from . import tray as TR  # noqa: E402  (STEP 8 too)
 
-ITEMS = {it["id"]: it for g in SCHEMA + JB.SCHEMA for it in g["items"]}
+ITEMS = {it["id"]: it for g in SCHEMA + JB.SCHEMA + TR.SCHEMA for it in g["items"]}
 DEFAULTS = {k: v["default"] for k, v in ITEMS.items()}
 
 
@@ -313,7 +316,7 @@ class _Geo:
         if not r:
             hh, zz = self.h(p, self.L.room), self.zf(start_el, end_el)
             return hh + zz, f"PLOT 직각 {hh:.0f}m (경로 못 찾음) + 높이 {zz:.1f}m"
-        if mode.startswith("UG") or (use_r and v["no_rack"].startswith("UG")):
+        if mode.startswith("UG") or (use_r and v["trunk_off"].startswith("UG")):
             gl = -float(v["ug_depth"])
         else:
             gl = float(v["sup_el"])
@@ -637,7 +640,7 @@ def summarize(cables, jbs, skipped):
 
 
 # ------------------------------------------------------------------ excel
-def write_xlsx(res: dict, s: dict, out: Path, project: str = ""):
+def write_xlsx(res: dict, s: dict, out: Path, project: str = "", tray: dict | None = None):
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font, PatternFill
     from openpyxl.utils import get_column_letter
@@ -719,7 +722,7 @@ def write_xlsx(res: dict, s: dict, out: Path, project: str = ""):
 
     v = s["values"]
     data = []
-    for g in SCHEMA + JB.SCHEMA:
+    for g in SCHEMA:
         for it in g["items"]:
             val = v[it["id"]]
             data.append([g["title"], it["name"], val, it["default"], "변경" if val != it["default"] else "",
@@ -728,6 +731,8 @@ def write_xlsx(res: dict, s: dict, out: Path, project: str = ""):
         data.append(["길이 가정 (PLOT PLAN 전)", f"JB → 룸 ({a})", m, v["len_trunk"], "유닛별 값", ""])
     sheet(wb.create_sheet("Cable_Settings"), ["구분", "항목", "적용값", "기본값", "", "설명"], data,
           [26, 30, 26, 26, 8, 70])
+    if tray is not None:
+        TR.write_sheets(wb, tray, s["values"], sheet)
     out.parent.mkdir(parents=True, exist_ok=True)
     wb.save(out)
     return out

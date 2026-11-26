@@ -773,6 +773,11 @@ def plot_update(name: str, b: dict):
     if b.get("jb_reset"):
         for j in (b["jb_reset"] if isinstance(b["jb_reset"], list) else [b["jb_reset"]]):
             (dd.get("jb_moves") or {}).pop(str(j), None)
+    if b.get("tray_size"):                           # STEP 8: {seg, cls, w, n}
+        t = b["tray_size"]
+        dd.setdefault("tray_size", {}).setdefault(str(t["seg"]), {})[str(t["cls"])] = [int(t["w"]), max(1, int(t["n"]))]
+    if b.get("tray_reset"):
+        (dd.get("tray_size") or {}).pop(str(b["tray_reset"]), None)
     if b.get("route_reset"):
         (dd.get("routes_edit") or {}).pop(b["route_reset"], None)
     if b.get("rack_add"):                            # polyline drawn on the plot, pt
@@ -847,6 +852,8 @@ def cable_view(name: str):
                                            "multi_size", "dwgs", "slot", "place", "moved", "material", "ex", "ip",
                                            "terminals", "gl_branch", "gl_multi", "fill", "tags")} for j in res["jbs"]],
             "jb_schema": cable.JB.SCHEMA, "size_table": cable.JB.size_table(s["values"]),
+            "tray_schema": cable.TR.SCHEMA, "tray": cable.TR.build(res, lay, s, _plot_dec(name)),
+            "tray_checklist": cable.TR.checklist(s["values"]),
             "checklist": cable.JB.checklist(s["values"]),
             "cables": res["cables"][:400], "cables_total": len(res["cables"]),
             "plot": plot_view(name, lay, res)}
@@ -875,9 +882,9 @@ def cable_update(name: str, b: dict):
 
 
 def cable_export(name: str):
-    s, res, _ = cable_result(name)
+    s, res, lay = cable_result(name)
     out = pdir(name) / "output" / f"Cable_Schedule_{safe_name(name)}_{time.strftime('%Y%m%d_%H%M')}.xlsx"
-    cable.write_xlsx(res, s, out, name)
+    cable.write_xlsx(res, s, out, name, cable.TR.build(res, lay, s, _plot_dec(name)))
     return {"files": [out.name]}
 
 
@@ -942,6 +949,13 @@ def _check_xlsx(data: bytes, kind: str, fn: str, path: Path | None = None):
     try:
         if kind == "template" and "Instrument_Index" not in names:
             raise ValueError(f"'Instrument_Index' 시트가 없습니다. 시트 목록: {', '.join(names[:12])}")
+        if kind == "template":
+            from ..export import template_problems
+            bad = template_problems(wb["Instrument_Index"])
+            if bad:
+                raise ValueError("표준 인덱스 양식과 머리글(2행)이 다릅니다 - " + "; ".join(bad[:5])
+                                 + (f" 외 {len(bad) - 5}곳" if len(bad) > 5 else "")
+                                 + ". 프로그램은 열 위치대로 값을 쓰므로, '표준 양식 받기'로 받은 양식을 써 주세요")
         if kind == "ref":
             from ..export import find_reference_sheet
             find_reference_sheet(wb)
@@ -1067,6 +1081,11 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, {"ok": True})
             if parts[1:] == ["font"]:
                 return self._send(200, {"found": {k: str(v) for k, v in FONTS.items()}})
+            if parts[1:] == ["template_std"]:                 # the standard index template to fill in
+                from urllib.parse import quote
+                f = PROTO / "Instrument_Index_Template.xlsx"
+                return self._send(200, f.read_bytes(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                  {"Content-Disposition": f"attachment; filename*=UTF-8''{quote(f.name)}"})
             if parts[1] == "ai":                          # global AI settings
                 if parts[2:] == ["settings"]:
                     if method == "POST":

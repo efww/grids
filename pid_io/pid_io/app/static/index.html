@@ -173,6 +173,7 @@ details summary::marker{color:var(--green)}
     <div class="st" data-s="output"><i>5</i>출력</div>
     <div class="st ext" data-s="cable"><i>6</i>케이블<span class="chip" style="margin-left:auto;font-size:10.5px;padding:0 6px">확장</span></div>
     <div class="st ext" data-s="jb"><i>7</i>JB<span class="chip" style="margin-left:auto;font-size:10.5px;padding:0 6px">확장</span></div>
+    <div class="st ext" data-s="tray"><i>8</i>트레이<span class="chip" style="margin-left:auto;font-size:10.5px;padding:0 6px">확장</span></div>
     <div class="st" data-s="ai" style="margin-top:14px;border-top:1px solid var(--line-l)"><i>AI</i>AI 연결 설정</div>
     <div class="foot">도면 인식은 한 번,<br>체크리스트를 바꾸면 IO가<br>즉시 다시 계산됩니다.<br><br><span class="mono">IO 1점 = 인덱스 1행</span><br><br><span id="fontst"></span></div>
   </nav>
@@ -198,7 +199,7 @@ const post = (path, data) => api(path, {method:"POST", headers:{"Content-Type":"
 const P = p => `p/${encodeURIComponent(S.project)}/${p}`;
 function toast(msg, err) { const t=$("#toast"); t.textContent=msg; t.className="toast"+(err?" err":""); t.style.display="block"; clearTimeout(t._h); t._h=setTimeout(()=>t.style.display="none", err?6000:2500); }
 
-function go(screen) { S.tok++; S.screen = screen; if (screen === "cable" || screen === "jb") CK.data = null; $("#main").className = ""; render(); }
+function go(screen) { S.tok++; S.screen = screen; if (["cable","jb","tray"].includes(screen)) CK.data = null; $("#main").className = ""; render(); }
 document.querySelectorAll("#nav .st").forEach(el => el.onclick = () => go(el.dataset.s));
 
 function navState() {
@@ -206,7 +207,7 @@ function navState() {
   document.querySelectorAll("#nav .st").forEach(el => {
     const s = el.dataset.s;
     el.classList.toggle("on", s === S.screen);
-    el.classList.toggle("dis", (!S.project && !["projects","ai"].includes(s)) || (!ex && ["concept","review","output","cable","jb"].includes(s)));
+    el.classList.toggle("dis", (!S.project && !["projects","ai"].includes(s)) || (!ex && ["concept","review","output","cable","jb","tray"].includes(s)));
     el.classList.toggle("done", (s==="projects" && S.project) || (s==="extract" && ex));
   });
   $("#pname").textContent = S.project || "선택 안 됨";
@@ -228,6 +229,7 @@ async function render() {
     if (S.screen === "output") return await renderOutput(m);
     if (S.screen === "cable") return await renderCable(m);
     if (S.screen === "jb") return await renderJB(m);
+    if (S.screen === "tray") return await renderTray(m);
   } catch (e) { toast(e.message, true); }
 }
 
@@ -338,7 +340,7 @@ async function renderExtract(m) {
   ${st.calc_error?`<div class="panel" style="border-left:5px solid var(--red);margin-bottom:16px"><b style="color:var(--red)">IO 계산 오류</b> · ${esc(st.calc_error)}</div>`:""}
   <div class="grid g3">
     ${fileCard("pdf","P&ID PDF","레전드 포함 벡터 PDF",true)}
-    ${fileCard("template","인덱스 양식","회사 Instrument Index 템플릿 (.xlsx, Instrument_Index 시트)",true)}
+    ${fileCard("template","인덱스 양식",`표준 Instrument Index 양식 (.xlsx). 열 순서·머리글이 표준과 같아야 합니다. <a href="/api/template_std" download>표준 양식 받기</a>`,true)}
     ${fileCard("ref","레퍼런스 인덱스","채점용 (INDEX 시트). 없어도 결과 동일",false)}
   </div>
   <div class="panel" style="margin-top:16px">
@@ -1275,6 +1277,125 @@ async function renderJB(m) {
       JM.sel = h.id; plotUpd({jb_move: {jbs: [no], slot: h.id}}); };
   };
   bindSvg($("#jbsvg"));
+}
+
+/* ---------------------------------------------------------------- 8 tray */
+const TM = {tab:99, sel:null, edit:{}, view:"seg"};
+const TW_COL = w => w >= 900 ? "#0b3d91" : w >= 600 ? "#2c7fc0" : "#5fb4ea";
+function trFill(a, w, n, V) { return a / (w * (+V.tray_height) * Math.max(1, n)); }
+function trayOverlay(d) {
+  const pp = d.plot, t = d.tray, [W,H] = pp.size, k = Math.max(W,H)/700, V = d.values, lim = +V.tray_fill;
+  const room = (pp.questions.find(q=>q.id==="room")||{}).pos;
+  const racks = (pp.racks||[]).filter(r=>!r[6]).map(r => `<rect x="${r[0]}" y="${r[1]}" width="${r[2]-r[0]}" height="${r[3]-r[1]}" fill="#2c7fc0" opacity=".10"/>`).join("");
+  const segs = t.segments.map(s => {
+    const [a,b] = s.poly, on = s.id === TM.sel;
+    if (s.kind === "UG") return `<line x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}" stroke="${on?"#e0002a":"#8a6d00"}" stroke-width="${(on?3:1.6)*k}" stroke-dasharray="${4*k} ${2.5*k}" opacity=".9"/>`;
+    const tr = s.trays[0] || {width:300, tiers:1, fill:0};
+    const over = s.trays.some(x => x.fill > lim + 1e-9), w = Math.max(...s.trays.map(x => x.width * x.tiers));
+    return `<line x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}" stroke="${on?"#e0002a":over?"#e0002a":TW_COL(tr.width)}" stroke-width="${(1.4 + w/300*1.3)*k}" stroke-linecap="square" ${s.kind==="AG"?`stroke-dasharray="${5*k} ${2*k}"`:""} opacity="${on?1:.9}"/>`;
+  }).join("");
+  const hits = t.segments.map(s => { const [a,b] = s.poly;
+    return `<line x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}" stroke="transparent" stroke-width="${9*k}" data-seg="${s.id}" style="cursor:pointer"><title>${esc(s.no)} · ${s.length}m · 케이블 ${s.cables.length}${s.trays.map(x=>` · ${x.cls} ${x.width}${x.tiers>1?"×"+x.tiers+"단":""} ${Math.round(x.fill*100)}%`).join("")}</title></line>`; }).join("");
+  const mark = room ? `<circle cx="${room[0]}" cy="${room[1]}" r="${11*k}" fill="none" stroke="#2c7fc0" stroke-width="${3*k}"/><text x="${room[0]+14*k}" y="${room[1]+5*k}" font-size="${15*k}" font-weight="700" fill="#2c7fc0">제어실</text>` : "";
+  const jbs = ((d.plot.geo||{}).stations||[]).map(x => `<rect x="${x.x-3.5*k}" y="${x.y-3.5*k}" width="${7*k}" height="${7*k}" fill="#f08a24" opacity=".85"><title>JB ${esc(x.jbs.join(", "))}</title></rect>`).join("");
+  return `<svg viewBox="0 0 ${W} ${H}" style="position:absolute;inset:0;width:100%;height:100%" id="trsvg">${racks}${segs}${jbs}${mark}${hits}</svg>`;
+}
+function traySegCard(d) {
+  const t = d.tray, V = d.values, s = t.segments.find(x => x.id === TM.sel), ws = (String(V.tray_widths).match(/\d+/g)||["300","600","900"]).map(Number).sort((a,b)=>a-b);
+  if (!s) return `<div class="ritem" style="cursor:default;background:#f7faf8"><div class="b">선을 누르면 그 구간의 케이블과 트레이 크기를 보여 줍니다. 폭·단 수를 바꾸면 Fill ratio가 바로 다시 계산되고, '적용'을 누르면 물량에 들어갑니다.</div></div>`;
+  if (s.kind === "UG") return `<div class="ritem on" style="cursor:default"><div class="a"><b>${esc(s.no)}</b><span class="chip y">UG 트렌치</span></div>
+    <div class="b">랙을 타지 않는 간선 구간 · ${s.length} m · 케이블 ${s.cables.length}가닥 · 단면적 ${fmt(s.area)} mm²<br><span style="font-size:11.5px">${esc(s.cables.slice(0,12).join(", "))}${s.cables.length>12?" …":""}</span></div>
+    <div style="margin-top:8px"><button class="btn sm line" id="trsx">선택 해제</button></div></div>`;
+  const rows = s.trays.map((x, i) => { const e = TM.edit[x.cls] || [x.width, x.tiers]; const f = trFill(x.area, e[0], e[1], V);
+    return `<tr><td style="min-width:110px"><b class="mono" style="white-space:nowrap">${esc(x.no)}</b><br><span style="font-size:11px;color:var(--sub);white-space:nowrap">${esc(x.cls)} · ${x.count}가닥</span><br><span style="font-size:11px;color:var(--sub)">${fmt(x.area)} mm²</span></td>
+      <td><select data-trw="${esc(x.cls)}">${ws.map(w=>`<option ${w===e[0]?"selected":""}>${w}</option>`).join("")}</select></td>
+      <td><input type="number" min="1" max="6" value="${e[1]}" data-trn="${esc(x.cls)}" style="width:52px"></td>
+      <td style="font-weight:700;color:${f > +V.tray_fill + 1e-9 ? "#e0002a" : "#15ad60"}" id="trf-${i}">${Math.round(f*100)}%</td>
+      <td style="font-size:11px;color:var(--sub)">자동 ${x.auto[0]}${x.auto[1]>1?"×"+x.auto[1]:""}${x.user?' <span class="chip b" style="font-size:10px;padding:0 4px">변경</span>':""}</td></tr>`; }).join("");
+  return `<div class="ritem on" style="cursor:default"><div class="a"><b>${esc(s.no)}</b><span class="chip">${s.kind==="랙"?"사다리 (랙)":"사다리 (AG)"}</span></div>
+    <div class="b">${s.length} m · 케이블 ${s.cables.length}가닥 · 높이 ${V.tray_height} mm · 기준 Fill ${Math.round(V.tray_fill*100)}%</div>
+    <table class="mini" style="margin-top:6px"><tr><th>트레이</th><th>폭</th><th>단</th><th>Fill</th><th></th></tr>${rows}</table>
+    <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap"><button class="btn sm" id="trapply">적용</button>${s.trays.some(x=>x.user)?`<button class="btn sm line" id="trreset">자동 크기로</button>`:""}<button class="btn sm line" id="trsx">선택 해제</button></div>
+    <div style="font-size:11.5px;color:var(--sub);margin-top:8px">${esc(s.cables.slice(0,14).join(", "))}${s.cables.length>14?" …":""}</div></div>`;
+}
+function traySide(d) {
+  const sm = d.tray.summary;
+  return `<div class="panel">
+    <div style="font-size:12.5px;color:var(--sub)">사다리 트레이</div>
+    <div style="font-size:46px;font-weight:300;line-height:1.05;letter-spacing:-.03em"><span class="uline">${fmt(sm.ladder_m)}</span><small style="font-size:16px;color:var(--sub)"> m</small></div>
+    <div style="font-size:12.5px;color:var(--sub);margin:8px 0 10px">구간 ${fmt(sm.segments)} · Fill 초과 <b style="color:${sm.overfill?"#e0002a":"inherit"}">${fmt(sm.overfill)}</b></div>
+    ${sm.ladder.map(x=>`<div class="kv"><span>${esc(x.cls)} ${x.width}×${d.values.tray_height}</span><b>${fmt(x.length)} m → ${fmt(x.order)} m</b></div>`).join("")}
+    <div class="kv"><span>UG 트렌치 (${fmt(sm.ug_segments)}구간)</span><b>${fmt(sm.ug_m)} m → ${fmt(sm.ug_order)} m</b></div>
+    <div class="kv"><span>Perforated ${esc(d.values.pt_width)} (${fmt(sm.pt_n)})</span><b>${fmt(sm.pt_m)} m</b></div>
+    <p class="xnote" style="margin-top:8px">→ 오른쪽 값은 피팅·할증 포함 물량</p>
+  </div>
+  <div class="panel" style="font-size:12px;color:var(--sub);line-height:1.6"><b style="color:var(--ink)">STEP 6·7에서 내려오는 것</b><br>
+    경로(끌어서 고친 경로 포함), JB 위치, 케이블 사양. 랙 밖 간선 = <b>${esc(d.values.trunk_off)}</b> (STEP 6 '경로 · 높이').<br>
+    <a data-go="cable" style="cursor:pointer">STEP 6 경로 고치기 →</a> · <a data-go="jb" style="cursor:pointer">STEP 7 JB 옮기기 →</a></div>`;
+}
+function trayTable(d) {
+  const t = d.tray, lim = +d.values.tray_fill;
+  const vt = (k, lab) => `<a class="${TM.view===k?"on":""}" data-trv="${k}">${lab}</a>`;
+  let body = "";
+  if (TM.view === "seg") body = `<table class="nw"><tr><th>Tray No</th><th>종류</th><th>구분</th><th>폭</th><th>단</th><th style="text-align:right">m</th><th style="text-align:right">케이블</th><th style="text-align:right">mm²</th><th style="text-align:right">Fill</th></tr>
+    ${t.segments.flatMap(s => s.kind==="UG" ? [`<tr data-segrow="${s.id}" style="cursor:pointer"><td class="mono">${esc(s.no)}</td><td>UG</td><td></td><td></td><td></td><td style="text-align:right">${s.length}</td><td style="text-align:right">${s.cables.length}</td><td style="text-align:right">${fmt(s.area)}</td><td></td></tr>`]
+      : s.trays.map(x => `<tr data-segrow="${s.id}" style="cursor:pointer;${x.fill>lim+1e-9?"background:#fde8ea":""}"><td class="mono">${esc(x.no)}</td><td>${s.kind==="랙"?"사다리":"사다리 AG"}</td><td>${esc(x.cls)}</td><td>${x.width}</td><td>${x.tiers}</td><td style="text-align:right">${s.length}</td><td style="text-align:right">${x.count}</td><td style="text-align:right">${fmt(x.area)}</td><td style="text-align:right">${Math.round(x.fill*100)}%${x.user?" ✎":""}</td></tr>`)).join("")}</table>`;
+  if (TM.view === "pt") body = `<table class="nw"><tr><th>PT No</th><th>케이블</th><th>From (JB)</th><th>To (계기)</th><th>폭</th><th style="text-align:right">m</th></tr>
+    ${t.pt.slice(0,400).map(p=>`<tr><td class="mono">${esc(p.no)}</td><td class="mono">${esc(p.cable)}</td><td class="mono">${esc(p.frm)}</td><td class="mono">${esc(p.to)}</td><td>${p.width}</td><td style="text-align:right">${p.length}</td></tr>`).join("")}</table>`;
+  return `<div class="panel" style="margin-top:16px"><div class="tabs" style="margin-bottom:10px">${vt("seg",`트레이 · UG 구간 (${t.segments.length})`)}${vt("pt",`Perforated (${t.pt.length})`)}</div>${body}</div>`;
+}
+async function renderTray(m) {
+  const t = S.tok;
+  if (!CK.data || CK.data._p !== S.project) { CK.data = await api(P("cable")); CK.data._p = S.project; }
+  if (t !== S.tok) return;
+  const d = CK.data, G = d.tray_schema, V = d.values, NT = G.length;
+  if (TM.tab > NT + 1 || TM.tab < 0) TM.tab = NT;
+  m.className = "ext-page";
+  const tabs = `<a class="${TM.tab===NT?"on":""}" data-trt="${NT}">PLOT 트레이</a>` + G.map((x,i)=>`<a class="${i===TM.tab?"on":""}" data-trt="${i}">${esc(x.title)}</a>`).join("")
+    + `<a class="${TM.tab===NT+1?"on":""}" data-trt="${NT+1}">체크리스트</a>`;
+  let body;
+  if (TM.tab === NT) body = !d.plot ? `<div class="empty" style="margin-top:12px">STEP 6에서 PLOT PLAN을 올리면 경로를 따라 트레이 구간을 만듭니다. 지금은 Perforated(계기 분기)만 냅니다.</div>`
+    : `<div style="display:flex;gap:16px;align-items:flex-start;margin-top:12px">
+      <div style="width:330px;flex:none"><div class="panel" style="padding:0">${traySegCard(d)}</div>
+        <div class="legend" style="margin-top:10px"><span><i style="background:#5fb4ea"></i>300</span><span><i style="background:#2c7fc0"></i>600</span><span><i style="background:#0b3d91"></i>900</span><span><i style="background:#e0002a"></i>Fill 초과 / 선택</span><span><i style="background:#8a6d00"></i>UG (점선)</span><span><i style="background:#f08a24"></i>JB</span></div>
+        <p class="xnote">굵기 = 폭 × 단 수. 같은 케이블이 지나가는 직선 구간이 한 트레이입니다. 경로가 갈라지는 곳에서 트레이가 나뉘고 폭이 줄어듭니다.${d.tray.lost_overrides?` · 경로가 바뀌어 적용 못 한 크기 변경 ${d.tray.lost_overrides}건`:""}</p></div>
+      <div class="viewer" style="flex:1;height:calc(100vh - 260px)"><div style="position:relative;width:100%;max-width:${Math.round(d.plot.size[0]*50/72)*2}px" id="trwrap"><img src="/api/${P("plot_png")}?v=${encodeURIComponent(d.plot.file)}" style="width:100%;display:block">${trayOverlay(d)}</div></div></div>`;
+  else if (TM.tab === NT+1) body = `<p class="xnote" style="margin-top:10px">트레이 설계 가정 체크리스트입니다. 엑셀 Tray_Checklist 시트에도 들어갑니다.</p>
+    <table class="mini"><tr><th>No</th><th>구분</th><th>항목</th><th>적용값</th><th>기본값</th><th>설명</th></tr>
+    ${d.tray_checklist.map(c=>`<tr style="${c.changed?"background:var(--chg)":""}"><td class="mono">${esc(c.code)}</td><td>${esc(c.group)}</td><td><b>${esc(c.name)}</b></td><td>${esc(typeof c.value==="number"&&c.value>0&&c.value<1?Math.round(c.value*100)+"%":c.value)}</td><td style="color:var(--sub)">${esc(typeof c.default==="number"&&c.default>0&&c.default<1?Math.round(c.default*100)+"%":c.default)}</td><td style="font-size:11.5px;color:var(--sub)">${esc(c.help)}</td></tr>`).join("")}</table>`;
+  else body = `<p class="xnote" style="margin-top:10px">${esc(G[TM.tab].lead)}</p>${ckItems(G[TM.tab], V, d)}`;
+  m.innerHTML = `
+  <div class="head"><div><div class="eyebrow">STEP 8</div><h1>트레이</h1>
+    <p class="lead">STEP 6·7 경로를 따라 사다리 트레이(랙), UG(랙 밖 간선), Perforated(JB → 계기)를 냅니다. 폭은 Fill ratio로 자동, 구간을 눌러 바꿀 수 있습니다.</p></div>
+    <div style="display:flex;gap:8px"><button class="btn" id="trmk">케이블 · JB · 트레이 엑셀 만들기</button></div></div>
+  <div style="display:flex;gap:20px;align-items:flex-start">
+    <div style="flex:1;min-width:0"><div class="panel"><div class="tabs">${tabs}</div>${body}</div>${trayTable(d)}</div>
+    <div class="side">${traySide(d)}</div>
+  </div>`;
+  const upd = async body => { try { CK.data = await post(P("cable"), body); CK.data._p = S.project; if (S.screen==="tray") renderTray(m); } catch(e) { toast(e.message, true); } };
+  const plotUpd = async body => { try { CK.data = await post(P("plot"), body); CK.data._p = S.project; TM.edit = {}; if (S.screen==="tray") renderTray(m); } catch(e) { toast(e.message, true); } };
+  m.querySelectorAll("[data-trt]").forEach(a => a.onclick = () => { TM.tab = +a.dataset.trt; renderTray(m); });
+  m.querySelectorAll("[data-trv]").forEach(a => a.onclick = () => { TM.view = a.dataset.trv; renderTray(m); });
+  m.querySelectorAll("[data-go]").forEach(a => a.onclick = () => go(a.dataset.go));
+  m.querySelectorAll("[data-ck]").forEach(el => el.onchange = () => upd({set:{[el.dataset.ck]: el.value}}));
+  m.querySelectorAll("[data-cktog]").forEach(el => el.onclick = () => { const it = G.flatMap(x=>x.items).find(x=>x.id===el.dataset.cktog);
+    upd({set:{[it.id]: el.classList.contains("on") ? it.options.find(o=>o!==it.on) : it.on}}); });
+  m.querySelectorAll("[data-segrow]").forEach(r => r.onclick = () => { TM.sel = r.dataset.segrow; TM.edit = {}; TM.tab = NT; renderTray(m); window.scrollTo(0,0); });
+  $("#trmk").onclick = async () => { const b = $("#trmk"); b.disabled = true; b.textContent = "만드는 중…";
+    try { const r = await post(P("cable_export"), {}); toast(r.files.join(", ") + " 생성 · 5 출력 화면에서 받을 수 있습니다"); } catch(e) { toast(e.message, true); }
+    if ($("#trmk")) { $("#trmk").disabled = false; $("#trmk").textContent = "케이블 · JB · 트레이 엑셀 만들기"; } };
+  const svg = $("#trsvg");
+  if (svg) svg.querySelectorAll("[data-seg]").forEach(el => el.onclick = () => { TM.sel = TM.sel === el.dataset.seg ? null : el.dataset.seg; TM.edit = {}; renderTray(m); });
+  if ($("#trsx")) $("#trsx").onclick = () => { TM.sel = null; TM.edit = {}; renderTray(m); };
+  const s = d.tray.segments.find(x => x.id === TM.sel);
+  const live = () => s.trays.forEach((x, i) => { const e = TM.edit[x.cls] || [x.width, x.tiers], f = trFill(x.area, e[0], e[1], V), el = $("#trf-"+i);
+    if (el) { el.textContent = Math.round(f*100) + "%"; el.style.color = f > +V.tray_fill + 1e-9 ? "#e0002a" : "#15ad60"; } });
+  m.querySelectorAll("[data-trw]").forEach(el => el.onchange = () => { const x = s.trays.find(y => y.cls === el.dataset.trw); const e = TM.edit[x.cls] || [x.width, x.tiers]; TM.edit[x.cls] = [+el.value, e[1]]; live(); });
+  m.querySelectorAll("[data-trn]").forEach(el => el.oninput = () => { const x = s.trays.find(y => y.cls === el.dataset.trn); const e = TM.edit[x.cls] || [x.width, x.tiers]; TM.edit[x.cls] = [e[0], Math.max(1, +el.value||1)]; live(); });
+  if ($("#trapply")) $("#trapply").onclick = async () => { const ch = Object.entries(TM.edit); if (!ch.length) return toast("바꾼 값이 없습니다", true);
+    for (const [cls, [w, n]] of ch) { try { CK.data = await post(P("plot"), {tray_size: {seg: s.id, cls, w, n}}); CK.data._p = S.project; } catch(e) { return toast(e.message, true); } }
+    TM.edit = {}; renderTray(m); };
+  if ($("#trreset")) $("#trreset").onclick = () => plotUpd({tray_reset: s.id});
 }
 
 api("font").then(f => { const k = Object.keys(f.found||{}); $("#fontst").innerHTML = k.length
