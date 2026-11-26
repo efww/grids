@@ -29,10 +29,14 @@ unsafe fn ini_now() -> String {
             }
             a.place_hold = remember_place(&mut a.s.places, &sig, pos, a.place_hold);
         }
-        if a.late.is_empty() {
+        // not shown since a sign-in start: folders still to retry; and panes moved to This PC off a pulled drive
+        // keep its folder, so starting with the drive plugged in opens it again
+        let mut keep = a.late.clone();
+        keep.extend(a.panes.iter().enumerate().filter_map(|(i, p)| Some((i, p.as_ref()?.unplugged.as_ref()?.0.clone()))));
+        if keep.is_empty() {
             a.s.to_ini()
         } else {
-            keep_late(&a.s, &a.late).to_ini() // not shown since a sign-in start: folders still to retry
+            keep_late(&a.s, &keep).to_ini()
         }
     })
 }

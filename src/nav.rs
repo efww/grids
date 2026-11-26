@@ -132,7 +132,8 @@ pub(crate) fn gone_text(ko: bool, n: usize, missing: &str, opened: &str) -> Stri
 // Like an Explorer window (and Total Commander / XYplorer for a removal): a pane inside a folder another pane,
 // Explorer or any shell app renamed opens its new name; one inside a removed folder opens the nearest parent.
 // The notification only queues; TIMER_SHELL looks at the disk once, after a short pause, for the whole batch.
-// ponytail: local fixed drives only (no blocking probe, no USB removal); renames that bypass the shell aren't seen.
+// ponytail: local fixed drives only (no blocking probe); renames that bypass the shell aren't seen. A drive letter
+// that goes away (USB pulled) is drives_changed's.
 
 pub(crate) const WM_SHELL_CHANGE: u32 = WM_APP + 51; // wParam = notification handle, lParam = process id (SHCNRF_NewDelivery)
 pub(crate) const TIMER_SHELL: usize = 1160; // on main: the queued changes are looked at
@@ -398,17 +399,112 @@ pub(crate) fn follow_text(ko: bool, disp: &str) -> String {
     if ko { format!("폴더 이름이 바뀌어 따라감: {leaf}") } else { format!("Followed renamed folder: {leaf}") }
 }
 
-// Pending / Failed events of a pane with a recovery or a rename follow waiting; Complete goes through on_nav.
+// Pending / Failed events of a pane with a recovery, a rename follow or a pulled drive's mark; Complete goes through on_nav.
 pub(crate) unsafe fn rec_event(i: usize, ev: Nav, pidl: *const ITEMIDLIST) {
-    if app(|a| a.panes[i].as_ref().is_some_and(|p| p.recover.is_some() || p.follow.is_some())) {
+    if app(|a| a.panes[i].as_ref().is_some_and(|p| p.recover.is_some() || p.follow.is_some() || p.unplugged.is_some())) {
         let path = name(pidl, SIGDN_DESKTOPABSOLUTEPARSING);
         app(|a| {
             a.panes[i].as_mut().map(|p| {
+                unplug_step(&mut p.unplugged, ev, &path);
                 rec_step(&mut p.recover, ev, &path);
                 rec_step(&mut p.follow, ev, &path)
             })
         });
     }
+}
+
+// ---------- drives that went or came back ----------
+// Like Explorer closing its window on a pulled USB stick (Total Commander / Directory Opus move the panel away): a
+// pane in a folder on a drive letter that went opens This PC, marked with that folder; when the letter comes back
+// (removable or fixed only, the kinds go_near looks at) a pane still on This PC reopens it. Letters only
+// (GetLogicalDrives): a letter that went is never looked at, so a cut network drive or subst can't block.
+// ponytail: a card reader or CD drive keeps its letter with nothing in it, so it isn't seen here.
+
+// A drive letter's bit (A = bit 0) for a path on it, any case: "E:\x", "e:". None for \\server, ::{GUID} and the like.
+pub(crate) fn drive_bit(path: &str) -> Option<u32> {
+    let b = path.as_bytes();
+    (b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':' && matches!(b.get(2), None | Some(b'\\'))).then(|| 1 << (b[0].to_ascii_uppercase() - b'A'))
+}
+
+// The panes a drive change moves: (to This PC: in a folder on a letter that `gone`, not marked yet; back home:
+// marked with a folder on a letter now `back` and still on This PC, so a place the user picked meanwhile stays).
+pub(crate) fn drive_moves(gone: u32, back: u32, paths: &[String], marks: &[Option<&str>]) -> (Vec<usize>, Vec<usize>) {
+    let on = |p: &str, m: u32| drive_bit(p).is_some_and(|b| b & m != 0);
+    let away = (0..paths.len().min(marks.len())).filter(|&i| marks[i].is_none() && on(&paths[i], gone)).collect();
+    let home = (0..paths.len().min(marks.len())).filter(|&i| marks[i].is_some_and(|m| on(m, back)) && paths[i].eq_ignore_ascii_case(THIS_PC)).collect();
+    (away, home)
+}
+
+// A pulled drive's mark through the pane's navigation events: kept while its own This PC is opening (and once it
+// has), dropped by anything else, including a later This PC (a session, the user's pick), which a drive coming
+// back must not replace.
+pub(crate) fn unplug_step(m: &mut Option<(String, bool)>, ev: Nav, path: &str) {
+    let Some((_, reached)) = m.as_mut() else { return };
+    let ours = !*reached && path.eq_ignore_ascii_case(THIS_PC);
+    match ev {
+        Nav::Complete if ours => *reached = true,
+        Nav::Pending if ours => {}
+        _ => *m = None,
+    }
+}
+
+// "Drive E: was removed · moved to This PC" / "Drive E: is back · reopened its folder" (5 s); several panes, one count.
+pub(crate) fn unplug_text(ko: bool, back: bool, drives: &str, n: usize) -> String {
+    let (en, k) = match (back, n) {
+        (false, 1) => ("Drive {drives} was removed · moved to This PC", "{drives} 드라이브가 빠져 내 PC로 옮김"),
+        (false, _) => ("Drive {drives} was removed · moved {n} panes to This PC", "{drives} 드라이브가 빠져 패널 {n}개를 내 PC로 옮김"),
+        (true, 1) => ("Drive {drives} is back · reopened its folder", "{drives} 드라이브가 돌아와 원래 폴더를 다시 엶"),
+        (true, _) => ("Drive {drives} is back · reopened the folders of {n} panes", "{drives} 드라이브가 돌아와 패널 {n}개의 원래 폴더를 다시 엶"),
+    };
+    (if ko { k } else { en }).replace("{drives}", drives).replace("{n}", &n.to_string())
+}
+
+// "E:" or "E:, F:" for the letters of these paths, in order, each once.
+fn drive_names<'a>(paths: impl Iterator<Item = &'a str>) -> String {
+    let mask = paths.filter_map(drive_bit).fold(0, |m, b| m | b);
+    mask_letters(mask).iter().map(|&c| format!("{}:", c as char)).collect::<Vec<_>>().join(", ")
+}
+
+// From refresh_drives, after the buttons came and went (also at the end of a drag or resize): `gone` letters, and
+// `back` ones that are removable or fixed drives.
+pub(crate) unsafe fn drives_changed(gone: u32, back: u32) {
+    let (away, home, paths) = app(|a| {
+        let marks: Vec<Option<&str>> = a.panes.iter().map(|p| p.as_ref().and_then(|p| p.unplugged.as_ref()).map(|m| m.0.as_str())).collect();
+        let paths: Vec<String> = (0..a.panes.len()).map(|i| if a.panes[i].is_some() { a.s.paths.get(i).cloned().unwrap_or_default() } else { String::new() }).collect();
+        let (away, home) = drive_moves(gone, back, &paths, &marks);
+        (away, home, paths)
+    });
+    let mut moved = Vec::new();
+    for i in away {
+        let from = paths[i].clone();
+        // set before browsing: the mark must be there for this navigation's own events
+        app(|a| a.panes[i].as_mut().map(|p| p.unplugged = Some((from.clone(), false))));
+        if navigate(i, THIS_PC) {
+            moved.push(from);
+        } else {
+            app(|a| a.panes[i].as_mut().map(|p| p.unplugged = None));
+        }
+    }
+    if !moved.is_empty() {
+        let text = unplug_text(KO.load(Ordering::Relaxed), false, &drive_names(moved.iter().map(String::as_str)), moved.len());
+        app(|a| (a.note, a.lost) = (Some((text, Instant::now() + Duration::from_secs(5))), 0));
+    }
+    let homes: Vec<(usize, String)> = app(|a| home.iter().filter_map(|&i| Some((i, a.panes[i].as_mut()?.unplugged.take()?.0))).collect());
+    if homes.is_empty() {
+        return;
+    }
+    // said before opening: a folder deleted meanwhile opens its parent, and on_nav's "Not found" then replaces this
+    let ko = KO.load(Ordering::Relaxed);
+    let text = unplug_text(ko, true, &drive_names(homes.iter().map(|h| h.1.as_str())), homes.len());
+    app(|a| (a.note, a.lost) = (Some((text.clone(), Instant::now() + Duration::from_secs(5))), 0));
+    let back: Vec<&str> = homes.iter().filter(|(i, p)| go_near(*i, p)).map(|h| h.1.as_str()).collect();
+    // a drive not ready yet opens nothing: the pane stays on This PC quietly, and the note counts only what opened
+    let now = (!back.is_empty()).then(|| unplug_text(ko, true, &drive_names(back.iter().copied()), back.len()));
+    app(|a| {
+        if a.note.as_ref().is_some_and(|n| n.0 == text) {
+            a.note = now.map(|t| (t, Instant::now() + Duration::from_secs(5)));
+        }
+    });
 }
 
 /// true when the browser accepted the move (false: no pane, or nothing to go back/forward/up to)
@@ -1387,6 +1483,9 @@ pub(crate) unsafe fn on_nav(i: usize, pidl: *const ITEMIDLIST) {
     let Some((h, eb, view, cols, ticket)) = app(|a| {
         let fs = is_fs(&parse);
         let old = std::mem::replace(&mut a.s.paths[i], parse.clone());
+        if let Some(p) = a.panes[i].as_mut() {
+            unplug_step(&mut p.unplugged, Nav::Complete, &parse);
+        }
         // a followed rename is no visit: its old name no longer exists (shell_tick fixed the recent list)
         let followed = a.panes[i].as_mut().and_then(|p| rec_step(&mut p.follow, Nav::Complete, &parse)).is_some();
         if followed {

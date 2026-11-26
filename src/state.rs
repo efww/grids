@@ -12,6 +12,7 @@ pub(crate) struct Pane {
     pub(crate) settle: Option<(String, u8)>, // columns just put on, and passes left to hold narrow widths (TIMER_SETTLE)
     pub(crate) recover: Option<(String, String)>, // missing folder, parent being opened instead (go_near)
     pub(crate) follow: Option<(String, String)>,  // folder renamed elsewhere, its new name being opened (shell_tick)
+    pub(crate) unplugged: Option<(String, bool)>, // folder on a drive that went, This PC opened instead (reached?)
     pub(crate) icon: i32,   // current folder's icon in the system image list, -1 = none (yet)
     pub(crate) ticket: u32, // its lookup (WM_PANE_ICON); 0 = none asked
     pub(crate) slot: Arc<AtomicUsize>, // where it is now (swap_panes moves it); its Explorer callbacks read it

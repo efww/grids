@@ -1602,6 +1602,44 @@ mod tests {
         assert!(f.is_none());
     }
 
+    // A drive letter that goes moves the panes on it to This PC; when it comes back, the ones still there go home.
+    #[test]
+    fn pulled_drive_panes() {
+        const E: u32 = 1 << 4;
+        assert_eq!([drive_bit(r"E:\x"), drive_bit("e:"), drive_bit(r"c:\")], [Some(E), Some(E), Some(1 << 2)]);
+        for p in [r"\\srv\E$", r"\\?\E:\x", THIS_PC, "::{X}", "E:x", "", "E", r"1:\x"] {
+            assert_eq!(drive_bit(p), None, "{p}");
+        }
+        let v = |s: &[&str]| s.iter().map(|p| p.to_string()).collect::<Vec<_>>();
+        // E: went: its panes (any case) move; F:\E:, a share, This PC, an empty slot and a marked pane stay
+        let paths = v(&[r"E:\사진\2026", r"F:\E", r"\\nas\E", THIS_PC, "", r"e:\", r"E:\a"]);
+        let marks = [None, None, None, None, None, None, Some(r"E:\b")];
+        assert_eq!(drive_moves(E, 0, &paths, &marks), (vec![0, 5], vec![]));
+        assert_eq!(drive_moves(1 << 5, 0, &paths, &marks).0, [1]);
+        // E: back: only marked panes on E: still on This PC (a pane the user moved on keeps its place)
+        let paths = v(&[THIS_PC, r"C:\Users", &THIS_PC.to_lowercase(), THIS_PC, THIS_PC]);
+        let marks = [Some(r"E:\사진"), Some(r"E:\a"), Some(r"e:\b"), Some(r"F:\c"), None];
+        assert_eq!(drive_moves(0, E, &paths, &marks), (vec![], vec![0, 2]));
+        assert_eq!(drive_moves(0, 0, &paths, &marks), (vec![], vec![]));
+        // the mark lives through its own This PC opening, and any later navigation (This PC too) drops it
+        let mut m = Some((r"E:\x".to_string(), false));
+        unplug_step(&mut m, Nav::Pending, THIS_PC);
+        unplug_step(&mut m, Nav::Complete, &THIS_PC.to_lowercase());
+        assert_eq!(m, Some((r"E:\x".to_string(), true)));
+        unplug_step(&mut m, Nav::Pending, THIS_PC); // the user (or a session) opens This PC again
+        assert_eq!(m, None);
+        for (ev, to) in [(Nav::Failed, THIS_PC), (Nav::Pending, r"C:\"), (Nav::Complete, r"D:\")] {
+            let mut m = Some((r"E:\x".to_string(), false));
+            unplug_step(&mut m, ev, to);
+            assert_eq!(m, None);
+        }
+        // the note: letters once each, one count for several panes
+        assert_eq!(unplug_text(false, false, "E:", 1), "Drive E: was removed · moved to This PC");
+        assert_eq!(unplug_text(true, false, "E:, F:", 3), "E:, F: 드라이브가 빠져 패널 3개를 내 PC로 옮김");
+        assert_eq!(unplug_text(false, true, "E:", 2), "Drive E: is back · reopened the folders of 2 panes");
+        assert_eq!(unplug_text(true, true, "E:", 1), "E: 드라이브가 돌아와 원래 폴더를 다시 엶");
+    }
+
     #[test]
     fn status_notes() {
         // more missing folders while the note still shows add up; else the count starts again

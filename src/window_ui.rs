@@ -1197,19 +1197,21 @@ pub(crate) unsafe fn cache_folder_icon() {
 }
 
 // Makes / removes the buttons of drive letters that came or went; true if any did. The caller lays them out.
+// Panes on a letter that went, or moved off one that came back, follow (drives_changed).
 pub(crate) unsafe fn refresh_drives() -> bool {
     let mask = GetLogicalDrives();
-    let Some((main, hover, gone, added)) = app(|a| {
+    let Some((main, hover, gone, added, went)) = app(|a| {
         let old = std::mem::replace(&mut a.drive_mask, mask);
         if old == mask {
             return None;
         }
         let (keep, gone): (Vec<_>, Vec<_>) = a.drives.drain(..).partition(|d| mask >> (d.0 - b'A') & 1 != 0);
         a.drives = keep;
-        Some((a.main, a.hover, gone, mask_letters(mask & !old)))
+        Some((a.main, a.hover, gone, mask_letters(mask & !old), old & !mask))
     }) else {
         return false;
     };
+    let mut back = 0u32; // letters that came, removable or fixed: the panes moved off them may go home
     for (_, _, h) in gone {
         if hover == h {
             set_hover(HWND::default());
@@ -1219,6 +1221,9 @@ pub(crate) unsafe fn refresh_drives() -> bool {
     }
     for c in added {
         let kind = GetDriveTypeW(&HSTRING::from(format!("{}:\\", c as char)));
+        if matches!(kind, 2 | 3) {
+            back |= 1 << (c - b'A'); // DRIVE_REMOVABLE, DRIVE_FIXED
+        }
         cache_drive_icon(kind);
         let name = HSTRING::from(format!("{}:", c as char)); // also the accessible name
         let h = child(main, w!("BUTTON"), PCWSTR(name.as_ptr()), BS_OWNERDRAW as u32, WINDOW_EX_STYLE(0), ID_DRIVE + (c - b'A') as i32, HFONT::default());
@@ -1227,6 +1232,10 @@ pub(crate) unsafe fn refresh_drives() -> bool {
             a.drives.push((c, kind, h));
             a.drives.sort_by_key(|d| d.0);
         });
+    }
+    // after the buttons: panes on a letter that went open This PC, ones moved off a letter that came back go home
+    if went | back != 0 {
+        drives_changed(went, back);
     }
     true
 }
