@@ -53,21 +53,59 @@ pub(crate) fn ago_text(m: u64, ko: bool) -> String {
     }
 }
 
-// The layout drawn to scale, each pane labelled with its folder name.
-pub(crate) unsafe fn draw_thumb(dc: HDC, r: RECT, s: &Session, font: HFONT) {
-    fill(dc, r, pal().bg);
-    let xs = cells(r.left + 2, r.right - r.left - 4, &s.colr, 2);
-    let mut i = 0;
+// One pane of a card's preview, in slot order (down each column, left to right).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ThumbPane {
+    pub(crate) plate: RECT,
+    pub(crate) head: Option<RECT>, // header strip; only when the folder name still fits under it
+    pub(crate) band: Option<RECT>, // colour label strip along the top, when the pane has one
+    pub(crate) name: Option<RECT>, // where its folder name goes, when the pane is big enough for one
+}
+
+// The layout to scale inside r, spaced for dpi. The margin is wider than the "session you're in" frame drawn
+// over the preview's edge (s(2)), so it never covers an edge pane's label or header. A pane shows its name
+// whenever it is over 24 × 12 (scaled); the header goes first when both don't fit.
+pub(crate) fn thumb_geo(r: RECT, s: &Session, dpi: i32) -> Vec<ThumbPane> {
+    let k = |v: i32| v * dpi / 96;
+    let (pad, gap, head_h, band_h) = (k(3), k(2), k(4), k(2).max(1));
+    let (name_w, name_h) = (k(24), k(12));
+    let xs = cells(r.left + pad, (r.right - r.left - 2 * pad).max(0), &s.colr, gap);
+    let mut out = Vec::with_capacity(s.panes());
     for (c, &(x0, x1)) in xs.iter().enumerate() {
-        for (y0, y1) in cells(r.top + 2, r.bottom - r.top - 4, &s.rowr[c], 2) {
-            let pane = RECT { left: x0, top: y0, right: x1, bottom: y1 };
-            fill(dc, pane, pal().card);
-            frame(dc, pane, 1, pal().line);
-            if x1 - x0 > 24 && y1 - y0 > 12 {
-                let inner = RECT { left: x0 + 3, right: x1 - 3, ..pane };
-                text(dc, inner, &place_label(&s.paths[i]), font, pal().sub, DT_CENTER);
-            }
-            i += 1;
+        for (y0, y1) in cells(r.top + pad, (r.bottom - r.top - 2 * pad).max(0), &s.rowr[c], gap) {
+            let plate = RECT { left: x0, top: y0, right: x1, bottom: y1 };
+            let i = out.len();
+            // inside the 1 px border
+            let inner = RECT { left: x0 + 1, top: y0 + 1, right: x1 - 1, bottom: y1 - 1 };
+            let (iw, ih) = (inner.right - inner.left, inner.bottom - inner.top);
+            let head = (iw > 0 && ih - head_h > name_h).then_some(RECT { bottom: inner.top + head_h, ..inner });
+            let tinted = s.tints.get(i).is_some_and(|t| (1..=6).contains(t));
+            let band = (tinted && iw > 0 && ih > 0).then_some(RECT { bottom: inner.top + band_h.min(ih), ..inner });
+            // a band alone doesn't push the name down: in a short pane those rows are what keeps it whole
+            let top = head.map_or(y0, |h| h.bottom);
+            let name = (x1 - x0 > name_w && y1 - y0 > name_h).then_some(RECT { left: x0 + k(3), top, right: x1 - k(3), bottom: y1 });
+            out.push(ThumbPane { plate, head, band, name });
+        }
+    }
+    out
+}
+
+// The layout drawn to scale like the window it restores: each pane with its folder name and colour label,
+// the pane you were last in with its header in the selection colour (or its border, where no header fits).
+pub(crate) unsafe fn draw_thumb(dc: HDC, r: RECT, s: &Session, font: HFONT, dpi: i32, accent: u32) {
+    fill(dc, r, pal().bg);
+    for (i, p) in thumb_geo(r, s, dpi).iter().enumerate() {
+        let on = i == s.active;
+        fill(dc, p.plate, pal().card);
+        frame(dc, p.plate, 1, if on && p.head.is_none() { accent } else { pal().line });
+        if let Some(h) = p.head.filter(|_| on) {
+            fill(dc, h, accent);
+        }
+        if let (Some(b), Some(t)) = (p.band, s.tints.get(i).and_then(|&t| tint_color(t))) {
+            fill(dc, b, t);
+        }
+        if let Some(n) = p.name {
+            text(dc, n, &place_label(&s.paths[i]), font, pal().sub, DT_CENTER);
         }
     }
 }
@@ -290,7 +328,7 @@ pub(crate) unsafe fn paint_load(h: HWND) {
             if on {
                 fill(dc, *card, pal().pill);
             }
-            draw_thumb(dc, *thumb, sess, small);
+            draw_thumb(dc, *thumb, sess, small, dpi, accent);
             if path.to_string_lossy() == cur.as_str() {
                 frame(dc, *thumb, s(2), accent); // the session you're in
             }

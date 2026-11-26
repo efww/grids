@@ -2200,6 +2200,72 @@ mod tests {
     }
 
     #[test]
+    fn session_card_preview() {
+        let within = |a: &RECT, b: &RECT| a.left >= b.left && a.top >= b.top && a.right <= b.right && a.bottom <= b.bottom;
+        let apart = |a: &RECT, b: &RECT| a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top;
+        for h in [vec![1], vec![2, 2], vec![1, 3], vec![4, 4, 4, 4], vec![3, 1, 2]] {
+            let mut s = Session::default();
+            s.set_heights(h.clone());
+            s.tints[0] = 3;
+            for dpi in [96, 120, 144, 192] {
+                let k = |v: i32| v * dpi / 96;
+                let thumb = load_geo(1, dpi).cards[0].1;
+                let g = thumb_geo(thumb, &s, dpi);
+                assert_eq!(g.len(), s.panes(), "{h:?} {dpi}");
+                // margin clear of the "session you're in" frame; dpi-scaled gaps, kept in slot order
+                let edge = RECT { left: thumb.left + k(2), top: thumb.top + k(2), right: thumb.right - k(2), bottom: thumb.bottom - k(2) };
+                for (i, p) in g.iter().enumerate() {
+                    assert!(within(&p.plate, &edge), "{h:?} {dpi} {i}");
+                    for q in &g[i + 1..] {
+                        assert!(apart(&p.plate, &q.plate), "{h:?} {dpi} {i}");
+                    }
+                    for part in [p.head, p.band, p.name].into_iter().flatten() {
+                        assert!(within(&part, &p.plate) && part.bottom > part.top, "{h:?} {dpi} {i}");
+                    }
+                    // a name wherever there was one before (over 24 × 12, now scaled); the header gives way to it
+                    let (w, ht) = (p.plate.right - p.plate.left, p.plate.bottom - p.plate.top);
+                    assert_eq!(p.name.is_some(), w > k(24) && ht > k(12), "{h:?} {dpi} {i}");
+                    if let (Some(hd), Some(n)) = (p.head, p.name) {
+                        assert!(n.top >= hd.bottom && n.bottom - n.top > k(12));
+                    }
+                    assert_eq!(p.band.is_some(), i == 0, "{h:?} {dpi} {i}");
+                }
+                let (mut cols, mut i) = (Vec::new(), 0);
+                for &n in &h {
+                    cols.push(g[i].plate.left);
+                    for r in 1..n {
+                        assert_eq!(g[i + r].plate.top - g[i + r - 1].plate.bottom, k(2));
+                        assert_eq!(g[i + r].plate.left, g[i].plate.left);
+                    }
+                    i += n;
+                }
+                assert!(cols.windows(2).all(|c| c[0] < c[1]));
+                // two-row columns have room for a header; four rows keep the names instead
+                if h == [2, 2] {
+                    assert!(g.iter().all(|p| p.head.is_some() && p.name.is_some()), "{dpi}");
+                }
+                if h == [4, 4, 4, 4] {
+                    assert!(g.iter().all(|p| p.head.is_none() && p.name.is_some()), "{dpi}");
+                    // the colour band alone doesn't cut into the name's rows
+                    assert_eq!(g[0].name.map(|n| n.top), Some(g[0].plate.top), "{dpi}");
+                }
+            }
+        }
+        // a tiny preview: nothing spills, no header taller than its pane
+        let mut s = Session::default();
+        s.set_heights(vec![4, 4, 4, 4]);
+        s.tints = vec![1; MAXP];
+        for (w, ht) in [(0, 0), (5, 5), (20, 12), (40, 30)] {
+            let r = RECT { left: 10, top: 10, right: 10 + w, bottom: 10 + ht };
+            for p in thumb_geo(r, &s, 96) {
+                for part in [p.head, p.band, p.name].into_iter().flatten() {
+                    assert!(within(&part, &p.plate) && part.bottom > part.top && part.right > part.left, "{w} {ht}");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn click_targets() {
         let apart = |a: &RECT, b: &RECT| a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top;
         let mid = |r: &RECT| ((r.left + r.right) / 2, (r.top + r.bottom) / 2);
