@@ -785,6 +785,8 @@ pub(crate) extern "system" fn pane_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 2 => _ = nav(SBSP_NAVIGATEFORWARD),
                 _ => return DefWindowProcW(h, msg, wp, lp),
             },
+            // Ctrl+G's menu: Ctrl+letter picks as the letter does
+            WM_MENUCHAR => return go_menu_char(wp, lp).unwrap_or_else(|| DefWindowProcW(h, msg, wp, lp)),
             _ => return DefWindowProcW(h, msg, wp, lp),
         }
         LRESULT(0)

@@ -2196,6 +2196,38 @@ mod tests {
         assert!(ko[1].last().unwrap().desc.ends_with("이미 실행 중이면 그 창에서 엽니다."));
     }
 
+    // Ctrl+G's menu: one underlined letter per row, the same rows and letters in both languages, and Ctrl+letter
+    // (its control code, as WM_MENUCHAR gets it) picking the row the letter does.
+    #[test]
+    fn go_menu_letters() {
+        let (en, ko) = (go_targets(false), go_targets(true));
+        assert_eq!(en.len(), ko.len());
+        let letters = |rows: &[Option<(&str, GoTarget)>]| rows.iter().map(|r| r.map(|(l, _)| go_letter(l).unwrap())).collect::<Vec<_>>();
+        assert_eq!(letters(&en), letters(&ko));
+        for (e, k) in en.iter().zip(&ko) {
+            assert_eq!(e.map(|r| r.1), k.map(|r| r.1));
+        }
+        let mut seen: Vec<char> = letters(&en).into_iter().flatten().collect();
+        let n = seen.len();
+        seen.sort();
+        seen.dedup();
+        assert_eq!(seen.len(), n, "a letter is used twice");
+        assert!(!seen.contains(&'G')); // Ctrl+G held: its repeats pick nothing
+        assert_eq!(go_letter("Down&loads"), Some('L'));
+        let at = |rows: &[Option<(&str, GoTarget)>], ch: u16| go_pick_char(rows, ch, true).map(|k| go_letter(rows[k].unwrap().0).unwrap());
+        for rows in [&en, &ko] {
+            assert_eq!((at(rows, 0x0C), at(rows, 'L' as u16), at(rows, 'l' as u16)), (Some('L'), Some('L'), Some('L')));
+            assert_eq!((at(rows, 0x08), at(rows, 0x01), at(rows, 0x14)), (Some('H'), Some('A'), Some('T')));
+            assert_eq!((at(rows, 0x07), at(rows, 'Z' as u16), at(rows, '1' as u16)), (None, None, None));
+            assert!(go_pick_char(rows, 0x0C, true).is_some_and(|k| rows[k].is_some_and(|r| r.1 == GoTarget::Known(&FOLDERID_Downloads))));
+            // without Ctrl, Backspace (0x08) and Tab (0x09) are not Ctrl+H / Ctrl+I; letters still pick
+            assert_eq!((go_pick_char(rows, 0x08, false), go_pick_char(rows, 0x09, false)), (None, None));
+            assert!(go_pick_char(rows, 'l' as u16, false).is_some());
+        }
+        let places: Vec<GoTarget> = en.iter().flatten().map(|r| r.1).collect();
+        assert!(places.contains(&GoTarget::Place(THIS_PC)) && places.contains(&GoTarget::Place(RECYCLE_BIN)));
+    }
+
     // The shortcut window is the in-app manual: mouse-only actions (menus on right-click, drops, the session
     // card's ✕) must stay described there in both languages, not only the keys the README tables check.
     // A Korean row is taken at the English row's index, as shortcut_rows and the find box pair them.

@@ -892,6 +892,141 @@ pub(crate) unsafe fn recent_menu(i: usize) {
     focus_view(i);
 }
 
+// Ctrl+G: Windows' own folders, as Finder's Go menu or Directory Opus' Go. None in a row is a separator.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) enum GoTarget {
+    Known(&'static GUID),
+    Place(&'static str), // a parsing name, as on_nav records it (a.s.paths)
+    Temp,
+}
+
+pub(crate) fn go_targets(ko: bool) -> Vec<Option<(&'static str, GoTarget)>> {
+    use GoTarget::*;
+    let rows: [Option<(&str, &str, GoTarget)>; 13] = [
+        Some(("&Home", "홈(&H)", Known(&FOLDERID_Profile))),
+        Some(("&Desktop", "바탕 화면(&D)", Known(&FOLDERID_Desktop))),
+        Some(("D&ocuments", "문서(&O)", Known(&FOLDERID_Documents))),
+        Some(("Down&loads", "다운로드(&L)", Known(&FOLDERID_Downloads))),
+        Some(("&Pictures", "사진(&P)", Known(&FOLDERID_Pictures))),
+        Some(("&Music", "음악(&M)", Known(&FOLDERID_Music))),
+        Some(("&Videos", "동영상(&V)", Known(&FOLDERID_Videos))),
+        None,
+        Some(("This P&C", "내 PC(&C)", Place(THIS_PC))),
+        Some(("&Recycle Bin", "휴지통(&R)", Place(RECYCLE_BIN))),
+        None,
+        Some(("&Temporary folder", "임시 폴더(&T)", Temp)),
+        Some(("&AppData", "AppData(&A)", Known(&FOLDERID_RoamingAppData))),
+    ];
+    rows.into_iter().map(|r| r.map(|(en, k, t)| (if ko { k } else { en }, t))).collect()
+}
+
+// A label's underlined letter, upper case ("Down&loads" → L).
+pub(crate) fn go_letter(label: &str) -> Option<char> {
+    label.split_once('&').and_then(|(_, r)| r.chars().next()).map(|c| c.to_ascii_uppercase())
+}
+
+// The menu position a typed character picks: the letter itself or, with Ctrl held, its control code (Ctrl+L = 0x0C).
+// Without Ctrl a control code is a plain key (Backspace = 0x08, Tab = 0x09) and picks nothing.
+pub(crate) fn go_pick_char(rows: &[Option<(&str, GoTarget)>], ch: u16, ctrl: bool) -> Option<usize> {
+    let c = match ch {
+        0x01..=0x1A if ctrl => char::from(b'A' + (ch - 1) as u8),
+        0x00..=0x1F => return None,
+        _ => char::from_u32(ch as u32)?.to_ascii_uppercase(),
+    };
+    rows.iter().position(|r| r.is_some_and(|(l, _)| go_letter(l) == Some(c)))
+}
+
+// A folder path without its trailing backslash, a drive root kept whole (C:\).
+fn go_trim(p: &str) -> String {
+    let t = p.trim_end_matches('\\');
+    if t.ends_with(':') {
+        format!("{t}\\")
+    } else {
+        t.to_string()
+    }
+}
+
+unsafe fn go_path(t: GoTarget) -> Option<String> {
+    match t {
+        GoTarget::Place(p) => Some(p.to_string()),
+        GoTarget::Temp => Some(go_trim(&std::env::temp_dir().to_string_lossy())).filter(|p| !p.is_empty()),
+        // DONT_VERIFY: a folder moved to a share or OneDrive is not probed (no wait); a missing one beeps when picked
+        GoTarget::Known(id) => {
+            let p = SHGetKnownFolderPath(id, KF_FLAG_DONT_VERIFY, None).ok()?;
+            let s = p.to_string().ok();
+            CoTaskMemFree(Some(p.0 as _));
+            s.map(|s| go_trim(&s)).filter(|s| !s.is_empty())
+        }
+    }
+}
+
+// Set while the Ctrl+G menu is open, for its WM_MENUCHAR (Ctrl still held while the letter is typed).
+static GO_OPEN: AtomicBool = AtomicBool::new(false);
+
+// The pane window's WM_MENUCHAR while the Ctrl+G menu is open: Ctrl+letter picks as the letter alone would.
+// None: not this menu's, DefWindowProcW as before.
+pub(crate) fn go_menu_char(wp: WPARAM, lp: LPARAM) -> Option<LRESULT> {
+    if !GO_OPEN.load(Ordering::Relaxed) {
+        return None;
+    }
+    const MNC_EXECUTE: isize = 2;
+    const MNC_SELECT: isize = 3;
+    let ch = (wp.0 & 0xffff) as u16;
+    let ctrl = unsafe { GetKeyState(VK_CONTROL.0 as i32) } < 0;
+    if let Some(k) = go_pick_char(&go_targets(KO.load(Ordering::Relaxed)), ch, ctrl) {
+        return Some(LRESULT(MNC_EXECUTE << 16 | k as isize));
+    }
+    if ch != 0x07 {
+        return None; // anything else beeps as in any menu
+    }
+    // Ctrl+G held: its repeats keep the highlight where it is, without a beep
+    let menu = HMENU(lp.0 as _);
+    let n = unsafe { GetMenuItemCount(Some(menu)) }.max(0) as u32;
+    let lit = (0..n).find(|&k| unsafe { GetMenuState(menu, k, MF_BYPOSITION) } & MF_HILITE.0 != 0).unwrap_or(0);
+    Some(LRESULT(MNC_SELECT << 16 | lit as isize))
+}
+
+// Ctrl+G: Windows' own folders (home, desktop, documents, downloads …), opened in pane i. Each underlined
+// letter picks at once, with or without Ctrl still held; the pane's own folder is checked.
+pub(crate) unsafe fn go_menu(i: usize) {
+    let Some(h) = app(|a| a.panes[i].as_ref().map(|p| p.hwnd)) else { return };
+    let rows = go_targets(KO.load(Ordering::Relaxed));
+    let here = app(|a| a.s.paths[i].clone());
+    let Ok(menu) = CreatePopupMenu() else { return };
+    let mut paths: Vec<Option<String>> = Vec::with_capacity(rows.len());
+    for (k, r) in rows.iter().enumerate() {
+        let Some((label, t)) = r else {
+            _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
+            paths.push(None);
+            continue;
+        };
+        let p = go_path(*t);
+        let mut flags = MF_STRING;
+        match &p {
+            None => flags |= MF_GRAYED,
+            Some(p) if same_dir(p, &here) => flags |= MF_CHECKED,
+            _ => {}
+        }
+        _ = AppendMenuW(menu, flags, k + 1, &HSTRING::from(*label));
+        paths.push(p);
+    }
+    let mut rc = RECT::default();
+    if let Some(e) = pane_ctl(i, ID_EDIT) {
+        _ = GetWindowRect(e, &mut rc);
+    }
+    GO_OPEN.store(true, Ordering::Relaxed);
+    let pick = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN, rc.left, rc.bottom, None, h, None).0;
+    GO_OPEN.store(false, Ordering::Relaxed);
+    _ = DestroyMenu(menu);
+    if pick > 0 {
+        let to = paths.get(pick as usize - 1).cloned().flatten();
+        if !to.is_some_and(|p| go_near(i, &p)) {
+            _ = MessageBeep(MB_ICONWARNING); // missing, or unreachable
+        }
+    }
+    focus_view(i);
+}
+
 pub(crate) unsafe fn apply_filter(i: usize) {
     let Some(f) = pane_ctl(i, ID_FILTER) else { return };
     let spec = filter_spec(&text_of(f));

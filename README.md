@@ -81,6 +81,7 @@ The exe is not code-signed, so Windows SmartScreen may warn the first time: choo
 | Alt+↑ | Parent folder |
 | Alt+PgDn / Alt+PgUp | Next / previous folder in the same parent folder, in Explorer's order (the status line shows which one, e.g. "Folder 4/12"; a beep at the first / last) |
 | Alt+↓ | Recent folders (all panes, newest first; right-click ← / → too) |
+| Ctrl+G | Go to a Windows folder in the active pane: Home, Desktop, Documents, Downloads, Pictures, Music, Videos, This PC, Recycle Bin, Temp, AppData (then its underlined letter, e.g. L for Downloads; not Ctrl+Alt+G, the file dialog jump) |
 | Ctrl+L, Alt+D, F4 | Address bar: also `..` or a subfolder name, a file to open, or a command such as `cmd`, `wt`, `powershell` (runs in this pane's folder), or part of a recent or favourite folder's name |
 | Ctrl+F | Name filter |
 | Alt+↓ (in the filter) | File types menu (or click the filter's icon) |

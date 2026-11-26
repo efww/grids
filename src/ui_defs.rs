@@ -367,6 +367,7 @@ Alt+← / Alt+→\tBack / forward\n\
 Alt+↑\tParent folder\n\
 Alt+PgDn / Alt+PgUp\tNext / previous folder in the same parent folder (Explorer's order; the status line shows which one, e.g. Folder 4/12)\n\
 Alt+↓\tRecent folders (all panes, newest first; right-click ← / → too)\n\
+Ctrl+G\tGo to a Windows folder in the active pane: Home, Desktop, Documents, Downloads, Pictures, Music, Videos, This PC, Recycle Bin, Temp, AppData (then its underlined letter, e.g. L for Downloads; not Ctrl+Alt+G, the file dialog jump)\n\
 Ctrl+L, Alt+D, F4\tAddress bar: also .. or a subfolder name, a file to open, or a command such as cmd, wt, powershell (runs in this pane's folder), or part of a recent or favourite folder's name\n\
 Ctrl+B\tFavourites list (↑/↓ or Home/End to choose, Enter to open, 1 … 9 opens the numbered row at once, Del to remove, Alt+↑/↓ or drag to reorder)\n\
 Ctrl+Shift+B\tAdd the active pane's folder to favourites, or remove it if it is one (as ☆+ in its header)\n\
@@ -429,6 +430,7 @@ Alt+← / Alt+→\t뒤로 / 앞으로\n\
 Alt+↑\t상위 폴더\n\
 Alt+PgDn / Alt+PgUp\t같은 상위 폴더 안의 다음 / 이전 폴더 (탐색기 순서, 상태줄에 '폴더 4/12'처럼 몇 번째인지 표시)\n\
 Alt+↓\t최근 폴더 (모든 패널, 최근 순, ← / → 오른쪽 클릭도 가능)\n\
+Ctrl+G\t지금 패널을 Windows 기본 폴더로 이동: 홈·바탕 화면·문서·다운로드·사진·음악·동영상·내 PC·휴지통·임시 폴더·AppData (이어서 밑줄 글자, 예: L은 다운로드, 파일 대화 상자용 Ctrl+Alt+G와는 다른 키)\n\
 Ctrl+L, Alt+D, F4\t주소창: .. 이나 하위 폴더 이름, 열 파일, cmd·wt·powershell 같은 명령도 가능(이 패널 폴더에서 실행), 다녀온 폴더·즐겨찾기 이름 일부\n\
 Ctrl+B\t즐겨찾기 목록 (↑/↓·Home/End 고르기, Enter 열기, 1 … 9는 번호가 붙은 줄 바로 열기, Del 빼기, Alt+↑/↓ 또는 끌어서 순서 바꾸기)\n\
 Ctrl+Shift+B\t선택한 패널의 폴더를 즐겨찾기에 추가, 이미 있으면 빼기 (머리줄 ☆+와 같음)\n\

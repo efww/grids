@@ -268,6 +268,12 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
             }
         }
         VK_DOWN if alt && !ctrl && !shift && filt => kind_menu(a), // a combo box's Alt+↓
+        // Ctrl+G: Windows' own folders, from the list, the address bar, the filter or the tree; held, it opens once
+        VK_G if ctrl && !shift && !alt => {
+            if m.lParam.0 & (1 << 30) == 0 {
+                go_menu(a);
+            }
+        }
         // the view leaves F5 to its frame, as Explorer's does: reload the active pane from anywhere in the window
         VK_F5 if !ctrl && !alt && !shift => {
             resum_sizes();
