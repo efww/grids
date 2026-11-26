@@ -5,11 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>계장 개념설계 IO 산출</title>
 <style>
+/*FONTFACE*/
 :root{
   --green:#15ad60; --green-d:#1c5438; --green-l:#e7f6ee; --ink:#111111; --sub:#666666; --mute:#999999;
   --line:#dcdcdc; --line-l:#ececec; --bg:#ededed; --panel:#ffffff; --dark:#222222;
   --red:#d1335d; --purple:#7e66cb; --blue:#4fa1e0; --yellow:#ffba00; --chg:#fff5d6;
-  --font:"Hyundai Harmony L","HyundaiHarmonyL","현대하모니 L","Hyundai Harmony","HyundaiHarmony","Malgun Gothic","Apple SD Gothic Neo","Noto Sans CJK KR",sans-serif;
+  --font:"HDHarmonyApp","Hyundai Harmony L","HyundaiHarmonyL","현대하모니 L","Hyundai Harmony","HyundaiHarmony","Malgun Gothic","Apple SD Gothic Neo","Noto Sans CJK KR",sans-serif;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
@@ -69,12 +70,36 @@ input[type=text],input[type=number],select{border:1px solid #bbb;background:#fff
 input[type=number]{width:90px;text-align:right}
 select{padding-right:26px}
 /* file cards */
-.fcard{background:#fff;border:1px solid var(--line);padding:18px;display:flex;flex-direction:column;gap:8px;min-height:150px}
-.fcard .t{font-weight:700;display:flex;justify-content:space-between;align-items:center}
+.fcard{background:#fff;border:2px dashed #c8c8c8;display:flex;flex-direction:column;min-height:170px;transition:border-color .15s,background .15s}
+.fcard .hd{display:flex;align-items:center;gap:10px;padding:12px 16px;font-weight:700;font-size:15px}
+.fcard .hd .ic{width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-size:16px;flex:none;border:2px solid currentColor;border-radius:50%}
+.fcard .hd .st{margin-left:auto;font-size:12.5px;font-weight:700;padding:3px 10px}
+.fcard .bd{padding:4px 16px 16px;display:flex;flex-direction:column;gap:10px;flex:1}
 .fcard .n{font-size:13px;color:var(--sub);word-break:break-all;flex:1}
-.fcard.ok{border-top:3px solid var(--green)} .fcard.need{border-top:3px solid var(--red)} .fcard.opt{border-top:3px solid var(--line)}
+.fcard .fn{font-size:13.5px;color:var(--ink);font-weight:700;word-break:break-all}
+.fcard .meta{font-size:12px;color:var(--sub)}
+.fcard .er{font-size:12.5px;color:var(--red);background:#fdecef;padding:8px 10px;line-height:1.45}
+.fcard.need .hd{color:var(--red)} .fcard.need .hd .st{background:#fdecef;color:var(--red)}
+.fcard.opt .hd{color:#777} .fcard.opt .hd .st{background:#f1f1f1;color:#777}
+.fcard.ok{border:2px solid var(--green);background:#f6fcf8}
+.fcard.ok .hd{background:var(--green);color:#fff} .fcard.ok .hd .st{background:#fff;color:var(--green-d)}
+.fcard.busy{border:2px solid var(--blue)} .fcard.busy .hd{color:#2c7fc0}
+.fcard.bad{border:2px solid var(--red)}
+.fcard.drag{border-color:var(--green);background:var(--green-l)}
 .fcard label{align-self:flex-start}
 .fcard input[type=file]{display:none}
+.g7{grid-template-columns:repeat(7,minmax(0,1fr))}
+.item .xtra{grid-column:2/-1;padding:4px 0 6px}
+.xnote{font-size:12.5px;color:var(--sub);margin:4px 0 8px;line-height:1.6}
+table.mini th,table.mini td{padding:6px 8px;font-size:12.5px}
+.typ{margin-top:12px;padding:12px;border:1px solid var(--line-l);background:#fff}
+.pager{display:flex;justify-content:space-between;align-items:center;margin-top:18px;padding-top:14px;border-top:1px solid var(--line-l)}
+.dec{margin-top:12px;border-top:1px solid var(--line-l);padding-top:12px;display:flex;flex-direction:column;gap:10px}
+.dec .drow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:13px}
+.aiopt{display:flex;gap:10px;align-items:flex-start;padding:12px;border:1px solid var(--line);margin-bottom:8px;cursor:pointer}
+.aiopt.on{border-color:var(--green);background:var(--green-l)}
+details summary::marker{color:var(--green)}
+.hint{font-size:12.5px;color:var(--red);margin-top:6px;text-align:right}
 .prog{height:6px;background:#e3e3e3;overflow:hidden}
 .prog i{display:block;height:100%;background:var(--green);transition:width .3s}
 /* checklist */
@@ -135,15 +160,15 @@ select{padding-right:26px}
     <div class="st" data-s="review"><i>4</i>검토</div>
     <div class="st" data-s="output"><i>5</i>출력</div>
     <div class="st" data-s="ai" style="margin-top:14px;border-top:1px solid var(--line-l)"><i>AI</i>AI 연결 설정</div>
-    <div class="foot">도면 인식은 한 번,<br>체크리스트를 바꾸면 IO가<br>즉시 다시 계산됩니다.<br><br><span class="mono">IO 1점 = 인덱스 1행</span></div>
+    <div class="foot">도면 인식은 한 번,<br>체크리스트를 바꾸면 IO가<br>즉시 다시 계산됩니다.<br><br><span class="mono">IO 1점 = 인덱스 1행</span><br><br><span id="fontst"></span></div>
   </nav>
   <main id="main"></main>
 </div>
 <div class="toast" id="toast"></div>
 
 <script>
-const ORIGIN_COLOR = {"도면인식":"#4fa1e0","Typical파생":"#15ad60","트레인복제":"#ffba00","장비Typical":"#7e66cb","패키지":"#d1335d","스페어":"#a8a8a8"};
-const S = {project:null, screen:"projects", state:null, concept:null, tab:0, summary:null, review:null, sel:null, reason:"", page:null, impact:null};
+const ORIGIN_COLOR = {"도면인식":"#4fa1e0","Typical파생":"#15ad60","트레인복제":"#ffba00","대수복제":"#f08a24","장비Typical":"#7e66cb","패키지":"#d1335d","스페어":"#a8a8a8"};
+const S = {tok:0, rview:"todo", showPage:false, warmed:false, project:null, screen:"projects", state:null, concept:null, tab:0, summary:null, review:null, sel:null, reason:"", page:null, impact:null};
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const fmt = n => (n ?? 0).toLocaleString("ko-KR");
@@ -159,7 +184,7 @@ const post = (path, data) => api(path, {method:"POST", headers:{"Content-Type":"
 const P = p => `p/${encodeURIComponent(S.project)}/${p}`;
 function toast(msg, err) { const t=$("#toast"); t.textContent=msg; t.className="toast"+(err?" err":""); t.style.display="block"; clearTimeout(t._h); t._h=setTimeout(()=>t.style.display="none", err?6000:2500); }
 
-function go(screen) { S.screen = screen; render(); }
+function go(screen) { S.tok++; S.screen = screen; render(); }
 document.querySelectorAll("#nav .st").forEach(el => el.onclick = () => go(el.dataset.s));
 
 function navState() {
@@ -177,21 +202,24 @@ async function loadState() { if (S.project) S.state = await api(P("")); navState
 
 async function render() {
   navState();
-  const m = $("#main");
+  const m = $("#main"), t = S.tok;
   try {
-    if (S.screen === "projects") return renderProjects(m);
-    if (S.screen === "ai") return renderAISettings(m);
+    if (S.screen === "projects") return await renderProjects(m);
+    if (S.screen === "ai") return await renderAISettings(m);
     await loadState();
-    if (S.screen === "extract") return renderExtract(m);
-    if (S.screen === "concept") return renderConcept(m);
-    if (S.screen === "review") return renderReview(m);
-    if (S.screen === "output") return renderOutput(m);
+    if (t !== S.tok) return;                 // user moved to another screen meanwhile
+    if (S.screen === "extract") return await renderExtract(m);
+    if (S.screen === "concept") return await renderConcept(m);
+    if (S.screen === "review") return await renderReview(m);
+    if (S.screen === "output") return await renderOutput(m);
   } catch (e) { toast(e.message, true); }
 }
 
 /* ---------------------------------------------------------------- 1 projects */
 async function renderProjects(m) {
+  const t = S.tok;
   const d = await api("projects");
+  if (t !== S.tok) return;
   $("#phome").textContent = "";
   m.innerHTML = `
   <div class="head"><div><div class="eyebrow">STEP 1</div><h1>프로젝트</h1>
@@ -212,7 +240,7 @@ async function renderProjects(m) {
       <button class="btn" id="mk">만들기</button>
     </div>
   </div>`;
-  m.querySelectorAll("tr.click").forEach(tr => tr.onclick = () => { S.project = tr.dataset.n; S.summary=null; S.concept=null; S.review=null; S.impact=null; go("extract"); });
+  m.querySelectorAll("tr.click").forEach(tr => tr.onclick = () => { S.project = tr.dataset.n; S.summary=null; S.concept=null; S.review=null; S.impact=null; S.warmed=false; S.sel=null; go("extract"); });
   $("#mk").onclick = async () => {
     const n = $("#newname").value.trim(); if (!n) return toast("이름을 입력하세요", true);
     try { await post("projects", {name:n}); S.project = n; go("extract"); } catch(e) { toast(e.message, true); }
@@ -220,30 +248,82 @@ async function renderProjects(m) {
 }
 
 /* ---------------------------------------------------------------- 2 extract */
+const UP = {};      // kind -> {busy, pct, err}
 function fileCard(kind, title, desc, required) {
   const f = (S.state.meta.files||{})[kind];
-  const cls = f ? "ok" : (required ? "need" : "opt");
+  const fi = (S.state.meta.file_info||{})[kind] || {};
+  const u = UP[kind] || {};
+  const cls = u.busy ? "busy" : (f ? "ok" : (u.err ? "bad " + (required ? "need" : "opt") : (required ? "need" : "opt")));
   const info = kind==="pdf" && S.state.meta.pdf_info ? ` · ${S.state.meta.pdf_info.pages}p · ${S.state.meta.pdf_info.vector?"벡터":"스캔(미지원)"}` : "";
-  return `<div class="fcard ${cls}">
-    <div class="t">${title} ${f?`<span class="chip g">확인</span>`:(required?`<span class="chip r">필수</span>`:`<span class="chip">선택</span>`)}</div>
-    <div class="n">${f?`<span class="mono">${esc(f)}</span>${info}`:desc}</div>
-    <label class="btn sm line">${f?"바꾸기":"파일 선택"}<input type="file" data-k="${kind}" accept="${kind==="pdf"?".pdf":".xlsx"}"></label>
+  const st = u.busy ? `업로드 중 ${u.pct||0}%` : (f ? "업로드 완료" : (required ? "필수 · 미업로드" : "선택 · 미업로드"));
+  const ic = u.busy ? "↑" : (f ? "✓" : (required ? "!" : "+"));
+  return `<div class="fcard ${cls}" data-drop="${kind}">
+    <div class="hd"><span class="ic">${ic}</span>${title}<span class="st">${st}</span></div>
+    <div class="bd">
+      ${f ? `<div class="fn">${esc(f)}</div><div class="meta">${fi.size?(fi.size/1024/1024).toFixed(1)+"MB · ":""}${esc(fi.time||"")}${info}</div>`
+          : `<div class="n">${desc}<br><span style="font-size:12px;color:var(--mute)">버튼을 누르거나 파일을 여기로 끌어 놓으세요</span></div>`}
+      ${u.busy ? `<div class="prog"><i style="width:${u.pct||0}%"></i></div>` : ""}
+      ${u.err ? `<div class="er">✕ ${esc(u.err)}</div>` : ""}
+      <label class="btn sm ${f?"line":""}">${f?"다른 파일로 바꾸기":"파일 선택"}<input type="file" data-k="${kind}" accept="${kind==="pdf"?".pdf":".xlsx"}"></label>
+    </div>
   </div>`;
+}
+function readErr(e) {
+  const n = (e && e.name) || "";
+  if (n === "NotReadableError" || n === "NotFoundError" || /Failed to fetch|NetworkError|network/i.test(String(e && e.message)))
+    return "브라우저가 파일을 읽지 못했습니다. ① 엑셀/PDF 뷰어에서 열려 있으면 닫고, ② 사내 보안(DRM) 파일이면 보안 해제 후, ③ OneDrive 파일이면 '항상 이 장치에 유지' 후 다시 선택하세요.";
+  return (e && e.message) || String(e);
+}
+async function uploadFile(kind, f) {
+  UP[kind] = {busy:true, pct:0};
+  if (S.screen === "extract") renderExtract($("#main"));
+  let buf;
+  try { buf = await f.arrayBuffer(); }
+  catch (e) { UP[kind] = {err: readErr(e)}; return S.screen === "extract" && renderExtract($("#main")); }
+  await new Promise(res => {
+    const x = new XMLHttpRequest();
+    x.open("POST", "/api/" + P("upload?kind=" + kind));
+    x.setRequestHeader("X-Filename", encodeURIComponent(f.name));
+    x.upload.onprogress = ev => { if (ev.lengthComputable) { UP[kind].pct = Math.round(100*ev.loaded/ev.total);
+      const c = document.querySelector(`[data-drop="${kind}"]`); if (c) { const i = c.querySelector(".prog i"); if (i) i.style.width = UP[kind].pct+"%";
+        const st = c.querySelector(".st"); if (st) st.textContent = `업로드 중 ${UP[kind].pct}%`; } } };
+    x.onload = () => { let b = {}; try { b = JSON.parse(x.responseText); } catch(e) {}
+      UP[kind] = x.status < 300 ? {} : {err: b.error || ("서버 오류 " + x.status)}; res(); };
+    x.onerror = () => { UP[kind] = {err: "서버와 연결이 끊겼습니다. 실행 창(검은 창)이 켜져 있는지 확인하고 다시 시도하세요."}; res(); };
+    x.send(buf);
+  });
+  S.concept = null;
+  if (!UP[kind].err) toast("업로드 완료");
+  await loadState(); if (S.screen === "extract") renderExtract($("#main"));
 }
 let pollH = null;
 async function renderExtract(m) {
   const st = S.state, j = st.job || {}, ex = st.extract;
   const running = j.state === "running";
   const pct = running && j.total ? Math.round(100*j.page/j.total) : (st.extracted ? 100 : 0);
+  const fl = st.meta.files || {};
+  const why = running ? "" : (!fl.pdf ? "P&ID PDF를 올리면 추출 실행이 켜집니다" : (!fl.template ? "추출은 가능 · 인덱스 양식은 출력 때 필요" : ""));
   m.innerHTML = `
   <div class="head"><div><div class="eyebrow">STEP 2</div><h1>입력 · 추출</h1>
     <p class="lead">도면에서 사실(계기, 연결, 노트, 펌프·패키지, 벤더 경계)을 읽습니다. 한 번 실행하면 결과가 저장됩니다.</p></div>
-    <div><button class="btn" id="run" ${running||!(st.meta.files||{}).pdf?"disabled":""}>${st.extracted?"다시 추출":"추출 실행"}</button></div></div>
-  <div class="grid g4">
+    <div><button class="btn" id="run" ${running||!fl.pdf?"disabled":""}>${st.extracted?"다시 추출":"추출 실행"}</button>
+      ${why?`<div class="hint">${why}</div>`:""}</div></div>
+  ${st.old_extract?`<div class="panel" style="border-left:5px solid var(--yellow);margin-bottom:16px">이전 버전으로 추출한 결과입니다. P&amp;ID Rev · Plant No · Equipment No · Service를 채우려면 <b>다시 추출</b>하세요.</div>`:""}
+  ${(() => { const pr = st.protected || {}, lab = {pdf:"P&amp;ID PDF", template:"인덱스 양식", ref:"레퍼런스 인덱스", concept:"체크리스트"};
+    const xl = Object.keys(pr).filter(k=>pr[k].mode==="excel"); const cj = st.cache_job || {};
+    let h = "";
+    if (cj.state === "running") h += `<div class="panel" style="border-left:5px solid var(--green);margin-bottom:16px;font-size:13px"><b>${esc(cj.msg||"도면 이미지 저장 중")}</b> · 보안이 다시 걸려도 검토 화면을 쓸 수 있도록 지금 읽히는 P&amp;ID를 이미지로 저장하고 있습니다.</div>`;
+    else if (pr.pdf && !st.pages_cached) h += `<div class="panel" style="border-left:5px solid var(--red);margin-bottom:16px;font-size:13px"><b style="color:var(--red)">P&amp;ID 이미지가 아직 저장되지 않았습니다</b><br>
+      P&amp;ID PDF에 보안이 걸려 있어 프로그램이 도면을 읽을 수 없는데, 위 P&amp;ID 카드에서 <b>다른 파일로 바꾸기</b>로 원본 P&amp;ID를 한 번 다시 올려 주세요. 올리는 즉시 전체 페이지를 이미지로 저장해 두므로, 그 뒤로는 보안이 다시 걸려도 검토 이미지·노트 보기·레퍼런스 비교가 계속 됩니다. (추출 결과·체크리스트·엑셀 출력은 지금도 됩니다)</div>`;
+    else if (pr.pdf) h += `<div class="panel" style="border-left:5px solid var(--green);margin-bottom:16px;font-size:12.5px">P&amp;ID PDF에 보안이 걸려 있지만 저장해 둔 도면 이미지로 모든 화면이 동작합니다. 다시 추출할 때만 P&amp;ID 파일을 다시 선택하면 됩니다.</div>`;
+    if (xl.length) h += `<div class="panel" style="border-left:5px solid var(--green);margin-bottom:16px;font-size:12.5px">보안 엑셀 ${xl.length}개(${xl.map(k=>lab[k]).join(", ")})는 Excel로 직접 열어 읽습니다. 보호는 그대로 둡니다.</div>`;
+    return h; })()}
+  ${st.notice?`<div class="panel" style="border-left:5px solid var(--yellow);margin-bottom:16px">${esc(st.notice)}</div>`:""}
+  ${st.calc_error?`<div class="panel" style="border-left:5px solid var(--red);margin-bottom:16px"><b style="color:var(--red)">IO 계산 오류</b> · ${esc(st.calc_error)}</div>`:""}
+  <div class="grid g3">
     ${fileCard("pdf","P&ID PDF","레전드 포함 벡터 PDF",true)}
-    ${fileCard("template","인덱스 양식","회사 Instrument Index 템플릿 (.xlsx)",true)}
-    ${fileCard("concept","개념 체크리스트","비우면 회사 표준 기본값 사용",false)}
-    ${fileCard("ref","레퍼런스 인덱스","채점용 (없어도 결과 동일)",false)}
+    ${fileCard("template","인덱스 양식","회사 Instrument Index 템플릿 (.xlsx, Instrument_Index 시트)",true)}
+    ${fileCard("ref","레퍼런스 인덱스","채점용 (INDEX 시트). 없어도 결과 동일",false)}
   </div>
   <div class="panel" style="margin-top:16px">
     <div style="display:flex;justify-content:space-between;margin-bottom:8px"><b>${running?esc(j.msg):(j.state==="error"?"오류":(st.extracted?"추출 완료":"대기"))}</b>
@@ -252,10 +332,12 @@ async function renderExtract(m) {
     ${j.state==="error"?`<p style="color:var(--red);margin-top:10px">${esc(j.msg)}</p>`:""}
   </div>
   ${ex ? `
-  <div class="grid g5" style="margin-top:16px">
+  <div class="grid g7" style="margin-top:16px">
     <div class="panel stat"><div class="k">인식 심볼</div><div class="v">${fmt(ex.symbols)}</div></div>
-    <div class="panel stat"><div class="k">ESD 연결 계기</div><div class="v" style="color:var(--red)">${fmt(ex.esd_linked)}</div></div>
-    <div class="panel stat"><div class="k">펌프 / 패키지</div><div class="v">${ex.pumps}<small>/ ${ex.packages}</small></div></div>
+    <div class="panel stat" title="도면에서 인식한 현장 계기 중 IO가 DCS로 가는 계기 (현재 체크리스트 기준)"><div class="k">DCS 연결 계기</div><div class="v" style="color:#2c7fc0">${ex.dcs_linked==null?"—":fmt(ex.dcs_linked)}</div></div>
+    <div class="panel stat" title="도면에서 인식한 현장 계기 중 IO가 ESD로 가는 계기 (현재 체크리스트 기준)"><div class="k">ESD 연결 계기</div><div class="v" style="color:var(--red)">${ex.esd_linked==null?"—":fmt(ex.esd_linked)}</div></div>
+    <div class="panel stat"><div class="k">펌프</div><div class="v">${fmt(ex.pumps)}</div></div>
+    <div class="panel stat"><div class="k">패키지</div><div class="v">${fmt(ex.packages)}</div></div>
     <div class="panel stat"><div class="k">벤더 경계 안 심볼</div><div class="v" style="color:var(--purple)">${fmt(ex.vendor_symbols)}</div></div>
     <div class="panel stat"><div class="k">읽은 노트</div><div class="v">${fmt(ex.notes)}</div></div>
   </div>
@@ -270,18 +352,23 @@ async function renderExtract(m) {
       <div style="margin-top:16px;text-align:right"><button class="btn" id="next">체크리스트로 →</button></div>
     </div>
   </div>` : ""}`;
-  m.querySelectorAll("input[type=file]").forEach(inp => inp.onchange = async () => {
-    const f = inp.files[0]; if (!f) return;
-    toast("업로드 중…");
-    try {
-      await api(P("upload?kind="+inp.dataset.k), {method:"POST", headers:{"X-Filename":encodeURIComponent(f.name)}, body:f});
-      S.concept = null; toast("업로드 완료"); render();
-    } catch(e) { toast(e.message, true); }
+  m.querySelectorAll("input[type=file]").forEach(inp => inp.onchange = () => { const f = inp.files[0]; if (f) uploadFile(inp.dataset.k, f); });
+  m.querySelectorAll("[data-drop]").forEach(c => {
+    c.ondragover = e => { e.preventDefault(); c.classList.add("drag"); };
+    c.ondragleave = () => c.classList.remove("drag");
+    c.ondrop = e => { e.preventDefault(); c.classList.remove("drag"); const f = e.dataTransfer.files[0]; if (f) uploadFile(c.dataset.drop, f); };
   });
-  const run = $("#run"); if (run) run.onclick = async () => { try { await post(P("extract")); S.summary=null; S.review=null; S.impact=null; render(); } catch(e) { toast(e.message, true); } };
+  const run = $("#run"); if (run) run.onclick = async () => {
+    if ((st.protected||{}).pdf) {            // labelled P&ID: pick the file, upload, then extract
+      const inp = document.createElement("input"); inp.type = "file"; inp.accept = ".pdf";
+      inp.onchange = async () => { const f = inp.files[0]; if (!f) return; await uploadFile("pdf", f);
+        if (UP.pdf && UP.pdf.err) return; try { await post(P("extract")); S.summary=null; S.review=null; S.impact=null; S.concept=null; S.warmed=false; if (S.screen==="extract") render(); } catch(e) { toast(e.message, true); } };
+      toast("P&ID에 보안이 걸려 있어 파일을 한 번 선택해 주시면 올린 뒤 바로 추출합니다");
+      inp.click(); return; }
+    try { await post(P("extract")); S.summary=null; S.review=null; S.impact=null; S.concept=null; S.warmed=false; if (S.screen==="extract") render(); } catch(e) { toast(e.message, true); } };
   const nx = $("#next"); if (nx) nx.onclick = () => go("concept");
   clearTimeout(pollH);
-  if (running) pollH = setTimeout(() => { if (S.screen==="extract") render(); }, 1500);
+  if (running || (st.cache_job && st.cache_job.state === "running")) pollH = setTimeout(() => { if (S.screen==="extract") render(); }, 1500);
 }
 
 /* ---------------------------------------------------------------- 3 concept */
@@ -304,40 +391,113 @@ function sidePanel() {
   <div class="panel">
     <div class="k" style="font-size:12.5px;color:var(--sub)">하드와이어 IO (스페어 포함)</div>
     <div style="font-size:52px;font-weight:300;line-height:1.05;letter-spacing:-.03em"><span class="uline">${fmt(s.hw)}</span></div>
-    <div style="font-size:12.5px;color:var(--sub);margin:8px 0 14px">${sys} · 통신 ${fmt(s.comm)} · 카드 ${fmt(s.cards_total)} · ${fmt(s.rows)}행</div>
-    <div class="bar">${s.origins.map(o=>`<span title="${o} ${s.per_origin[o].hw}" style="width:${100*s.per_origin[o].hw/tot}%;background:${ORIGIN_COLOR[o]}"></span>`).join("")}</div>
-    <div class="legend">${s.origins.map(o=>`<span><i style="background:${ORIGIN_COLOR[o]}"></i>${o} ${fmt(s.per_origin[o].hw)}</span>`).join("")}</div>
+    <div style="font-size:12.5px;color:var(--sub);margin:8px 0 6px">${sys} · 카드 ${fmt(s.cards_total)} · ${fmt(s.rows)}행</div>
+    <div style="font-size:12px;background:#f3f3f3;padding:6px 8px;margin-bottom:14px">통신 IO ${fmt(s.comm)}점 (패키지·MCC·VFD 통신 포트)은 하드와이어가 아니라서 위 합계에서 <b>제외</b>했습니다.</div>
+    <div class="bar">${s.origins.map(o=>`<span title="${o} ${s.per_origin[o].hw}" style="width:${100*s.per_origin[o].hw/tot}%;background:${ORIGIN_COLOR[o]||"#999"}"></span>`).join("")}</div>
+    <div class="legend">${s.origins.filter(o=>s.per_origin[o].rows).map(o=>`<span><i style="background:${ORIGIN_COLOR[o]||"#999"}"></i>${o} ${fmt(s.per_origin[o].hw)}</span>`).join("")}</div>
   </div>
   <div class="panel">
-    <h2 style="font-size:14px">시나리오</h2>
-    ${sc.map(x=>`<div style="display:flex;align-items:center;gap:8px;margin-bottom:7px;font-size:12.5px"><span style="width:76px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(x.name)}">${esc(x.name)}</span>
-      <div style="flex:1;background:#eee;height:12px"><div style="width:${100*x.hw/mx}%;height:12px;background:var(--green-d)"></div></div><b style="width:42px;text-align:right">${fmt(x.hw)}</b></div>`).join("") || `<p class="lead" style="font-size:12.5px;margin:0 0 8px">저장된 시나리오가 없습니다.</p>`}
-    <div style="display:flex;align-items:center;gap:8px;font-size:12.5px;margin-bottom:10px"><span style="width:76px;color:var(--green);font-weight:700">현재</span>
-      <div style="flex:1;background:#eee;height:12px"><div style="width:${100*s.hw/mx}%;height:12px;background:var(--green)"></div></div><b style="width:42px;text-align:right">${fmt(s.hw)}</b></div>
-    <div style="display:flex;gap:6px"><input type="text" id="scname" placeholder="시나리오 이름" style="flex:1"><button class="btn sm" id="scsave">저장</button></div>
+    <h2 style="font-size:14px;margin-bottom:4px">시나리오 (설정 비교용)</h2>
+    <p class="lead" style="font-size:12px;margin:0 0 10px;line-height:1.55">지금 체크리스트 설정과 IO 결과를 이름 붙여 저장합니다. 예: 'MCC 하드와이어' / 'MCC 통신'을 각각 저장하면 IO 차이를 막대로 비교하고, 엑셀 출력 때 <b>Scenarios 시트</b>에 나란히 들어갑니다. <b>불러오기</b>는 저장한 설정으로 체크리스트를 되돌립니다.</p>
+    ${sc.map(x=>`<div style="display:flex;align-items:center;gap:6px;margin-bottom:7px;font-size:12.5px" title="${esc((x.changed||[]).map(c=>c[0]+" "+c[1]+": "+c[2]).join("\n")||"기본값")}">
+      <span style="width:72px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.name)}</span>
+      <div style="flex:1;background:#eee;height:12px"><div style="width:${100*x.hw/mx}%;height:12px;background:var(--green-d)"></div></div><b style="width:40px;text-align:right">${fmt(x.hw)}</b>
+      <button class="btn sm line" data-scload="${esc(x.name)}" style="padding:2px 7px;font-size:11.5px">불러오기</button>
+      <button class="btn sm line" data-scdel="${esc(x.name)}" style="padding:2px 7px;font-size:11.5px" title="삭제">✕</button></div>`).join("") || `<p class="lead" style="font-size:12.5px;margin:0 0 8px">저장된 시나리오가 없습니다.</p>`}
+    <div style="display:flex;align-items:center;gap:8px;font-size:12.5px;margin-bottom:10px"><span style="width:72px;color:var(--green);font-weight:700">현재</span>
+      <div style="flex:1;background:#eee;height:12px"><div style="width:${100*s.hw/mx}%;height:12px;background:var(--green)"></div></div><b style="width:40px;text-align:right">${fmt(s.hw)}</b></div>
+    <div style="display:flex;gap:6px"><input type="text" id="scname" placeholder="예: MCC 통신안" style="flex:1"><button class="btn sm" id="scsave">현재 설정 저장</button></div>
   </div>
   <div class="panel">
-    <div style="display:flex;justify-content:space-between;align-items:center"><h2 style="font-size:14px;margin:0">영향 큰 가정</h2><button class="btn sm line" id="impbtn">분석</button></div>
-    <p class="lead" style="font-size:12px;margin:4px 0 8px">각 항목을 반대로 바꿨을 때 하드와이어 IO 변화</p>
-    ${imp ? imp.items.map(x=>`<div class="kv"><span><span class="mono" style="color:var(--mute)">${x.id}</span> ${esc(x.name)}<br><span style="font-size:11.5px;color:var(--sub)">${esc(x.current)} → ${esc(x.alt)}</span></span>
+    <div style="display:flex;justify-content:space-between;align-items:center"><h2 style="font-size:14px;margin:0">I/O 변화폭이 큰 체크리스트</h2><button class="btn sm line" id="impbtn">분석</button></div>
+    <p class="lead" style="font-size:12px;margin:4px 0 8px">항목을 반대로 바꾸면 하드와이어 IO가 얼마나 변하는지. 위에 있는 것부터 먼저 확정하세요. 누르면 그 항목으로 이동합니다.</p>
+    ${imp ? imp.items.map(x=>`<div class="kv" data-goto="${x.id}" style="cursor:pointer"><span><span class="mono" style="color:var(--mute)">${x.id}</span> ${esc(x.name)}<br><span style="font-size:11.5px;color:var(--sub)">${esc(x.current)} → ${esc(x.alt)}</span></span>
       <span class="${x.delta<0?"delta-n":"delta-p"}">${x.delta>0?"+":""}${fmt(x.delta)}</span></div>`).join("") || `<p class="lead">변화 없음</p>` : `<p class="lead" style="font-size:12.5px">"분석"을 누르면 몇 초 걸립니다.</p>`}
   </div>`;
 }
+function noteImgBtn(n) { return `<button class="btn sm line" data-note="${n.page}|${n.q}|${esc(n.dwg)}" style="padding:3px 9px;font-size:12px">노트 보기</button>`; }
+function notesBlock(id) {
+  const c = S.concept, L = (c.notes||{})[id] || [];
+  if (id === "B01") { if (!L.length) return `<div class="empty" style="padding:12px">트레인 노트가 있는 시트가 없습니다.</div>`;
+    const isCp = n => /복제/.test(n.effect||"") && !/복제 없음/.test(n.effect||""); const cp = L.filter(isCp), pre = L.filter(n=>!isCp(n));
+    const tbl = R => `<table class="mini"><tr><th>시트</th><th>노트</th><th>적용</th><th></th></tr>${R.map(n=>`<tr><td class="mono">${esc(n.dwg)}<br><span style="color:var(--sub)">${esc(n.title||"")}</span></td><td class="mono">${esc(n.text)}</td><td>${esc(n.effect)}</td><td>${noteImgBtn(n)}</td></tr>`).join("")}</table>`;
+    return `<details class="xd"><summary style="cursor:pointer;font-size:13px;padding:4px 0"><b>노트 보기</b> · 트레인 복제 ${cp.length}개 시트${cp.length?` (${esc(cp.map(n=>n.dwg).join(", "))})`:""} · 태그 접두만 ${pre.length}개 시트</summary>
+      ${cp.length?tbl(cp):""}${pre.length?`<details style="margin-top:6px"><summary style="cursor:pointer;font-size:12.5px;color:var(--sub)">태그 접두만 적용된 시트 ${pre.length}개 (복제 없음)</summary>${tbl(pre)}</details>`:""}</details>`; }
+  if (id === "B03") return L.length ? `<p class="xnote">노트 예: <span class="mono">"PUMP A/B - ONLY ONE IS SHOWN"</span> = 같은 장비·계기가 여러 대인데 도면에는 1대만 그렸다는 뜻. 몇 대인지는 노트에 없어서 <b>실제 대수</b>를 입력해야 합니다. 비워 두면 해당 시트 행은 '대수 확인 필요'로 검토에 올라갑니다.</p>
+    <table class="mini"><tr><th>시트</th><th>노트 (앞뒤 문맥)</th><th style="width:120px">실제 대수</th><th></th></tr>${L.map(n=>`<tr><td class="mono">${esc(n.dwg)}<br><span style="color:var(--sub)">${esc(n.title||"")}</span></td><td class="mono" style="font-size:11.5px">${esc(n.text)}</td>
+      <td><input type="number" min="1" placeholder="미확인" value="${esc(n.qty)}" data-oo="${esc(n.dwg)}" style="width:80px"> 대</td><td>${noteImgBtn(n)}</td></tr>`).join("")}</table>`
+    : `<div class="empty" style="padding:12px">'ONLY ONE IS SHOWN' 노트가 있는 시트가 없습니다.</div>`;
+  if (id === "C09") { const a = c.allowance||{};
+    return `<div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:8px"><b style="font-size:13px">패키지 1대당 Allowance</b>
+      ${["AI","AO","DI","DO"].map(k=>`<label style="display:flex;align-items:center;gap:6px">${k}<input type="number" min="0" value="${esc(a[k]||0)}" data-alw="${k}" style="width:64px"></label>`).join("")}
+      <span class="def">인덱스에 'Package Allowance' 행으로 들어갑니다 (Tag: 10-ALW-XXXX1…)</span></div>
+      ${L.length?`<table class="mini"><tr><th>시트</th><th>노트</th><th></th></tr>${L.map(n=>`<tr><td class="mono">${esc(n.dwg)}<br><span style="color:var(--sub)">${esc(n.title||"")}</span></td><td class="mono" style="font-size:11.5px">${esc(n.text)}</td><td>${noteImgBtn(n)}</td></tr>`).join("")}</table>`:`<div class="empty" style="padding:12px">도면 미개발 노트가 있는 시트가 없습니다.</div>`}`; }
+  return "";
+}
+function typicalDiagram(pts) {
+  const act = pts.filter(p=>p.active);
+  if (!act.length) return "";
+  const rows = []; act.forEach(p => { for (let k=0;k<Math.max(1,p.qty);k++) rows.push(p); });
+  const H = 34 + rows.length*30, W = 560;
+  const sysY = {}; let y = 30;
+  const lines = rows.map((p,i) => { const yy = 30 + i*30 + 12; const toSys = /^(DI|AI)$/.test(p.io);
+    const col = p.io==="COMM"?"#4fa1e0":(p.system==="ESD"?"#d1335d":"#1c5438");
+    return `<line x1="${toSys?400:120}" y1="${yy}" x2="${toSys?126:394}" y2="${yy}" stroke="${col}" stroke-width="2" marker-end="url(#ah)" ${p.io==="COMM"?'stroke-dasharray="6 4"':""}/>
+      <text x="260" y="${yy-5}" text-anchor="middle" font-size="11.5" fill="${col}"><tspan font-weight="700">${esc(p.system)} ${esc(p.io)}</tspan> · ${esc(p.desc)}</text>`; }).join("");
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;max-width:${W}px;height:auto;background:#fafafa;border:1px solid var(--line-l)" font-family="inherit">
+    <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="context-stroke"/></marker></defs>
+    <rect x="20" y="16" width="100" height="${H-32}" fill="#fff" stroke="#111"/><text x="70" y="${H/2}" text-anchor="middle" font-size="13" font-weight="700">DCS / ESD</text>
+    <rect x="400" y="16" width="70" height="${H-32}" fill="#fff" stroke="#111"/><text x="435" y="${H/2+4}" text-anchor="middle" font-size="12" font-weight="700">MCC</text>
+    <line x1="470" y1="${H/2}" x2="500" y2="${H/2}" stroke="#111"/><circle cx="522" cy="${H/2}" r="20" fill="#fff" stroke="#111" stroke-width="1.6"/><text x="522" y="${H/2+5}" text-anchor="middle" font-size="15" font-weight="700">M</text>
+    ${lines}</svg>`;
+}
+function typicalBlock(typ, kind) {
+  const pts = (S.concept.typicals||{})[typ] || [];
+  if (!pts.length) return "";
+  const act = pts.filter(p=>p.active), n = {}; act.forEach(p => n[p.io] = (n[p.io]||0) + p.qty);
+  const sum = Object.entries(n).map(([k,v])=>`${k} ${v}`).join(" · ");
+  return `<div class="typ"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><b class="mono">${esc(typ)}</b><span class="chip g">${kind} 1대당 ${sum||"IO 없음"}</span></div>
+    ${kind==="모터"?typicalDiagram(pts):""}
+    <table class="mini" style="margin-top:8px"><tr><th>IO</th><th>System</th><th>기능</th><th>설명</th><th>수량</th><th>조건</th></tr>
+    ${pts.map(p=>`<tr style="${p.active?"":"color:#aaa;text-decoration:line-through"}"><td><b>${esc(p.io)}</b></td><td>${esc(p.system)}</td><td class="mono">${esc(p.func)}${esc(p.suffix)}</td><td>${esc(p.desc)}</td><td>${p.qty}${p.qty_id?` <span class="def">(${esc(p.qty_id)})</span>`:""}</td><td class="mono" style="font-size:11.5px">${esc(p.cond||"항상")}</td></tr>`).join("")}</table>
+    <p class="def" style="margin-top:4px">회색 줄은 현재 설정 조건에 맞지 않아 빠진 점입니다 (예: D04=OFF).</p></div>`;
+}
+function packagesTable(c) {
+  if (!c.packages.length) return `<div class="empty" style="padding:12px">도면에서 찾은 패키지가 없습니다.</div>`;
+  const opts = ["전부 하드와이어","벤더PLC+통신","혼합"];
+  return `<p class="xnote">도면에서 찾은 패키지 ${c.packages.length}개입니다. 패키지마다 연결 방식을 고를 수 있습니다. 고르지 않은 패키지는 위 C01 기본값을 따릅니다.</p>
+  <table class="mini"><tr><th>패키지</th><th>시트</th><th>유닛</th><th>연결 방식</th><th>대수</th><th>Typical</th><th>지정</th></tr>
+  ${c.packages.map(p=>`<tr><td class="mono" style="white-space:nowrap"><b>${esc(p.tag)}</b>${p.later?`<br><span class="chip y" style="font-size:10.5px">도면 미개발</span>`:""}</td><td>${esc(p.dwg||"")}<br><span style="font-size:12px;color:var(--sub)">${esc(p.title||"")}</span></td><td class="mono">${esc(p.units||"-")}</td>
+    <td><select data-pk="${esc(p.tag)}" data-f="conn">${opts.map(o=>`<option ${o===p.conn?"selected":""}>${o}</option>`).join("")}</select></td>
+    <td><input type="number" min="1" value="${esc(p.qty||1)}" data-pk="${esc(p.tag)}" data-f="qty" style="width:64px"></td>
+    <td class="mono">${esc(p.typical||"")}</td><td><span class="chip ${p.source==="C01"?"":"g"}">${p.source==="C01"?"기본값(C01)":"개별 지정"}</span></td></tr>`).join("")}</table>`;
+}
+function extraFor(it) {
+  if (["B01","B03","C09"].includes(it.id)) return notesBlock(it.id);
+  if (it.id === "C01") return packagesTable(S.concept) + typicalBlock(({"전부 하드와이어":"PKG-HARDWIRED","벤더PLC+통신":"PKG-COMM","혼합":"PKG-HYBRID"})[String(it.value)]||"PKG-HYBRID", "패키지");
+  if (it.id === "D01") return typicalBlock(String(it.value), "모터");
+  return "";
+}
 async function renderConcept(m) {
+  const t = S.tok;
   if (!S.concept) S.concept = await api(P("concept"));
   if (!S.summary) S.summary = await api(P("summary"));
-  const c = S.concept;
-  const tabs = c.groups.map((g,i) => { const n = g.items.filter(x=>String(x.value)!==String(x.default)).length;
-    return `<a class="${i===S.tab?"on":""}" data-i="${i}">${esc(g.title.replace(/\s*\(.*\)$/,""))}${n?`<span class="cnt">${n}</span>`:""}</a>`; });
-  tabs.push(`<a class="${S.tab===-1?"on":""}" data-i="-1">패키지별 (${c.packages.length})</a>`);
-  const g = c.groups[S.tab];
-  const body = S.tab === -1 ? packagesTable(c) : g.items.map(it => `
-    <div class="item ${String(it.value)!==String(it.default)?"chg":""} ${it.status==="planned"?"plan":""}">
+  if (t !== S.tok) return;
+  const c = S.concept, G = c.groups;
+  if (S.tab < 0 || S.tab >= G.length) S.tab = 0;
+  const short = g => g.title.replace(/\s*\(.*\)$/,"");
+  const tabs = G.map((g,i) => { const n = g.items.filter(x=>String(x.value)!==String(x.default)).length;
+    return `<a class="${i===S.tab?"on":""}" data-i="${i}">${esc(short(g))}${n?`<span class="cnt">${n}</span>`:""}</a>`; });
+  const g = G[S.tab];
+  const body = g.items.map(it => { const x = extraFor(it); return `
+    <div class="item ${String(it.value)!==String(it.default)?"chg":""} ${it.status==="planned"?"plan":""}" id="it-${it.id}">
       <div class="id">${it.id}</div>
       <div><div class="nm">${esc(it.name)}${it.status==="planned"?` <span class="chip" title="${esc(it.status_note)}">미적용</span>`:it.status==="info"?` <span class="chip b" title="${esc(it.status_note)}">기록용</span>`:""}</div>
         <div class="ef">${esc(it.effect)}${it.basis?` · <span style="color:var(--mute)">${esc(it.basis)}</span>`:""}${it.status_note?`<br><span style="color:#b07a00">${esc(it.status_note)}</span>`:""}</div></div>
       <div class="ctl">${String(it.value)!==String(it.default)?`<span class="def">기본 ${esc(typeof it.default==="number"&&it.default<1&&it.default>0?Math.round(it.default*100)+"%":it.default)}</span>`:""}${control(it)}</div>
-    </div>`).join("");
+      ${x?`<div class="xtra">${x}</div>`:""}
+    </div>`; }).join("");
+  const prev = G[S.tab-1], next = G[S.tab+1];
   m.innerHTML = `
   <div class="head"><div><div class="eyebrow">STEP 3</div><h1>개념 체크리스트</h1>
     <p class="lead">설계 가정을 바꾸면 오른쪽 IO가 즉시 다시 계산됩니다. 바꾼 항목은 노란색으로 표시됩니다. (변경 ${c.changed}건)</p></div>
@@ -346,101 +506,182 @@ async function renderConcept(m) {
     <div style="flex:1;min-width:0" class="panel">
       <div class="tabs">${tabs.join("")}</div>
       <div>${body}</div>
+      <div class="pager">${prev?`<button class="btn line" id="tprev">← ${esc(short(prev))}</button>`:"<span></span>"}
+        <span class="def">${S.tab+1} / ${G.length}</span>
+        ${next?`<button class="btn" id="tnext">${esc(short(next))} →</button>`:`<button class="btn" id="tnext2">검토로 →</button>`}</div>
     </div>
     <div class="side" id="side">${sidePanel()}</div>
   </div>`;
-  m.querySelectorAll(".tabs a").forEach(a => a.onclick = () => { S.tab = +a.dataset.i; renderConcept(m); });
+  const toTab = i => { S.tab = i; renderConcept(m).then(() => window.scrollTo({top:0})); };
+  m.querySelectorAll(".tabs a").forEach(a => a.onclick = () => toTab(+a.dataset.i));
+  if ($("#tprev")) $("#tprev").onclick = () => toTab(S.tab-1);
+  if ($("#tnext")) $("#tnext").onclick = () => toTab(S.tab+1);
+  if ($("#tnext2")) $("#tnext2").onclick = () => go("review");
   m.querySelectorAll("[data-id]").forEach(el => {
     const fire = v => setVal(el.dataset.id, v);
     if (el.dataset.t === "tog") el.onclick = () => fire(el.classList.contains("on") ? "OFF" : "ON");
     else el.onchange = () => fire(el.value);
   });
   m.querySelectorAll("[data-pk]").forEach(el => el.onchange = () => setPkg(el.dataset.pk, el.dataset.f, el.value));
+  m.querySelectorAll("[data-oo]").forEach(el => el.onchange = () => setDecision({only_one:{[el.dataset.oo]: el.value}}));
+  m.querySelectorAll("[data-alw]").forEach(el => el.onchange = () => { const a = {}; m.querySelectorAll("[data-alw]").forEach(x => a[x.dataset.alw] = +x.value||0); setDecision({allowance:a}); });
+  m.querySelectorAll("[data-note]").forEach(b => b.onclick = () => { const [pg,q,dwg] = b.dataset.note.split("|");
+    showBig(`/api/${P(`note?page=${pg}&q=${q}`)}`, `${dwg} (p${pg}) · 노란 칸: 해당 노트 문구`); });
   bindSide();
-  $("#reset").onclick = async () => { if (!confirm("모든 항목을 기본값으로 되돌릴까요?")) return; S.concept = await post(P("concept"), {reset:true}); await refreshSummary(); renderConcept(m); };
+  $("#reset").onclick = async () => { if (!confirm("모든 항목을 기본값으로 되돌릴까요?")) return; S.concept = await post(P("concept"), {reset:true}); await refreshSummary(); if (S.screen==="concept") renderConcept(m); };
   $("#tor").onclick = () => go("review");
-}
-function packagesTable(c) {
-  if (!c.packages.length) return `<div class="empty" style="margin-top:14px">도면에서 찾은 패키지가 없습니다.</div>`;
-  const opts = ["전부 하드와이어","벤더PLC+통신","혼합"];
-  return `<p class="lead" style="margin:14px 0">도면에서 찾은 패키지입니다. 지정하지 않으면 C01 기본값을 따릅니다.</p>
-  <table><tr><th>패키지</th><th>시트</th><th>유닛</th><th>연결 방식</th><th>대수</th><th>Typical</th><th>출처</th></tr>
-  ${c.packages.map(p=>`<tr><td class="mono" style="white-space:nowrap"><b>${esc(p.tag)}</b></td><td>${esc(p.dwg||"")}<br><span style="font-size:12px;color:var(--sub)">${esc(p.title||"")}</span></td><td class="mono">${esc(p.units||"-")}</td>
-    <td><select data-pk="${esc(p.tag)}" data-f="conn">${opts.map(o=>`<option ${o===p.conn?"selected":""}>${o}</option>`).join("")}</select></td>
-    <td><input type="number" min="1" value="${esc(p.qty||1)}" data-pk="${esc(p.tag)}" data-f="qty" style="width:64px"></td>
-    <td class="mono">${esc(p.typical||"")}</td><td><span class="chip ${p.source==="C01"?"":"g"}">${esc(p.source)}</span></td></tr>`).join("")}</table>`;
 }
 function bindSide() {
   const sv = $("#scsave"); if (sv) sv.onclick = async () => { const n = $("#scname").value.trim(); if (!n) return toast("시나리오 이름을 입력하세요", true);
-    await post(P("scenario"), {name:n}); S.summary = await api(P("summary")); $("#side").innerHTML = sidePanel(); bindSide(); toast("시나리오 저장"); };
-  const ib = $("#impbtn"); if (ib) ib.onclick = async () => { ib.textContent = "계산 중…"; ib.disabled = true; S.impact = await api(P("impact")); $("#side").innerHTML = sidePanel(); bindSide(); };
+    await post(P("scenario"), {name:n}); S.summary = await api(P("summary")); if ($("#side")) { $("#side").innerHTML = sidePanel(); bindSide(); } toast("현재 설정을 시나리오로 저장했습니다"); };
+  document.querySelectorAll("[data-scload]").forEach(b => b.onclick = async () => {
+    if (!confirm(`'${b.dataset.scload}' 시나리오 설정으로 체크리스트를 바꿀까요?`)) return;
+    try { S.concept = await post(P("concept"), {scenario:b.dataset.scload}); await refreshSummary(); if (S.screen==="concept") renderConcept($("#main")); toast("시나리오 설정을 불러왔습니다"); } catch(e) { toast(e.message, true); } });
+  document.querySelectorAll("[data-scdel]").forEach(b => b.onclick = async () => {
+    if (!confirm(`'${b.dataset.scdel}' 시나리오를 삭제할까요?`)) return;
+    await post(P("scenario_del"), {name:b.dataset.scdel}); S.summary = await api(P("summary")); if ($("#side")) { $("#side").innerHTML = sidePanel(); bindSide(); } });
+  document.querySelectorAll("[data-goto]").forEach(el => el.onclick = () => {
+    const id = el.dataset.goto, i = S.concept.groups.findIndex(g => g.items.some(x => x.id === id));
+    if (i >= 0) { S.tab = i; renderConcept($("#main")).then(() => { const e = document.getElementById("it-"+id); if (e) { e.scrollIntoView({behavior:"smooth", block:"center"}); e.style.outline = "2px solid var(--green)"; } }); } });
+  const ib = $("#impbtn"); if (ib) ib.onclick = async () => { ib.textContent = "계산 중…"; ib.disabled = true; S.impact = await api(P("impact")); if ($("#side")) { $("#side").innerHTML = sidePanel(); bindSide(); } };
 }
 async function refreshSummary() { S.summary = await api(P("summary")); S.review = null; S.impact = null; }
 async function setVal(id, v) {
-  try { S.concept = await post(P("concept"), {set:{[id]:v}}); await refreshSummary(); renderConcept($("#main")); }
+  try { S.concept = await post(P("concept"), {set:{[id]:v}}); await refreshSummary(); if (S.screen==="concept") renderConcept($("#main")); }
+  catch(e) { toast(e.message, true); }
+}
+async function setDecision(body) {
+  try { S.concept = await post(P("decisions"), body); await refreshSummary(); if (S.screen==="concept") renderConcept($("#main")); toast("반영했습니다"); }
   catch(e) { toast(e.message, true); }
 }
 async function setPkg(tag, f, v) {
   const p = S.concept.packages.find(x=>x.tag===tag);
   const body = {tag, dwg:p.dwg, title:p.title, conn:p.conn, qty:p.qty}; body[f] = v;
-  try { S.concept = await post(P("concept"), {packages:[body]}); await refreshSummary(); renderConcept($("#main")); }
+  try { S.concept = await post(P("concept"), {packages:[body]}); await refreshSummary(); if (S.screen==="concept") renderConcept($("#main")); }
   catch(e) { toast(e.message, true); }
 }
-
 /* ---------------------------------------------------------------- 4 review */
+const VIEW_NAME = {todo:"판단 필요", evidence:"근거 자료 (규칙으로 결정됨)", decided:"판단 완료"};
+async function loadReview() {
+  const qs = `view=${S.rview||"todo"}` + (S.reason?`&reason=${encodeURIComponent(S.reason)}`:"");
+  if (!S.review || S.review._qs !== qs) { S.review = await api(P("review?" + qs)); S.review._qs = qs; }
+  return S.review;
+}
 async function renderReview(m) {
-  if (!S.review || S.review._reason !== S.reason) { S.review = await api(P("review" + (S.reason?`?reason=${encodeURIComponent(S.reason)}`:""))); S.review._reason = S.reason; }
-  const r = S.review;
-  if (!S.page) S.page = (r.pages[0]||{}).page;
-  const chips = Object.entries(r.counts).sort((a,b)=>b[1]-a[1]).map(([k,v]) =>
+  const t = S.tok;
+  if (!S.warmed) { S.warmed = true; post(P("warm")).catch(()=>{}); }
+  const r = await loadReview();
+  if (t !== S.tok) return;
+  if (S.sel == null || S.sel >= r.items.length) S.sel = r.items.length ? 0 : null;
+  const counts = S.rview==="evidence" ? r.evidence_counts : (S.rview==="decided" ? {} : r.counts);
+  const chips = Object.entries(counts||{}).sort((a,b)=>b[1]-a[1]).map(([k,v]) =>
     `<span class="chip ${S.reason===k?"fill":""}" data-r="${esc(k)}" style="cursor:pointer;margin:0 6px 6px 0">${esc(k)} ${v}</span>`).join("");
+  const vt = (k,n) => `<a class="${(S.rview||"todo")===k?"on":""}" data-v="${k}">${VIEW_NAME[k]} <b>${fmt(n)}</b></a>`;
   m.innerHTML = `
   <div class="head"><div><div class="eyebrow">STEP 4</div><h1>검토</h1>
-    <p class="lead">확인이 필요한 행만 모았습니다. 항목을 누르면 도면에서 위치를 보여줍니다.</p></div>
-    <div style="display:flex;gap:8px;align-items:center"><select id="pg">${r.pages.map(p=>`<option value="${p.page}" ${p.page==S.page?"selected":""}>p${p.page} · ${esc(p.dwg)} ${esc(p.title||"")}</option>`).join("")}</select>
-      <button class="btn line" id="pkt" title="판단이 필요한 항목을 표시된 도면 조각과 질문 카드로 묶은 PDF">판단 요청서 PDF</button>
-      <button class="btn" id="too">출력 →</button></div></div>
+    <p class="lead">애매한 것만 판단합니다. 규칙으로 정해진 행(Typical 파생, ESD 연결, 벤더 경계 등)은 <b>근거 자료</b>에 저장만 해 둡니다. 판단은 바로 인덱스에 반영됩니다.</p></div>
+    <div><button class="btn" id="too">출력 →</button></div></div>
+  <div class="tabs" style="margin-bottom:14px">${vt("todo", r.n_todo)}${vt("evidence", r.n_evidence)}${vt("decided", r.n_decided)}</div>
   <div style="display:flex;gap:16px;align-items:flex-start">
-    <div style="flex:1.6;min-width:0"><div class="viewer" id="viewer"><img id="pimg" src="/api/${P("page/"+S.page)}" alt="도면"><div class="hl hidden" id="hl"></div></div>
-      <div class="legend" style="margin-top:8px"><span><i style="background:#15ad60"></i>FIELD</span><span><i style="background:#4fa1e0"></i>DCS</span><span><i style="background:#d1335d"></i>ESD Interlock</span><span><i style="background:#ffba00"></i>DCS/HW Interlock</span><span><i style="background:#7e66cb"></i>벤더 경계</span></div></div>
-    <div style="flex:1;min-width:300px">
-      <div id="aipanel"></div>
-      <div style="margin-bottom:6px">${S.reason?`<span class="chip" data-r="" style="cursor:pointer;margin:0 6px 6px 0">전체 보기 ✕</span>`:""}${chips}</div>
+    <div style="flex:1.5;min-width:0" id="detail"></div>
+    <div style="flex:1;min-width:320px">
+      ${S.rview==="decided"?"":`<div id="aipanel"></div>`}
+      <div style="margin-bottom:6px">${S.reason?`<span class="chip" data-r="" style="cursor:pointer;margin:0 6px 6px 0">사유 필터 해제 ✕</span>`:""}${chips}</div>
       <div class="rlist" id="rlist">${r.items.map((x,i)=>`<div class="ritem ${S.sel===i?"on":""}" data-i="${i}" style="display:flex;gap:10px">
-        ${x.card?`<img class="thumb" loading="lazy" data-big="/api/${P("card?k="+encodeURIComponent(x.card))}" src="/api/${P("card?k="+encodeURIComponent(x.card))}" alt="">`:`<div class="thumb"></div>`}
+        ${x.card?`<img class="thumb" loading="lazy" src="/api/${P("card?k="+encodeURIComponent(x.card))}" alt="" style="width:64px;height:64px" onerror="this.outerHTML='<div class=&quot;thumb&quot; style=&quot;width:64px;height:64px;font-size:10px;color:#999;display:flex;align-items:center;justify-content:center;text-align:center&quot;>이미지<br>없음</div>'">`:`<div class="thumb" style="width:64px;height:64px"></div>`}
         <div style="flex:1;min-width:0">
-        <div class="a"><b class="mono">${esc(x.tag)}</b><span>${x.reasons.map(t=>`<span class="chip ${/불일치/.test(t)?"r":/ESD/.test(t)?"r":/벤더/.test(t)?"p":/중복|대수|미분류/.test(t)?"y":""}">${esc(t)}</span>`).join(" ")}</span></div>
-        <div class="b">${esc(x.desc)} · ${esc(x.system)} ${esc(x.io)} · ${esc(x.dwg)} p${x.page||"-"} · <span style="color:${ORIGIN_COLOR[x.origin]||"#999"}">${esc(x.origin)}</span></div>
-        ${x.inform?`<div class="b" style="color:#444">${esc(x.inform)}</div>`:""}</div></div>`).join("") || `<div class="empty">검토할 항목이 없습니다.</div>`}
+        <div class="a"><b class="mono">${esc(x.tag)}</b><span>${(x.reasons||[]).map(t=>`<span class="chip ${/불일치|ESD/.test(t)?"r":/벤더/.test(t)?"p":/중복|대수|미분류|미상/.test(t)?"y":""}">${esc(t)}</span>`).join(" ")}</span></div>
+        <div class="b">${esc(x.desc)} · ${esc(x.system)} ${esc(x.io)} · ${esc(x.dwg)} ${x.page?"p"+x.page:""}</div>
+        ${x.decided?`<div class="b" style="color:var(--green-d);font-weight:700">✓ ${esc(x.decided)}</div>`:""}</div></div>`).join("")
+        || `<div class="empty">${S.rview==="decided"?"아직 판단한 항목이 없습니다.":"판단할 항목이 없습니다. 출력으로 넘어가세요."}</div>`}
       </div>
       <p class="lead" style="font-size:12px;margin-top:6px">${fmt(r.total)}건${r.total>r.items.length?` 중 ${r.items.length}건 표시`:""}</p>
     </div>
   </div>
-  <div class="panel" style="margin-top:16px"><h2>읽은 노트와 적용 효과</h2>
-    <table><tr><th style="width:100px">시트</th><th>노트 (발췌)</th><th style="width:330px">적용</th></tr>
-    ${r.notes.map(n=>`<tr><td class="mono">${esc(n.dwg)}</td><td style="font-size:12.5px">${esc(n.text)}</td><td>${esc(n.effect)}</td></tr>`).join("")}</table></div>`;
+  <details class="panel" style="margin-top:16px"><summary style="cursor:pointer;font-weight:700">읽은 노트와 적용 효과 (${r.notes.length})</summary>
+    <table style="margin-top:10px"><tr><th style="width:100px">시트</th><th>노트 (발췌)</th><th style="width:330px">적용</th></tr>
+    ${r.notes.map(n=>`<tr><td class="mono">${esc(n.dwg)}</td><td style="font-size:12.5px">${esc(n.text)}</td><td>${esc(n.effect)}</td></tr>`).join("")}</table></details>`;
+  m.querySelectorAll("[data-v]").forEach(a => a.onclick = () => { S.rview = a.dataset.v; S.reason = ""; S.sel = null; S.showPage = false; renderReview(m); });
   m.querySelectorAll("[data-r]").forEach(c => c.onclick = () => { S.reason = c.dataset.r; S.sel = null; renderReview(m); });
-  $("#pg").onchange = e => { S.page = +e.target.value; S.sel = null; renderReview(m); };
   $("#too").onclick = () => go("output");
-  $("#pkt").onclick = async () => { const b=$("#pkt"); b.disabled=true; b.textContent="만드는 중…";
-    try { const res = await post(P("packet")); toast(`판단 요청서 ${res.count}건 생성 → 출력 화면에서 받기`); }
-    catch(e) { toast(e.message, true); } b.disabled=false; b.textContent="판단 요청서 PDF"; };
-  m.querySelectorAll("img.thumb").forEach(im => im.onclick = (ev) => { ev.stopPropagation(); showBig(im.dataset.big); });
-  m.querySelectorAll(".ritem").forEach(el => el.onclick = () => {
-    const x = r.items[+el.dataset.i]; S.sel = +el.dataset.i;
-    if (x.page && x.page !== S.page) { S.page = x.page; renderReview(m).then(() => focusItem(x)); }
-    else { m.querySelectorAll(".ritem").forEach(e=>e.classList.toggle("on", e===el)); focusItem(x); }
-  });
-  if (S.sel != null && r.items[S.sel]) focusItem(r.items[S.sel]);
-  renderAIPanel();
+  m.querySelectorAll(".ritem").forEach(el => el.onclick = () => { S.sel = +el.dataset.i;
+    m.querySelectorAll(".ritem").forEach(e=>e.classList.toggle("on", e===el)); renderDetail(); });
+  renderDetail();
+  if (S.rview !== "decided") renderAIPanel();
 }
-
+function renderDetail() {
+  const box = $("#detail"), r = S.review; if (!box || !r) return;
+  const x = r.items[S.sel];
+  if (!x) { box.innerHTML = `<div class="panel empty">왼쪽에 표시할 항목이 없습니다.</div>`; return; }
+  const big = x.card ? `/api/${P("card?k="+encodeURIComponent(x.card))}` : "";
+  const sameN = r.items.filter(i => i.key && (i.reasons||[]).join() === (x.reasons||[]).join()).length;
+  let ctl = "";
+  if (S.rview === "decided") ctl = `<div class="dec"><b style="color:var(--green-d)">✓ ${esc(x.decided)}</b>
+      <button class="btn sm line" id="d-undo" style="margin-left:auto">판단 되돌리기</button></div>`;
+  else if (!x.key && x.sid) ctl = `<div class="dec"><b>규칙에 맞지 않은 태그 모양 글자입니다. 무엇인가요?</b>
+      <div class="drow"><button class="btn sm line" id="d-nt">계기 아님 (라인번호·노트 등) → 무시</button>
+      <span style="display:flex;gap:6px;align-items:center">태그 <input type="text" id="d-tag" value="${esc(x.tag)}" style="width:130px"><button class="btn sm" id="d-field">현장 계기로 인정</button></span></div></div>`;
+  else if (x.key) ctl = `<div class="dec">
+      <div class="drow"><button class="btn sm" id="d-ok">현행 그대로 확정</button><button class="btn sm line" id="d-ex">인덱스에서 제외</button>
+        <label style="margin-left:auto;font-size:12.5px;display:flex;gap:6px;align-items:center"><input type="checkbox" id="d-all"> 같은 사유 ${sameN}건 모두에 적용</label></div>
+      <div class="drow"><span>IO</span><select id="d-io">${["","AI","AO","DI","DO","-"].map(v=>`<option value="${v}" ${v===x.io?"selected":""}>${v||"(유지)"}${v==="-"?" (IO 없음)":""}</option>`).join("")}</select>
+        <span>System</span><select id="d-sys">${["","DCS","ESD","F&G","PKG PLC"].map(v=>`<option value="${v}" ${v===x.system?"selected":""}>${v||"(유지)"}</option>`).join("")}</select>
+        <span>수량</span><input type="number" id="d-qty" min="1" value="1" style="width:60px">
+        <button class="btn sm line" id="d-edit">이대로 수정</button></div>
+      <div class="drow" style="flex-wrap:nowrap"><input type="text" id="d-text" placeholder="말로 지시: 예) DI로 바꾸고 ESD로 / 2대임 / 빼줘 / 태그는 10-PT-0602A" style="flex:1">
+        <button class="btn sm line" id="d-parse">해석</button></div>
+      <div id="d-prev"></div>
+      <p class="def">판단은 인덱스에 바로 반영되고(Remarks에 '사용자 판단' 기록), 이 목록에서 빠집니다. '판단 완료' 탭에서 되돌릴 수 있습니다.</p></div>`;
+  box.innerHTML = `<div class="panel" style="padding:16px">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:10px">
+      <div><b class="mono" style="font-size:17px">${esc(x.tag)}</b> <span style="color:var(--sub)">${esc(x.desc)}</span>
+        <div style="font-size:12.5px;color:var(--sub);margin-top:3px">${esc(x.system)} ${esc(x.io)} · ${esc(x.dwg)} ${x.page?"p"+x.page:""} · <span style="color:${ORIGIN_COLOR[x.origin]||"#999"}">${esc(x.origin)}</span>${x.vendor?` · 벤더 ${esc(x.vendor)}`:""}</div></div>
+      ${x.page&&x.coord?`<button class="btn sm line" id="d-page">${S.showPage?"확대 이미지로":"전체 도면에서 위치 보기"}</button>`:""}</div>
+    ${S.showPage ? `<div class="viewer" id="viewer" style="height:520px"><img id="pimg" src="/api/${P("page/"+x.page)}" alt="도면"><div class="hl hidden" id="hl"></div></div>
+      <div class="legend" style="margin-top:6px"><span><i style="background:#15ad60"></i>FIELD</span><span><i style="background:#4fa1e0"></i>DCS</span><span><i style="background:#d1335d"></i>ESD Interlock</span><span><i style="background:#ffba00"></i>DCS/HW Interlock</span><span><i style="background:#7e66cb"></i>벤더 경계</span></div>`
+      : (big ? `<div style="background:#fff;border:1px solid var(--line);text-align:center"><img src="${big}" style="max-width:100%;max-height:440px;cursor:zoom-in" id="d-big" onerror="this.parentNode.innerHTML='<div class=&quot;empty&quot; style=&quot;padding:18px;font-size:12.5px&quot;>확대 이미지가 아직 저장되지 않았는데, 입력·추출 화면에서 P&amp;amp;ID를 다시 올려 주시면 바로 보입니다.</div>'"></div>
+        <div class="def" style="margin-top:4px">빨강: 판단 대상 · 주황: 따라간 신호선 · 파랑: 신호선 도착 심볼 · 보라: 벤더 경계</div>` : `<div class="empty">도면 위치 정보가 없는 행입니다 (Typical로 만든 행).</div>`)}
+    ${(() => { const E = x.explain || [], A = E.filter(e=>e.k==="ask"), I = E.filter(e=>e.k!=="ask");
+      if (!E.length && !x.basis) return "";
+      return `<div style="margin-top:10px;font-size:13px;line-height:1.65">
+        ${A.length?`<div style="background:#fff7e0;border-left:4px solid var(--yellow);padding:8px 12px;margin-bottom:6px"><b>판단해 주실 것</b>${A.map(e=>`<div>• ${esc(e.t)}</div>`).join("")}</div>`
+          : S.rview==="todo"?`<div style="background:#f3f3f3;padding:8px 12px;margin-bottom:6px">특별히 막힌 곳은 없는데, 확대 이미지를 보고 맞으면 '현행 그대로 확정'을 눌러 주세요.</div>`:""}
+        ${I.length?`<div style="color:var(--sub);font-size:12.5px"><b>참고</b>${I.map(e=>`<div>· ${esc(e.t)}</div>`).join("")}</div>`:""}
+        ${x.basis?`<div style="color:var(--mute);font-size:12px;margin-top:4px">근거: ${esc(x.basis)}</div>`:""}</div>`; })()}
+    ${ctl}</div>`;
+  const keys = () => $("#d-all") && $("#d-all").checked ? r.items.filter(i => i.key && (i.reasons||[]).join() === (x.reasons||[]).join()).map(i=>i.key) : [x.key];
+  const send = async (body, msg) => {
+    try { const res = await post(P("rowdecide"), body); toast(msg || `반영: ${res.summary||"완료"}${res.count>1?` (${res.count}건)`:""}`);
+      S.review = null; S.summary = null; if (S.screen === "review") renderReview($("#main")); }
+    catch(e) { toast(e.message, true); } };
+  if ($("#d-page")) $("#d-page").onclick = () => { S.showPage = !S.showPage; renderDetail(); };
+  if (S.showPage) focusItem(x);
+  if ($("#d-big")) $("#d-big").onclick = () => showBig(big);
+  if ($("#d-undo")) $("#d-undo").onclick = () => x.sid && !x.key ? send({sid:x.sid, action:"undo"}, "되돌렸습니다") : send({keys:[x.key], action:"undo"}, "되돌렸습니다");
+  if ($("#d-nt")) $("#d-nt").onclick = () => send({sid:x.sid, action:"exclude"}, "계기 아님으로 처리");
+  if ($("#d-field")) $("#d-field").onclick = () => send({sid:x.sid, action:"accept", tag:$("#d-tag").value.trim()}, "현장 계기로 인정");
+  if ($("#d-ok")) $("#d-ok").onclick = () => send({keys:keys(), action:"ok"});
+  if ($("#d-ex")) $("#d-ex").onclick = () => send({keys:keys(), action:"exclude"});
+  if ($("#d-edit")) $("#d-edit").onclick = () => { const e = {}; if ($("#d-io").value) e.io = $("#d-io").value; if ($("#d-sys").value) e.system = $("#d-sys").value;
+    if (+$("#d-qty").value > 1) e.qty = +$("#d-qty").value; send({keys:keys(), action:"edit", edit:e}); };
+  if ($("#d-parse")) {
+    const run = async () => { const txt = $("#d-text").value.trim(); if (!txt) return; const pv = $("#d-prev"); pv.innerHTML = `<p class="def">해석 중…</p>`;
+      try { const p = await post(P("rowdecide"), {keys:[x.key], text:txt, preview:true});
+        pv.innerHTML = `<div class="drow" style="background:var(--green-l);padding:8px 10px"><span>이렇게 반영합니다: <b>${esc(p.summary)}</b> <span class="def">(${esc(p.via)} 해석)</span></span>
+          <button class="btn sm" id="d-apply" style="margin-left:auto">적용</button></div>`;
+        $("#d-apply").onclick = () => send({keys:keys(), action:p.edit.action, edit:p.edit}); }
+      catch(e) { pv.innerHTML = `<p style="color:var(--red);font-size:12.5px">${esc(e.message)}</p>`; } };
+    $("#d-parse").onclick = run; $("#d-text").onkeydown = ev => { if (ev.key === "Enter") run(); };
+  }
+}
 /* ---------------------------------------------------------------- AI */
+const CLS_KO = {FIELD:"현장 계기", DCS_SHARED:"DCS 표시/제어", PANEL_CR:"제어실 패널", PANEL_BEHIND:"패널 뒤", PLC:"PLC", ESD_INTERLOCK:"ESD 인터록", DCS_INTERLOCK:"DCS 인터록", HW_INTERLOCK:"하드와이어 인터록", NOT_A_TAG:"계기 아님"};
 const PROVIDER_NAME = {none:"사용 안 함", manual:"수동 (채팅 AI에 복사·붙여넣기)", copilot_cli:"GitHub Copilot CLI"};
 let aiPoll = null;
 async function renderAIPanel() {
-  const box = $("#aipanel"); if (!box) return;
+  let box = $("#aipanel"); if (!box) return;
   const a = await api(P("ai"));
+  box = $("#aipanel"); if (!box || S.screen !== "review") return;
   const c = a.counts || {symbols:0, funcs:0};
   const pend = a.suggestions.filter(x=>x.status==="pending");
   const running = a.job && a.job.state === "running";
@@ -448,39 +689,48 @@ async function renderAIPanel() {
     <div style="display:flex;justify-content:space-between;align-items:center"><b>AI 재판정</b>
       <span class="chip ${a.provider==="none"?"":"g"}" style="cursor:pointer" id="aiset">${esc(PROVIDER_NAME[a.provider])}</span></div>
     <p class="lead" style="font-size:12.5px;margin:6px 0 10px">규칙이 확정하지 못한 것만 AI에게 묻습니다. 답은 제안으로 들어오고, 승인해야 반영됩니다.</p>
+    <details style="font-size:12px;color:var(--sub);margin:-4px 0 10px"><summary style="cursor:pointer">버튼 설명</summary>
+      <div style="margin-top:4px;line-height:1.6"><b>심볼 재판정</b> · 모양이 애매한 심볼을 확대 이미지와 함께 보내 FIELD/DCS/ESD 등 종류를 다시 판정받습니다.<br>
+      <b>IO 판정 불일치</b> · 규칙(기능코드)과 도면 신호선이 다른 계기를 어느 쪽이 맞는지 판단받습니다.<br>
+      <b>모르는 기능코드 IO 추정</b> · 도면에서 읽었지만 IO 규칙표에 없는 코드(예: EH)를 AI가 보고 계기 종류와 IO를 추정합니다. TRAIN·PUMPS처럼 계기가 아닌 일반 단어면 '계기 아님'으로 답합니다. 승인하면 이 프로젝트 규칙에 추가되어, 그 코드를 가진 계기가 모두 그 IO로 인덱스에 들어갑니다.</div></details>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       <button class="btn sm" data-ai="symbols" ${!c.symbols||running||a.provider==="none"?"disabled":""}>심볼 재판정 (${c.symbols})</button>
       <button class="btn sm line" data-ai="ioconf" ${!c.ioconf||running||a.provider==="none"?"disabled":""}>IO 판정 불일치 판단 (${c.ioconf||0})</button>
-      <button class="btn sm line" data-ai="funcs" ${!c.funcs||running||a.provider==="none"?"disabled":""}>미분류 기능코드 IO 제안 (${c.funcs})</button>
+      <button class="btn sm line" data-ai="funcs" ${!c.funcs||running||a.provider==="none"?"disabled":""}>모르는 기능코드 IO 추정 (${c.funcs})</button>
     </div>
     ${running?`<p style="margin-top:10px;color:var(--green-d)">${esc(a.job.msg)}…</p>`:""}
     ${a.job && a.job.state==="error"?`<p style="margin-top:10px;color:var(--red)">${esc(a.job.msg)}</p>`:""}
     ${a.pending?manualBox(a.pending):""}
     ${pend.length?`<div style="margin-top:12px;border-top:1px solid var(--line-l);padding-top:10px">
+      ${pend.some(x=>!/[가-힣]/.test(x.reason||""))?`<div style="font-size:12px;background:#f3f3f3;padding:6px 8px;margin-bottom:6px">영어로 받은 이전 답변이 있는데, 아래 버튼으로 지우고 다시 물으면 한글로 받습니다.
+        ${[...new Set(pend.filter(x=>!/[가-힣]/.test(x.reason||"")).map(x=>x.kind))].map(k=>`<button class="btn sm line" data-redo="${k}" style="margin-left:4px">${k==="funcs"?"기능코드":"심볼"} 다시 묻기</button>`).join("")}</div>`:""}
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><b style="font-size:13px">AI 제안 ${pend.length}건</b>
         <button class="btn sm line" id="aiall">신뢰도 0.8 이상 모두 승인</button></div>
       ${pend.map(x=>`<div class="ritem" style="padding:8px 4px" data-sg="${x.sid}">
-        <div class="a"><span><b class="mono">${esc(x.kind==="symbols"?(x.text||x.tag):x.func)}</b> → ${esc(x.kind==="symbols"?`${x.class} ${x.tag} ${x.io}/${x.system}`:`${x.desc} ${x.io.join("/")||"IO 없음"} ${x.system}`)}</span>
+        <div class="a"><span><b class="mono">${esc(x.kind==="symbols"?(x.text||x.tag):x.func)}</b> → ${esc(x.kind==="symbols"?`${CLS_KO[x.class]||x.class} ${x.tag} · ${x.io==="-"?"IO 없음":x.io} · ${x.system}`:`${x.desc} · ${x.io.join("/")||"IO 없음"}${x.system&&x.system!=="-"?" · "+x.system:""}`)}</span>
           <span class="mono" style="color:var(--sub)">${Math.round((x.confidence||0)*100)}%</span></div>
         <div class="b">${esc(x.reason)}</div>
         <div style="margin-top:6px;display:flex;gap:6px"><button class="btn sm" data-ok="${x.sid}">승인</button><button class="btn sm line" data-no="${x.sid}">거절</button></div>
       </div>`).join("")}</div>`:""}
   </div>`;
   $("#aiset").onclick = () => go("ai");
+  box.querySelectorAll("[data-redo]").forEach(b => b.onclick = async () => { b.disabled = true;
+    try { await post(P("ai/redo"), {kind:b.dataset.redo}); toast("Copilot에 다시 물었습니다 (한글 답변)"); renderAIPanel(); } catch(e) { toast(e.message, true); } });
   box.querySelectorAll("[data-ai]").forEach(b => b.onclick = async () => {
+    b.disabled = true;
     try { const r = await post(P("ai/run"), {kind:b.dataset.ai}); if (!r.manual) toast("Copilot에 질문을 보냈습니다"); renderAIPanel(); }
     catch(e) { toast(e.message, true); }
   });
   box.querySelectorAll("[data-ok],[data-no]").forEach(b => b.onclick = async (ev) => {
     ev.stopPropagation();
     await post(P("ai/decide"), {sid:b.dataset.ok||b.dataset.no, accept:!!b.dataset.ok});
-    S.summary = null; S.review = null; renderReview($("#main"));
+    S.summary = null; S.review = null; if (S.screen === "review") renderReview($("#main"));
   });
   box.querySelectorAll("[data-sg]").forEach(el => el.onclick = () => {
     const x = a.suggestions.find(y=>y.sid===el.dataset.sg);
-    if (x && x.page) { if (x.page !== S.page) { S.page = x.page; renderReview($("#main")).then(()=>focusItem(x)); } else focusItem(x); }
+    if (x && x.id) showBig(`/api/${P("card?k="+encodeURIComponent(x.id))}`);
   });
-  const all = $("#aiall"); if (all) all.onclick = async () => { await post(P("ai/decide"), {min_conf:0.8}); S.summary=null; S.review=null; renderReview($("#main")); };
+  const all = $("#aiall"); if (all) all.onclick = async () => { await post(P("ai/decide"), {min_conf:0.8}); S.summary=null; S.review=null; if (S.screen === "review") renderReview($("#main")); };
   const cp = $("#aicopy"); if (cp) cp.onclick = async () => { const t=$("#aiprompt"); t.select(); try { await navigator.clipboard.writeText(t.value); } catch(e) { document.execCommand("copy"); } toast("질문을 복사했습니다. Copilot 채팅에 붙여넣으세요"); };
   const sb = $("#aisubmit"); if (sb) sb.onclick = async () => {
     try { const r = await post(P("ai/answer"), {task_id:a.pending.task_id, text:$("#aianswer").value}); toast(`제안 ${r.added}건 추가`); renderAIPanel(); }
@@ -502,49 +752,56 @@ function manualBox(t) {
   </div>`;
 }
 async function renderAISettings(m) {
+  const t = S.tok;
   const st = await api("ai/settings");
+  if (t !== S.tok) return;
+  const opt = (k, title, desc) => `<label class="aiopt ${st.provider===k?"on":""}"><input type="radio" name="prov" value="${k}" ${st.provider===k?"checked":""}>
+    <span><b>${title}</b><br><span style="font-size:12.5px;color:var(--sub)">${desc}</span></span></label>`;
   m.innerHTML = `
   <div class="head"><div><div class="eyebrow">SETTINGS</div><h1>AI 연결 설정</h1>
-    <p class="lead">AI는 규칙이 확정하지 못한 심볼과 기능코드에만 쓰입니다. 답은 항상 제안이며 승인해야 반영됩니다.</p></div></div>
+    <p class="lead">AI는 프로그램 규칙으로 정하지 못한 것(애매한 심볼, 모르는 기능코드, 말로 한 지시 해석)에만 씁니다. AI 답은 항상 '제안'이고, 승인해야 인덱스에 반영됩니다.</p></div></div>
   <div class="grid g2">
-    <div class="panel"><h2>연결 방식</h2>
-      ${Object.entries(PROVIDER_NAME).map(([k,v])=>`<label class="kv" style="cursor:pointer"><span><input type="radio" name="prov" value="${k}" ${st.provider===k?"checked":""}> ${v}</span><span></span></label>`).join("")}
-      <div id="clibox" style="margin-top:14px">
-        <div class="lead" style="font-size:12.5px;margin-bottom:4px">Copilot CLI 명령 (JSON 배열, {prompt} {prompt_file} {model} 치환)</div>
-        <input type="text" id="cmd" style="width:100%;font-family:Consolas,monospace" value='${esc(JSON.stringify(st.command))}'>
-        <div style="display:flex;gap:10px;margin-top:10px;align-items:center;flex-wrap:wrap">
-          <span>모델</span><input type="text" id="model" value="${esc(st.model)}" placeholder="비우면 기본 모델" style="width:180px">
-          <span>시간 제한(초)</span><input type="number" id="tmo" value="${esc(st.timeout)}">
-          <label><input type="checkbox" id="stdin" ${st.stdin?"checked":""}> 질문을 표준입력으로 전달</label>
-        </div>
-      </div>
+    <div class="panel"><h2>어떻게 AI에게 물을까요?</h2>
+      ${opt("none","사용 안 함","AI 없이 규칙과 내 판단으로만 진행합니다.")}
+      ${opt("manual","복사 · 붙여넣기 (추천: 설치 필요 없음)","프로그램이 질문을 만들어 주면 [질문 복사] → 회사 Copilot 채팅에 붙여넣기 → 답을 복사해 다시 붙여넣기.")}
+      ${opt("copilot_cli","자동 (이 PC의 GitHub Copilot CLI)","버튼 한 번으로 질문과 답을 자동으로 주고받습니다. 이 PC에 GitHub Copilot CLI가 설치·로그인되어 있어야 합니다. 아래 [연결 테스트]로 확인하세요.")}
       <div style="margin-top:16px;display:flex;gap:8px"><button class="btn" id="save">저장</button><button class="btn line" id="test">연결 테스트</button></div>
       <pre id="tres" class="mono" style="margin-top:12px;white-space:pre-wrap;font-size:12px;color:var(--sub)"></pre>
+      <details style="margin-top:12px" id="adv"><summary style="cursor:pointer;color:var(--sub);font-size:13px">고급 설정 (자동 방식이 안 될 때만)</summary>
+        <div style="margin-top:10px;font-size:12.5px;line-height:1.7">
+          <div>실행 명령 <span class="def">— 보통 바꿀 필요 없음. {prompt} 자리에 질문이 들어갑니다.</span></div>
+          <input type="text" id="cmd" style="width:100%;font-family:Consolas,monospace" value='${esc(JSON.stringify(st.command))}'>
+          <div style="display:flex;gap:10px;margin-top:8px;align-items:center;flex-wrap:wrap">
+            <span>모델</span><input type="text" id="model" value="${esc(st.model)}" placeholder="비우면 기본" style="width:160px">
+            <span>최대 대기(초)</span><input type="number" id="tmo" value="${esc(st.timeout)}">
+            <label title="질문을 명령 뒤에 붙이지 않고 따로 흘려 보냅니다. 질문이 잘리는 경우에만 켜세요."><input type="checkbox" id="stdin" ${st.stdin?"checked":""}> 긴 질문 따로 보내기</label>
+          </div>
+          <div class="def" style="margin-top:6px">문제가 생기면 프로젝트 폴더의 <span class="mono">ai_last_answer.txt</span>에 마지막 AI 응답 원문이 남습니다.</div>
+        </div></details>
     </div>
     <div class="panel"><h2>안내</h2>
-      <div class="kv"><span><b>수동</b>: 질문을 복사해 회사 Copilot(M365) 채팅에 붙여넣고, 답을 다시 붙여넣습니다. API 없이 바로 사용.</span></div>
-      <div class="kv"><span><b>GitHub Copilot CLI</b>: 이 PC에 설치된 <span class="mono">copilot</span> 명령을 버튼 하나로 실행합니다. 설치된 버전의 실행 옵션에 맞게 위 명령을 조정하세요 (명령창에서 <span class="mono">copilot --help</span>).</span></div>
-      <div class="kv"><span>질문에는 태그 글자, 주변 글자, 외곽선 측정값이 들어갑니다. 심볼 재판정은 주변을 자른 작은 이미지도 함께 만들어집니다 (도면 전체는 보내지 않음).</span></div>
-      <div class="kv"><span>승인된 판단은 프로젝트의 <span class="mono">overrides.json</span>에 저장되어 다음 계산부터 자동 적용됩니다.</span></div>
+      <div class="kv"><span><b>보내는 내용</b>: 태그 글자, 주변 글자, 심볼 모양 측정값, 심볼 주변을 자른 작은 이미지. 도면 전체는 보내지 않습니다.</span></div>
+      <div class="kv"><span><b>반영</b>: AI 제안을 승인하면 프로젝트 폴더에 저장되어 다음 계산부터 자동 적용됩니다.</span></div>
+      <div class="kv"><span><b>오류 'JSON을 찾지 못했습니다'</b>: AI 답이 정해진 형식이 아닐 때 납니다. 오류 메시지에 받은 답 앞부분이 함께 나오니 그대로 알려 주세요.</span></div>
     </div>
   </div>`;
-  const sync = () => $("#clibox").style.opacity = (document.querySelector("input[name=prov]:checked").value==="copilot_cli") ? 1 : .4;
-  m.querySelectorAll("input[name=prov]").forEach(r => r.onchange = sync); sync();
-  const collect = () => { let cmd; try { cmd = JSON.parse($("#cmd").value); } catch(e) { throw new Error("명령은 JSON 배열이어야 합니다"); }
+  m.querySelectorAll("input[name=prov]").forEach(r => r.onchange = () => m.querySelectorAll(".aiopt").forEach(l => l.classList.toggle("on", l.querySelector("input").checked)));
+  const collect = () => { let cmd; try { cmd = JSON.parse($("#cmd").value); } catch(e) { throw new Error("고급 설정의 실행 명령 형식이 잘못되었습니다"); }
     return {provider:document.querySelector("input[name=prov]:checked").value, command:cmd, model:$("#model").value.trim(), timeout:+$("#tmo").value||300, stdin:$("#stdin").checked}; };
   $("#save").onclick = async () => { try { await post("ai/settings", collect()); toast("저장했습니다"); } catch(e) { toast(e.message, true); } };
-  $("#test").onclick = async () => { try { await post("ai/settings", collect()); $("#tres").textContent = "테스트 중…"; const r = await post("ai/test"); $("#tres").textContent = (r.ok?"✓ 연결됨\n":"응답은 왔지만 형식이 다릅니다\n") + r.answer; } catch(e) { $("#tres").textContent = "✕ " + e.message; } };
+  $("#test").onclick = async () => { try { await post("ai/settings", collect()); $("#tres").textContent = "테스트 중… (최대 몇십 초)"; const r = await post("ai/test"); $("#tres").textContent = (r.ok?"✓ 연결됨\n":"응답은 왔지만 형식이 다릅니다\n") + r.answer; } catch(e) { $("#tres").textContent = "✕ " + e.message; } };
 }
-function showBig(src) {
+function showBig(src, cap) {
   let o = $("#bigview");
   if (!o) { o = document.createElement("div"); o.id = "bigview"; document.body.appendChild(o);
     o.onclick = () => o.style.display = "none"; }
-  o.innerHTML = `<div class="bigbox"><img src="${src}"><div class="cap">빨강: 판단 대상 · 주황: 따라간 신호선 · 파랑: 신호선 도착 심볼 · 보라: 벤더 경계 <span style="float:right">닫기 ✕</span></div></div>`;
+  o.innerHTML = `<div class="bigbox"><img src="${src}"><div class="cap">${cap||"빨강: 판단 대상 · 주황: 따라간 신호선 · 파랑: 신호선 도착 심볼 · 보라: 벤더 경계"} <span style="float:right">닫기 ✕</span></div></div>`;
   o.style.display = "flex";
 }
 function focusItem(x) {
   const img = $("#pimg"), hl = $("#hl"), v = $("#viewer");
-  if (!x.coord || !img) { hl.classList.add("hidden"); return; }
+  if (!img || !hl || !v) return;
+  if (!x.coord) { hl.classList.add("hidden"); return; }
   const place = () => {
     const [cx, cy] = x.coord.split(",").map(Number);
     const k = 60/72, r = 30*k;
@@ -557,9 +814,11 @@ function focusItem(x) {
 
 /* ---------------------------------------------------------------- 5 output */
 async function renderOutput(m) {
+  const t = S.tok;
   const outs = await api(P("outputs"));
   if (!S.concept) S.concept = await api(P("concept"));
   if (!S.summary) S.summary = await api(P("summary"));
+  if (t !== S.tok) return;
   const s = S.summary;
   m.innerHTML = `
   <div class="head"><div><div class="eyebrow">STEP 5</div><h1>출력</h1>
@@ -587,11 +846,13 @@ async function renderOutput(m) {
     ${Object.entries(s.per_system).map(([k,v])=>`<tr><td><b>${esc(k)}</b></td><td>${v.AI}</td><td>${v.AO}</td><td>${v.DI}</td><td>${v.DO}</td><td>${v["TC/RTD"]||0}</td><td><b>${v.AI+v.AO+v.DI+v.DO+(v["TC/RTD"]||0)}</b></td><td>${s.cards[k]}</td></tr>`).join("")}</table></div>`;
   $("#mk").onclick = async () => {
     const b = $("#mk"); b.disabled = true; b.textContent = "만드는 중…";
-    try { const r = await post(P("export"), {overlay: $("#ov").checked}); toast(r.files.join(", ") + " 생성"); renderOutput(m); }
-    catch(e) { toast(e.message, true); b.disabled = false; b.textContent = "엑셀 만들기"; }
+    try { const r = await post(P("export"), {overlay: $("#ov").checked}); toast(r.files.join(", ") + " 생성" + ((r.warnings||[]).length ? " · " + r.warnings.join(" ") : ""), !!(r.warnings||[]).length); if (S.screen === "output") renderOutput(m); }
+    catch(e) { toast(e.message, true); if (S.screen === "output" && $("#mk")) { $("#mk").disabled = false; $("#mk").textContent = "엑셀 만들기"; } }
   };
 }
 
+api("font").then(f => { const k = Object.keys(f.found||{}); $("#fontst").innerHTML = k.length
+  ? `글꼴: 현대하모니 ${k.join("·")} ✓` : `글꼴: 현대하모니 없음 → 맑은 고딕<br>(앱 폴더 <span class="mono">fonts</span>에 ttf/otf를 넣고 재실행)`; }).catch(()=>{});
 render();
 </script>
 </body>

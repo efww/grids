@@ -14,12 +14,17 @@ from dataclasses import dataclass, field
 
 from .concept import Concept
 from .extract import Symbol
+from .naming import instrument_type
 from .signals import judge
 
 SYSTEM_NAMES = {"FGS": "F&G", "PLC": "PKG PLC"}       # -> template "Lists" names
 IO_NAMES = {"DO-SOV": "DO", "DI(MCC)": "DI", "DO(MCC)": "DO", "COMM": "Serial/Comm"}
+# Inst. Location from the ISA 5.1 balloon (decision 16): plain circle = field,
+# solid midline = primary location (CCR), dashed midline = behind panel in CCR.
 LOCATION = {"FIELD": "Field", "DCS_SHARED": "CCR", "PANEL_CR": "CCR",
-            "PANEL_BEHIND": "Local Panel", "PLC": "Local Panel"}
+            "PANEL_BEHIND": "CCR", "PLC": "Local Panel"}
+# I/O Location (decision 6): package rows = Skid, others by system
+IO_LOCATION = {"DCS": "CCR", "ESD": "CCR", "F&G": "CCR", "PKG PLC": "Skid"}
 HW_IO = ("AI", "AO", "DI", "DO")
 SPARE_IDS = {"AI": "H01", "AO": "H02", "DI": "H03", "DO": "H04"}
 
@@ -50,6 +55,11 @@ class Row:
     vendor_pkg: str = ""
     sid: str = ""                 # source symbol id (drawn instruments)
     line: str = ""                # signal-line check: agree / conflict / none
+    equip: str = ""               # Equipment No (body / nozzle instruments, motor, package)
+    service: str = ""             # Service Description draft
+    ioloc: str = ""               # I/O Location
+    key: str = ""                 # stable row id for user decisions (tag|desc before XXXX numbering)
+    decided: str = ""             # user decision summary (review step)
 
     @property
     def derived(self):
@@ -76,8 +86,12 @@ def _status(conf, notes, review_flag, confirm, review):
 
 
 def assign(symbols: list[Symbol], io_proto: dict, concept: Concept, notes: dict | None = None,
-           confirm=0.95, review=0.80):
+           confirm=0.95, review=0.80, decisions: dict | None = None):
+    """decisions (decisions.json): only_one {dwg: qty}, allowance {AI,AO,DI,DO}, rows {key: edit}."""
     notes = notes or {}
+    decisions = decisions or {}
+    only_one_qty = {k: int(v) for k, v in (decisions.get("only_one") or {}).items() if str(v).strip()}
+    allow = {k: int(v or 0) for k, v in (decisions.get("allowance") or {}).items() if k in HW_IO}
     rules = io_proto["rules"]
     by_sid = {s.sid: s for s in symbols}
     rows: list[Row] = []
@@ -97,7 +111,8 @@ def assign(symbols: list[Symbol], io_proto: dict, concept: Concept, notes: dict 
                 rows.append(Row(unit, f"{unit}-{fc}-{num}{sfx}", f"M-{num}", fc, f"{desc} [{s.number}]",
                                 s.dwg, s.title, "MCC", sys_, _io(io), "24VDC", s.page, "", 1.0, "검토필요",
                                 [], "EQUIPMENT", origin="장비Typical",
-                                basis=f"{s.number} / {typ} ({', '.join(['D01'] + ids)})", src_tag=s.number))
+                                basis=f"{s.number} / {typ} ({', '.join(['D01'] + ids)})", src_tag=s.number,
+                                equip=s.number, service=f"{s.number} Motor"))
             continue
 
         # ------------------------------------------------ vendor packages
@@ -108,13 +123,34 @@ def assign(symbols: list[Symbol], io_proto: dict, concept: Concept, notes: dict 
             unit = s.number[:2]
             later = notes.get(s.dwg).later if notes.get(s.dwg) else ""
             pts = list(concept.expand(typ))
+            if later and concept.on("C09") and sum(allow.values()) > 0:     # C09 allowance per package unit
+                for k in range(n):
+                    letter = units[k] if k < len(units) else str(k + 1)
+                    pk = f"{s.number}{letter}"
+                    for io_t in HW_IO:
+                        for j in range(allow.get(io_t, 0)):
+                            rows.append(Row(unit, f"{unit}-ALW-XXXX", "", "ALW", f"Package Allowance {io_t} [{pk}]",
+                                            s.dwg, s.title, "Skid", "DCS", io_t, "", s.page, "", 1.0, "검토필요",
+                                            ["도면 미개발 패키지 Allowance (C09)"], "PACKAGE", origin="패키지",
+                                            basis=f"{pk} / C09 Allowance AI{allow.get('AI',0)} AO{allow.get('AO',0)} "
+                                                  f"DI{allow.get('DI',0)} DO{allow.get('DO',0)}",
+                                            src_tag=s.number, vendor_pkg=pk, equip=pk, service=f"{pk} Package"))
+                continue
+            if typ == "PKG-HARDWIRED" and later and concept.on("C09"):
+                rows.append(Row(unit, f"{unit}-PKG-XXXX", "", "PKG", f"패키지 물량 미상 [{s.number}]",
+                                s.dwg, s.title, "Skid", "?", "-", "-", s.page, "", 0.0, "불명",
+                                ["패키지 도면 미개발 + 전부 하드와이어: 계기 수를 알 수 없음"], "PACKAGE",
+                                origin="패키지", basis=f"{s.number} / {typ} ({src}, C09)",
+                                src_tag=s.number, vendor_pkg=s.number, equip=s.number,
+                                service=f"{s.number} Package"))
             if not [p for p in pts if p[5] and p[5] != "-"]:
                 if later and concept.on("C09"):
                     rows.append(Row(unit, f"{unit}-PKG-XXXX", "", "PKG", f"패키지 물량 미상 [{s.number}]",
                                     s.dwg, s.title, "Skid", "?", "-", "-", s.page, "", 0.0, "불명",
                                     ["패키지 도면 미개발 + 전부 하드와이어: 계기 수를 알 수 없음"], "PACKAGE",
                                     origin="패키지", basis=f"{s.number} / {typ} ({src}, C09)",
-                                    src_tag=s.number, vendor_pkg=s.number))
+                                    src_tag=s.number, vendor_pkg=s.number, equip=s.number,
+                                    service=f"{s.number} Package"))
                 continue
             for k in range(n):
                 letter = units[k] if k < len(units) else str(k + 1)
@@ -124,7 +160,7 @@ def assign(symbols: list[Symbol], io_proto: dict, concept: Concept, notes: dict 
                                     "Skid", sys_, _io(io), "", s.page, "", 1.0, "검토필요",
                                     [f"연결 방식: {conn}"], "PACKAGE", origin="패키지",
                                     basis=f"{pk} / {typ} ({', '.join([src] + ids)})",
-                                    src_tag=s.number, vendor_pkg=pk))
+                                    src_tag=s.number, vendor_pkg=pk, equip=pk, service=f"{pk} Package"))
             continue
 
         # ------------------------------------------------ drawn instruments
@@ -140,11 +176,13 @@ def assign(symbols: list[Symbol], io_proto: dict, concept: Concept, notes: dict 
                 inform.append("ESD interlock " + ",".join(sorted({f"{i.func}-{i.number}" for i in esd_links})))
         base = dict(unit=s.unit, dwg=s.dwg, title=s.title, location=LOCATION.get(s.cls, ""),
                     page=s.page, coord=f"{round(s.cx)},{round(s.cy)}", conf=round(s.score, 3),
-                    symbol_cls=s.cls)
+                    symbol_cls=s.cls, equip=getattr(s, "equip", ""), service=getattr(s, "service", ""))
+        if base["service"]:
+            inform.append("Service 자동 초안 - 검토")
         loop = f"{s.func[0]}-{s.number}" if s.number else ""
         status = _status(s.score, s.notes, rule.get("review") or system == "?", confirm, review)
         if rule.get("review"):
-            inform.append("function code not in IO protocol")
+            inform.append("기능코드가 IO 규칙표에 없음")
         pkg = s.vendor            # from the dash-dot vendor boundary the symbol sits in
 
         if s.role == "function" and s.system != "FIELD":
@@ -174,7 +212,7 @@ def assign(symbols: list[Symbol], io_proto: dict, concept: Concept, notes: dict 
         if pkg and concept.on("B06"):
             inform.append(f"벤더 경계 안 ({pkg})")
             ptyp, conn, _, _ = concept.package_typical(pkg)
-            if ptyp == "PKG-COMM" and not concept.on("A03"):
+            if ptyp in ("PKG-COMM", "PKG-HYBRID") and not concept.on("A03"):   # instruments wired to the vendor PLC
                 vendor_out = True
                 inform.append(f"벤더 PLC 내부 계기 - IO 제외 ({pkg}, A03 OFF)")
         verdict, why = judge(_io(main_io), s.line) if not vendor_out else ("none", "")
@@ -189,7 +227,8 @@ def assign(symbols: list[Symbol], io_proto: dict, concept: Concept, notes: dict 
                 if x.startswith("interlock link via actuator") and any(e["to_tag"] in x for e in s.line):
                     inform.remove(x)
                     inform.append("Interlock 연결 확인 (신호선)")
-        row = Row(tag=s.tag, loop=loop, func=s.func, desc=rule.get("desc", ""), sid=s.sid, line=verdict,
+        row = Row(tag=s.tag, loop=loop, func=s.func, desc=instrument_type(s.func, rule.get("desc", "")),
+                  sid=s.sid, line=verdict,
                   system=SYSTEM_NAMES.get(system, system), io="-" if vendor_out else _io(main_io),
                   signal=rule.get("signal", ""), status=status, inform=inform,
                   basis=f"{s.dwg}" + (f" / {typ}" if typ else ""),
@@ -224,7 +263,8 @@ def assign(symbols: list[Symbol], io_proto: dict, concept: Concept, notes: dict 
             have.add(tag)
             rows.append(Row(r.unit, tag, r.loop, imp["tag"], imp["desc"], r.dwg, r.title, r.location, "-", "-",
                             "-", r.page, r.coord, r.conf, "검토필요", [], "IMPLIED", origin="Typical파생",
-                            basis=f"{r.tag} ({imp.get('gate', '')})", src_tag=r.tag, vendor_pkg=r.vendor_pkg))
+                            basis=f"{r.tag} ({imp.get('gate', '')})", src_tag=r.tag, vendor_pkg=r.vendor_pkg,
+                            equip=r.equip, service=r.service))
 
     # ------------------------------------------------ notes: train copies / only-one-shown
     for dwg, pn in notes.items():
@@ -237,12 +277,26 @@ def assign(symbols: list[Symbol], io_proto: dict, concept: Concept, notes: dict 
                     c = copy.deepcopy(r)
                     c.tag = re.sub(rf"^{re.escape(r.unit)}-", f"{t}-", r.tag) if r.unit else f"{t}-{r.tag}"
                     c.vendor_pkg = re.sub(rf"^{re.escape(r.unit)}-", f"{t}-", r.vendor_pkg) if r.vendor_pkg else ""
+                    if r.unit:
+                        c.equip = re.sub(rf"^{re.escape(r.unit)}-", f"{t}-", r.equip) if r.equip else ""
+                        c.service = re.sub(rf"\b{re.escape(r.unit)}-", f"{t}-", r.service) if r.service else ""
                     c.unit = t
                     c.origin = "트레인복제"
                     c.basis = f"{dwg} 노트 '{pn.copy_text}' (B01)"
                     c.src_tag = r.tag
                     rows.append(c)
-        if pn.only_one and concept.on("B03"):
+        nq = only_one_qty.get(dwg, 0)
+        if pn.only_one and concept.on("B03") and nq > 1:            # user entered the real count
+            src_rows = [r for r in rows if r.dwg == dwg and r.origin in ("도면인식", "Typical파생", "장비Typical")]
+            for k in range(2, nq + 1):
+                for r in src_rows:
+                    c = copy.deepcopy(r)
+                    c.tag = f"{r.tag}-{k}"
+                    c.origin = "대수복제"
+                    c.basis = f"{dwg} 노트 'ONLY ONE IS SHOWN' → 실제 {nq}대 (B03)"
+                    c.src_tag = r.tag
+                    rows.append(c)
+        elif pn.only_one and concept.on("B03") and dwg not in only_one_qty:
             for r in rows:
                 if r.dwg == dwg and r.origin in ("도면인식", "Typical파생", "장비Typical"):
                     r.inform.append("노트 'ONLY ONE IS SHOWN': 대수 확인 필요 (B03)")
@@ -278,6 +332,10 @@ def assign(symbols: list[Symbol], io_proto: dict, concept: Concept, notes: dict 
                 r.io = "TC/RTD"
                 r.inform.append("RTD 직결 (G05)")
 
+    # ------------------------------------------------ user decisions (review step)
+    from .decisions import apply_rows
+    rows = apply_rows(rows, decisions.get("rows") or {})
+
     # ------------------------------------------------ spares
     counts = {}
     for r in rows:
@@ -290,7 +348,23 @@ def assign(symbols: list[Symbol], io_proto: dict, concept: Concept, notes: dict 
             rows.append(Row("", f"{sys_}-{io}-SPARE-{i + 1:03d}", "", "SPARE", f"Spare {io}", "", "", "", sys_, io,
                             "", 0, "", 1.0, "확정", [], "SPARE", origin="스페어",
                             basis=f"{SPARE_IDS[io]} {rate:.0%} × {n}"))
+    _number_xxxx(rows)
+    for r in rows:
+        if r.kind != "instrument" or r.io in ("-", "", None) or r.origin == "스페어":
+            continue
+        r.ioloc = "Skid" if (r.origin == "패키지" or r.system == "PKG PLC") else IO_LOCATION.get(r.system, "")
     return rows, log
+
+
+def _number_xxxx(rows):
+    """Tags without a number get XXXX1, XXXX2 ... per tag family (decision 11)."""
+    cnt = {}
+    for r in rows:
+        if "XXXX" not in r.tag:
+            continue
+        head = r.tag.split("XXXX")[0]
+        cnt[head] = cnt.get(head, 0) + 1
+        r.tag = f"{head}XXXX{cnt[head]}"
 
 
 def _add(row, rows, seen, keep_dupes=False):
@@ -301,7 +375,7 @@ def _add(row, rows, seen, keep_dupes=False):
         return True
     if row.tag in seen:                  # same tag on another sheet (off-page / repeated)
         first = seen[row.tag]
-        first.inform.append(f"same tag also on {row.dwg} p{row.page} - repeat or duplicate number?")
+        first.inform.append(f"같은 태그가 {row.dwg} p{row.page}에도 있음 - 반복 표기인지 번호 중복인지 확인")
         if first.status == "확정":
             first.status = "검토필요"
         return False

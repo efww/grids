@@ -41,6 +41,8 @@ class Symbol:
     notes: list = field(default_factory=list)
     override: dict = field(default_factory=dict)  # accepted review / AI decision (cls, io, system, ...)
     line: list = field(default_factory=list)      # signal-line evidence (signals.py), supporting only
+    equip: str = ""           # equipment the instrument is connected to (body / nozzle only)
+    service: str = ""         # draft service description (sheetinfo.py)
 
     @property
     def tag(self):
@@ -222,6 +224,8 @@ def extract_page(page: fitz.Page, proto: dict) -> list[Symbol]:
     trace_links(geom, syms)
     from .signals import collect
     collect(page, geom, syms)
+    from .sheetinfo import attach_equipment
+    attach_equipment(page, geom, syms)          # Equipment No / Service draft (fail-safe)
     # candidates sitting on an accepted symbol are just its second word
     for c in cands:
         if not any((abs(c.cx - s.cx) < 12 and abs(c.cy - s.cy) < 12) or

@@ -59,10 +59,14 @@ def main(argv=None):
     if a.pages:
         notes = {d: n for d, n in notes.items() if n.page in _pages(a.pages)}
     rows, log = assign(syms, io_proto, concept, notes)
-    m = re.search(r"Rev\.?\s*([A-Z0-9]+)", a.pdf.name, re.I)
+    import pymupdf as fitz
     from .pipeline import impact
-    write_template(rows, a.template, a.out, a.pdf.name, m.group(1) if m else "", concept, log,
-                   impact=impact(syms, notes, concept, a.io_rules, top=None))
+    from .sheetinfo import title_block
+    sheets = {p.number + 1: title_block(p) for p in fitz.open(a.pdf)}
+    am = HERE / "area_map.yaml"
+    area = (load_protocol(am) or {}).get("map") or {} if am.exists() else {}
+    write_template(rows, a.template, a.out, a.pdf.name, sheets, concept, log,
+                   impact=impact(syms, notes, concept, a.io_rules, top=None), area_map=area)
     print(f"symbols: {len(syms)}  index rows: {len(rows)}  -> {a.out}")
     if a.overlay:
         from .overlay import write_overlay

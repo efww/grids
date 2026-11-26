@@ -14,6 +14,8 @@ from pathlib import Path
 
 import openpyxl
 
+from .directopen import load_workbook
+
 PKG_TYPICAL = {"전부 하드와이어": "PKG-HARDWIRED", "벤더PLC+통신": "PKG-COMM", "혼합": "PKG-HYBRID"}
 
 # How far each checklist item is wired into the calculation. Items not listed
@@ -50,7 +52,7 @@ class Point:
 class Concept:
     def __init__(self, path: Path):
         self.path = Path(path)
-        wb = openpyxl.load_workbook(self.path)          # literal inputs, not formulas
+        wb = load_workbook(self.path)                   # literal inputs; labelled files are opened through Excel
         ws = wb["Concept_Checklist"]
         self.items: dict[str, dict] = {}
         group = ""
@@ -69,6 +71,13 @@ class Concept:
                 self.points.append(Point(r[0], str(r[2] or ""), str(r[3] or ""), r[4] or "",
                                          str(r[5] or ""), str(r[6] or ""), r[7] if r[7] is not None else 0,
                                          str(r[8] or "")))
+        if not any(p.typical == "PKG-HARDWIRED" and p.io not in ("-", "") for p in self.points):
+            # older checklists: "전부 하드와이어" had no common points, so it counted fewer IO than "혼합".
+            # Fully hard-wired keeps the run/trip/start signals as hard-wired points (C05~C08).
+            import dataclasses
+            hyb = [p for p in self.points if p.typical == "PKG-HYBRID" and p.io != "COMM"]
+            self.points = [p for p in self.points if p.typical != "PKG-HARDWIRED"] + \
+                [dataclasses.replace(p, typical="PKG-HARDWIRED") for p in hyb]
         self.packages = []
         for r in wb["Package_Concept"].iter_rows(min_row=5, values_only=True):
             if r[0] and str(r[0]) != "합계":
@@ -90,7 +99,7 @@ class Concept:
     def save(self, path: Path | None = None):
         """Write settings and package rows back into the checklist workbook."""
         path = Path(path or self.path)
-        wb = openpyxl.load_workbook(self.path)
+        wb = load_workbook(self._save_base())
         ws = wb["Concept_Checklist"]
         for row in ws.iter_rows(min_row=5):
             k = row[0].value
@@ -110,6 +119,42 @@ class Concept:
                 r[col].value = p.get(k)
         wb.save(path)
         self.path = path
+        try:                                            # plain JSON copy of the inputs
+            from .protect import save_values
+            save_values(self, path.parent)
+        except OSError:
+            pass
+
+    def _save_base(self) -> Path:
+        """Workbook to write into. A labelled checklist read through Excel keeps the values but not
+        the drop-downs/colours; when its Typical_Points match the default, write into the
+        formatted default template instead."""
+        from .directopen import is_locked
+        default = Path(__file__).resolve().parent.parent / "protocols" / "concept_default.xlsx"
+        if not is_locked(self.path) or not default.exists() or is_locked(default):
+            return self.path
+        try:
+            if Concept(default).points == self.points:
+                return default
+        except Exception:
+            pass
+        return self.path
+
+    def apply_values(self, data: dict) -> int:
+        """Put back inputs saved by protect.save_values. Returns how many items differ from default."""
+        n = 0
+        for k, v in (data.get("items") or {}).items():
+            if k in self.items:
+                self.items[k]["value"] = v
+                n += v != self.items[k]["default"]
+        for p in data.get("packages") or []:
+            if p.get("tag"):
+                q = next((x for x in self.packages if x["tag"] == p["tag"]), None)
+                if q is None:
+                    self.packages.append(dict(p))
+                else:
+                    q.update(p)
+        return n
 
     def set_package(self, tag, conn=None, qty=None, typical=None, **info):
         p = next((x for x in self.packages if x["tag"] == tag), None)

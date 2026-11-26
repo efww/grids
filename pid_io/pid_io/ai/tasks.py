@@ -36,22 +36,66 @@ NOT_A_TAG     text that is not an instrument tag (line number, connector, note)"
 
 
 # ------------------------------------------------------------------ helpers
-def extract_json(text: str):
-    """Take the first JSON object out of a chat answer (code fences allowed)."""
-    m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.S)
-    raw = m.group(1) if m else None
-    if raw is None:
-        start = text.find("{")
-        depth = 0
-        for i in range(start, len(text)) if start >= 0 else []:
-            depth += text[i] == "{"
-            depth -= text[i] == "}"
+ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+
+
+def _balanced(text: str, start: int):
+    """End index of the JSON object starting at text[start] == '{' (string-aware), or -1."""
+    depth, ins, esc = 0, False, False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if ins:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                ins = False
+            continue
+        if ch == '"':
+            ins = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
             if depth == 0:
-                raw = text[start:i + 1]
+                return i
+    return -1
+
+
+def extract_json(text: str, want=("items", "rules", "ok", "action")):
+    """Take the JSON object out of a chat / CLI answer. Tries every '{' (CLI output often
+    has logs, echoed prompts or '{placeholders}' before the answer), prefers an object
+    with an expected key, tolerates code fences, single quotes and trailing commas."""
+    import ast
+    text = ANSI.sub("", text or "")
+    found = []
+    for m in re.finditer(r"\{", text):
+        end = _balanced(text, m.start())
+        if end < 0:
+            continue
+        raw = text[m.start():end + 1]
+        obj = None
+        for cand in (raw, re.sub(r",\s*([}\]])", r"\1", raw)):
+            try:
+                obj = json.loads(cand)
                 break
-    if not raw:
-        raise ValueError("답변에서 JSON을 찾지 못했습니다")
-    return json.loads(raw)
+            except ValueError:
+                pass
+        if obj is None:
+            try:
+                obj = ast.literal_eval(re.sub(r"\btrue\b", "True", re.sub(r"\bfalse\b", "False",
+                                                                           re.sub(r"\bnull\b", "None", raw))))
+            except Exception:
+                obj = None
+        if isinstance(obj, dict):
+            if any(k in obj for k in want):
+                return obj
+            found.append(obj)
+    if found:
+        return found[-1]
+    snippet = " ".join(text.split())[:240]
+    raise ValueError("답변에서 JSON을 찾지 못했습니다. 받은 답변 앞부분: " + (snippet or "(비어 있음)"))
 
 
 def nearby_words(page: fitz.Page, cx, cy, r=70):
@@ -87,22 +131,28 @@ def symbol_items(syms, rules_unknown):
     return items
 
 
-def build_symbols(pdf: Path, syms, rules_unknown, crop_dir: Path, limit=40):
-    doc = fitz.open(pdf)
+def build_symbols(pdf: Path, syms, rules_unknown, crop_dir: Path, limit=40, pd: Path | None = None):
+    from .. import pagecache
+    cached = pd is not None and pagecache.ready(pd)       # labelled P&ID: work from the saved page images
+    doc = None if cached else fitz.open(pdf)
     crop_dir.mkdir(parents=True, exist_ok=True)
     items = symbol_items(syms, rules_unknown)[:limit]
     lines, files = [], []
     for k, (s, why) in enumerate(items, 1):
-        page = doc[s.page - 1]
         img = crop_dir / f"{k:02d}_{s.dwg}_{s.func}-{s.number}.png"
-        from ..markup import crop as mark_crop          # red box on the item, traced line if any
-        mark_crop(pdf, s.page, s.cx, s.cy, img, sym=s, radius=s.radius)
+        if cached:
+            pagecache.card(pd, s.page, s.cx, s.cy, img, sym=s, radius=s.radius)
+            near = pagecache.nearby_words(pd, s.page, s.cx, s.cy)
+        else:
+            from ..markup import crop as mark_crop          # red box on the item, traced line if any
+            mark_crop(pdf, s.page, s.cx, s.cy, img, sym=s, radius=s.radius)
+            near = nearby_words(doc[s.page - 1], s.cx, s.cy)
         files.append(img)
         f = s.feats or {}
         lines.append(json.dumps({
             "id": s.sid, "image": img.name, "sheet": s.dwg, "text": f"{s.func} {s.number}".strip(),
             "outline": {k2: f.get(k2) for k2 in ("circle", "square", "diamond", "midline")},
-            "rule_result": s.cls, "why_asked": why, "nearby_text": nearby_words(page, s.cx, s.cy),
+            "rule_result": s.cls, "why_asked": why, "nearby_text": near,
         }, ensure_ascii=False))
     prompt = f"""You are an instrumentation engineer reviewing symbols read from a P&ID (ISA 5.1 legend).
 A rule-based reader could not settle the items below. For each item decide what it is.
@@ -117,6 +167,8 @@ RED box, a traced signal line is ORANGE, the symbol that line reaches is in a BL
 Items (one JSON per line):
 {chr(10).join(lines)}
 
+
+Write every "desc" and "reason" value in Korean (한국어), short and plain.
 Answer with ONE JSON object only, no other text:
 {{"items": [{{"id": "<id as given>", "class": "<one of the classes>", "tag": "<func-number, e.g. PT-0602>",
   "io": "<AI|AO|DI|DO|->", "system": "<DCS|ESD|F&G|PKG PLC|->", "confidence": <0..1>, "reason": "<short>"}}]}}
@@ -156,6 +208,8 @@ Decide the IO for each item.
 
 {chr(10).join(lines)}
 
+
+Write every "desc" and "reason" value in Korean (한국어), short and plain.
 Answer with ONE JSON object only:
 {{"items": [{{"id": "<id as given>", "class": "FIELD", "tag": "<tag>", "io": "<AI|AO|DI|DO|->",
   "system": "<DCS|ESD|F&G|PKG PLC|->", "confidence": <0..1>, "reason": "<short: rule or drawing, why>"}}]}}
@@ -175,14 +229,18 @@ def unknown_funcs(syms, rules):
 
 def build_funcs(codes: dict):
     lines = [json.dumps({"func": k, "examples": v[:5]}, ensure_ascii=False) for k, v in codes.items()]
-    prompt = f"""You are an instrumentation engineer. These ISA 5.1 function codes appear on a P&ID but our IO rules
-do not cover them. For each, give the instrument type and the physical IO one such instrument needs
+    prompt = f"""You are an instrumentation engineer. These tag-like codes were read from a P&ID but our IO rules do not
+cover them. Some are real ISA 5.1 function codes (e.g. EH = electric heater), some are just ordinary
+words picked up from notes or titles (e.g. TRAIN, PUMPS) - set "instrument": false for those.
+For each real code give the instrument type and the physical IO one such instrument needs
 (conceptual design; [] if it has no IO, e.g. local gauges or relief devices).
 
 {chr(10).join(lines)}
 
+
+Write every "desc" and "reason" value in Korean (한국어), short and plain.
 Answer with ONE JSON object only:
-{{"rules": [{{"func": "<code>", "desc": "<instrument type>", "io": ["AI"|"AO"|"DI"|"DO", ...],
+{{"rules": [{{"func": "<code>", "instrument": <true|false>, "desc": "<instrument type, Korean>", "io": ["AI"|"AO"|"DI"|"DO", ...],
   "system": "<DCS|ESD|F&G|->", "confidence": <0..1>, "reason": "<short>"}}]}}
 """
     return prompt, list(codes)
@@ -195,6 +253,9 @@ def parse_funcs(answer: str, asked):
         f = str(r.get("func", "")).upper()
         io = [str(x).upper() for x in (r.get("io") or [])]
         sy = str(r.get("system", "DCS")).upper().replace("FGS", "F&G")
+        if r.get("instrument") is False:
+            io, sy = [], "-"
+            r["desc"] = "계기 기능코드 아님 (도면의 일반 단어)"
         if f not in asked or any(x not in IOS[:4] for x in io) or sy not in SYSTEMS:
             continue
         out.append({"func": f, "desc": str(r.get("desc", ""))[:60], "io": io, "system": sy,

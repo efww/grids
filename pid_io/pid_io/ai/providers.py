@@ -42,6 +42,7 @@ def load_settings(home: Path) -> dict:
     s = dict(DEFAULTS)
     if f.exists():
         s.update(json.loads(f.read_text(encoding="utf-8")))
+    s["_home"] = str(home)
     return s
 
 
@@ -67,6 +68,10 @@ def _copilot(settings: dict, prompt: str) -> str:
     if not exe:
         raise RuntimeError(f"'{cmd[0]}' 명령을 찾을 수 없습니다. GitHub Copilot CLI 설치와 PATH를 확인하세요.")
     cmd[0] = exe
+    if exe.lower().endswith((".cmd", ".bat")) and not settings.get("stdin"):
+        # Windows runs .cmd through cmd.exe, which cuts an argument at the first line break -
+        # the CLI then got only the first line of the question. Send it as one line.
+        prompt = " ".join(prompt.split())
     tmp = None
     if any("{prompt_file}" in c for c in cmd):
         tmp = tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8")
@@ -88,6 +93,11 @@ def _copilot(settings: dict, prompt: str) -> str:
     finally:
         if tmp:
             os.unlink(tmp.name)
+    try:                                   # keep the last raw answer for troubleshooting
+        (Path(settings.get("_home") or ".") / "ai_last_answer.txt").write_text(
+            f"$ {' '.join(args[:2])} ...\n--- stdout ---\n{r.stdout}\n--- stderr ---\n{r.stderr}", encoding="utf-8")
+    except OSError:
+        pass
     if r.returncode != 0 and not r.stdout.strip():
         raise RuntimeError(f"Copilot CLI 오류 (code {r.returncode}): {r.stderr.strip()[:400]}")
     return r.stdout

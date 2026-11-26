@@ -7,6 +7,8 @@ from copy import copy
 from pathlib import Path
 
 import openpyxl
+
+from .directopen import load_workbook
 from openpyxl.styles import Font, PatternFill
 
 from .io_assign import Row
@@ -14,14 +16,19 @@ from .io_assign import Row
 IO_COLS = ["AI", "AO", "DI", "DO", "DI(MCC)", "DO(MCC)", "DO-SOV"]
 
 
-ORIGINS = ["도면인식", "Typical파생", "트레인복제", "장비Typical", "패키지", "스페어"]
+ORIGINS = ["도면인식", "Typical파생", "트레인복제", "대수복제", "장비Typical", "패키지", "스페어"]
 SYSTEMS = ["DCS", "ESD", "F&G", "PKG PLC"]
 HW = ["AI", "AO", "DI", "DO"]
 
 
-def write_template(all_rows: list[Row], template: Path, out: Path, source_file: str, rev: str = "",
-                   concept=None, log=None, scenarios=None, impact=None):
-    rows = [r for r in all_rows if r.kind != "function"]
+def write_template(all_rows: list[Row], template: Path, out: Path, source_file: str, sheets: dict | None = None,
+                   concept=None, log=None, scenarios=None, impact=None, area_map: dict | None = None):
+    """sheets: {page: {rev, plant_no, sheet_no}} from the title blocks (extract.json).
+    area_map: {dwg or plant_no: Area} - Area is filled only from this map (decision 1)."""
+    sheets = {str(k): v for k, v in (sheets or {}).items()}
+    area_map = area_map or {}
+    spares = [r for r in all_rows if r.kind != "function" and r.origin == "스페어"]
+    rows = [r for r in all_rows if r.kind != "function" and r.origin != "스페어"]   # decision 21
     funcs = [r for r in all_rows if r.kind == "function"]
     if concept is not None and str(concept.get("I01", "")) == "접두 없음":
         import copy as _c
@@ -31,7 +38,7 @@ def write_template(all_rows: list[Row], template: Path, out: Path, source_file: 
                 r.tag = r.tag[len(r.unit) + 1:]
     if concept is not None and not concept.on("A05"):
         funcs = None
-    wb = openpyxl.load_workbook(template)
+    wb = load_workbook(template)
     ws = wb["Instrument_Index"]
     first = 3
     style_row = [copy(c._style) for c in ws[first + 3]]      # blank formatted row
@@ -40,27 +47,36 @@ def write_template(all_rows: list[Row], template: Path, out: Path, source_file: 
         for c in range(2, 31):
             ws.cell(r, c).value = None
     # extra columns: where each row came from
-    for c, h in ((28, "산출구분"), (29, "근거 (도면/노트/체크리스트)"), (30, "원본 Tag")):
+    for c, h in ((28, "산출구분"), (29, "근거 (도면/노트/체크리스트)"), (30, "원본 Tag"), (31, "Plant No"),
+                 (32, "Sheet No")):
         cell = ws.cell(2, c, h)
         cell._style = copy(ws.cell(2, 27)._style)
-        ws.column_dimensions[cell.column_letter].width = (12, 46, 16)[c - 28]
+        ws.column_dimensions[cell.column_letter].width = (12, 46, 16, 10, 10)[c - 28]
+    try:
+        from openpyxl.comments import Comment
+        ws.cell(2, 22).comment = Comment("값 = 심볼 인식 신뢰도 (0~1). OCR은 사용하지 않음.", "pid_io")
+    except Exception:
+        pass
     ws.cell(1, 28, "산출 근거")._style = copy(ws.cell(1, 19)._style)
     for i, row in enumerate(rows):
         r = first + i
+        sh = sheets.get(str(row.page), {}) if row.page else {}
+        area = area_map.get(row.dwg) or area_map.get(sh.get("plant_no", "")) or ""
         vals = {
-            1: f'=IF(D{r}="","",ROW()-2)', 3: row.unit, 4: row.tag, 5: row.loop, 6: row.func,
-            7: row.desc, 9: row.dwg, 10: rev, 14: row.location, 15: row.system, 16: row.io,
-            17: "", 18: row.vendor_pkg, 19: source_file, 20: row.page or None, 21: row.coord,
+            1: f'=IF(D{r}="","",ROW()-2)', 2: area, 3: row.unit, 4: row.tag, 5: row.loop, 6: row.func,
+            7: row.desc, 8: getattr(row, "service", ""), 9: row.dwg, 10: sh.get("rev", ""),
+            12: getattr(row, "equip", ""), 14: row.location, 15: row.system, 16: row.io,
+            17: getattr(row, "ioloc", ""), 18: row.vendor_pkg, 19: source_file, 20: row.page or None, 21: row.coord,
             22: row.conf, 23: row.status, 24: "; ".join(row.inform),
             27: " | ".join(x for x in (row.title, row.symbol_cls, row.signal) if x),
-            28: row.origin, 29: row.basis, 30: row.src_tag,
+            28: row.origin, 29: row.basis, 30: row.src_tag, 31: sh.get("plant_no", ""), 32: sh.get("sheet_no", ""),
         }
         for c, v in vals.items():
             cell = ws.cell(r, c)
             cell.value = v
             if r >= first + 3 and c - 1 < len(style_row):
                 cell._style = copy(style_row[c - 1])
-            elif c >= 28:
+            elif c >= 28 or c in (2, 8, 12, 17):
                 cell._style = copy(ws.cell(r, 27)._style)
             if c != 1:
                 cell.font = Font(color="000000")
@@ -70,9 +86,12 @@ def write_template(all_rows: list[Row], template: Path, out: Path, source_file: 
             for c in line:
                 if isinstance(c.value, str) and "502" in c.value:
                     c.value = c.value.replace("502", str(n_last))
-    ws.auto_filter.ref = f"A2:AD{max(n_last, 502)}"
+    ws.auto_filter.ref = f"A2:AF{max(n_last, 502)}"
     _restore_rules(ws, max(n_last, 502))
-    _io_summary(wb, max(n_last, 502), concept)
+    _io_summary(wb, max(n_last, 502), concept, spares)
+    if "Settings" in wb.sheetnames:                    # decision 19
+        wb["Settings"]["B2"] = 0.95
+        wb["Settings"]["B3"] = 0.80
     if concept is not None:
         _concept_basis(wb, concept, all_rows, impact)
     if log:
@@ -102,15 +121,17 @@ def write_template(all_rows: list[Row], template: Path, out: Path, source_file: 
     wb.save(out)
 
 
-def _io_summary(wb, last, concept):
+def _io_summary(wb, last, concept, spares=None):
     """IO points counted from the index rows themselves (COUNTIFS), split by
-    where the rows came from - so the totals can never disagree with the index."""
+    where the rows came from. Spares are not index rows (decision 21)."""
+    spare_cnt = collections.Counter((r.system, r.io) for r in (spares or []))
     ws = wb.create_sheet("IO_Summary", 1)
     ix = "Instrument_Index"
     rng = lambda col: f"{ix}!${col}$3:${col}${last}"
     ws["A1"] = "IO 집계 (인덱스 행을 직접 카운트)"
     ws["A1"].font = Font(bold=True, size=14)
-    ws["A2"] = "모든 IO는 인덱스의 한 행입니다. 산출구분별로 어디서 생긴 IO인지 보여줍니다. 수식이므로 인덱스를 고치면 자동 갱신됩니다."
+    ws["A2"] = ("IO는 인덱스 행을 직접 셉니다(수식). 스페어는 인덱스 본문에 넣지 않고 이 시트의 '스페어' 행에만 "
+                "스페어율 계산값으로 넣습니다.")
     cols = [(s, io) for s in ("DCS", "ESD", "F&G") for io in HW] + [("*", "Serial/Comm")]
     hdr = ["산출구분"] + [f"{s} {io}" for s, io in cols[:-1]] + ["통신 포트", "하드와이어 합계", "인덱스 행 수"]
     ws.append([])
@@ -126,6 +147,8 @@ def _io_summary(wb, last, concept):
             if org == "합계":
                 L = ws.cell(5, col).column_letter
                 f = f"=SUM({L}5:{L}{r - 1})"
+            elif org == "스페어":
+                f = spare_cnt.get((sy, io), 0) if sy != "*" else 0
             elif sy == "*":
                 f = f'=COUNTIFS({rng("AB")},$A{r},{rng("P")},"{io}")'
             else:
@@ -135,7 +158,7 @@ def _io_summary(wb, last, concept):
         a, b = ws.cell(r, 2).column_letter, ws.cell(r, 1 + n - 1).column_letter
         ws.cell(r, 2 + n, f"=SUM({a}{r}:{b}{r})").font = Font(bold=True)
         ws.cell(r, 3 + n, f"=SUM({ws.cell(5, 3 + n).column_letter}5:{ws.cell(5, 3 + n).column_letter}{r - 1})"
-                if org == "합계" else f'=COUNTIF({rng("AB")},$A{r})')
+                if org == "합계" else ("(본문 제외)" if org == "스페어" else f'=COUNTIF({rng("AB")},$A{r})'))
     tot = 5 + len(ORIGINS)
     # cards per system / IO type
     ch = concept.num("H05", 16) if concept is not None else 16
@@ -154,7 +177,8 @@ def _io_summary(wb, last, concept):
         r = hr + 1 + j
         ws.cell(r, 1, sy)
         for k, io in enumerate(HW):
-            ws.cell(r, 2 + k, f'=ROUNDUP(COUNTIFS({rng("O")},"{sy}",{rng("P")},"{io}")/$B${r0 + 1},0)')
+            tot_cell = ws.cell(tot, 2 + cols.index((sy, io))).coordinate
+            ws.cell(r, 2 + k, f'=ROUNDUP({tot_cell}/$B${r0 + 1},0)')
         ws.cell(r, 6, f"=SUM(B{r}:E{r})").font = Font(bold=True)
     for col, w in zip("ABCDEFGHIJKLMNOPQ", [14] + [9] * 16):
         ws.column_dimensions[col].width = w
@@ -328,13 +352,28 @@ def _common_words(pages):
     return _COMMON[key]
 
 
+def find_reference_sheet(wb):
+    """(sheet, header row): 'INDEX' if present, else the first sheet with a 'Tag No.' header in rows 1-10."""
+    order = (["INDEX"] if "INDEX" in wb.sheetnames else []) + [n for n in wb.sheetnames if n != "INDEX"]
+    for n in order:
+        ws = wb[n]
+        for i, row in enumerate(ws.iter_rows(min_row=1, max_row=10, values_only=True), 1):
+            if any(str(v or "").replace("\n", " ").strip() == "Tag No." for v in row):
+                return ws, i
+    raise ValueError("레퍼런스에서 'Tag No.' 머리글이 있는 시트를 찾지 못했습니다 (시트: "
+                     + ", ".join(wb.sheetnames[:12]) + ")")
+
+
 def load_reference(path: Path):
-    wb = openpyxl.load_workbook(path, data_only=True)
-    ws = wb["INDEX"]
-    hdr = [str(c.value or "").replace("\n", " ") for c in ws[4]]
+    wb = load_workbook(path, data_only=True)
+    ws, hrow = find_reference_sheet(wb)
+    hdr = [str(c.value or "").replace("\n", " ").strip() for c in ws[hrow]]
     col = {h: i for i, h in enumerate(hdr)}
+    for need in ("Tag No.", "P&ID Title", "DWG. No.", "To (System)", "Instrument Description"):
+        if need not in col:
+            raise ValueError(f"레퍼런스 '{ws.title}' 시트 {hrow}행에 '{need}' 열이 없습니다")
     out = []
-    for r in ws.iter_rows(min_row=5, values_only=True):
+    for r in ws.iter_rows(min_row=hrow + 1, values_only=True):
         tag = r[col["Tag No."]]
         if not tag or str(r[0]).startswith("DEL"):
             continue
@@ -368,10 +407,10 @@ def compare(rows: list[Row], ref: list[dict], out_wb: Path, pages: dict, overrid
     for x in ref:
         dwg = title_map[(x["title"], x["dwg"])][0] or f"(ref) {x['title']}"
         ref_cnt[(dwg, x["func"])] += 1
-    rows = [r for r in rows if r.kind != "function" and r.origin not in ("트레인복제", "스페어")]
+    rows = [r for r in rows if r.kind != "function" and r.origin not in ("트레인복제", "대수복제", "스페어")]
     our_cnt = collections.Counter((r.dwg, r.func) for r in rows)
 
-    wb = openpyxl.load_workbook(out_wb)
+    wb = load_workbook(out_wb)
     if "Ref_Compare" in wb.sheetnames:
         del wb["Ref_Compare"]
     ws = wb.create_sheet("Ref_Compare")

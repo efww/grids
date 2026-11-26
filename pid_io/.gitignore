@@ -5,3 +5,9 @@
 __pycache__/
 !protocols/concept_default.xlsx
 projects/
+
+# company fonts are not redistributed
+fonts/*.ttf
+fonts/*.otf
+fonts/*.woff
+fonts/*.woff2

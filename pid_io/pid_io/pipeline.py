@@ -20,7 +20,7 @@ from .io_assign import assign
 from .notes import PageNotes, read_notes
 
 PROTO = Path(__file__).resolve().parent.parent / "protocols"
-ORIGINS = ["도면인식", "Typical파생", "트레인복제", "장비Typical", "패키지", "스페어"]
+ORIGINS = ["도면인식", "Typical파생", "트레인복제", "대수복제", "장비Typical", "패키지", "스페어"]
 HW = ("AI", "AO", "DI", "DO", "TC/RTD")
 
 
@@ -30,11 +30,13 @@ def run_extract(pdf: Path, out: Path, progress=None, symbols_yaml: Path = PROTO 
     n = doc.page_count
     syms = extract_pdf(pdf, proto, progress=(lambda p, k: progress(p, n, k)) if progress else None)
     notes = read_notes(pdf)
-    pages = {}
+    from .sheetinfo import title_block
+    pages, sheets = {}, {}
     for page in doc:
         pages[page.number + 1] = [page.rect.width, page.rect.height]
+        sheets[page.number + 1] = title_block(page)        # REV / Plant No / Sheet No per page
     data = {
-        "pdf": Path(pdf).name, "page_count": n, "page_size": pages,
+        "pdf": Path(pdf).name, "page_count": n, "page_size": pages, "sheets": sheets, "version": 5,
         "symbols": [{**asdict(s), "links": sorted(s.links)} for s in syms],
         "notes": {d: asdict(v) for d, v in notes.items()},
     }
@@ -97,7 +99,7 @@ def apply_overrides(syms, rules: dict, overrides: dict | None):
 
 def compute(syms, notes, concept: Concept, io_rules: Path = PROTO / "io_rules.yaml", overrides: dict | None = None):
     syms, rules = apply_overrides(syms, load_protocol(io_rules), overrides)
-    rows, log = assign(syms, rules, concept, notes)
+    rows, log = assign(syms, rules, concept, notes, decisions=(overrides or {}).get("decisions"))
     return rows, log
 
 
@@ -127,11 +129,11 @@ def summarize(rows, concept: Concept):
             "cards_total": sum(cards.values()), "status": status}
 
 
-def impact(syms, notes, concept: Concept, io_rules: Path = PROTO / "io_rules.yaml", top=8):
+def impact(syms, notes, concept: Concept, io_rules: Path = PROTO / "io_rules.yaml", top=8, decisions=None):
     """Flip each ON/OFF or choice item to its alternatives and report how much the
     hard-wired IO total moves - shows which assumptions to settle first."""
     proto = load_protocol(io_rules)
-    base_rows, _ = assign(syms, proto, concept, notes)
+    base_rows, _ = assign(syms, proto, concept, notes, decisions=decisions)
     base = summarize(base_rows, concept)["hw"]
     out = []
     for iid, it in concept.items.items():
@@ -142,7 +144,7 @@ def impact(syms, notes, concept: Concept, io_rules: Path = PROTO / "io_rules.yam
         for alt in concept.alternatives(iid):
             it["value"] = alt
             try:
-                rows, _ = assign(syms, proto, concept, notes)
+                rows, _ = assign(syms, proto, concept, notes, decisions=decisions)
                 d = summarize(rows, concept)["hw"] - base
             finally:
                 it["value"] = orig
