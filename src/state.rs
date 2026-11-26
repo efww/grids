@@ -92,6 +92,7 @@ pub(crate) struct App {
     pub(crate) peek_pane: usize,         // pane whose focused item it shows
     pub(crate) peek_name: String,        // that item's display name
     pub(crate) ilist: Option<IImageList>, // system small icons, for the address bar (shared, never freed)
+    pub(crate) tab_icons: IconMemo,       // folder icons looked up this run, for the tabs (runtime only)
     pub(crate) drives: Vec<(u8, u32, HWND)>, // top toolbar drive buttons, A→Z: letter, drive type, button
     pub(crate) drive_mask: u32,              // GetLogicalDrives() they were made for
     pub(crate) drive_mark: Option<u8>,       // the active pane's drive (underlined)
@@ -187,6 +188,7 @@ thread_local! {
         peek_pane: 0,
         peek_name: String::new(),
         ilist: None,
+        tab_icons: IconMemo::default(),
         drives: Vec::new(),
         drive_mask: 0,
         drive_mark: None,

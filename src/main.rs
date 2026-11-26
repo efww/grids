@@ -366,6 +366,7 @@ fn main() -> Result<()> {
         apply_theme();
         apply_font();
         refresh_drives(); // laid out by the relayout below
+        cache_folder_icon(); // tabs of folders not opened yet this run
         if app(|a| a.s.updates) {
             check_star(); // ticks View > Star once gh says so; network, so only with updates on
         }
@@ -2760,6 +2761,80 @@ mod tests {
         let (tabs, plus) = tab_rects(strip, 10, 96); // squeezed evenly, '+' still inside
         assert!(tabs.iter().all(|r| r.right - r.left == 36) && plus.right <= strip.right);
         assert!(tab_close_rect(tabs[0], 96).is_none() && tab_close_rect(RECT { left: 0, top: 0, right: 64, bottom: 20 }, 96).is_some());
+    }
+
+    // A tab's folder icon: only while the name keeps s(24) after it (up to the current tab's × with several tabs).
+    #[test]
+    fn tab_icons() {
+        for dpi in [96, 144] {
+            let s = |v: i32| v * dpi / 96;
+            let tab = |w: i32| RECT { left: 10, top: 33, right: 10 + w, bottom: 33 + s(23) };
+            for close in [false, true] {
+                let end = if close { s(22) } else { s(8) };
+                let least = s(28) + end + s(24); // narrowest tab with an icon
+                assert!(tab_icon_rect(tab(least - 1), close, dpi).is_none(), "{dpi} {close}");
+                let r = tab_icon_rect(tab(least), close, dpi).expect("wide enough");
+                assert_eq!((r.left, r.right - r.left, r.bottom - r.top), (10 + s(8), s(16), s(16)), "{dpi} {close}");
+                assert!((r.top - 33 - (33 + s(23) - r.bottom)).abs() <= 1); // centred top to bottom
+                // the name after it (s(28) on) keeps s(24) before the ×, where there is one
+                for w in [least, least + 1, s(170)] {
+                    if tab_icon_rect(tab(w), close, dpi).is_some() {
+                        let right = tab_close_rect(tab(w), dpi).filter(|_| close).map_or(tab(w).right - s(8), |c| c.left);
+                        assert!(right - (10 + s(28)) >= s(24), "{dpi} {close} {w}");
+                    }
+                }
+            }
+            // one decision for the strip: every tab as wide, so none drops its icon alone
+            for width in [200, 300, 400, 1200] {
+                let strip = RECT { left: 2, top: 30, right: 2 + width, bottom: 30 + s(26) };
+                for n in [1, 2, 3, 12] {
+                    let (tabs, _) = tab_rects(strip, n, dpi);
+                    let on: Vec<bool> = tabs.iter().map(|r| tab_icon_rect(*r, n > 1, dpi).is_some()).collect();
+                    assert!(on.iter().all(|&b| b == on[0]), "{dpi} {width} {n}");
+                }
+            }
+        }
+        // 96 DPI: 170 px tabs have icons; ten in 400 px (36 px each) don't
+        let strip = RECT { left: 2, top: 30, right: 402, bottom: 56 };
+        assert!(tab_icon_rect(tab_rects(strip, 2, 96).0[0], true, 96).is_some());
+        assert!(tab_icon_rect(tab_rects(strip, 10, 96).0[0], true, 96).is_none());
+    }
+
+    #[test]
+    fn tab_icon_choice() {
+        // current tab: the pane's icon, else the one saved for its folder
+        assert_eq!(tab_icon_pick(true, 7, Some(3), 9, 1), 7);
+        assert_eq!(tab_icon_pick(true, -1, Some(3), 9, 1), 3);
+        // others: saved → drive kind → plain folder; -1s fall through
+        assert_eq!(tab_icon_pick(false, 7, Some(3), 9, 1), 3);
+        assert_eq!(tab_icon_pick(false, 7, None, 9, 1), 9);
+        assert_eq!(tab_icon_pick(false, 7, Some(-1), -1, 1), 1);
+        assert_eq!(tab_icon_pick(true, -1, None, -1, 1), 1);
+        assert_eq!(tab_icon_pick(false, -1, None, -1, -1), -1); // nothing known: no icon
+        assert_eq!(tab_icon_pick(false, -1, None, -1, i32::MIN), -1);
+        // drive roots only as X:\ exactly
+        assert_eq!(drive_root("d:\\"), Some(b'D'));
+        for p in ["D:", "D:\\x", "\\\\srv\\share", "::{20D04FE0-3AEA-1069-A2D8-08002B30309D}", "", "1:\\"] {
+            assert_eq!(drive_root(p), None, "{p}");
+        }
+    }
+
+    #[test]
+    fn tab_icon_memo() {
+        let mut m = IconMemo::default();
+        m.put("C:\\Users\\Public\\Downloads", 12);
+        assert_eq!(m.get("c:\\users\\public\\DOWNLOADS"), Some(12)); // case-insensitive
+        m.put("C:\\x", -1); // a failed lookup isn't kept
+        m.put("", 4);
+        assert_eq!((m.get("C:\\x"), m.len()), (None, 1));
+        for k in 1..IconMemo::MAX {
+            m.put(&format!("C:\\f{k}"), 5);
+        }
+        assert_eq!(m.len(), IconMemo::MAX);
+        m.put("c:\\F1", 6); // already there: replaced, nothing dropped
+        assert_eq!((m.len(), m.get("C:\\f1")), (IconMemo::MAX, Some(6)));
+        m.put("C:\\one more", 8); // full: emptied first
+        assert_eq!((m.len(), m.get("C:\\one more"), m.get("C:\\f1")), (1, Some(8), None));
     }
 
     // The tab strip's mouse: a click closes only where a × is painted, and a double click never closes.

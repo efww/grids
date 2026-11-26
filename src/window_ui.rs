@@ -526,14 +526,28 @@ pub(crate) extern "system" fn pane_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             }
             WM_KIDS => kids_show(h, wp.0),
             // folder icon looked up: only the icon's square is repainted, nothing moves
+            // (and the tab strip: the folder's tabs keep this icon for this run, IconMemo)
             WM_PANE_ICON => {
-                let (changed, dpi) = app(|a| {
-                    let p = a.panes.iter_mut().flatten().find(|p| p.hwnd == h);
-                    let new = p.and_then(|p| take_icon(p.ticket, wp.0 as u32, lp.0 as i32).filter(|&n| n != p.icon).map(|n| p.icon = n));
-                    (new.is_some(), a.dpi)
+                let (changed, stored, dpi, i, n) = app(|a| {
+                    let n = a.panes.len();
+                    let Some(i) = a.panes.iter().position(|p| p.as_ref().is_some_and(|p| p.hwnd == h)) else { return (false, false, a.dpi, 0, n) };
+                    let Some(p) = a.panes[i].as_mut() else { return (false, false, a.dpi, 0, n) };
+                    let got = take_icon(p.ticket, wp.0 as u32, lp.0 as i32);
+                    let new = got.filter(|&n| n != p.icon).map(|n| p.icon = n);
+                    // the ticket matched: paths[i] is that folder
+                    let stored = got.is_some_and(|n| a.tab_icons.put(&a.s.paths[i], n));
+                    (new.is_some(), stored, a.dpi, i, n)
                 });
                 if let Some(r) = addr_icon(addr_rect(h, dpi), dpi).filter(|_| changed) {
                     _ = InvalidateRect(Some(h), Some(&r), false);
+                }
+                if tabs_on() {
+                    if stored {
+                        // other panes may hold this folder as a tab that is not current
+                        (0..n).for_each(|k| repaint_tabs(k));
+                    } else if changed {
+                        repaint_tabs(i);
+                    }
                 }
             }
             WM_ERASEBKGND => return LRESULT(1), // paint_pane covers everything
@@ -839,16 +853,32 @@ pub(crate) fn drive_icon(kind: u32) -> i32 {
 }
 
 unsafe fn cache_drive_icon(kind: u32) {
-    let slot = drive_icon_slot(kind);
+    cache_stock_icon(drive_icon_slot(kind), drive_icon_id(kind));
+}
+
+// Asks the shell once for a stock icon's system image list index (-1: failed); later calls do nothing.
+unsafe fn cache_stock_icon(slot: &std::sync::atomic::AtomicI32, id: SHSTOCKICONID) {
     if slot.load(Ordering::Relaxed) != i32::MIN {
         return;
     }
     let mut info = SHSTOCKICONINFO { cbSize: size_of::<SHSTOCKICONINFO>() as u32, ..Default::default() };
-    let ix = match SHGetStockIconInfo(drive_icon_id(kind), SHGSI_SYSICONINDEX, &mut info) {
+    let ix = match SHGetStockIconInfo(id, SHGSI_SYSICONINDEX, &mut info) {
         Ok(()) if info.iSysImageIndex >= 0 => info.iSysImageIndex,
         _ => -1,
     };
     slot.store(ix, Ordering::Relaxed);
+}
+
+// The plain folder icon, for tabs whose own icon this run hasn't seen: asked once at startup (cache_folder_icon),
+// never while painting or inside app().
+static FOLDER_ICON: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(i32::MIN);
+
+pub(crate) fn folder_icon() -> i32 {
+    FOLDER_ICON.load(Ordering::Relaxed).max(-1)
+}
+
+pub(crate) unsafe fn cache_folder_icon() {
+    cache_stock_icon(&FOLDER_ICON, SIID_FOLDER);
 }
 
 // Makes / removes the buttons of drive letters that came or went; true if any did. The caller lays them out.

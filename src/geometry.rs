@@ -224,6 +224,19 @@ pub(crate) fn tab_close_rect(tab: RECT, dpi: i32) -> Option<RECT> {
     (tab.right - tab.left >= s(64)).then(|| RECT { left: tab.right - s(22), right: tab.right - s(4), ..tab })
 }
 
+// The folder icon's square at a tab's left (s(16), centred top to bottom); the name then starts at s(28).
+// Decided for the whole strip (all tabs are as wide): `close` = several tabs, so the tightest name room is
+// the current tab's, up to its ×. None when that would leave under s(24) of name: names only, as before.
+pub(crate) fn tab_icon_rect(tab: RECT, close: bool, dpi: i32) -> Option<RECT> {
+    let s = |v: i32| v * dpi / 96;
+    let end = if close { s(22) } else { s(8) };
+    if tab.right - tab.left - s(28) - end < s(24) {
+        return None;
+    }
+    let (left, top) = (tab.left + s(8), tab.top + (tab.bottom - tab.top - s(16)) / 2);
+    Some(RECT { left, top, right: left + s(16), bottom: top + s(16) })
+}
+
 pub(crate) fn inside(r: RECT, x: i32, y: i32) -> bool {
     x >= r.left && x < r.right && y >= r.top && y < r.bottom
 }

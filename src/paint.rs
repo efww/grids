@@ -607,8 +607,14 @@ pub(crate) unsafe fn paint_pane(h: HWND) {
         let waiting = a.kids.as_ref().filter(|k| k.hwnd == h && k.step == 0).map(|k| k.dir.clone());
         (active, i, a.dpi, a.icon_font, a.small_font, a.font, a.s.accent_now(), hot, hot_head, tint, folder, waiting)
     });
-    let tabs = i.filter(|_| tabs_on()).map(|i| app(|a| (a.s.tab_list(i), a.s.tab[i])));
-    let ilist = if folder >= 0 { small_ilist() } else { app(|a| a.ilist.clone()) };
+    let tabs = i.filter(|_| tabs_on()).map(|i| {
+        app(|a| {
+            let (list, cur) = (a.s.tab_list(i), a.s.tab[i]);
+            let icons = tab_icons_of(a, i, &list, cur);
+            (list, cur, icons)
+        })
+    });
+    let ilist = if folder >= 0 || tabs.is_some() { small_ilist() } else { app(|a| a.ilist.clone()) };
     let crumbs_on = GetDlgItem(Some(h), ID_EDIT).is_ok_and(|e| !IsWindowVisible(e).as_bool());
     let filtered = i.is_some_and(|i| FILTERS.lock().is_ok_and(|f| !f[i].is_empty()));
     let (head, ink) = header_colors(h);
@@ -673,8 +679,8 @@ pub(crate) unsafe fn paint_pane(h: HWND) {
                 text(dc, RECT { left: r.left + s(4), right: r.right - s(4), ..r }, &label, font, ink, DT_LEFT);
             }
         }
-        if let Some((list, cur)) = &tabs {
-            paint_tabs(dc, &pg, list, *cur, dpi, font, accent, hot_head);
+        if let Some((list, cur, icons)) = &tabs {
+            paint_tabs(dc, &pg, list, *cur, dpi, font, accent, hot_head, ilist.as_ref().map(|il| (il, icons.as_slice())));
         }
         // the icon opens the file-type menu: under the mouse its slot is shaded (inside the pill and its focus frame),
         // a ring round the filter badge, whose own colour stays

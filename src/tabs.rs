@@ -25,6 +25,68 @@ pub(crate) unsafe fn repaint_tabs(i: usize) {
     }
 }
 
+// Folder path → system image list index, filled from the address bar's own lookups (WM_PANE_ICON) so a tab
+// that is not current keeps its folder's icon; nothing is looked up for it. Case-insensitive, runtime only,
+// at most MAX entries (one more empties it).
+#[derive(Default)]
+pub(crate) struct IconMemo(std::collections::HashMap<String, i32>);
+
+impl IconMemo {
+    pub(crate) const MAX: usize = 256;
+
+    // Only real icons: a failed lookup (-1) leaves the tab to the drive / plain folder icon.
+    // True when the stored icon is new or different (other panes' tabs of that folder need a repaint).
+    pub(crate) fn put(&mut self, path: &str, ix: i32) -> bool {
+        if ix < 0 || path.is_empty() {
+            return false;
+        }
+        let k = path.to_lowercase();
+        if self.0.len() >= Self::MAX && !self.0.contains_key(&k) {
+            self.0.clear();
+        }
+        self.0.insert(k, ix) != Some(ix)
+    }
+
+    pub(crate) fn get(&self, path: &str) -> Option<i32> {
+        self.0.get(&path.to_lowercase()).copied()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.0.len()
+    }
+}
+
+// "X:\" exactly (a drive's root) → its letter.
+pub(crate) fn drive_root(path: &str) -> Option<u8> {
+    match path.as_bytes() {
+        [c, b':', b'\\'] if c.is_ascii_alphabetic() => Some(c.to_ascii_uppercase()),
+        _ => None,
+    }
+}
+
+// A tab's icon (-1: none). The current tab: the address bar's icon, or while that is still on its way the one
+// this folder had before (no blink on switching). Then: last seen this run → its drive kind's (a root) → plain folder.
+pub(crate) fn tab_icon_pick(current: bool, pane: i32, saved: Option<i32>, drive: i32, folder: i32) -> i32 {
+    if current && pane >= 0 {
+        return pane;
+    }
+    saved.filter(|&n| n >= 0).or(Some(drive).filter(|&n| n >= 0)).unwrap_or(folder.max(-1))
+}
+
+// Each tab's icon for the painter (inside app(): reads only what is cached, calls nothing).
+pub(crate) fn tab_icons_of(a: &App, i: usize, list: &[String], cur: usize) -> Vec<i32> {
+    let pane = a.panes.get(i).and_then(|p| p.as_ref()).map_or(-1, |p| p.icon);
+    let folder = folder_icon();
+    list.iter()
+        .enumerate()
+        .map(|(k, path)| {
+            let kind = drive_root(path).and_then(|c| a.drives.iter().find(|d| d.0 == c)).map(|d| d.1);
+            tab_icon_pick(k == cur, pane, a.tab_icons.get(path), kind.map_or(-1, drive_icon), folder)
+        })
+        .collect()
+}
+
 // A tab change that browses: undone when the folder can't be opened (go_near already tried its parent).
 unsafe fn tab_go(i: usize, change: impl FnOnce(&mut Session) -> Option<String>) {
     let (before, to) = app(|a| {
@@ -213,14 +275,27 @@ pub(crate) unsafe fn tab_mouse(h: HWND, i: usize, x: i32, y: i32, click: TabClic
 // The strip under the header bar: the current tab raised on the list's colour with an accent edge on top,
 // the others as plain names; a × on the current one when there are several; '+' after the last.
 // Under the mouse (as browser tabs): another tab lightens, the × or '+' gets a shaded square.
+// Each name follows its folder's icon (icons[k], from tab_icons_of) when the tabs are wide enough for one.
 #[allow(clippy::too_many_arguments)]
-pub(crate) unsafe fn paint_tabs(dc: HDC, pg: &PaneGeo, tabs: &[String], cur: usize, dpi: i32, font: HFONT, accent: u32, hot: Option<HeadHot>) {
+pub(crate) unsafe fn paint_tabs(
+    dc: HDC,
+    pg: &PaneGeo,
+    tabs: &[String],
+    cur: usize,
+    dpi: i32,
+    font: HFONT,
+    accent: u32,
+    hot: Option<HeadHot>,
+    icons: Option<(&IImageList, &[i32])>,
+) {
     let s = |v: i32| v * dpi / 96;
     if pg.tabs.bottom <= pg.tabs.top {
         return;
     }
     fill(dc, pg.tabs, pal().bg);
     let (rects, plus) = tab_rects(pg.tabs, tabs.len(), dpi);
+    // icons or not, once for the whole strip (tab_icon_rect), so no single tab drops its icon
+    let icons = icons.filter(|_| rects.first().is_some_and(|r| tab_icon_rect(*r, tabs.len() > 1, dpi).is_some()));
     // a hot × / '+': a square centred on the glyph, shaded as a pressed header button
     let square = |c: RECT, under: u32| {
         let (d, x, y) = (s(16), (c.left + c.right) / 2 - s(8), (c.top + c.bottom) / 2 - s(8));
@@ -244,8 +319,17 @@ pub(crate) unsafe fn paint_tabs(dc: HDC, pg: &PaneGeo, tabs: &[String], cur: usi
             // hairline between two plain tabs (not against a lightened one)
             fill(dc, RECT { left: r.right - 1, top: r.top + s(5), right: r.right, bottom: r.bottom - s(5) }, pal().line);
         }
+        // no icon to draw (none known, GetIcon failed): the name stays where it was without icons
+        let mut left = r.left + s(8);
+        if let (Some((il, ixs)), Some(ir)) = (icons, tab_icon_rect(*r, tabs.len() > 1, dpi)) {
+            if let Some(icon) = ixs.get(k).filter(|&&n| n >= 0).and_then(|&n| il.GetIcon(n, ILD_NORMAL.0).ok()) {
+                _ = DrawIconEx(dc, ir.left, ir.top, icon, ir.right - ir.left, ir.bottom - ir.top, 0, None, DI_NORMAL);
+                _ = DestroyIcon(icon);
+                left = r.left + s(28);
+            }
+        }
         let right = close.map_or(r.right - s(8), |c| c.left);
-        let label = RECT { left: r.left + s(8), right, ..*r };
+        let label = RECT { left, right, ..*r };
         text(dc, label, &name, font, if on || lit(k) { pal().text } else { pal().sub }, DT_LEFT);
         if let Some(c) = close {
             let hot_x = hot == Some(HeadHot::Close(k));
