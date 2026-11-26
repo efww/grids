@@ -1,5 +1,6 @@
 use crate::*;
 use windows::Win32::System::Threading::GetCurrentProcessId;
+use windows::Win32::UI::HiDpi::{GetDpiForMonitor, GetSystemMetricsForDpi, MDT_EFFECTIVE_DPI};
 
 // ---------- window procs ----------
 
@@ -44,6 +45,34 @@ unsafe fn app_in_front() -> bool {
     pid == GetCurrentProcessId()
 }
 
+// Window `h`, shown and not maximized: remembers its rect when that is not rcNormalPosition (snapped to a half or
+// quarter, where rcNormalPosition is the size from before), so ini_now saves where it is, also once minimized.
+pub(crate) unsafe fn note_arranged(h: HWND) {
+    let mut wp = WINDOWPLACEMENT { length: size_of::<WINDOWPLACEMENT>() as u32, ..Default::default() };
+    let mut r = RECT::default();
+    let mut mi = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
+    let arranged = if GetWindowPlacement(h, &mut wp).is_ok()
+        && GetWindowRect(h, &mut r).is_ok()
+        && GetMonitorInfoW(MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST), &mut mi).as_bool()
+    {
+        let p = placed_rect(r, mi.rcMonitor, mi.rcWork);
+        (p != wp.rcNormalPosition).then_some(p)
+    } else {
+        None
+    };
+    app(|a| a.arranged = arranged);
+}
+
+// The invisible resize border a snapped window's rect has past the work area (about 7 px at 100%), at monitor `mon`'s
+// DPI, for fit_saved. 0 when that DPI is unknown.
+pub(crate) unsafe fn snap_slack(mon: HMONITOR) -> i32 {
+    let (mut x, mut y) = (0, 0);
+    if GetDpiForMonitor(mon, MDT_EFFECTIVE_DPI, &mut x, &mut y).is_err() || x == 0 {
+        return 0;
+    }
+    GetSystemMetricsForDpi(SM_CXSIZEFRAME, x) + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, x)
+}
+
 // Same timer id: SetTimer only changes the interval (WM_DESTROY's KillTimer still ends it).
 unsafe fn set_tick(h: HWND, ms: u32) {
     app(|a| a.tick_ms = ms);
@@ -75,6 +104,9 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                     }
                     a.sizing
                 });
+                if wp.0 as u32 == SIZE_RESTORED {
+                    note_arranged(h); // snapped and minimized right away: ini_now still saves the snapped rect
+                }
                 if !sizing {
                     relayout();
                     redraw_all(); // maximize / restore
@@ -151,6 +183,9 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             }
             WM_EXITSIZEMOVE => {
                 app(|a| a.sizing = false);
+                if !IsIconic(h).as_bool() && !IsZoomed(h).as_bool() {
+                    note_arranged(h);
+                }
                 refresh_drives(); // one that came or went mid-resize
                 relayout();
                 redraw_all();

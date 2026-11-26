@@ -34,11 +34,23 @@ pub(crate) fn fit(r: RECT, work: RECT) -> RECT {
     RECT { left, top, right: left + w, bottom: top + h }
 }
 
-/// `fit` for a saved rcNormalPosition, which is in workspace coordinates (origin at rcWork's corner).
-pub(crate) fn fit_saved(saved: RECT, mon: RECT, work: RECT) -> RECT {
+/// `fit` for a saved rcNormalPosition, which is in workspace coordinates (origin at rcWork's corner). `slack` px past
+/// the left, right and bottom edges still count as inside: a window snapped to a half or quarter has its invisible
+/// resize border there (none on top, where its title bar would be cut off).
+pub(crate) fn fit_saved(saved: RECT, mon: RECT, work: RECT, slack: i32) -> RECT {
     let (dx, dy) = (work.left - mon.left, work.top - mon.top);
-    let r = fit(RECT { left: saved.left + dx, top: saved.top + dy, right: saved.right + dx, bottom: saved.bottom + dy }, work);
+    let wide = RECT { left: work.left - slack, top: work.top, right: work.right + slack, bottom: work.bottom + slack };
+    let r = fit(RECT { left: saved.left + dx, top: saved.top + dy, right: saved.right + dx, bottom: saved.bottom + dy }, wide);
     RECT { left: r.left - dx, top: r.top - dy, right: r.right - dx, bottom: r.bottom - dy }
+}
+
+/// The window rect `actual` (GetWindowRect, screen coordinates) in rcNormalPosition's workspace coordinates, `mon` and
+/// `work` being its monitor's rcMonitor and rcWork as for `fit_saved`. For a floating window this equals its
+/// rcNormalPosition; for one snapped to a half or quarter it is the rect it shows, where rcNormalPosition keeps the
+/// size from before the snap. Only for a window neither minimized nor maximized.
+pub(crate) fn placed_rect(actual: RECT, mon: RECT, work: RECT) -> RECT {
+    let (dx, dy) = (work.left - mon.left, work.top - mon.top);
+    RECT { left: actual.left - dx, top: actual.top - dy, right: actual.right - dx, bottom: actual.bottom - dy }
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]

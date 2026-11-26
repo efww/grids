@@ -34,6 +34,7 @@ pub(crate) struct App {
     pub(crate) gap_hot: Option<Hit>, // splitter under the mouse, marked in the accent colour
     pub(crate) sizing: bool, // inside the window's own move/size loop
     pub(crate) was_max: bool, // maximized when last not minimized (saved as such while minimized)
+    pub(crate) arranged: Option<RECT>, // snapped to a half or quarter when last shown: that rect (workspace coordinates)
     pub(crate) saved_ini: String, // grids.ini text last written
     pub(crate) save_after: Option<Instant>, // a failed write: autosave waits until then
     pub(crate) status: StatusLine,
@@ -135,6 +136,7 @@ thread_local! {
         gap_hot: None,
         sizing: false,
         was_max: false,
+        arranged: None,
         saved_ini: String::new(),
         save_after: None,
         status: StatusLine::default(),

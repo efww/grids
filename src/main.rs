@@ -379,8 +379,11 @@ fn main() -> Result<()> {
             Some([l, t, r, b, max]) => {
                 let saved = RECT { left: l, top: t, right: r, bottom: b };
                 let mut fixed = saved;
-                if GetMonitorInfoW(MonitorFromRect(&saved, MONITOR_DEFAULTTONEAREST), &mut mi).as_bool() {
-                    fixed = fit_saved(saved, mi.rcMonitor, mi.rcWork);
+                let mon = MonitorFromRect(&saved, MONITOR_DEFAULTTONEAREST);
+                if GetMonitorInfoW(mon, &mut mi).as_bool() {
+                    // a rect saved snapped to a half or quarter comes back as it was, its invisible border included
+                    // (also when maximized: its restore rect may be such a snap rect, reopened there earlier)
+                    fixed = fit_saved(saved, mi.rcMonitor, mi.rcWork, snap_slack(mon));
                     // still hidden: move onto the target monitor first, so a DPI change happens here and not after
                     // the placement below (WM_DPICHANGED would apply Windows' scaled size on top of it)
                     let (dx, dy) = (mi.rcWork.left - mi.rcMonitor.left, mi.rcWork.top - mi.rcMonitor.top);
@@ -2375,17 +2378,47 @@ mod tests {
         for work in [r(0, 40, 1920, 1080), r(60, 0, 1920, 1080)] {
             for saved in [r(0, 0, 800, 600), r(100, 100, 900, 700), r(1060, 400, 1860, 1000), r(1120, 440, 1920, 1040)] {
                 if saved.right + work.left <= work.right && saved.bottom + work.top <= work.bottom {
-                    assert_eq!(fit_saved(saved, mon, work), saved);
+                    assert_eq!(fit_saved(saved, mon, work, 0), saved);
                 }
             }
             // too big or off screen: in screen coordinates the result lies inside rcWork
             for saved in [r(-300, -200, 3000, 2000), r(1500, 900, 2300, 1500)] {
-                let f = fit_saved(saved, mon, work);
+                let f = fit_saved(saved, mon, work, 0);
                 let (dx, dy) = (work.left - mon.left, work.top - mon.top);
                 assert_eq!(fit(r(f.left + dx, f.top + dy, f.right + dx, f.bottom + dy), work), r(f.left + dx, f.top + dy, f.right + dx, f.bottom + dy));
             }
         }
-        assert_eq!(fit_saved(r(1500, 900, 2300, 1500), mon, r(0, 40, 1920, 1080)), r(1120, 440, 1920, 1040));
+        assert_eq!(fit_saved(r(1500, 900, 2300, 1500), mon, r(0, 40, 1920, 1080), 0), r(1120, 440, 1920, 1040));
+        // snapped left half / bottom-right quarter on a 1920x1040 work area: the 7 px invisible border past the left,
+        // right and bottom edges stays within an 8 px slack, so the rect comes back unchanged
+        let work = r(0, 0, 1920, 1040);
+        for snapped in [r(-7, 0, 967, 1047), r(953, 520, 1927, 1047)] {
+            assert_eq!(fit_saved(snapped, mon, work, 8), snapped);
+            assert_ne!(fit_saved(snapped, mon, work, 0), snapped);
+        }
+        // no slack on top, and 200 px off screen still comes back in (#78)
+        assert_eq!(fit_saved(r(100, -7, 900, 600), mon, work, 8), r(100, 0, 900, 607));
+        assert_eq!(fit_saved(r(1500, 900, 2300, 1500), mon, work, 8), r(1128, 448, 1928, 1048));
+        // taskbar on top: the same snapped rect in workspace coordinates also stays
+        assert_eq!(fit_saved(r(-7, 0, 967, 1047), mon, r(0, 40, 1920, 1080), 8), r(-7, 0, 967, 1047));
+    }
+
+    #[test]
+    fn snapped_rect_in_workspace_coordinates() {
+        let r = |left, top, right, bottom| RECT { left, top, right, bottom };
+        let mon = r(0, 0, 1920, 1080);
+        // taskbar at the bottom: workspace and screen coordinates agree
+        assert_eq!(placed_rect(r(-7, 0, 967, 1047), mon, r(0, 0, 1920, 1040)), r(-7, 0, 967, 1047));
+        // taskbar on top / on the left: shifted back by its thickness, as rcNormalPosition is
+        assert_eq!(placed_rect(r(-7, 40, 967, 1087), mon, r(0, 40, 1920, 1080)), r(-7, 0, 967, 1047));
+        assert_eq!(placed_rect(r(53, 0, 1027, 1047), mon, r(60, 0, 1920, 1040)), r(-7, 0, 967, 1047));
+        // a floating window: its rcNormalPosition, so nothing is remembered (arranged stays None)
+        assert_eq!(placed_rect(r(100, 140, 900, 740), mon, r(0, 40, 1920, 1080)), r(100, 100, 900, 700));
+        // a monitor left of the primary, snapped to its left half, and back at startup with the slack
+        let (left, left_work) = (r(-1920, 0, 0, 1080), r(-1920, 0, 0, 1040));
+        let p = placed_rect(r(-1927, 0, -953, 1047), left, left_work);
+        assert_eq!(p, r(-1927, 0, -953, 1047));
+        assert_eq!(fit_saved(p, left, left_work, 8), p);
     }
 
     #[test]

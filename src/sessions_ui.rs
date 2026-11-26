@@ -4,10 +4,15 @@ use crate::*;
 
 // grids.ini text for the current state. Views must be saved first (save_view).
 unsafe fn ini_now() -> String {
+    let main = app(|a| a.main);
+    if !IsIconic(main).as_bool() && !app(|a| a.was_max) {
+        note_arranged(main); // also after a move that sent no WM_SIZE (Win+Shift+arrow to a same-size screen)
+    }
     let mut wp = WINDOWPLACEMENT { length: size_of::<WINDOWPLACEMENT>() as u32, ..Default::default() };
-    _ = GetWindowPlacement(app(|a| a.main), &mut wp);
+    _ = GetWindowPlacement(main, &mut wp);
     app(|a| {
-        let r = wp.rcNormalPosition; // the restore rectangle, also while minimized
+        // the restore rectangle, also while minimized; snapped to a half or quarter, the rect it showed (as Chrome does)
+        let r = if a.was_max { wp.rcNormalPosition } else { a.arranged.unwrap_or(wp.rcNormalPosition) };
         a.s.win = Some([r.left, r.top, r.right, r.bottom, a.was_max as i32]);
         if a.late.is_empty() {
             a.s.to_ini()
