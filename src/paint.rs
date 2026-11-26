@@ -4,10 +4,10 @@ use crate::*;
 
 // Ground, the sidebar plate and the status line. Pane plates are child windows (paint_pane).
 pub(crate) unsafe fn paint_main(h: HWND) {
-    let (g, status, font, dpi, hot) = app(|a| {
+    let (g, status, font, dpi, hot, accent) = app(|a| {
         let g = geo(a);
         let hot = a.gap_hot.filter(|_| a.drag.is_none() && a.nudge.is_none()).and_then(|d| gap_line(&g, d, 2 * a.dpi / 96));
-        (g, a.status.clone(), a.font, a.dpi, hot.map(|r| (r, a.s.accent_now())))
+        (g, a.status.clone(), a.font, a.dpi, hot.map(|r| (r, a.s.accent_now())), a.s.accent_now())
     });
     buffered(h, |dc, rc| {
         fill(dc, rc, pal().bg);
@@ -19,9 +19,73 @@ pub(crate) unsafe fn paint_main(h: HWND) {
         if let Some((r, c)) = hot {
             fill(dc, r, c); // where to grab; dragging swaps it for the guide bar in the same colour
         }
-        let st = status_rect(&g);
-        text(dc, RECT { left: g.pad + 4 * dpi / 96, ..st }, &status, font, pal().sub, DT_LEFT);
+        paint_status(dc, &g, &status, font, dpi, accent);
     });
+}
+
+// The status line in zones (status_fit): the note in an accent-tinted chip, items and selection, a thin line,
+// filter / copying / maximized, and the drive with its usage bar at the right end.
+unsafe fn paint_status(dc: HDC, g: &Geo, st: &StatusLine, font: HFONT, dpi: i32, accent: u32) {
+    let s = |v: i32| v * dpi / 96;
+    let p = pal();
+    let line = status_rect(g);
+    let (left, right) = (g.pad + s(4), g.w - g.pad - s(4));
+    let (gap, chip_pad, bar_w, bar_gap) = (s(12), s(8), s(64), s(6));
+    let w = |t: &str| text_w(dc, t, font);
+    let span = |(l, r): (i32, i32)| RECT { left: l, right: r, ..line };
+    let mid = st.mid.join(ZONE_DOT);
+    // the drive's forms, widest first: label + bar + "free x / y", label + "free x / y", label + "free x"
+    let drive = st.drive.as_ref().map(|(label, free, total)| {
+        let (full, short) = (format!("{} {} / {}", tr("free", "여유"), human(*free), human(*total)), format!("{} {}", tr("free", "여유"), human(*free)));
+        let usage = drive_use(*free, *total);
+        let (lw, fw, sw) = (w(label) + bar_gap, w(&full), w(&short));
+        let mut forms = Vec::new();
+        if usage.is_some() {
+            forms.push((true, full.clone(), lw + bar_w + bar_gap + fw));
+        }
+        forms.push((false, full, lw + fw));
+        forms.push((false, short, lw + sw));
+        (label, lw, usage, forms)
+    });
+    let widths: Vec<i32> = drive.as_ref().map(|d| d.3.iter().map(|f| f.2).collect()).unwrap_or_default();
+    let fit = status_fit(
+        left,
+        right,
+        gap,
+        s(60),
+        st.note.as_ref().map(|n| w(n) + 2 * chip_pad),
+        w(&st.head),
+        (!mid.is_empty()).then(|| w(&mid)),
+        &widths,
+    );
+    let rule = |x: i32| fill(dc, RECT { left: x, right: x + 1, top: line.top + s(6), bottom: line.bottom - s(6) }, p.line);
+    if let (Some(n), Some(r)) = (&st.note, fit.note) {
+        let chip = RECT { top: line.top + s(3), bottom: line.bottom - s(3), ..span(r) };
+        fill(dc, chip, blend(p.bg, accent, 0.18));
+        text(dc, RECT { left: chip.left + chip_pad, right: chip.right - chip_pad, ..chip }, n, font, p.text, DT_LEFT);
+    }
+    text(dc, span(fit.head), &st.head, font, p.sub, DT_LEFT);
+    if let Some(r) = fit.mid {
+        rule(r.0 - gap / 2);
+        text(dc, span(r), &mid, font, p.sub, DT_LEFT);
+    }
+    if let (Some((label, lw, usage, forms)), Some((l, r, k))) = (drive, fit.drive) {
+        rule(l - gap / 2);
+        let (bar, words, _) = &forms[k];
+        text(dc, RECT { left: l, right: (l + lw).min(r), ..line }, label, font, p.sub, DT_LEFT);
+        let mut x = l + lw;
+        if let (true, Some((used, warn))) = (*bar, usage) {
+            let top = line.top + (line.bottom - line.top - s(6)) / 2;
+            let track = RECT { left: x, top, right: x + bar_w, bottom: top + s(6) };
+            fill(dc, track, p.line);
+            let done = ((bar_w as f64 * used).round() as i32).clamp(if used > 0.0 { 1 } else { 0 }, bar_w);
+            fill(dc, RECT { right: x + done, ..track }, bar_fill(&p, accent, warn));
+            x += bar_w + bar_gap;
+        }
+        if x < r {
+            text(dc, RECT { left: x, right: r, ..line }, words, font, p.sub, DT_LEFT);
+        }
+    }
 }
 
 #[derive(Clone, PartialEq)]

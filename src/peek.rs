@@ -1146,7 +1146,8 @@ pub(crate) unsafe fn text_flags(dc: HDC, mut r: RECT, s: &str, font: HFONT, rgb:
     SelectObject(dc, old);
 }
 
-unsafe fn text_w(dc: HDC, s: &str, font: HFONT) -> i32 {
+// Width of a single-line text (the first 200 characters; text() cuts longer ones with an ellipsis anyway).
+pub(crate) unsafe fn text_w(dc: HDC, s: &str, font: HFONT) -> i32 {
     let w: Vec<u16> = s.chars().take(200).collect::<String>().encode_utf16().collect();
     let old = SelectObject(dc, font.into());
     let mut sz = SIZE::default();

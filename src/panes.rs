@@ -415,6 +415,8 @@ pub(crate) unsafe fn paint_accent(c: u32) {
     for (_, _, h) in app(|a| a.drives.clone()) {
         _ = InvalidateRect(Some(h), None, false); // the active drive's underline
     }
+    let (main, st) = app(|a| (a.main, status_rect(&geo(a))));
+    _ = InvalidateRect(Some(main), Some(&st), false); // the note chip and the drive bar
 }
 
 // The hosted Explorer list ignores the app-wide dark mode, so its (new, per folder) list view is dyed here.

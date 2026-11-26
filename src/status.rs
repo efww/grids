@@ -225,9 +225,9 @@ pub(crate) unsafe fn update_status() {
     };
     let ko = KO.load(Ordering::Relaxed);
     let Some(rc) = app(|a| {
-        let (head, size, tail) = &a.status_base;
+        let (head, size, mid, drive) = &a.status_base;
         let size = size.map(|(f, d, p)| size_text(ko, f, d, job, p)).unwrap_or_default();
-        // a short confirmation (path copied, missing folder) leads for a few seconds: the line's end gets cut when it's too long
+        // a short confirmation (path copied, missing folder) leads for a few seconds in its own chip
         if let Some(saved) = SAVED.lock().unwrap_or_else(|e| e.into_inner()).take() {
             a.note = Some((saved, Instant::now() + Duration::from_secs(5)));
             a.lost = 0;
@@ -236,16 +236,80 @@ pub(crate) unsafe fn update_status() {
         if a.note.is_none() {
             a.lost = 0;
         }
-        let note = a.note.as_ref().map(|(s, _)| format!("{s}     ·     ")).unwrap_or_default();
-        let status = format!("{note}{head}{size}{tail}");
-        (a.status != status).then(|| {
-            a.status = status;
+        // every zone's value (the note, the size progress, raw free/total bytes) takes part in the compare
+        let line = StatusLine { note: a.note.as_ref().map(|(s, _)| s.clone()), head: format!("{head}{size}"), mid: mid.clone(), drive: drive.clone() };
+        (a.status != line).then(|| {
+            a.status = line;
             status_rect(&geo(a))
         })
     }) else {
         return;
     };
     _ = InvalidateRect(Some(main), Some(&rc), true);
+}
+
+// What the status line shows, by zone: [note chip] [items · selected (size)] | [filter · copying · maximized] ... [drive].
+#[derive(Clone, Default, PartialEq)]
+pub(crate) struct StatusLine {
+    pub(crate) note: Option<String>,
+    pub(crate) head: String,
+    pub(crate) mid: Vec<String>,
+    pub(crate) drive: Option<(String, u64, u64)>, // label, free and total bytes
+}
+
+// Inside a zone items are joined by a dot; zones are split by a thin line.
+pub(crate) const ZONE_DOT: &str = "  ·  ";
+
+// The drive bar: (used share, 90% or more used). None = no total to compare with.
+pub(crate) fn drive_use(free: u64, total: u64) -> Option<(f64, bool)> {
+    (total > 0).then(|| {
+        let used = total.saturating_sub(free);
+        (used as f64 / total as f64, used as u128 * 10 >= total as u128 * 9)
+    })
+}
+
+// The bar's fill: red from 90% used, else the selection colour, or the theme's grey (text, if that too
+// fades) when the colour fades into the track (Gray or Peach on light, a pale custom colour). The usual fill is
+// never the warning colour itself: under high contrast both would be the highlight, so the ground stands in.
+pub(crate) fn bar_fill(p: &Palette, accent: u32, warn: bool) -> u32 {
+    if warn {
+        return p.warn;
+    }
+    [accent, p.sub, p.text].into_iter().find(|&c| c != p.warn && contrast(c, p.line) >= 1.5).unwrap_or(p.card)
+}
+
+// Where the zones go between left and right: x spans, None = not shown.
+#[derive(Debug, PartialEq)]
+pub(crate) struct StatusFit {
+    pub(crate) note: Option<(i32, i32)>,
+    pub(crate) head: (i32, i32),
+    pub(crate) mid: Option<(i32, i32)>,
+    pub(crate) drive: Option<(i32, i32, usize)>, // span, and which of its forms
+}
+
+// Widths in, spans out. The note chip leads and may take whatever the items zone and the full drive zone
+// leave over, and at least half the line. The drive zone hugs the right edge and
+// steps down its forms (widest first: bar + text, text, drive and free only) only once the items zone would
+// get under min_head; when even the last form doesn't fit, it takes at most half of what's left.
+// The middle zone gets the rest, so it is cut first.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn status_fit(left: i32, right: i32, gap: i32, min_head: i32, note: Option<i32>, head: i32, mid: Option<i32>, drive: &[i32]) -> StatusFit {
+    let all = (right - left).max(0);
+    let cap = (all / 2).max(all - gap - head - drive.first().map_or(0, |&w| gap + w));
+    let note = note.map(|w| (left, left + w.min(cap)));
+    let x = note.map_or(left, |(_, r)| r + gap);
+    let room = (right - x).max(0);
+    let need = head.min(min_head);
+    let pick = match drive.iter().position(|&w| need + gap + w <= room) {
+        Some(k) => Some((k, drive[k])),
+        None => drive.len().checked_sub(1).map(|k| (k, drive[k].min(room / 2 - gap))),
+    };
+    let drive = pick.filter(|&(_, w)| w > 0).map(|(k, w)| (right - w, right, k));
+    let end = drive.map_or(right, |(l, ..)| l - gap);
+    let head = (x, x + head.min(end - x).max(0));
+    let mx = head.1 + gap;
+    let mid = mid.map(|w| (mx, (mx + w).min(end))).filter(|&(l, r)| r - l >= 3 * gap);
+    StatusFit { note, head, mid, drive }
 }
 
 // The status text around the selection size, the window title, and a new folder size job.
@@ -267,8 +331,9 @@ pub(crate) unsafe fn status_base(i: usize, path: &str, main: HWND, fv: &IFolderV
         parts.push(if ko { format!("{sel}개 선택") } else { format!("{sel} selected") });
     }
     want_size(&dirs, busy);
-    let head = parts.join("     ·     ");
-    let mut parts = vec![String::new()];
+    let head = parts.join(ZONE_DOT);
+    let mut parts = Vec::new();
+    let mut disk = None;
     if !spec.is_empty() {
         parts.push(format!("{} {spec}", tr("Filter", "필터")));
     }
@@ -280,7 +345,7 @@ pub(crate) unsafe fn status_base(i: usize, path: &str, main: HWND, fv: &IFolderV
         let (mut free, mut total) = (0, 0);
         if GetDiskFreeSpaceExW(&HSTRING::from(path),Some(&mut free), Some(&mut total), None).is_ok() {
             let label = if drive { &path[..2] } else { tr("Network", "네트워크") };
-            parts.push(format!("{label} {} {} / {}", tr("free", "여유"), human(free), human(total)));
+            disk = Some((label.to_string(), free, total));
         }
     }
     if let Some(z) = zoom {
@@ -291,5 +356,5 @@ pub(crate) unsafe fn status_base(i: usize, path: &str, main: HWND, fv: &IFolderV
             format!("Pane {z} maximized · Ctrl+Shift+M or double-click its header to restore")
         });
     }
-    app(|a| a.status_base = (head, size, parts.join("     ·     ")));
+    app(|a| a.status_base = (head, size, parts, disk));
 }

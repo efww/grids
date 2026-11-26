@@ -86,6 +86,7 @@ pub(crate) struct Palette {
     pub(crate) pill: u32, // fields
     pub(crate) text: u32,
     pub(crate) sub: u32,
+    pub(crate) warn: u32, // a drive 90% or more full: its status line bar, on line
     pub(crate) accents: [(&'static str, u32); 6],
 }
 
@@ -96,6 +97,7 @@ pub(crate) const LIGHT: Palette = Palette {
     pill: 0xF4F2EE,
     text: 0x2A2825,
     sub: 0x7C776F,
+    warn: 0xC42B1C,
     accents: [("하늘", 0x8DB5E8), ("그레이", 0xC5C5C5), ("라벤더", 0xA99BE0), ("세이지", 0x8CC5A8), ("피치", 0xEFAE92), ("로즈", 0xE7A1B5)],
 };
 
@@ -106,6 +108,7 @@ pub(crate) const DARK: Palette = Palette {
     pill: 0x303338,
     text: 0xE6E8EB,
     sub: 0x9AA0A8,
+    warn: 0xFF6B6B,
     accents: [("하늘", 0x4C6FA8), ("그레이", 0x4B4B4B), ("라벤더", 0x6A5AA8), ("세이지", 0x3E8676), ("피치", 0xA8624A), ("로즈", 0xA65A78)],
 };
 
@@ -191,7 +194,9 @@ pub(crate) fn hc_palette(c: &SysColors) -> Palette {
     let (card, text) = (c.window, c.window_text);
     let bg = if c.face_text == text && contrast(text, c.face) >= 4.5 { c.face } else { card };
     let sub = if contrast(c.gray, bg).min(contrast(c.gray, card)) >= 4.5 { c.gray } else { text };
-    Palette { bg, card, line: text, pill: card, text, sub, accents: LIGHT.accents.map(|(n, _)| (n, c.hl)) }
+    // the bar's track is the text colour here, so a full drive shows in the highlight (bar_fill then keeps
+    // the usual fill off the highlight, which is also the selection colour)
+    Palette { bg, card, line: text, pill: card, text, sub, warn: c.hl, accents: LIGHT.accents.map(|(n, _)| (n, c.hl)) }
 }
 
 // WCAG 2 contrast ratio of two 0xRRGGBB colours.

@@ -1446,6 +1446,62 @@ mod tests {
         assert_eq!(size_text(true, 0, false, None, true), " (크기 모름)");
     }
 
+    // Status line zones: the middle zone gives way first, then the items zone (down to min_head), then the
+    // drive loses its bar, then its total; the note chip stays in front, at most half the line.
+    #[test]
+    fn status_line_fit() {
+        let fit = |right, note, mid| status_fit(0, right, 12, 60, note, 200, mid, &[250, 180, 120]);
+        // wide: everything at full width, the drive at the right end with its bar
+        let f = fit(1000, Some(100), Some(150));
+        assert_eq!(f, StatusFit { note: Some((0, 100)), head: (112, 312), mid: Some((324, 474)), drive: Some((750, 1000, 0)) });
+        // narrower: the middle zone goes, the items zone is cut, the bar stays
+        let f = fit(500, Some(100), Some(150));
+        assert_eq!(f, StatusFit { note: Some((0, 100)), head: (112, 238), mid: None, drive: Some((250, 500, 0)) });
+        // a middle zone cut short but still readable
+        assert_eq!(fit(562, None, Some(150)).mid, Some((212, 300)));
+        // narrow: no bar
+        let f = fit(300, None, Some(150));
+        assert_eq!(f, StatusFit { note: None, head: (0, 108), mid: None, drive: Some((120, 300, 1)) });
+        // very narrow: the short form, cut to half of the room
+        let f = fit(150, None, None);
+        assert_eq!(f, StatusFit { note: None, head: (0, 75), mid: None, drive: Some((87, 150, 2)) });
+        // nothing left: no drive, nothing negative
+        let f = fit(10, None, Some(50));
+        assert_eq!(f, StatusFit { note: None, head: (0, 10), mid: None, drive: None });
+        // a long note (a missing folder's path) takes what the items and the full drive zone leave over
+        let f = fit(1000, Some(900), None);
+        assert_eq!(f, StatusFit { note: Some((0, 526)), head: (538, 738), mid: None, drive: Some((750, 1000, 0)) });
+        // ... but at least half the line when they need more
+        assert_eq!(fit(600, Some(900), None).note, Some((0, 300)));
+        // no drive zone (copying, a shell place): the items zone runs to the end
+        assert_eq!(status_fit(0, 1000, 12, 60, None, 2000, Some(100), &[]), StatusFit { note: None, head: (0, 1000), mid: None, drive: None });
+        // a short items text never pushes the drive into a smaller form
+        assert_eq!(status_fit(0, 300, 12, 60, None, 40, None, &[248]).drive, Some((52, 300, 0)));
+    }
+
+    #[test]
+    fn drive_usage_bar() {
+        assert_eq!(drive_use(500, 0), None); // no total: no bar
+        assert_eq!(drive_use(0, 0), None);
+        assert_eq!(drive_use(101, 1000), Some((0.899, false))); // 89.9% used
+        assert_eq!(drive_use(100, 1000), Some((0.9, true))); // 90%
+        assert_eq!(drive_use(0, 1000), Some((1.0, true)));
+        assert_eq!(drive_use(1000, 1000), Some((0.0, false)));
+        assert_eq!(drive_use(2000, 1000), Some((0.0, false))); // more free than total (quota): empty, not negative
+        let tb = 1u64 << 40;
+        assert_eq!(drive_use(tb / 10, tb).map(|u| u.1), Some(true));
+        assert_eq!(drive_use(tb / 10 + 1, tb).map(|u| u.1), Some(false));
+        // the bar reads on its track in every theme and colour; a full drive is the theme's red
+        for p in [&LIGHT, &DARK] {
+            for (name, c) in p.accents {
+                assert!(contrast(bar_fill(p, c, false), p.line) >= 1.5, "{name}");
+                assert_eq!(bar_fill(p, c, true), p.warn);
+            }
+            assert_eq!(bar_fill(p, p.line, false), p.sub); // a custom colour equal to the track
+            assert_eq!(bar_fill(p, p.warn, false), p.sub); // a custom colour equal to the warning red
+        }
+    }
+
     // Every text-on-fill pair painted from a palette, in CONTRAST_FLOOR's order.
     fn contrast_pairs(p: &Palette) -> Vec<(String, f64)> {
         let mut v = vec![];
@@ -1471,13 +1527,16 @@ mod tests {
         add("star".into(), p.sub, p.card);
         add("star hot".into(), p.sub, blend(p.card, p.text, press_tint(false, false)));
         add("star pressed".into(), p.sub, blend(p.card, p.text, press_tint(false, true)));
+        // a nearly full drive's bar on its track, and next to it on the status line
+        add("warn on line".into(), p.warn, p.line);
+        add("warn on bg".into(), p.warn, p.bg);
         v
     }
 
     // Today's contrast of each pair, rounded down. A change may raise these; lowering one means fixing the
     // colour or saying in review why that pair may get harder to read, then lowering just that value.
     #[rustfmt::skip]
-    const CONTRAST_FLOOR: [[f64; 31]; 2] = [
+    const CONTRAST_FLOOR: [[f64; 33]; 2] = [
         [
             13.02, 14.69, 13.14, 3.93, 4.44, 3.97, // text, sub on bg/card/pill
             6.93, 5.18, 4.18, // Sky: plain, hot, pressed
@@ -1488,6 +1547,7 @@ mod tests {
             7.11, 5.27, 4.26, // Rose
             11.46, 10.22, 12.89, 11.45, // text on bg hot/pressed, card hot/pressed
             4.44, 3.89, 3.46, // star: plain, hot, pressed
+            4.3, 5.0, // drive bar red on line, on bg
         ],
         [
             13.72, 12.02, 10.32, 6.39, 5.60, 4.81,
@@ -1499,6 +1559,7 @@ mod tests {
             4.82, 3.45, 2.78,
             11.53, 9.69, 10.00, 8.33,
             5.60, 4.66, 3.88,
+            4.1, 6.0,
         ],
     ];
 
@@ -1544,6 +1605,9 @@ mod tests {
                 }
             }
             assert!(p.accents.iter().all(|&(_, a)| a == c.hl), "{name}");
+            // the drive bar: a full drive (the highlight) still differs from the usual fill, which reads on its track
+            let usual = bar_fill(&p, c.hl, false);
+            assert!(usual != bar_fill(&p, c.hl, true) && contrast(usual, p.line) >= 1.5, "{name}: {usual:06X}");
             assert_eq!(p.accents.map(|(n, _)| n), LIGHT.accents.map(|(n, _)| n));
         }
         let odd = hc_palette(&themes[6].1);
