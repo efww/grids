@@ -22,6 +22,49 @@ pub(crate) unsafe fn toggle_fav(i: usize) {
     repaint_fav_buttons();
 }
 
+// Ctrl+Shift+B: toggle_fav on pane i, then the status bar says which way it went (a beep when there's no folder)
+pub(crate) unsafe fn fav_key(i: usize) {
+    let (path, was) = app(|a| {
+        let p = a.s.paths[i].clone();
+        let was = a.s.is_fav(&p);
+        (p, was)
+    });
+    if path.is_empty() {
+        _ = MessageBeep(MB_ICONWARNING);
+        return;
+    }
+    toggle_fav(i);
+    let name = short_name(&path);
+    let note = match (KO.load(Ordering::Relaxed), was) {
+        (true, false) => format!("즐겨찾기에 추가함: {name}"),
+        (true, true) => format!("즐겨찾기에서 뺌: {name}"),
+        (false, false) => format!("Added to favourites: {name}"),
+        (false, true) => format!("Removed from favourites: {name}"),
+    };
+    app(|x| {
+        x.note = Some((note, Instant::now() + Duration::from_secs(3)));
+        x.lost = 0;
+    });
+    update_status();
+}
+
+// A plain 1 … 9 (number pad too) in the favourites list: the row it opens, None past the list or with a modifier
+pub(crate) fn fav_digit(vk: VIRTUAL_KEY, n: usize, ctrl: bool, alt: bool, shift: bool) -> Option<usize> {
+    if ctrl || alt || shift {
+        return None;
+    }
+    let k = match vk.0 {
+        v if (VK_1.0..=VK_9.0).contains(&v) => v - VK_1.0,
+        v if (VK_NUMPAD1.0..=VK_NUMPAD9.0).contains(&v) => v - VK_NUMPAD1.0,
+        _ => return None,
+    } as usize;
+    (k < n).then_some(k)
+}
+
+fn is_digit_key(vk: VIRTUAL_KEY) -> bool {
+    (VK_1.0..=VK_9.0).contains(&vk.0) || (VK_NUMPAD1.0..=VK_NUMPAD9.0).contains(&vk.0)
+}
+
 pub(crate) struct FavGeo {
     pub(crate) w: i32,
     pub(crate) h: i32,
@@ -120,15 +163,15 @@ pub(crate) fn fav_step(vk: VIRTUAL_KEY, ctrl: bool, alt: bool, shift: bool) -> O
     }
 }
 
-pub(crate) const FAV_EMPTY: (&str, &str) = ("No favourites yet · add one with ☆+ in a pane header", "즐겨찾기가 없습니다 · 패널 머리줄의 ☆+로 추가");
+pub(crate) const FAV_EMPTY: (&str, &str) = ("No favourites yet · add one with ☆+ or Ctrl+Shift+B", "즐겨찾기가 없습니다 · ☆+ 또는 Ctrl+Shift+B로 추가");
 
 // What a screen reader hears for the whole list: the count and the keys, or the empty list's note as drawn.
 pub(crate) fn fav_list_speech(n: usize, ko: bool) -> String {
     match (n, ko) {
         (0, ko) => if ko { FAV_EMPTY.1 } else { FAV_EMPTY.0 }.to_string(),
-        (n, true) => format!("즐겨찾기, {n}개 · ↑/↓로 고르기, Enter 열기, Del 빼기"),
-        (1, false) => "Favourites, 1 folder · ↑/↓ to pick, Enter opens, Del removes".to_string(),
-        (n, false) => format!("Favourites, {n} folders · ↑/↓ to pick, Enter opens, Del removes"),
+        (n, true) => format!("즐겨찾기, {n}개 · ↑/↓로 고르기, Enter 열기, 1~9 바로 열기, Del 빼기"),
+        (1, false) => "Favourites, 1 folder · ↑/↓ to pick, Enter opens, 1 … 9 opens that one, Del removes".to_string(),
+        (n, false) => format!("Favourites, {n} folders · ↑/↓ to pick, Enter opens, 1 … 9 opens that one, Del removes"),
     }
 }
 
@@ -217,7 +260,11 @@ pub(crate) unsafe fn paint_favs(h: HWND) {
                 let x_on = hot == Some((k, true));
                 text(dc, *remove, "\u{E711}", icon_font, if x_on { pal().text } else { pal().sub }, DT_CENTER);
             }
-            let icon = RECT { left: row.left + s(6), right: row.left + s(28), ..*row };
+            // the digit that opens it (the first nine, counted in the whole list); every row keeps the same indent
+            if k < 9 {
+                text(dc, RECT { left: row.left + s(2), right: row.left + s(15), ..*row }, &(k + 1).to_string(), small, pal().sub, DT_CENTER);
+            }
+            let icon = RECT { left: row.left + s(15), right: row.left + s(37), ..*row };
             text(dc, icon, "\u{E8B7}", icon_font, pal().sub, DT_CENTER);
             let line = |top: i32, hgt: i32| RECT { left: icon.right + s(6), right: remove.left - s(4), top, bottom: top + hgt };
             text(dc, line(row.top + s(3), s(19)), &short_name(f), font, pal().text, DT_LEFT);
@@ -399,8 +446,25 @@ pub(crate) extern "system" fn fav_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                         }
                     }
                     _ if n == 0 || pressing => {}
-                    k @ (VK_DOWN | VK_UP) => {
-                        let next = if k == VK_DOWN { cur.map_or(0, |k| (k + 1) % n) } else { cur.map_or(n - 1, |k| (k + n - 1) % n) };
+                    // 1 … 9: that row at once, as the ⇄ menu's digits; held, the repeats stay out of the pane's type-to-find
+                    k if is_digit_key(k) => {
+                        let (c, al, sh) = (down(VK_CONTROL), down(VK_MENU), down(VK_SHIFT));
+                        match fav_digit(k, n, c, al, sh) {
+                            Some(j) => {
+                                app(|x| x.held = Some(k.0));
+                                open(j);
+                            }
+                            None if !(c || al || sh) => _ = MessageBeep(MB_ICONWARNING), // past the list
+                            None => {}
+                        }
+                    }
+                    k @ (VK_DOWN | VK_UP | VK_HOME | VK_END) => {
+                        let next = match k {
+                            VK_HOME => 0,
+                            VK_END => n - 1,
+                            VK_DOWN => cur.map_or(0, |k| (k + 1) % n),
+                            _ => cur.map_or(n - 1, |k| (k + n - 1) % n),
+                        };
                         app(|a| (a.fav_hot, a.fav_top) = (Some((next, false)), fav_scroll_to(g.first, next, g.rows.len(), n)));
                         _ = InvalidateRect(Some(h), None, false);
                         fav_tell(h, true);

@@ -611,9 +611,9 @@ mod tests {
     #[test]
     fn fav_speech_names() {
         // the whole list: count and keys, or the empty list's note exactly as drawn
-        assert_eq!(fav_list_speech(5, false), "Favourites, 5 folders · ↑/↓ to pick, Enter opens, Del removes");
-        assert_eq!(fav_list_speech(1, false), "Favourites, 1 folder · ↑/↓ to pick, Enter opens, Del removes");
-        assert_eq!(fav_list_speech(5, true), "즐겨찾기, 5개 · ↑/↓로 고르기, Enter 열기, Del 빼기");
+        assert_eq!(fav_list_speech(5, false), "Favourites, 5 folders · ↑/↓ to pick, Enter opens, 1 … 9 opens that one, Del removes");
+        assert_eq!(fav_list_speech(1, false), "Favourites, 1 folder · ↑/↓ to pick, Enter opens, 1 … 9 opens that one, Del removes");
+        assert_eq!(fav_list_speech(5, true), "즐겨찾기, 5개 · ↑/↓로 고르기, Enter 열기, 1~9 바로 열기, Del 빼기");
         assert_eq!((fav_list_speech(0, false).as_str(), fav_list_speech(0, true).as_str()), FAV_EMPTY);
         // one row: folder name, whole path, place in the list; a shell place by its name, not "::{GUID}"
         let docs = "C:\\Users\\me\\Documents";
@@ -691,6 +691,16 @@ mod tests {
             assert_eq!((fav_step(VK_UP, c, a, s), fav_step(VK_DOWN, c, a, s)), (None, None));
         }
         assert_eq!((fav_step(VK_LEFT, false, true, false), fav_step(VK_F4, false, true, false)), (None, None));
+
+        // plain 1 … 9 (number pad too) open that row; past the list, 0, other keys or any modifier: nothing
+        assert_eq!((fav_digit(VK_1, 5, false, false, false), fav_digit(VK_9, 9, false, false, false)), (Some(0), Some(8)));
+        assert_eq!((fav_digit(VK_NUMPAD1, 5, false, false, false), fav_digit(VK_NUMPAD5, 5, false, false, false)), (Some(0), Some(4)));
+        assert_eq!((fav_digit(VK_6, 5, false, false, false), fav_digit(VK_NUMPAD9, 3, false, false, false)), (None, None));
+        assert_eq!((fav_digit(VK_1, 0, false, false, false), fav_digit(VK_0, 30, false, false, false), fav_digit(VK_NUMPAD0, 30, false, false, false)), (None, None, None));
+        assert_eq!((fav_digit(VK_B, 30, false, false, false), fav_digit(VK_HOME, 30, false, false, false)), (None, None));
+        for (c, a, s) in [(true, false, false), (false, true, false), (false, false, true), (true, true, false)] {
+            assert_eq!((fav_digit(VK_3, 30, c, a, s), fav_digit(VK_NUMPAD3, 30, c, a, s)), (None, None));
+        }
     }
 
     #[test]

@@ -141,6 +141,13 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
             key_used(TIP_FAVS);
             open_favs();
         }
+        // Ctrl+Shift+B: the active pane's ☆+ from the keys (a browser's "bookmark this page"); held, it toggles once.
+        // Not while the list is open: it would shrink the favourites under the list's highlight.
+        VK_B if ctrl && shift && !alt => {
+            if m.lParam.0 & (1 << 30) == 0 && app(|x| x.fav_popup.0.is_null()) {
+                fav_key(a);
+            }
+        }
         // auto-repeat (bit 30) is swallowed: holding Ctrl+/ toggles once
         VK_OEM_2 if ctrl && !shift && !alt => {
             if m.lParam.0 & (1 << 30) == 0 {
