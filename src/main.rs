@@ -2196,6 +2196,36 @@ mod tests {
         assert!(ko[1].last().unwrap().desc.ends_with("이미 실행 중이면 그 창에서 엽니다."));
     }
 
+    // The shortcut window is the in-app manual: mouse-only actions (menus on right-click, drops, the session
+    // card's ✕) must stay described there in both languages, not only the keys the README tables check.
+    // A Korean row is taken at the English row's index, as shortcut_rows and the find box pair them.
+    #[test]
+    fn mouse_help_lists_mouse_actions() {
+        let (en, ko) = (key_rows(KEYS_EN), key_rows(KEYS_KO));
+        let check = |sec: usize, pick: &dyn Fn(&KeyRow) -> bool, en_words: &[&str], ko_words: &[&str]| {
+            let i = en[sec].iter().position(pick).expect("row not found");
+            let (e, k) = (&en[sec][i], &ko[sec][i]);
+            for w in en_words {
+                assert!(e.desc.contains(w), "{:?} lacks {w:?}: {}", e.keys, e.desc);
+            }
+            for w in ko_words {
+                assert!(k.desc.contains(w), "{:?} lacks {w:?}: {}", k.keys, k.desc);
+            }
+        };
+        let name = |n: &'static str| move |r: &KeyRow| r.keys[0].starts_with(n);
+        check(1, &name("Tabs"), &["right-click", "move left / right"], &["오른쪽 클릭", "옮기기"]);
+        check(1, &name("Drive buttons"), &["right-click", "Eject"], &["오른쪽 클릭", "꺼내기"]);
+        check(1, &name("Load"), &["✕", "rename"], &["✕", "이름 바꾸기"]);
+        check(1, &name("Pane header"), &["right-click", "double-click", "drop a folder"], &["오른쪽 클릭", "더블클릭", "끌어다 놓"]);
+        let key = |k: &'static str| move |r: &KeyRow| r.keys[0] == k;
+        check(0, &key("Alt+↓"), &["right-click"], &["오른쪽 클릭"]);
+        check(0, &key("F3"), &["Enter", "online-only"], &["Enter", "온라인 전용"]);
+        // a mouse row's name ends at its first ": ", so a ": " inside its brackets cuts it ("Drive buttons (C: D: …)" did)
+        for r in en[1].iter().chain(&ko[1]) {
+            assert_eq!(r.keys[0].matches('(').count(), r.keys[0].matches(')').count(), "name cut short: {:?}", r.keys);
+        }
+    }
+
     // One row's keycaps as "context:key", context "" (anywhere), "filter" or "preview", so that losing
     // the filter's Alt+↓ or the preview's F2 / Del shows even while the plain one is still listed.
     // Keys break at ", " and " / " as key_rows does; a bare arrow keeps the modifiers before it

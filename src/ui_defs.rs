@@ -366,7 +366,7 @@ Ctrl+Alt+← / → / ↑ / ↓\tMove the active pane's splitter that way (hold t
 Alt+← / Alt+→\tBack / forward\n\
 Alt+↑\tParent folder\n\
 Alt+PgDn / Alt+PgUp\tNext / previous folder in the same parent folder (Explorer's order; the status line shows which one, e.g. Folder 4/12)\n\
-Alt+↓\tRecent folders (all panes, newest first)\n\
+Alt+↓\tRecent folders (all panes, newest first; right-click ← / → too)\n\
 Ctrl+L, Alt+D, F4\tAddress bar: also .. or a subfolder name, a file to open, or a command such as cmd, wt, powershell (runs in this pane's folder), or part of a recent or favourite folder's name\n\
 Ctrl+B\tFavourites list (↑/↓ or Home/End to choose, Enter to open, 1 … 9 opens the numbered row at once, Del to remove, Alt+↑/↓ or drag to reorder)\n\
 Ctrl+Shift+B\tAdd the active pane's folder to favourites, or remove it if it is one (as ☆+ in its header)\n\
@@ -398,7 +398,7 @@ Ctrl+F7\tMove the selected items into a new folder named after them, ready to re
 F6 / Shift+F6\tMove between file list, address bar, filter and folder tree\n\
 Enter / Esc\tApply / cancel the address or filter\n\
 Ctrl+H\tShow hidden files\n\
-F3, Space\tQuick preview of the focused file: pictures, text and code, Markdown, CSV tables, Office / PDF / HTML / mail (files up to 10 MB), HWP / HWPX, ZIP contents, folders; anything else as a card of facts (arrows or the wheel: previous / next file without closing; on long text the wheel scrolls first and moves on past the end; PgUp / PgDn: scroll; Esc: close, also while it is still opening)\n\
+F3, Space\tQuick preview of the focused file: pictures, text and code, Markdown, CSV tables, Office / PDF / HTML / mail (files up to 10 MB), HWP / HWPX, ZIP contents, folders; anything else as a card of facts (arrows or the wheel: previous / next file without closing; on long text the wheel scrolls first and moves on past the end; PgUp / PgDn: scroll; Enter on an online-only cloud file: download it and preview; Esc: close, also while it is still opening)\n\
 Del / Shift+Del, F2\tIn the preview: the file shown to the Recycle Bin / deleted for good (Windows asks as in Explorer; the preview moves on to the next file), or renamed in its header (Enter / Esc)\n\
 Ctrl+wheel, Ctrl+= / Ctrl+- / Ctrl+0\tIn the preview: zoom a picture or PDF in / out (the wheel zooms on the cursor) / back to fit; zoomed in, drag it or its scrollbars to move around\n\
 Ctrl+V\tWith a copied picture (screenshot, browser image): save it here as a PNG file; with copied text: save it as a text file named after its first line, ready to rename\n\
@@ -411,12 +411,12 @@ Address bar: click a folder in the path to go there; click a › to list the fol
 Layout button: click for an even grid, press and drag for rows per column (arrow keys + Enter work too)\n\
 ⇄ button: open the selected folder (or the current one) in another pane, with this pane's columns; or copy / move the selected files (up to 10,000) to another pane's folder, a favourite or recent folder, or any folder you choose; swap places with another pane; which program is using the selected files; SHA-256 checksum of the selected files; sort the selected files into date folders; move the selected items into a new folder (Ctrl+F7); remove empty folders in this folder; what takes up space in this folder (Ctrl+Shift+U); Compare with WinMerge (2 selected items, or this folder with another pane's) when WinMerge is installed\n\
 Save (Ctrl+S): overwrite the current session file; green dot = unsaved layout changes (not folder moves)\n\
-Load (Ctrl+O): pick a saved session by its layout preview\n\
-Drive buttons (C: D: …): open that drive in the active pane; its drive is underlined\n\
+Load (Ctrl+O): pick a saved session by its layout preview; point at a card for its ✕ to delete it, or right-click it to rename or delete\n\
+Drive buttons (C, D …): open that drive in the active pane; its drive is underlined; right-click: the drive menu as in Explorer (Eject, Properties …)\n\
 Double-click a splitter: split evenly\n\
 Update button (blue, top right): a newer Grids is out; click to restart into it (settings, folders and sessions stay)\n\
-Right-click a pane header: colour label (saved with the session)\n\
-Tabs: click to switch, × or middle-click to close, + or double-click the empty strip for a new tab, right-click to duplicate or close\n\
+Pane header: right-click for a colour label (saved with the session); double-click to maximize / restore the pane; drop a folder on it to open it there (a file: its folder)\n\
+Tabs: click to switch, × or middle-click to close, + or double-click the empty strip for a new tab, right-click to duplicate, move left / right or close\n\
 Arguments: grids.exe C:\\a D:\\b ... or grids.exe work.grids\n\
 If Grids is already running, they open in that window.";
 
@@ -428,7 +428,7 @@ Ctrl+Alt+← / → / ↑ / ↓\t지금 패널의 경계선을 그쪽으로 옮�
 Alt+← / Alt+→\t뒤로 / 앞으로\n\
 Alt+↑\t상위 폴더\n\
 Alt+PgDn / Alt+PgUp\t같은 상위 폴더 안의 다음 / 이전 폴더 (탐색기 순서, 상태줄에 '폴더 4/12'처럼 몇 번째인지 표시)\n\
-Alt+↓\t최근 폴더 (모든 패널, 최근 순)\n\
+Alt+↓\t최근 폴더 (모든 패널, 최근 순, ← / → 오른쪽 클릭도 가능)\n\
 Ctrl+L, Alt+D, F4\t주소창: .. 이나 하위 폴더 이름, 열 파일, cmd·wt·powershell 같은 명령도 가능(이 패널 폴더에서 실행), 다녀온 폴더·즐겨찾기 이름 일부\n\
 Ctrl+B\t즐겨찾기 목록 (↑/↓·Home/End 고르기, Enter 열기, 1 … 9는 번호가 붙은 줄 바로 열기, Del 빼기, Alt+↑/↓ 또는 끌어서 순서 바꾸기)\n\
 Ctrl+Shift+B\t선택한 패널의 폴더를 즐겨찾기에 추가, 이미 있으면 빼기 (머리줄 ☆+와 같음)\n\
@@ -460,7 +460,7 @@ Ctrl+F7\t선택한 항목을 공통 이름의 새 폴더로 묶고 이름 짓기
 F6 / Shift+F6\t파일 목록·주소창·필터·폴더 트리 사이 이동\n\
 Enter / Esc\t주소창·필터 적용 / 취소\n\
 Ctrl+H\t숨김 파일 표시\n\
-F3, Space\t포커스한 파일 빠른 미리보기: 사진, 텍스트·코드, 마크다운, CSV 표, Office·PDF·HTML·메일(10 MB까지), HWP·HWPX, ZIP 목록, 폴더. 나머지는 정보 카드 (방향키·휠: 닫지 않고 이전·다음 파일, 긴 텍스트에서는 휠이 먼저 스크롤하고 끝에서 넘어감, PgUp/PgDn: 스크롤, Esc: 닫기, 여는 중에도 바로)\n\
+F3, Space\t포커스한 파일 빠른 미리보기: 사진, 텍스트·코드, 마크다운, CSV 표, Office·PDF·HTML·메일(10 MB까지), HWP·HWPX, ZIP 목록, 폴더. 나머지는 정보 카드 (방향키·휠: 닫지 않고 이전·다음 파일, 긴 텍스트에서는 휠이 먼저 스크롤하고 끝에서 넘어감, PgUp/PgDn: 스크롤, 온라인 전용 클라우드 파일에서 Enter: 내려받아 미리보기, Esc: 닫기, 여는 중에도 바로)\n\
 Del / Shift+Del, F2\t미리보기에서: 보고 있는 파일을 휴지통으로 / 완전히 삭제 (탐색기처럼 Windows가 확인, 미리보기는 다음 파일로), 또는 머리줄에서 이름 바꾸기 (Enter / Esc)\n\
 Ctrl+휠, Ctrl+= / Ctrl+- / Ctrl+0\t미리보기에서: 사진·PDF 확대 / 축소 (휠은 커서 위치 기준) / 화면에 맞춤, 확대한 상태에서는 끌거나 스크롤바로 이동\n\
 Ctrl+V\t복사한 그림(스크린샷, 브라우저 이미지)이 있으면 이 폴더에 PNG 파일로 저장, 복사한 글은 텍스트 파일로 저장(첫 줄이 이름, 바로 이름 바꾸기)\n\
@@ -473,11 +473,11 @@ F2, Del, Ctrl+C/X/V, F5\t탐색기와 동일\n\n\
 레이아웃 버튼: 클릭 = 균등 배치, 누른 채 끌기 = 열마다 칸 수 (방향키+Enter도 가능)\n\
 ⇄ 버튼: 선택한 폴더(없으면 현재 폴더)를 다른 패널에서 열기, 열 순서·폭·정렬도 함께. 또는 선택한 파일을 다른 패널 폴더·즐겨찾기·최근 폴더·직접 고른 폴더로 복사·이동 (최대 10,000개). 다른 패널과 자리 바꾸기. 선택한 파일을 쓰고 있는 프로그램 확인. 선택한 파일의 체크섬(SHA-256). 선택한 파일을 날짜별 폴더로 정리. 선택한 항목을 새 폴더로 묶기 (Ctrl+F7). 이 폴더 안의 빈 폴더 지우기. 이 폴더 용량 분석 (Ctrl+Shift+U). WinMerge가 있으면 WinMerge로 비교 (선택한 2개, 또는 이 폴더와 다른 패널 폴더)\n\
 저장 (Ctrl+S): 지금 세션 파일에 바로 덮어쓰기, 초록 점 = 저장 안 된 배치 변경(폴더 이동은 제외)\n\
-불러오기 (Ctrl+O): 저장한 세션을 배치 미리보기로 보고 한 번 클릭\n\
-드라이브 버튼 (C: D: …): 지금 패널에서 그 드라이브 열기, 지금 패널의 드라이브에 밑줄\n\
+불러오기 (Ctrl+O): 저장한 세션을 배치 미리보기로 보고 한 번 클릭, 카드에 마우스를 올리면 ✕로 삭제, 오른쪽 클릭으로 이름 바꾸기·삭제\n\
+드라이브 버튼 (C, D …): 지금 패널에서 그 드라이브 열기, 지금 패널의 드라이브에 밑줄, 오른쪽 클릭: 탐색기와 같은 드라이브 메뉴(꺼내기·속성 …)\n\
 스플리터 더블클릭: 균등 분할\n\
 업데이트 버튼 (파란색, 오른쪽 위): 새 Grids가 나옴, 누르면 재시작해 업데이트 (설정·폴더·세션 유지)\n\
-패널 머리줄 오른쪽 클릭: 패널 색 라벨 (세션에 저장)\n\
-탭: 클릭 = 전환, × 또는 가운데 클릭 = 닫기, + 또는 탭 줄 빈 곳 더블클릭 = 새 탭, 오른쪽 클릭 = 복제·닫기\n\
+패널 머리줄: 오른쪽 클릭 = 패널 색 라벨 (세션에 저장), 더블클릭 = 크게 보기 / 복원, 폴더를 끌어다 놓으면 그 패널에서 열기 (파일은 그 파일이 든 폴더)\n\
+탭: 클릭 = 전환, × 또는 가운데 클릭 = 닫기, + 또는 탭 줄 빈 곳 더블클릭 = 새 탭, 오른쪽 클릭 = 복제·왼쪽/오른쪽으로 옮기기·닫기\n\
 실행 인자: grids.exe C:\\a D:\\b ... 또는 grids.exe 작업.grids\n\
 이미 실행 중이면 그 창에서 엽니다.";
