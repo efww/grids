@@ -46,9 +46,10 @@ pub(crate) struct App {
     pub(crate) save_after: Option<Instant>, // a failed write: autosave waits until then
     pub(crate) status: StatusLine,
     pub(crate) status_key: String,
-    // items text before the selection size, (file bytes, has folders, partial), middle zone, drive (label, free, total)
+    // items text before the selection size, Some(partial while collecting) = a selection to size (the worker sums it),
+    // middle zone, drive (label, free, total)
     #[allow(clippy::type_complexity)]
-    pub(crate) status_base: (String, Option<(u64, bool, bool)>, Vec<String>, Option<(String, u64, u64)>),
+    pub(crate) status_base: (String, Option<bool>, Vec<String>, Option<(String, u64, u64)>),
     pub(crate) view_menu: HMENU,
     pub(crate) base: Option<Session>, // last loaded/saved (or startup) state; differs -> green dot
     pub(crate) dirty: bool,

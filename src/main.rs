@@ -1902,19 +1902,40 @@ mod tests {
     #[test]
     fn folder_size_text() {
         let kb = human(1024);
-        assert_eq!(size_text(false, 0, true, None, false), " (calculating…)");
-        assert_eq!(size_text(false, 0, true, Some((0, false, false)), false), " (calculating…)");
-        assert_eq!(size_text(false, 1024, true, Some((1024, false, false)), false), format!(" ({}…)", human(2048)));
-        assert_eq!(size_text(false, 0, true, Some((1024, true, false)), false), format!(" ({kb})"));
-        assert_eq!(size_text(false, 0, true, Some((1024, true, true)), false), format!(" ({kb}, partial)"));
+        // running: a folder met shows "calculating", bytes so far show with "…"
+        assert_eq!(size_text(false, Some((0, false, false, true)), false), " (calculating…)");
+        assert_eq!(size_text(true, Some((0, false, false, true)), false), " (계산 중…)");
+        assert_eq!(size_text(false, Some((2048, false, false, true)), false), format!(" ({}…)", human(2048)));
+        assert_eq!(size_text(false, Some((2048, false, false, false)), false), format!(" ({}…)", human(2048)));
+        // files only, nothing summed yet: nothing shows (no blink on a local disk)
+        assert_eq!(size_text(false, Some((0, false, false, false)), false), "");
+        assert_eq!(size_text(false, Some((0, false, false, false)), true), "");
+        // done
+        assert_eq!(size_text(false, Some((1024, true, false, true)), false), format!(" ({kb})"));
+        assert_eq!(size_text(false, Some((1024, true, true, true)), false), format!(" ({kb}, partial)"));
+        assert_eq!(size_text(false, Some((0, true, false, true)), false), format!(" ({})", human(0)));
         // something missed while collecting the selection isn't shown as a full total
-        assert_eq!(size_text(false, 0, true, Some((1024, true, false)), true), format!(" ({kb}, partial)"));
-        assert_eq!(size_text(true, 0, true, Some((1024, true, false)), true), format!(" ({kb}, 일부만)"));
-        assert_eq!(size_text(false, 1024, false, None, false), format!(" ({kb})"));
-        assert_eq!(size_text(false, 1024, false, None, true), format!(" ({kb}, partial)"));
-        assert_eq!(size_text(false, 0, false, None, false), "");
-        assert_eq!(size_text(false, 0, false, None, true), " (size unknown)");
-        assert_eq!(size_text(true, 0, false, None, true), " (크기 모름)");
+        assert_eq!(size_text(false, Some((1024, true, false, true)), true), format!(" ({kb}, partial)"));
+        assert_eq!(size_text(true, Some((1024, true, false, true)), true), format!(" ({kb}, 일부만)"));
+        assert_eq!(size_text(false, Some((1024, true, false, false)), false), format!(" ({kb})"));
+        assert_eq!(size_text(false, Some((1024, true, false, false)), true), format!(" ({kb}, partial)"));
+        assert_eq!(size_text(false, Some((0, true, false, false)), false), "");
+        assert_eq!(size_text(false, Some((0, true, true, false)), false), " (size unknown)");
+        // no file system path at all (This PC, the bin, inside a zip): no job, done at once
+        assert_eq!(size_text(false, None, true), " (size unknown)");
+        assert_eq!(size_text(true, None, true), " (크기 모름)");
+        assert_eq!(size_text(false, None, false), "");
+    }
+
+    #[test]
+    fn free_space_volume() {
+        assert_eq!(vol_key(r"C:\Users\Public").as_deref(), Some("c:"));
+        assert_eq!(vol_key(r"c:\").as_deref(), Some("c:"));
+        assert_eq!(vol_key(r"\\NAS\Share\docs").as_deref(), Some(r"\\nas\share"));
+        assert_eq!(vol_key(r"\\nas\share"), vol_key(r"\\NAS\SHARE\x\y"));
+        assert_ne!(vol_key(r"\\nas\a\x"), vol_key(r"\\nas\b\x"));
+        assert_eq!(vol_key("::{20D04FE0-3AEA-1069-A2D8-08002B30309D}"), None);
+        assert_eq!(vol_key(""), None);
     }
 
     // Status line zones: the middle zone gives way first, then the items zone (down to min_head), then the
@@ -2212,20 +2233,59 @@ mod tests {
     fn folder_size_collect() {
         let root = tree("collect", &[("f.bin".into(), 7), (r"d\x.bin".into(), 1)]);
         let path = |p: &str| root.join(p).to_string_lossy().into_owned();
-        let (f, d) = (path("f.bin"), path("d"));
-        let none = Sel { file_bytes: 0, dirs: vec![], partial: true };
+        let (f, d, gone) = (path("f.bin"), path("d"), path("gone"));
+        // the UI thread only gathers paths: a gone one is kept for the worker, nothing is read here
+        let none = Sel { paths: vec![], partial: true };
         assert_eq!(collect_sel(None, |_| None), none); // GetSelection / GetCount failed
         assert_eq!(collect_sel(Some(1), |_| None), none); // GetItemAt / no file system path
-        assert_eq!(collect_sel(Some(1), |_| Some(path("gone"))), none);
-        assert_eq!(collect_sel(Some(1), |_| Some(r"C:\".into())), none); // a drive root isn't walked
+        assert_eq!(collect_sel(Some(1), |_| Some(gone.clone())), Sel { paths: vec![gone.clone()], partial: false });
         let both = [f.clone(), d.clone()];
-        assert_eq!(collect_sel(Some(2), |k| Some(both[k as usize].clone())), Sel { file_bytes: 7, dirs: vec![d], partial: false });
+        assert_eq!(collect_sel(Some(2), |k| Some(both[k as usize].clone())), Sel { paths: both.to_vec(), partial: false });
         let calls = std::cell::Cell::new(0);
         let s = collect_sel(Some(10_001), |_| {
             calls.set(calls.get() + 1);
             Some(f.clone())
         });
-        assert_eq!((s.file_bytes, s.partial, calls.get()), (70_000, true, 10_000));
+        assert_eq!((s.paths.len(), s.partial, calls.get()), (10_000, true, 10_000));
+
+        // the worker sorts them: a file by its size, a folder walked, a root or a gone path partial
+        assert_eq!(sel_kind(&f), SelKind::File(7));
+        assert_eq!(sel_kind(&d), SelKind::Dir);
+        assert_eq!(sel_kind(r"C:\"), SelKind::Unknown); // a drive root isn't walked
+        assert_eq!(sel_kind(&gone), SelKind::Unknown);
+        let never = || false;
+        let mut quiet = |_, _, _| {};
+        let sum = |t: &[String], quiet: &mut dyn FnMut(u64, bool, bool)| sel_bytes(t, &never, &never, quiet);
+        assert_eq!(sum(&[f.clone()], &mut quiet), Some((7, false, false)));
+        assert_eq!(sum(&both, &mut quiet), Some((8, false, true)));
+        assert_eq!(sum(&[f.clone(), gone.clone()], &mut quiet), Some((7, true, false)));
+        assert_eq!(sum(&[r"C:\".into()], &mut quiet), Some((0, true, false)));
+        // many files: progress comes with the running total, and a new selection stops the old sum
+        let files = vec![f.clone(); 2100];
+        let mut last = 0;
+        assert_eq!(sum(&files, &mut |b, _, _| last = b), Some((14_700, false, false)));
+        assert!(last >= 14_000);
+        let n = std::cell::Cell::new(0);
+        let later = || {
+            n.set(n.get() + 1);
+            n.get() > 5
+        };
+        assert_eq!(sel_bytes(&files, &later, &never, &mut quiet), None);
+        assert!(n.get() < 10);
+        // a copy only pauses it; a cancel still gets through while paused
+        let seen = std::cell::Cell::new(0);
+        let copying = || {
+            seen.set(seen.get() + 1);
+            (10..13).contains(&seen.get())
+        };
+        assert_eq!(sel_bytes(&files[..50], &never, &copying, &mut quiet), Some((350, false, false)));
+        let held = std::cell::Cell::new(0);
+        let copy_on = || {
+            held.set(held.get() + 1);
+            held.get() > 5
+        };
+        let cancel = || held.get() > 7;
+        assert_eq!(sel_bytes(&files, &cancel, &copy_on, &mut quiet), None);
         _ = std::fs::remove_dir_all(root);
     }
 
