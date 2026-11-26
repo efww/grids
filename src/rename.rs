@@ -268,6 +268,47 @@ unsafe fn geo_now(h: HWND) -> Geo {
 const MIN_W: i32 = 600;
 const MIN_H: i32 = 400;
 
+// Smallest window size in pixels at this DPI, never more than the work area (WM_GETMINMAXINFO, rename_refont).
+fn min_size(dpi: i32, work: RECT) -> (i32, i32) {
+    ((MIN_W * dpi / 96).min(work.right - work.left).max(1), (MIN_H * dpi / 96).min(work.bottom - work.top).max(1))
+}
+
+// One rule row: the text plus its padding (WM_MEASUREITEM, and again after a DPI change).
+fn rule_row_h(fh: i32, dpi: i32) -> i32 {
+    fh + 10 * dpi / 96
+}
+
+// After a DPI change, from apply_font before the old font is deleted: every control takes the new font
+// (the list view passes it on to its header), the rule rows their new height, the window its new smallest size.
+pub(crate) unsafe fn rename_refont() {
+    let h = rn(|r| r.h);
+    if h.0.is_null() {
+        return;
+    }
+    let (font, fh, dpi) = app(|a| (a.font, a.fh, a.dpi));
+    let mut c = GetWindow(h, GW_CHILD).unwrap_or_default();
+    while !c.0.is_null() {
+        SendMessageW(c, WM_SETFONT, Some(WPARAM(font.0 as usize)), Some(LPARAM(1)));
+        c = GetWindow(c, GW_HWNDNEXT).unwrap_or_default();
+    }
+    let lb = item(h, ID_RULES);
+    SendMessageW(lb, LB_SETITEMHEIGHT, Some(WPARAM(0)), Some(LPARAM(rule_row_h(fh, dpi) as isize)));
+    _ = InvalidateRect(Some(lb), None, true); // the parent clips its children: layout() alone leaves the old rows
+    if !IsIconic(h).as_bool() && !IsZoomed(h).as_bool() {
+        let work = work_area(h);
+        let (mw, mh) = min_size(dpi, work);
+        let mut rc = RECT::default();
+        _ = GetWindowRect(h, &mut rc);
+        let (w, ht) = ((rc.right - rc.left).max(mw), (rc.bottom - rc.top).max(mh));
+        if (w, ht) != (rc.right - rc.left, rc.bottom - rc.top) {
+            let x = rc.left.min(work.right - w).max(work.left);
+            let y = rc.top.min(work.bottom - ht).max(work.top);
+            _ = SetWindowPos(h, None, x, y, w, ht, SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+    }
+    layout(h);
+}
+
 // Work area of the monitor h is on; the primary one's if that can't be read (never an empty rect).
 unsafe fn work_area(h: HWND) -> RECT {
     let mut mi = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
@@ -1316,9 +1357,8 @@ pub(crate) extern "system" fn rename_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPA
                 let dpi = app(|a| a.dpi);
                 let mm = &mut *(lp.0 as *mut MINMAXINFO);
                 // fits a 640 × 480 screen (geo goes tight); never more than the work area it is on
-                let work = work_area(h);
-                let (mw, mh) = (MIN_W * dpi / 96, MIN_H * dpi / 96);
-                mm.ptMinTrackSize = POINT { x: mw.min(work.right - work.left).max(1), y: mh.min(work.bottom - work.top).max(1) };
+                let (mw, mh) = min_size(dpi, work_area(h));
+                mm.ptMinTrackSize = POINT { x: mw, y: mh };
             }
             WM_CTLCOLOREDIT => return edit_colors(wp),
             WM_CTLCOLORLISTBOX => {
@@ -1329,7 +1369,7 @@ pub(crate) extern "system" fn rename_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPA
             WM_MEASUREITEM => {
                 let mi = &mut *(lp.0 as *mut MEASUREITEMSTRUCT);
                 let (fh, dpi) = app(|a| (a.fh, a.dpi));
-                mi.itemHeight = (fh + 10 * dpi / 96) as u32;
+                mi.itemHeight = rule_row_h(fh, dpi) as u32;
                 return LRESULT(1);
             }
             WM_DRAWITEM => {
@@ -1487,5 +1527,18 @@ mod tests {
             let lb = g.ctl.iter().find(|(id, _)| *id == ID_RULES).unwrap().1;
             assert!(lb.bottom - lb.top >= 40 * dpi / 96);
         }
+    }
+
+    #[test]
+    fn rename_row_and_min_size() {
+        // rule rows follow the new text height after a DPI change
+        assert_eq!(rule_row_h(16, 96), 26);
+        assert_eq!(rule_row_h(24, 144), 39);
+        assert_eq!(rule_row_h(32, 192), 52);
+        let work = |w, h| RECT { left: 0, top: 0, right: w, bottom: h };
+        assert_eq!(min_size(96, work(1920, 1040)), (600, 400));
+        assert_eq!(min_size(144, work(1920, 1040)), (900, 600));
+        assert_eq!(min_size(192, work(800, 560)), (800, 560)); // never more than the work area
+        assert_eq!(min_size(96, work(0, 0)), (1, 1));
     }
 }

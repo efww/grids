@@ -47,6 +47,7 @@ pub(crate) unsafe fn apply_font() {
             }
         }
     }
+    rename_refont(); // the batch rename window stays open while the main window moves: off the old font first
     for f in [old, old_icon].into_iter().filter(|f| !f.is_invalid()) {
         _ = DeleteObject(f.into());
     }
