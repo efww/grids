@@ -114,7 +114,12 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             WM_PAINT => paint_main(h),
             WM_ERASEBKGND => return LRESULT(1), // paint_main covers everything
             WM_DRAWITEM => {
-                draw_button(&*(lp.0 as *const DRAWITEMSTRUCT));
+                let d = &*(lp.0 as *const DRAWITEMSTRUCT);
+                if d.CtlID == ID_STATUS as u32 {
+                    draw_status(d);
+                } else {
+                    draw_button(d);
+                }
                 return LRESULT(1);
             }
             WM_TIMER if wp.0 == TIMER_REVEAL => {
@@ -367,6 +372,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             WM_TIMER if wp.0 == dialog_jump::TIMER_DLG_RETRY || wp.0 == dialog_jump::TIMER_DLG_RESTORE => dialog_jump::on_timer(wp.0),
             WM_DESTROY => {
                 _ = KillTimer(Some(h), TIMER_STATUS);
+                drop_status();
                 unwatch_folders();
                 dialog_jump::shutdown();
                 if app(|a| a.hot_on) {

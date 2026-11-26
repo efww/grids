@@ -239,6 +239,9 @@ pub(crate) unsafe fn relayout() {
             shown.push((h, x + s(32) <= edge - s(12)));
             x += s(32) + s(2);
         }
+        if !a.status_hwnd.0.is_null() {
+            moves.push((a.status_hwnd, status_rect(&g)));
+        }
         let full = RECT { left: g.gx, top: g.top, right: g.w - g.pad, bottom: g.bot };
         for (i, p) in a.panes.iter().enumerate().take(a.s.panes()) {
             if let Some(p) = p {
@@ -261,6 +264,7 @@ pub(crate) unsafe fn relayout() {
         }
     }
     _ = InvalidateRect(Some(main), None, true);
+    status_dirty(); // its zones depend on the width, and the main window no longer paints over it
     // Paint now: WM_PAINT is only generated once the message queue is empty, which never happens
     // while the mouse keeps moving, so mid-drag the views would keep showing the previous frame.
     _ = RedrawWindow(Some(main), None, None, RDW_UPDATENOW | RDW_ALLCHILDREN);
@@ -415,8 +419,7 @@ pub(crate) unsafe fn paint_accent(c: u32) {
     for (_, _, h) in app(|a| a.drives.clone()) {
         _ = InvalidateRect(Some(h), None, false); // the active drive's underline
     }
-    let (main, st) = app(|a| (a.main, status_rect(&geo(a))));
-    _ = InvalidateRect(Some(main), Some(&st), false); // the note chip and the drive bar
+    status_dirty(); // the note chip and the drive bar
 }
 
 // The hosted Explorer list ignores the app-wide dark mode, so its (new, per folder) list view is dyed here.

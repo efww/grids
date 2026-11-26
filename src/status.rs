@@ -206,25 +206,27 @@ pub(crate) fn resum_sizes() {
 pub(crate) unsafe fn update_status() {
     mark_drive();
     let (i, path, main) = app(|a| (a.s.active, a.s.paths[a.s.active].clone(), a.main));
-    let Some(fv) = view_of::<IFolderView2>(i) else { return };
-    let n = fv.ItemCount(SVGIO_ALLVIEW).unwrap_or(0);
-    let sel = fv.ItemCount(SVGIO_SELECTION).unwrap_or(0);
-    let spec = filter_of(i);
-    // while a background copy runs, the disk is left alone (size and free space come back after)
-    let busy = COPYING.load(Ordering::Relaxed) > 0;
-    let zoom = app(|a| a.zoom);
-    let rev = SEL_REV[i].load(Ordering::Relaxed);
-    let key = format!("{i}|{path}|{n}|{sel}|{}|{spec}|{busy}|{zoom:?}|{rev}", fv.GetFocusedItem().unwrap_or(-1));
-    if app(|a| a.status_key != key) {
-        status_base(i, &path, main, &fv, n, sel, &spec, busy, zoom);
-        app(|a| a.status_key = key);
+    // no list yet (a folder still opening): the counts wait, a new note still shows and is read out
+    if let Some(fv) = view_of::<IFolderView2>(i) {
+        let n = fv.ItemCount(SVGIO_ALLVIEW).unwrap_or(0);
+        let sel = fv.ItemCount(SVGIO_SELECTION).unwrap_or(0);
+        let spec = filter_of(i);
+        // while a background copy runs, the disk is left alone (size and free space come back after)
+        let busy = COPYING.load(Ordering::Relaxed) > 0;
+        let zoom = app(|a| a.zoom);
+        let rev = SEL_REV[i].load(Ordering::Relaxed);
+        let key = format!("{i}|{path}|{n}|{sel}|{}|{spec}|{busy}|{zoom:?}|{rev}", fv.GetFocusedItem().unwrap_or(-1));
+        if app(|a| a.status_key != key) {
+            status_base(i, &path, main, &fv, n, sel, &spec, busy, zoom);
+            app(|a| a.status_key = key);
+        }
     }
     let job = {
         let j = size_job();
         (!j.target.is_empty()).then_some((j.bytes, j.done, j.partial))
     };
     let ko = KO.load(Ordering::Relaxed);
-    let Some(rc) = app(|a| {
+    let (changed, fresh, ctl) = app(|a| {
         let (head, size, mid, drive) = &a.status_base;
         let size = size.map(|(f, d, p)| size_text(ko, f, d, job, p)).unwrap_or_default();
         // a short confirmation (path copied, missing folder) leads for a few seconds in its own chip
@@ -238,14 +240,96 @@ pub(crate) unsafe fn update_status() {
         }
         // every zone's value (the note, the size progress, raw free/total bytes) takes part in the compare
         let line = StatusLine { note: a.note.as_ref().map(|(s, _)| s.clone()), head: format!("{head}{size}"), mid: mid.clone(), drive: drive.clone() };
-        (a.status != line).then(|| {
+        // each note set anew (its own end time) is read out once, the same words too; expiry, counts and size don't
+        let fresh = a.note.as_ref().filter(|n| a.said != Some(n.1)).map(|(s, t)| (s.clone(), *t));
+        if let Some((_, t)) = &fresh {
+            a.said = Some(*t);
+        }
+        let changed = (a.status != line).then(|| {
+            let words = status_speech(&line);
             a.status = line;
-            status_rect(&geo(a))
-        })
-    }) else {
+            words
+        });
+        (changed, fresh.map(|(s, _)| (s, a.note_hwnd)), a.status_hwnd)
+    });
+    // outside the borrow: setting the text and the event may call straight back in from a screen reader
+    if let Some(words) = changed {
+        if !ctl.0.is_null() {
+            _ = SetWindowTextW(ctl, &HSTRING::from(words)); // the whole line, read on request
+        }
+        status_dirty();
+    }
+    // only the note itself is read out by itself, not the counts and free space around it
+    if let Some((note, live)) = fresh.filter(|(_, h)| !h.0.is_null()) {
+        _ = SetWindowTextW(live, &HSTRING::from(note));
+        NotifyWinEvent(EVENT_OBJECT_LIVEREGIONCHANGED, live, OBJID_CLIENT.0, CHILDID_SELF as i32);
+    }
+}
+
+// ---------- the status line for screen readers ----------
+// An owner-drawn static on the status line, like Explorer's and Notepad's status bars: its text is the whole line
+// (a screen reader's "read status bar") and its role a status bar. Next to it a zero-size static holds only the
+// note and is a polite live region, so a new note is read out by itself without the counts and free space.
+// Without SS_NOTIFY both hit-test transparent, so clicks still go to the main window.
+// Failing leaves the main window painting the line, as before; a failed annotation only loses the role or the reading.
+pub(crate) unsafe fn create_status(main: HWND) {
+    const SS_OWNERDRAW: u32 = 0x0D;
+    let h = child(main, w!("STATIC"), w!(""), SS_OWNERDRAW, WINDOW_EX_STYLE(0), ID_STATUS, HFONT::default());
+    if h.0.is_null() {
         return;
-    };
-    _ = InvalidateRect(Some(main), Some(&rc), true);
+    }
+    let live = child(main, w!("STATIC"), w!(""), 0, WINDOW_EX_STYLE(0), ID_STATUS_NOTE, HFONT::default());
+    if let Ok(acc) = CoCreateInstance::<_, IAccPropServices>(&CLSID_AccPropServices, None, CLSCTX_INPROC_SERVER) {
+        let (obj, me) = (OBJID_CLIENT.0 as u32, CHILDID_SELF);
+        _ = acc.SetHwndProp(h, obj, me, PROPID_ACC_ROLE, &VARIANT::from(ROLE_SYSTEM_STATUSBAR as i32));
+        if !live.0.is_null() {
+            _ = acc.SetHwndProp(live, obj, me, LiveSetting_Property_GUID, &VARIANT::from(Polite.0));
+        }
+    }
+    app(|a| (a.status_hwnd, a.note_hwnd) = (h, live));
+}
+
+// Before the main window goes (its children go after its WM_DESTROY): the annotations come off.
+pub(crate) unsafe fn drop_status() {
+    let (h, live) = app(|a| (std::mem::take(&mut a.status_hwnd), std::mem::take(&mut a.note_hwnd)));
+    if h.0.is_null() && live.0.is_null() {
+        return;
+    }
+    if let Ok(acc) = CoCreateInstance::<_, IAccPropServices>(&CLSID_AccPropServices, None, CLSCTX_INPROC_SERVER) {
+        let (obj, me) = (OBJID_CLIENT.0 as u32, CHILDID_SELF);
+        if !h.0.is_null() {
+            _ = acc.ClearHwndProps(h, obj, me, &[PROPID_ACC_ROLE]);
+        }
+        if !live.0.is_null() {
+            _ = acc.ClearHwndProps(live, obj, me, &[LiveSetting_Property_GUID]);
+        }
+    }
+}
+
+// Repaint the status line: its control, or that strip of the main window when there is none.
+pub(crate) unsafe fn status_dirty() {
+    let (main, ctl, rc) = app(|a| (a.main, a.status_hwnd, status_rect(&geo(a))));
+    if !ctl.0.is_null() {
+        _ = InvalidateRect(Some(ctl), None, false); // draw_status covers all of it
+    } else if !main.0.is_null() {
+        _ = InvalidateRect(Some(main), Some(&rc), true);
+    }
+}
+
+// What a screen reader hears for the line: the note first, then items, the middle zone and the drive.
+pub(crate) fn status_speech(st: &StatusLine) -> String {
+    let mut parts: Vec<String> = st.note.iter().cloned().collect();
+    parts.push(st.head.replace(ZONE_DOT, ", "));
+    parts.extend(st.mid.iter().cloned());
+    if let Some((label, free, total)) = &st.drive {
+        parts.push(if KO.load(Ordering::Relaxed) {
+            format!("{label} 여유 {} / 전체 {}", human(*free), human(*total))
+        } else {
+            format!("{label} {} free of {}", human(*free), human(*total))
+        });
+    }
+    parts.retain(|p| !p.trim().is_empty());
+    parts.join(", ")
 }
 
 // What the status line shows, by zone: [note chip] [items · selected (size)] | [filter · copying · maximized] ... [drive].

@@ -395,7 +395,7 @@ pub(crate) unsafe fn hash_msg(h: HWND, gen: usize, fin: bool) {
         j.note = format!("{} {pct}% · {}", tr("SHA-256 in progress", "SHA-256 계산 중"), j.name);
         let note = j.note.clone();
         drop(j);
-        set_note(note);
+        set_progress_note(note);
         return;
     }
     j.busy = false;

@@ -76,6 +76,9 @@ pub(crate) struct App {
     pub(crate) focus_req: HWND,     // pane to focus once its folder shows (set_layout gave it the active pane's place)
     pub(crate) note: Option<(String, Instant)>, // status line confirmation and when it goes (runtime only)
     pub(crate) lost: usize,                     // missing folders the shown note counts (gone_note)
+    pub(crate) said: Option<Instant>,           // the note (by its end time) last handed to screen readers
+    pub(crate) status_hwnd: HWND,               // the status line control (screen readers); null = the main window paints it
+    pub(crate) note_hwnd: HWND,                 // the note's live region (zero size, nothing drawn); null = no announcements
     pub(crate) drop_hover: HWND,                         // pane whose top bar something openable is being dragged over
     pub(crate) drop_open: Option<(HWND, usize, IShellItem)>, // folder dropped on a top bar, opened by WM_DROP_OPEN
     pub(crate) crumb_hot: Option<(HWND, usize)>,             // address bar crumb under the mouse (pane, crumb_layout index)
@@ -164,6 +167,9 @@ thread_local! {
         focus_req: HWND::default(),
         note: None,
         lost: 0,
+        said: None,
+        status_hwnd: HWND::default(),
+        note_hwnd: HWND::default(),
         drop_hover: HWND::default(),
         drop_open: None,
         crumb_hot: None,

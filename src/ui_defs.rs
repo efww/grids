@@ -19,6 +19,8 @@ pub(crate) const ID_TB_FAV: i32 = 206;
 pub(crate) const ID_TB_VIEW: i32 = 203;
 pub(crate) const ID_TB_EV: i32 = 207; // orange magnifier: Everything search, shown while Everything runs
 pub(crate) const ID_TB_UPDATE: i32 = 208; // blue "Update", shown when a newer release is out
+pub(crate) const ID_STATUS: i32 = 209; // the status line: an owner-drawn static, so screen readers find it
+pub(crate) const ID_STATUS_NOTE: i32 = 210; // the note alone, a polite live region: what screen readers read out by themselves
 pub(crate) const ID_DRIVE: i32 = 1500; // + 0..25: drive buttons A: … Z:
 // menu ids
 pub(crate) const ID_HIDDEN: usize = 1100;

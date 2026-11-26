@@ -7,7 +7,9 @@ pub(crate) unsafe fn paint_main(h: HWND) {
     let (g, status, font, dpi, hot, accent) = app(|a| {
         let g = geo(a);
         let hot = a.gap_hot.filter(|_| a.drag.is_none() && a.nudge.is_none()).and_then(|d| gap_line(&g, d, 2 * a.dpi / 96));
-        (g, a.status.clone(), a.font, a.dpi, hot.map(|r| (r, a.s.accent_now())), a.s.accent_now())
+        // with its own control (draw_status) the line is not painted here
+        let status = a.status_hwnd.0.is_null().then(|| a.status.clone());
+        (g, status, a.font, a.dpi, hot.map(|r| (r, a.s.accent_now())), a.s.accent_now())
     });
     buffered(h, |dc, rc| {
         fill(dc, rc, pal().bg);
@@ -19,16 +21,31 @@ pub(crate) unsafe fn paint_main(h: HWND) {
         if let Some((r, c)) = hot {
             fill(dc, r, c); // where to grab; dragging swaps it for the guide bar in the same colour
         }
-        paint_status(dc, &g, &status, font, dpi, accent);
+        if let Some(st) = &status {
+            paint_status(dc, &g, status_rect(&g), st, font, dpi, accent);
+        }
     });
+}
+
+// WM_DRAWITEM for the status line control, which sits on status_rect: the same zones, from its own top.
+pub(crate) unsafe fn draw_status(d: &DRAWITEMSTRUCT) {
+    let (g, status, font, dpi, accent) = app(|a| (geo(a), a.status.clone(), a.font, a.dpi, a.s.accent_now()));
+    let rc = d.rcItem;
+    let mut mem = HDC::default();
+    let pb = BeginBufferedPaint(d.hDC, &rc, BPBF_TOPDOWNDIB, None, &mut mem);
+    let dc = if pb == 0 { d.hDC } else { mem };
+    fill(dc, rc, pal().bg);
+    paint_status(dc, &g, RECT { left: 0, right: g.w, ..rc }, &status, font, dpi, accent);
+    if pb != 0 {
+        _ = EndBufferedPaint(pb, true);
+    }
 }
 
 // The status line in zones (status_fit): the note in an accent-tinted chip, items and selection, a thin line,
 // filter / copying / maximized, and the drive with its usage bar at the right end.
-unsafe fn paint_status(dc: HDC, g: &Geo, st: &StatusLine, font: HFONT, dpi: i32, accent: u32) {
+unsafe fn paint_status(dc: HDC, g: &Geo, line: RECT, st: &StatusLine, font: HFONT, dpi: i32, accent: u32) {
     let s = |v: i32| v * dpi / 96;
     let p = pal();
-    let line = status_rect(g);
     let (left, right) = (g.pad + s(4), g.w - g.pad - s(4));
     let (gap, chip_pad, bar_w, bar_gap) = (s(12), s(8), s(64), s(6));
     let w = |t: &str| text_w(dc, t, font);

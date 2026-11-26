@@ -23,7 +23,10 @@ use windows::Win32::System::Ole::*;
 use windows::Win32::System::SystemServices::{MK_CONTROL, MK_SHIFT, MODIFIERKEYS_FLAGS, SFGAO_FLAGS, SFGAO_FOLDER, SFGAO_STREAM};
 use windows::Win32::System::Threading::{CreateEventW, SetEvent, OpenProcess, INFINITE,QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION};
 use windows::Win32::System::Variant::{VariantClear, VARIANT, VT_I4};
-use windows::Win32::UI::Accessibility::{AccessibleObjectFromPoint, CLSID_AccPropServices, IAccPropServices, IAccessible, PROPID_ACC_NAME, ROLE_SYSTEM_LIST, ROLE_SYSTEM_LISTITEM};
+use windows::Win32::UI::Accessibility::{
+    AccessibleObjectFromPoint, LiveSetting_Property_GUID, NotifyWinEvent, Polite, CLSID_AccPropServices, IAccPropServices, IAccessible, PROPID_ACC_NAME, PROPID_ACC_ROLE,
+    ROLE_SYSTEM_LIST, ROLE_SYSTEM_LISTITEM, ROLE_SYSTEM_STATUSBAR,
+};
 use windows::Win32::UI::Controls::Dialogs::{ChooseColorW, CC_FULLOPEN, CC_RGBINIT, CHOOSECOLORW};
 use windows::Win32::UI::Controls::{
     SetWindowTheme, BeginBufferedPaint, BufferedPaintInit, EndBufferedPaint, BPBF_TOPDOWNDIB, DRAWITEMSTRUCT, ODS_SELECTED, TOOLTIPS_CLASSW,
@@ -307,6 +310,7 @@ fn main() -> Result<()> {
         for (id, label, hint) in toolbar_tips() {
             add_tip(child(main, w!("BUTTON"), PCWSTR(HSTRING::from(label).as_ptr()), BS_OWNERDRAW as u32, WINDOW_EX_STYLE(0), id, HFONT::default()), hint);
         }
+        create_status(main);
         if let Ok((t, th)) = create_tree(main) {
             app(|a| (a.tree, a.tree_hwnd) = (Some(t), th));
         }
@@ -1477,6 +1481,22 @@ mod tests {
         assert_eq!(status_fit(0, 1000, 12, 60, None, 2000, Some(100), &[]), StatusFit { note: None, head: (0, 1000), mid: None, drive: None });
         // a short items text never pushes the drive into a smaller form
         assert_eq!(status_fit(0, 300, 12, 60, None, 40, None, &[248]).drive, Some((52, 300, 0)));
+    }
+
+    #[test]
+    fn status_line_for_screen_readers() {
+        let st = StatusLine {
+            note: Some("No match: *.tmp".into()),
+            head: format!("12 items{ZONE_DOT}3 selected"),
+            mid: vec!["Filter pdf".into()],
+            drive: Some(("C:".into(), 1 << 30, 4 << 30)),
+        };
+        let words = status_speech(&st);
+        assert!(words.starts_with("No match: *.tmp, 12 items, 3 selected, Filter pdf, C: "), "{words}"); // the note is heard first
+        assert!(words.contains("1.0 GB") && words.contains("4.0 GB") && !words.contains('·'), "{words}");
+        // no note, nothing in the middle, no drive: no empty pieces
+        let st = StatusLine { head: "0 items".into(), ..Default::default() };
+        assert_eq!(status_speech(&st), "0 items");
     }
 
     #[test]

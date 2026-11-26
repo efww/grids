@@ -103,6 +103,16 @@ pub(crate) unsafe fn set_note(note: String) {
     update_status();
 }
 
+// A note that keeps updating in place (checksum progress): shown like set_note, but not read out at every step.
+pub(crate) unsafe fn set_progress_note(note: String) {
+    app(|x| {
+        let until = Instant::now() + Duration::from_secs(5);
+        x.note = Some((note, until));
+        x.said = Some(until);
+    });
+    update_status();
+}
+
 // Calls `each` for every item in the view with redraw off; true = that item changed. None: over SEND_MAX,
 // nothing touched (and the status line says so).
 pub(crate) unsafe fn bulk_select(fv: &IFolderView2, mut each: impl FnMut(i32) -> bool) -> Option<usize> {
