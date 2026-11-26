@@ -201,10 +201,6 @@ pub(crate) fn ev_target(h: &EvHit, into: bool) -> (String, Option<String>) {
     }
 }
 
-pub(crate) fn same_dir(a: &str, b: &str) -> bool {
-    a.trim_end_matches('\\').eq_ignore_ascii_case(b.trim_end_matches('\\'))
-}
-
 /// Arrow / page keys: the next row, kept inside the list.
 pub(crate) fn ev_step(sel: Option<usize>, n: usize, d: i32) -> Option<usize> {
     if n == 0 {

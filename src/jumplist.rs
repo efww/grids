@@ -23,25 +23,6 @@ pub(crate) fn take_folder_flag(args: &mut Vec<String>) -> bool {
     on
 }
 
-/// One command-line argument in quotes, read back unchanged by Windows' argument rules:
-/// backslashes before a quote and at the end are doubled, so "D:\\" keeps its closing quote.
-pub(crate) fn quote_arg(s: &str) -> String {
-    let (mut o, mut bs) = (String::from("\""), 0);
-    for c in s.chars() {
-        if c == '\\' {
-            bs += 1;
-            continue;
-        }
-        let n = if c == '"' { bs * 2 + 1 } else { bs };
-        o.push_str(&"\\".repeat(n));
-        o.push(c);
-        bs = 0;
-    }
-    o.push_str(&"\\".repeat(bs * 2));
-    o.push('"');
-    o
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct JumpLink {
     pub(crate) title: String,

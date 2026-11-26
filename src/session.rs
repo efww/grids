@@ -666,6 +666,36 @@ pub(crate) fn resolve(p: String) -> String {
     }
 }
 
+/// One command-line argument in quotes, read back unchanged by Windows' argument rules:
+/// backslashes before a quote and at the end are doubled, so "D:\\" keeps its closing quote.
+/// Used for both the jump list's arguments and WinMerge's.
+pub(crate) fn quote_arg(s: &str) -> String {
+    let (mut o, mut bs) = (String::from("\""), 0);
+    for c in s.chars() {
+        if c == '\\' {
+            bs += 1;
+            continue;
+        }
+        let n = if c == '"' { bs * 2 + 1 } else { bs };
+        o.push_str(&"\\".repeat(n));
+        o.push(c);
+        bs = 0;
+    }
+    o.push_str(&"\\".repeat(bs * 2));
+    o.push('"');
+    o
+}
+
+/// This running exe's full path, as written to the registry (Run key, Explorer's menu).
+pub(crate) fn this_exe() -> Option<String> {
+    std::env::current_exe().ok().map(|p| p.to_string_lossy().into_owned())
+}
+
+/// Same folder, ignoring case and a trailing backslash (C:\x vs c:\X\).
+pub(crate) fn same_dir(a: &str, b: &str) -> bool {
+    a.trim_end_matches('\\').eq_ignore_ascii_case(b.trim_end_matches('\\'))
+}
+
 pub(crate) fn is_session_file(p: &Path) -> bool {
     // .qdr: sessions saved before the rename
     p.extension().is_some_and(|x| x.eq_ignore_ascii_case("grids") || x.eq_ignore_ascii_case("qdr"))

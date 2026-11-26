@@ -48,10 +48,6 @@ pub(crate) fn approved_off(data: &[u8]) -> bool {
     data.first().is_some_and(|b| b & 1 == 1)
 }
 
-fn this_exe() -> Option<String> {
-    std::env::current_exe().ok().map(|p| p.to_string_lossy().into_owned())
-}
-
 unsafe fn run_value() -> Option<String> {
     let (mut buf, mut n) = ([0u16; 1024], 2048u32);
     RegGetValueW(HKEY_CURRENT_USER, &HSTRING::from(RUN_KEY), &HSTRING::from(RUN_NAME), RRF_RT_REG_SZ, None, Some(buf.as_mut_ptr() as _), Some(&mut n)).ok().ok()?;

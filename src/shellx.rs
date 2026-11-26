@@ -137,10 +137,6 @@ fn base_of(p: &str) -> &str {
     p.trim_end_matches('\\').rsplit('\\').next().unwrap_or(p)
 }
 
-fn same_dir(a: &str, b: &str) -> bool {
-    a.trim_end_matches('\\').eq_ignore_ascii_case(b.trim_end_matches('\\'))
-}
-
 unsafe fn view_id(i: usize) -> usize {
     view_of::<IShellView>(i).map_or(0, |v| v.as_raw() as usize)
 }
@@ -512,22 +508,6 @@ pub(crate) fn winmerge_candidates(reg: &[Option<String>], roots: &[String]) -> V
     out
 }
 
-// Quoted for CommandLineToArgvW: backslashes before a quote (or the closing quote) are doubled, so C:\ stays C:\.
-pub(crate) fn quote_arg(s: &str) -> String {
-    let mut out = String::from("\"");
-    let mut bs = 0;
-    for c in s.chars() {
-        if c == '"' {
-            out.push_str(&"\\".repeat(bs + 1));
-        }
-        bs = if c == '\\' { bs + 1 } else { 0 };
-        out.push(c);
-    }
-    out.push_str(&"\\".repeat(bs));
-    out.push('"');
-    out
-}
-
 // /e: Esc closes it, /u: the paths stay out of WinMerge's recent list, /r: whole folder trees.
 pub(crate) fn winmerge_args(left: &str, right: &str, folders: bool) -> String {
     format!("/e /u{} {} {}", if folders { " /r" } else { "" }, quote_arg(left), quote_arg(right))
@@ -666,10 +646,6 @@ unsafe fn set_ctx_at(base: &str, exe: &str, label: &str, on: bool) -> bool {
     }
 }
 
-fn this_exe() -> Option<String> {
-    std::env::current_exe().ok().map(|p| p.to_string_lossy().into_owned())
-}
-
 /// Checked in the View menu only when the menu runs this exe: after moving Grids, one click registers the new path.
 pub(crate) unsafe fn ctx_menu_on() -> bool {
     this_exe().is_some_and(|e| ctx_on_at(CTX_BASE, &e))
@@ -781,6 +757,28 @@ pub(crate) unsafe fn shell_pick(h: HWND, src: usize, p: usize, picked: std::resu
 mod tests {
     use super::*;
 
+    // A whole command line split by Windows' own CommandLineToArgvW; the first token is the program name.
+    fn split(cmd: &str) -> Vec<String> {
+        unsafe {
+            let mut n = 0;
+            let v = CommandLineToArgvW(&HSTRING::from(cmd), &mut n);
+            let out: Vec<String> = (0..n as usize).map(|k| (*v.add(k)).to_string().unwrap()).collect();
+            _ = windows::Win32::Foundation::LocalFree(Some(windows::Win32::Foundation::HLOCAL(v as _)));
+            out
+        }
+    }
+
+    // The one quote_arg (jump list and WinMerge) read back by the real Windows rules, not a look-alike.
+    #[test]
+    fn quote_arg_matches_windows() {
+        // "x " in front: the program name has its own rules, and an empty line returns this exe's path
+        let one = |p: &str| split(&format!("x {}", quote_arg(p))).into_iter().skip(1).collect::<Vec<_>>();
+        for p in [r"D:\", r"C:\a b\", r"\\srv\s", r"E:\x\\", r#"a"b"#, r#"C:\q\"x"#, "", r"C:\한글 폴더", r"C:\x\\\"] {
+            assert_eq!(one(p), [p], "{p}");
+        }
+        assert_eq!(split(&format!("x {}", winmerge_args(r"D:\", r"C:\a b\", true)))[1..], ["/e", "/u", "/r", r"D:\", r"C:\a b\"]);
+    }
+
     #[test]
     fn new_text_file_names() {
         assert_eq!(fresh_name("New Text Document.txt", |_| false), "New Text Document.txt");
@@ -851,13 +849,6 @@ mod tests {
         assert!(!ctx_owned(&ctx_command(r"D:\old\grids.exe"), exe)); // moved exe: not checked, one click re-registers
         assert!(!ctx_owned(r#""C:\Program Files\My Tools\grids.exe" "%V""#, exe));
         // what Explorer passes after %V is filled in, split by Windows' own rules, then cleaned and resolved
-        let split = |cmd: &str| unsafe {
-            let mut n = 0;
-            let v = CommandLineToArgvW(&HSTRING::from(cmd), &mut n);
-            let out: Vec<String> = (0..n as usize).map(|k| (*v.add(k)).to_string().unwrap()).collect();
-            _ = windows::Win32::Foundation::LocalFree(Some(windows::Win32::Foundation::HLOCAL(v as _)));
-            out
-        };
         let run = |v: &str| menu_args(split(&ctx_command(exe).replace("%V", v)).into_iter().skip(1).collect());
         assert_eq!(run(r"D:\"), [FOLDER_FLAG, r"D:\"]);
         assert_eq!(run(r"C:\Users\Public"), [FOLDER_FLAG, r"C:\Users\Public"]);
