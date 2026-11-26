@@ -144,6 +144,7 @@ details summary::marker{color:var(--green)}
 .toast.err{background:var(--red)}
 .hidden{display:none!important}
 .dot{display:inline-block;width:8px;height:8px;margin-right:6px}
+.nw th,.nw td{white-space:nowrap}.nw td:last-child{white-space:normal}
 </style>
 </head>
 <body>
@@ -159,6 +160,7 @@ details summary::marker{color:var(--green)}
     <div class="st" data-s="concept"><i>3</i>개념 체크리스트</div>
     <div class="st" data-s="review"><i>4</i>검토</div>
     <div class="st" data-s="output"><i>5</i>출력</div>
+    <div class="st" data-s="cable"><i>6</i>케이블 · JB</div>
     <div class="st" data-s="ai" style="margin-top:14px;border-top:1px solid var(--line-l)"><i>AI</i>AI 연결 설정</div>
     <div class="foot">도면 인식은 한 번,<br>체크리스트를 바꾸면 IO가<br>즉시 다시 계산됩니다.<br><br><span class="mono">IO 1점 = 인덱스 1행</span><br><br><span id="fontst"></span></div>
   </nav>
@@ -184,7 +186,7 @@ const post = (path, data) => api(path, {method:"POST", headers:{"Content-Type":"
 const P = p => `p/${encodeURIComponent(S.project)}/${p}`;
 function toast(msg, err) { const t=$("#toast"); t.textContent=msg; t.className="toast"+(err?" err":""); t.style.display="block"; clearTimeout(t._h); t._h=setTimeout(()=>t.style.display="none", err?6000:2500); }
 
-function go(screen) { S.tok++; S.screen = screen; render(); }
+function go(screen) { S.tok++; S.screen = screen; if (screen === "cable") CK.data = null; render(); }
 document.querySelectorAll("#nav .st").forEach(el => el.onclick = () => go(el.dataset.s));
 
 function navState() {
@@ -192,7 +194,7 @@ function navState() {
   document.querySelectorAll("#nav .st").forEach(el => {
     const s = el.dataset.s;
     el.classList.toggle("on", s === S.screen);
-    el.classList.toggle("dis", (!S.project && !["projects","ai"].includes(s)) || (!ex && ["concept","review","output"].includes(s)));
+    el.classList.toggle("dis", (!S.project && !["projects","ai"].includes(s)) || (!ex && ["concept","review","output","cable"].includes(s)));
     el.classList.toggle("done", (s==="projects" && S.project) || (s==="extract" && ex));
   });
   $("#pname").textContent = S.project || "선택 안 됨";
@@ -212,6 +214,7 @@ async function render() {
     if (S.screen === "concept") return await renderConcept(m);
     if (S.screen === "review") return await renderReview(m);
     if (S.screen === "output") return await renderOutput(m);
+    if (S.screen === "cable") return await renderCable(m);
   } catch (e) { toast(e.message, true); }
 }
 
@@ -545,7 +548,7 @@ function bindSide() {
     if (i >= 0) { S.tab = i; renderConcept($("#main")).then(() => { const e = document.getElementById("it-"+id); if (e) { e.scrollIntoView({behavior:"smooth", block:"center"}); e.style.outline = "2px solid var(--green)"; } }); } });
   const ib = $("#impbtn"); if (ib) ib.onclick = async () => { ib.textContent = "계산 중…"; ib.disabled = true; S.impact = await api(P("impact")); if ($("#side")) { $("#side").innerHTML = sidePanel(); bindSide(); } };
 }
-async function refreshSummary() { S.summary = await api(P("summary")); S.review = null; S.impact = null; }
+async function refreshSummary() { S.summary = await api(P("summary")); S.review = null; S.impact = null; CK.data = null; }
 async function setVal(id, v) {
   try { S.concept = await post(P("concept"), {set:{[id]:v}}); await refreshSummary(); if (S.screen==="concept") renderConcept($("#main")); }
   catch(e) { toast(e.message, true); }
@@ -849,6 +852,107 @@ async function renderOutput(m) {
     try { const r = await post(P("export"), {overlay: $("#ov").checked}); toast(r.files.join(", ") + " 생성" + ((r.warnings||[]).length ? " · " + r.warnings.join(" ") : ""), !!(r.warnings||[]).length); if (S.screen === "output") renderOutput(m); }
     catch(e) { toast(e.message, true); if (S.screen === "output" && $("#mk")) { $("#mk").disabled = false; $("#mk").textContent = "엑셀 만들기"; } }
   };
+}
+
+/* ---------------------------------------------------------------- 6 cable */
+const CK = {tab:0, view:"spec", data:null};
+function ckCtl(it, v) {
+  if (it.type === "select") return `<select data-ck="${it.id}">${it.options.map(o=>`<option ${o===String(v)?"selected":""}>${esc(o)}</option>`).join("")}</select>`;
+  if (it.type === "text") return `<input type="text" data-ck="${it.id}" value="${esc(v)}" style="width:230px">`;
+  const pct = it.step < 1;
+  return `<input type="number" data-ck="${it.id}" step="${it.step||1}" min="0" value="${esc(v)}">${pct?`<span class="def">${Math.round(v*100)}%</span>`:(it.unit?`<span class="def">${esc(it.unit)}</span>`:"")}`;
+}
+function ckDef(it) { return it.step < 1 ? Math.round(it.default*100)+"%" : it.default + (it.unit||""); }
+function ckBranch(g, V) {
+  const shc = {"OS (전체 차폐)":"OS","IS+OS (개별+전체 차폐)":"IS-OS","비차폐":""};
+  const by = id => g.items.find(x => x.id === id);
+  const rows = ["AI","AO","DI","DO","RTD"].map(io => {
+    const f = by(io+"_form"), q = by(io+"_sq"), h = by(io+"_shield");
+    const chg = [f,q,h].some(x => String(V[x.id]) !== String(x.default));
+    const spec = `${V[f.id]} x ${V[q.id]}SQ ${shc[V[h.id]]||""}`;
+    return `<tr style="${chg?"background:var(--chg)":""}"><td><b>${io}</b>${io==="RTD"?' <span class="def">(TC/RTD)</span>':""}</td>
+      <td>${ckCtl(f, V[f.id])}</td><td>${ckCtl(q, V[q.id])}</td><td>${ckCtl(h, V[h.id])}</td><td class="mono">${esc(spec)}</td></tr>`; }).join("");
+  const cm = by("COMM_spec");
+  return `<table class="mini" style="margin-top:6px"><tr><th>IO</th><th>구성</th><th>굵기 (SQ)</th><th>차폐</th><th>사양</th></tr>${rows}</table>
+    <div class="item ${String(V[cm.id])!==String(cm.default)?"chg":""}" style="grid-template-columns:1fr 260px"><div><div class="nm">${esc(cm.name)}</div><div class="ef">${esc(cm.help)}</div></div><div class="ctl">${ckCtl(cm, V[cm.id])}</div></div>`;
+}
+function ckItems(g, V, d) {
+  const body = g.items.map(it => { const chg = String(V[it.id]) !== String(it.default);
+    return `<div class="item ${chg?"chg":""}" style="grid-template-columns:1fr 300px">
+      <div><div class="nm">${esc(it.name)}</div>${it.help?`<div class="ef">${esc(it.help)}</div>`:""}</div>
+      <div class="ctl">${chg?`<span class="def">기본 ${esc(ckDef(it))}</span>`:""}${ckCtl(it, V[it.id])}</div></div>`; }).join("");
+  if (g.id !== "len") return body;
+  return body + `<h2 style="font-size:14px;margin:18px 0 4px">유닛별 JB → 룸 길이</h2>
+    <p class="xnote">비워 두면 위 기본값(${esc(V.len_trunk)}m)을 씁니다. 룸에서 먼 유닛만 따로 넣으세요.</p>
+    <table class="mini"><tr><th>유닛 / 그룹</th><th>JB → 룸 (m)</th></tr>${d.areas.map(a=>`<tr><td class="mono">${esc(a)}</td>
+      <td><input type="number" min="0" data-trunk="${esc(a)}" value="${esc(d.trunk[a] ?? "")}" placeholder="${esc(V.len_trunk)}" style="width:90px"> m</td></tr>`).join("")}</table>`;
+}
+function ckSide(d) {
+  const s = d.summary, K = s.kinds || {};
+  const kv = (k, lab) => K[k] ? `<div class="kv"><span>${lab}</span><b>${fmt(K[k].count)}가닥 · ${fmt(K[k].length)} m</b></div>` : "";
+  return `<div class="panel">
+    <div style="font-size:12.5px;color:var(--sub)">케이블 총 길이 (가정 길이)</div>
+    <div style="font-size:46px;font-weight:300;line-height:1.05;letter-spacing:-.03em"><span class="uline">${fmt(s.length)}</span><small style="font-size:16px;color:var(--sub)"> m</small></div>
+    <div style="font-size:12.5px;color:var(--sub);margin:8px 0 10px">${fmt(s.cables)}가닥 · JB ${fmt(s.jbs)}개 · JB 평균 채움 ${Math.round(s.jb_fill*100)}%</div>
+    ${kv("분기","분기 (계기→JB)")}${kv("멀티","멀티 (JB→룸)")}${kv("패키지","패키지 제어반→룸")}${kv("MCC","MCC→룸")}${kv("통신","통신 직결")}
+    <div class="kv"><span>JB 크기</span><b>${Object.entries(s.jb_sizes).map(([k,n])=>`${k} × ${n}`).join(" · ")||"-"}</b></div>
+  </div>
+  <div class="panel"><h2 style="font-size:14px;margin-bottom:4px">프리셋 (리드 엔지니어 기준)</h2>
+    <p class="lead" style="font-size:12px;margin:0 0 10px;line-height:1.55">지금 케이블 설정을 이름 붙여 저장하고 다른 프로젝트에서 불러옵니다.${d.preset?` 현재: <b>${esc(d.preset)}</b>`:""}</p>
+    ${d.presets.length?`<div style="display:flex;gap:6px;margin-bottom:8px"><select id="ckpre" style="flex:1">${d.presets.map(p=>`<option>${esc(p)}</option>`).join("")}</select><button class="btn sm line" id="ckload">불러오기</button></div>`:""}
+    <div style="display:flex;gap:6px"><input type="text" id="ckname" placeholder="예: 김부장 기준" style="flex:1"><button class="btn sm" id="cksave">저장</button></div>
+  </div>
+  <div class="panel" style="font-size:12px;color:var(--sub);line-height:1.6">
+    <b style="color:var(--ink)">케이블이 없는 행</b><br>${Object.entries(s.skipped).map(([k,n])=>`${esc(k)} ${fmt(n)}`).join("<br>")||"-"}
+  </div>`;
+}
+function ckTables(d) {
+  const s = d.summary;
+  const vt = (k, lab) => `<a class="${CK.view===k?"on":""}" data-ckv="${k}">${lab}</a>`;
+  let body = "";
+  if (CK.view === "spec") body = `<table><tr><th>구분</th><th>사양</th><th style="text-align:right">가닥</th><th style="text-align:right">길이 (m)</th></tr>
+    ${s.specs.map(x=>`<tr><td>${esc(x.kind)}</td><td class="mono">${esc(x.spec)}</td><td style="text-align:right">${fmt(x.count)}</td><td style="text-align:right"><b>${fmt(x.length)}</b></td></tr>`).join("")}</table>`;
+  if (CK.view === "jb") body = `<table class="nw"><tr><th>JB</th><th>구분</th><th>System</th><th>신호</th><th>IS</th><th>크기</th><th>사용</th><th>스페어</th><th>멀티 케이블</th><th>P&amp;ID</th></tr>
+    ${d.jbs.map(j=>`<tr><td class="mono"><b>${esc(j.no)}</b></td><td>${esc(j.kind)}</td><td>${esc(j.system)}</td><td>${esc(j.cls)}</td><td>${esc(j.is)}</td><td>${esc(j.size)}</td><td>${j.used}</td><td>${j.spare}</td><td class="mono">${esc(j.multi)}</td><td style="font-size:12px">${esc(j.dwgs)}</td></tr>`).join("")}</table>`;
+  if (CK.view === "cab") body = `<table class="nw"><tr><th>Cable No</th><th>구분</th><th>From</th><th>To</th><th>사양</th><th>IO</th><th style="text-align:right">m</th><th>근거</th></tr>
+    ${d.cables.map(c=>`<tr><td class="mono">${esc(c.no)}</td><td>${esc(c.kind)}</td><td class="mono">${esc(c.frm)}</td><td class="mono">${esc(c.to)}</td><td class="mono" style="font-size:12px">${esc(c.spec)}</td><td>${esc(c.io)}</td><td style="text-align:right">${fmt(c.length)}</td><td style="font-size:11.5px;color:var(--sub)">${esc(c.basis)}</td></tr>`).join("")}</table>
+    ${d.cables_total>d.cables.length?`<p class="def" style="margin-top:6px">화면에는 ${fmt(d.cables.length)}가닥만 표시합니다. 전체 ${fmt(d.cables_total)}가닥은 엑셀에 들어갑니다.</p>`:""}`;
+  return `<div class="panel" style="margin-top:16px"><div class="tabs" style="margin-bottom:10px">${vt("spec","사양별 물량")}${vt("jb",`JB 리스트 (${d.jbs.length})`)}${vt("cab",`케이블 스케줄 (${d.cables_total})`)}</div>${body}</div>`;
+}
+async function renderCable(m) {
+  const t = S.tok;
+  if (!CK.data || CK.data._p !== S.project) { CK.data = await api(P("cable")); CK.data._p = S.project; }
+  if (t !== S.tok) return;
+  const d = CK.data, G = d.schema, V = d.values;
+  if (CK.tab >= G.length) CK.tab = 0;
+  const g = G[CK.tab];
+  m.innerHTML = `
+  <div class="head"><div><div class="eyebrow">STEP 6</div><h1>케이블 · JB</h1>
+    <p class="lead">만들어진 인덱스의 IO로 분기 케이블, JB, 멀티 케이블을 뽑습니다. PLOT PLAN 전이라 길이는 가정입니다. (변경 ${d.changed}건)</p></div>
+    <div style="display:flex;gap:8px"><button class="btn line" id="ckreset">기본값으로</button><button class="btn" id="ckmk">케이블 엑셀 만들기</button></div></div>
+  <div style="display:flex;gap:20px;align-items:flex-start">
+    <div style="flex:1;min-width:0">
+      <div class="panel">
+        <div class="tabs">${G.map((x,i)=>`<a class="${i===CK.tab?"on":""}" data-ckt="${i}">${esc(x.title)}</a>`).join("")}</div>
+        <p class="xnote" style="margin-top:10px">${esc(g.lead)}</p>
+        ${g.id === "branch" ? ckBranch(g, V) : ckItems(g, V, d)}
+      </div>
+      ${ckTables(d)}
+    </div>
+    <div class="side">${ckSide(d)}</div>
+  </div>`;
+  const upd = async body => { try { CK.data = await post(P("cable"), body); CK.data._p = S.project; if (S.screen==="cable") renderCable(m); } catch(e) { toast(e.message, true); } };
+  m.querySelectorAll("[data-ckt]").forEach(a => a.onclick = () => { CK.tab = +a.dataset.ckt; renderCable(m); });
+  m.querySelectorAll("[data-ckv]").forEach(a => a.onclick = () => { CK.view = a.dataset.ckv; renderCable(m); });
+  m.querySelectorAll("[data-ck]").forEach(el => el.onchange = () => upd({set:{[el.dataset.ck]: el.value}}));
+  m.querySelectorAll("[data-trunk]").forEach(el => el.onchange = () => upd({trunk:{[el.dataset.trunk]: el.value}}));
+  $("#ckreset").onclick = () => { if (confirm("케이블 설정을 모두 기본값으로 되돌릴까요?")) upd({reset:true}); };
+  if ($("#ckload")) $("#ckload").onclick = () => { if (confirm(`'${$("#ckpre").value}' 프리셋으로 설정을 바꿀까요? (유닛별 길이는 유지)`)) upd({preset_load: $("#ckpre").value}); };
+  $("#cksave").onclick = async () => { const n = $("#ckname").value.trim(); if (!n) return toast("프리셋 이름을 입력하세요", true); await upd({preset_save:n}); toast("프리셋을 저장했습니다"); };
+  $("#ckmk").onclick = async () => { const b = $("#ckmk"); b.disabled = true; b.textContent = "만드는 중…";
+    try { const r = await post(P("cable_export"), {}); toast(r.files.join(", ") + " 생성 · 5 출력 화면에서 받을 수 있습니다"); }
+    catch(e) { toast(e.message, true); }
+    if ($("#ckmk")) { $("#ckmk").disabled = false; $("#ckmk").textContent = "케이블 엑셀 만들기"; } };
 }
 
 api("font").then(f => { const k = Object.keys(f.found||{}); $("#fontst").innerHTML = k.length

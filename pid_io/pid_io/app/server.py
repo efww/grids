@@ -24,6 +24,7 @@ import pymupdf as fitz
 from ..ai import providers as ai
 from ..ai import tasks as ait
 from ..concept import Concept
+from .. import cable
 from .. import decisions as dec
 from .. import pagecache, protect
 from ..explain import explain
@@ -697,6 +698,61 @@ def card_png(name: str, key: str) -> Path:
     return crop(pdf, page, cx, cy, out, sym=sym, radius=r, regions=c[page])
 
 
+def _area_map(name: str) -> dict:
+    d = pdir(name)
+    am = d / "area_map.yaml" if (d / "area_map.yaml").exists() else PROTO / "area_map.yaml"
+    return ((load_protocol(am) or {}).get("map") or {}) if am.exists() else {}
+
+
+def cable_result(name: str):
+    c = computed(name)
+    if not c:
+        raise ValueError("먼저 추출을 실행해 주세요")
+    s = cable.load(pdir(name))
+    return s, cable.build(c[4], s, _area_map(name))
+
+
+def cable_view(name: str):
+    s, res = cable_result(name)
+    trunk_areas = sorted({j["area"] for j in res["jbs"] if j["kind"] == "필드"}
+                         | {c.get("unit") or "00" for c in res["cables"] if c["kind"] in ("패키지", "통신")})
+    return {"schema": cable.SCHEMA, "values": s["values"], "trunk": s["trunk"], "preset": s.get("preset", ""),
+            "presets": cable.list_presets(HOME), "changed": len(cable.changed(s)),
+            "summary": res["summary"], "areas": trunk_areas,
+            "jbs": [{k: j[k] for k in ("no", "kind", "area", "system", "cls", "is", "size", "used", "spare", "multi",
+                                       "dwgs")} for j in res["jbs"]],
+            "cables": res["cables"][:400], "cables_total": len(res["cables"])}
+
+
+def cable_update(name: str, b: dict):
+    d = pdir(name)
+    s = cable.load(d)
+    if b.get("reset"):
+        s = {"values": dict(cable.DEFAULTS), "trunk": {}, "preset": ""}
+    if b.get("preset_load"):
+        cable.load_preset(HOME, b["preset_load"], s)
+    for k, v in (b.get("set") or {}).items():
+        cable.set_value(s, k, v)
+    for a, m in (b.get("trunk") or {}).items():
+        if str(m).strip() in ("", "None"):
+            s["trunk"].pop(a, None)
+        else:
+            if float(m) < 0:
+                raise ValueError("길이는 0 이상이어야 합니다")
+            s["trunk"][a] = float(m)
+    if b.get("preset_save"):
+        s["preset"] = cable.save_preset(HOME, b["preset_save"], s)
+    cable.save(d, s)
+    return cable_view(name)
+
+
+def cable_export(name: str):
+    s, res = cable_result(name)
+    out = pdir(name) / "output" / f"Cable_Schedule_{safe_name(name)}_{time.strftime('%Y%m%d_%H%M')}.xlsx"
+    cable.write_xlsx(res, s, out, name)
+    return {"files": [out.name]}
+
+
 def export(name: str, body: dict):
     c = computed(name)
     if not c:
@@ -1065,6 +1121,14 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, f.read_bytes(), "image/png")
             if act == "export" and method == "POST":
                 return self._send(200, export(name, self._json()))
+            if act == "cable":
+                with CALC:
+                    if method == "POST":
+                        return self._send(200, cable_update(name, self._json()))
+                    return self._send(200, cable_view(name))
+            if act == "cable_export" and method == "POST":
+                with CALC:
+                    return self._send(200, cable_export(name))
             if act == "outputs":
                 d = pdir(name) / "output"
                 fl = sorted(d.iterdir(), key=lambda p: -p.stat().st_mtime) if d.exists() else []
