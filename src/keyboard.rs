@@ -11,6 +11,10 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
     if let Some(used) = ev_key(m) {
         return used;
     }
+    // folder usage: every key is its own while it has the focus (no Ctrl+W, Alt+← … on the pane behind)
+    if let Some(used) = usage_key(m) {
+        return used;
+    }
     let down = |k: VIRTUAL_KEY| GetKeyState(k.0 as i32) < 0;
     let (ctrl, shift, alt) = (down(VK_CONTROL), down(VK_SHIFT), down(VK_MENU));
     // the pattern box takes Enter / Esc; everything else is typing, so pane shortcuts stay out of it
@@ -216,6 +220,11 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
             }
         }
         VK_C if ctrl && shift && !alt && list() => copy_paths(a),
+        VK_U if ctrl && shift && !alt && list() => {
+            if m.lParam.0 & (1 << 30) == 0 {
+                open_usage(a);
+            }
+        }
         // Ctrl+M: the ⇄ menu, opened when M is let go, so M's auto-repeats (swallowed while held) can't pick
         // its "&Move" item
         VK_M if ctrl && !shift && !alt && list() => {
@@ -326,6 +335,7 @@ pub(crate) unsafe fn pre_translate(m: &MSG) -> bool {
         }
         WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN => {
             kids_cancel();
+            usage_click_away(m.hwnd);
             if let Some(i) = pane_of(m.hwnd) {
                 set_active(i);
             }

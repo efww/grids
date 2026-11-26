@@ -603,9 +603,15 @@ unsafe fn ev_open(k: Option<usize>, into: bool) {
         _ = MessageBeep(MB_ICONWARNING);
         return;
     };
-    let (i, main) = app(|a| (a.s.active, a.main));
+    let i = app(|a| a.s.active);
     ev_close(false);
     let (to, name) = ev_target(&hit, into);
+    show_in_pane(i, to, name);
+}
+
+// Pane i shows folder `to`, then (TIMER_EV_SELECT) selects `name` there once its list has it. Also folder usage's Enter.
+pub(crate) unsafe fn show_in_pane(i: usize, to: String, name: Option<String>) {
+    let main = app(|a| a.main);
     let here = app(|a| same_dir(&a.s.paths[i], &to));
     if !here && !navigate(i, &to) {
         _ = MessageBeep(MB_ICONWARNING);
@@ -655,7 +661,7 @@ unsafe fn select_name(i: usize, name: &str) -> bool {
 }
 
 // The shell's icon for a name, by its type only (no disk access).
-unsafe fn type_icon(name: &str, folder: bool) -> i32 {
+pub(crate) unsafe fn type_icon(name: &str, folder: bool) -> i32 {
     let mut fi = SHFILEINFOW::default();
     let attr = if folder { FILE_ATTRIBUTE_DIRECTORY } else { FILE_ATTRIBUTE_NORMAL };
     let flags = SHGFI_SYSICONINDEX | SHGFI_SMALLICON | SHGFI_USEFILEATTRIBUTES;
