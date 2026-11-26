@@ -185,6 +185,26 @@ pub(crate) fn follow(path: &str, changes: &[Change]) -> Option<Follow> {
     }
 }
 
+// `list` (recent folders, favourites) after `changes`: a folder renamed on disk (`on_disk`), or one inside it, takes
+// its new name in place; a removed one stays (it may come back from the Recycle Bin). Names that end up the same,
+// any case, keep only the first. The flag: at least one entry took a new name.
+pub(crate) fn follow_list(list: &[String], changes: &[Change], on_disk: impl Fn(&str, &str) -> bool) -> (Vec<String>, bool) {
+    let (mut out, mut moved) = (Vec::<String>::with_capacity(list.len()), false);
+    for p in list {
+        let p = match follow(p, changes) {
+            Some(Follow::To(t)) if on_disk(p, &t) => {
+                moved = true;
+                t
+            }
+            _ => p.clone(),
+        };
+        if !out.iter().any(|s| s.eq_ignore_ascii_case(&p)) {
+            out.push(p);
+        }
+    }
+    (out, moved)
+}
+
 fn fixed_drive(path: &str) -> bool {
     path.get(1..3) == Some(":\\") && unsafe { GetDriveTypeW(&HSTRING::from(&path[..3])) } == 3 // DRIVE_FIXED
 }
@@ -219,7 +239,7 @@ pub(crate) unsafe fn unwatch_folders() {
 }
 
 // WM_SHELL_CHANGE: the two ID lists become paths (copied while locked), and a change that concerns a pane, a tab,
-// the recent list or an earlier queued change waits for TIMER_SHELL. No disk calls here.
+// the recent list, a favourite or an earlier queued change waits for TIMER_SHELL. No disk calls here.
 pub(crate) unsafe fn shell_change(h: HWND, wp: WPARAM, lp: LPARAM) {
     let mut pp: *mut *mut ITEMIDLIST = std::ptr::null_mut();
     let mut ev = 0i32;
@@ -254,7 +274,7 @@ pub(crate) unsafe fn shell_change(h: HWND, wp: WPARAM, lp: LPARAM) {
     }
     let start = app(|a| {
         let s = &a.s;
-        let ours = s.paths.iter().chain(s.tabs.iter().flatten()).chain(&s.recent).any(|p| under(p, &old).is_some());
+        let ours = s.paths.iter().chain(s.tabs.iter().flatten()).chain(&s.recent).chain(&s.favs).any(|p| under(p, &old).is_some());
         let chained = a.shell_q.iter().any(|c| matches!(c, Change::Renamed(_, n) if under(n, &old).is_some() || under(&old, n).is_some()));
         if !(ours || chained) || a.shell_q.len() >= 256 {
             return false;
@@ -267,11 +287,12 @@ pub(crate) unsafe fn shell_change(h: HWND, wp: WPARAM, lp: LPARAM) {
     }
 }
 
-// TIMER_SHELL: renames that really happened move tabs and the recent list along, and panes open the new name
-// (on_nav confirms it and says so); a pane inside a removed folder opens its nearest parent (go_near).
+// TIMER_SHELL: renames that really happened move tabs, the recent list and favourites along, and panes open the new
+// name (on_nav confirms it and says so); a pane inside a removed folder opens its nearest parent (go_near).
 pub(crate) unsafe fn shell_tick(h: HWND) {
     _ = KillTimer(Some(h), TIMER_SHELL);
-    let (changes, paths, tabs, recent) = app(|a| (std::mem::take(&mut a.shell_q), a.s.paths.clone(), a.s.tabs.clone(), a.s.recent.clone()));
+    let (changes, paths, tabs, recent, favs) =
+        app(|a| (std::mem::take(&mut a.shell_q), a.s.paths.clone(), a.s.tabs.clone(), a.s.recent.clone(), a.s.favs.clone()));
     if changes.is_empty() {
         return;
     }
@@ -280,20 +301,34 @@ pub(crate) unsafe fn shell_tick(h: HWND) {
         _ => p.clone(),
     };
     let tabs: Vec<Vec<String>> = tabs.iter().map(|t| t.iter().map(moved).collect()).collect();
-    let mut recent: Vec<String> = recent.iter().map(moved).collect();
-    let mut seen: Vec<String> = Vec::new();
-    recent.retain(|p| {
-        let new = !seen.iter().any(|s| s.eq_ignore_ascii_case(p));
-        seen.push(p.clone());
-        new
-    });
-    let live = app(|a| {
+    let (recent, _) = follow_list(&recent, &changes, moved_on_disk);
+    // favourites change only when one took a new name: a case-only duplicate typed into grids.ini stays otherwise
+    let favs = Some(follow_list(&favs, &changes, moved_on_disk)).filter(|f| f.1).map(|f| f.0);
+    // written back from the same snapshot with no message in between, so an added or removed favourite isn't lost
+    let fav_moved = favs.is_some();
+    let (live, fewer, popup) = app(|a| {
         a.s.recent = recent;
         for (i, t) in tabs.into_iter().enumerate().take(a.s.tabs.len()) {
             a.s.tabs[i] = t;
         }
-        (0..MAXP).filter(|&i| a.panes[i].is_some()).collect::<Vec<_>>()
+        let fewer = favs.as_ref().is_some_and(|f| f.len() < a.s.favs.len());
+        if let Some(f) = favs {
+            a.s.favs = f;
+        }
+        ((0..MAXP).filter(|&i| a.panes[i].is_some()).collect::<Vec<_>>(), fewer, a.fav_popup)
     });
+    if fav_moved {
+        // the ★ list, if open: fewer rows leave its row indexes and height stale, so it closes; else it repaints
+        if !popup.0.is_null() {
+            if fewer {
+                app(|a| (a.fav_hot, a.fav_press) = (None, None));
+                _ = SendMessageW(popup, WM_CLOSE, None, None);
+            } else {
+                _ = InvalidateRect(Some(popup), None, false);
+            }
+        }
+        repaint_fav_buttons();
+    }
     for i in live {
         let p = &paths[i];
         if is_fs(p) {
@@ -1525,4 +1560,36 @@ pub(crate) unsafe fn pwstr(p: PWSTR) -> String {
 
 pub(crate) unsafe fn name(pidl: *const ITEMIDLIST, kind: SIGDN) -> String {
     SHGetNameFromIDList(pidl, kind).map(|p| pwstr(p)).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn follow_list_moves_renamed_folders() {
+        let r = |o: &str, n: &str| Change::Renamed(o.into(), n.into());
+        let v = |l: &[&str]| l.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let yes = |_: &str, _: &str| true;
+        let list = v(&[r"C:\a\b", r"C:\a\bc", r"D:\z", r"::{20D04FE0-3AEA-1069-A2D8-08002B30309D}", r"\\nas\share"]);
+        // the folder itself; a look-alike name, a shell folder and a share stay
+        let out = v(&[r"C:\a\x", r"C:\a\bc", r"D:\z", r"::{20D04FE0-3AEA-1069-A2D8-08002B30309D}", r"\\nas\share"]);
+        assert_eq!(follow_list(&list, &[r(r"C:\a\b", r"C:\a\x")], yes), (out, true));
+        // a parent renamed: C:\a\b under C:\a → C:\x
+        assert_eq!(follow_list(&v(&[r"C:\a\b"]), &[r(r"C:\a", r"C:\x")], yes), (v(&[r"C:\x\b"]), true));
+        // two renames in a row
+        assert_eq!(follow_list(&v(&[r"C:\a\b"]), &[r(r"C:\a\b", r"C:\a\c"), r(r"C:\a", r"C:\x")], yes), (v(&[r"C:\x\c"]), true));
+        // not confirmed on disk, or removed (it may come back from the Recycle Bin): unchanged
+        assert_eq!(follow_list(&v(&[r"C:\a\b"]), &[r(r"C:\a\b", r"C:\a\x")], |_, _| false), (v(&[r"C:\a\b"]), false));
+        assert_eq!(follow_list(&v(&[r"C:\a\b"]), &[Change::Removed(r"C:\a".into())], yes), (v(&[r"C:\a\b"]), false));
+        // the new name was already listed: the first stays, order kept
+        let list = v(&[r"C:\p", r"C:\a\x", r"C:\q", r"C:\a\b"]);
+        assert_eq!(follow_list(&list, &[r(r"C:\a\b", r"C:\a\x")], yes), (v(&[r"C:\p", r"C:\a\x", r"C:\q"]), true));
+        let list = v(&[r"C:\p", r"C:\a\b", r"C:\q", r"C:\A\X"]);
+        assert_eq!(follow_list(&list, &[r(r"C:\a\b", r"C:\a\x")], yes), (v(&[r"C:\p", r"C:\a\x", r"C:\q"]), true));
+        // nothing moved: duplicates still drop (the recent list as before), and the flag says nothing moved,
+        // so favourites keep a case-only duplicate
+        let list = v(&[r"C:\p", r"C:\P", r"C:\q"]);
+        assert_eq!(follow_list(&list, &[r(r"C:\a", r"C:\b")], yes), (v(&[r"C:\p", r"C:\q"]), false));
+    }
 }
