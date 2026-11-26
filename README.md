@@ -93,7 +93,7 @@ The exe is not code-signed, so Windows SmartScreen may warn the first time: choo
 | Ctrl+V | With a copied picture (screenshot, browser image): save it here as a PNG file |
 | Ctrl+S | Save the current session |
 | Ctrl+B | Favourites list (↑/↓, Enter to open, Del to remove, Alt+↑/↓ or drag to reorder) |
-| Ctrl+/ | Keyboard shortcuts (this list): ↑/↓, PgUp/PgDn, Home/End step through it a row at a time, and screen readers read each row's keys and description; Esc closes |
+| Ctrl+/ | Keyboard shortcuts (this list): ↑/↓, PgUp/PgDn, Home/End step through it a row at a time, and screen readers read each row's keys and description. Its find box (Ctrl+F or Tab) keeps only the rows with every word typed, in English or Korean; ↓ / Enter goes to the first match. Esc empties the box, then closes |
 | F1 | Help (opens this README on GitHub, in the UI language) |
 | Ctrl+Shift+M | Maximize / restore the active pane (or double-click its header) |
 | Ctrl+Shift+E | Hide / show the folder tree (also View menu → Folder tree; its width is kept) |

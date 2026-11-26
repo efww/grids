@@ -2244,6 +2244,71 @@ mod tests {
         assert_eq!(key_items("A\ta\n\nB: b\nmore", ["K", "M"]), ["K. A: a", "M. B: b more"]);
     }
 
+    // The shortcut window's find box: every word, any case, in either language's keys or description.
+    #[test]
+    fn shortcut_find() {
+        let row = |k: &str, d: &str| KeyRow { keys: vec![k.into()], desc: d.into() };
+        let (en, ko) = (row("Ctrl+Shift+R", "Batch rename the selected items"), row("Ctrl+Shift+R", "선택한 항목 일괄 이름 바꾸기"));
+        for q in ["", "  ", "RENAME", "rename  batch", "이름 바꾸기", "ctrl+shift+r 일괄", "Rename 이름"] {
+            assert!(keys_match(q, &en, &ko) && keys_match(q, &ko, &en), "{q:?}");
+        }
+        for q in ["zip", "rename zip", "이름 압축", "ctrl+shift+q"] {
+            assert!(!keys_match(q, &en, &ko), "{q:?}");
+        }
+        let (en, ko) = (key_rows(KEYS_EN), key_rows(KEYS_KO));
+        assert_eq!(keys_filter("", &ko, &en).map(|s| s.len()), [ko[0].len(), ko[1].len()]);
+        assert_eq!(keys_filter("qqq zzz", &ko, &en).map(|s| s.len()), [0, 0]);
+        // an English word on the Korean list (and a Korean one on the English list) finds the same rows
+        let ren = en[0].iter().position(|r| r.keys[0] == "Ctrl+Shift+R").unwrap();
+        let hit = keys_filter("RENAME", &ko, &en);
+        assert!(hit[0].contains(&ren) && hit == keys_filter("rename", &en, &ko));
+        assert!(keys_filter("일괄", &en, &ko)[0].contains(&ren));
+
+        // A filtered list: the key column as for the whole list, an empty section without its title or gap.
+        let dpi = 144;
+        let s = |v: i32| v * dpi / 96;
+        let (cw, lh) = (s(7), s(16));
+        let measure = |t: &str, max_w: i32, cap: bool| {
+            let w = t.chars().count() as i32 * cw;
+            let lines = if cap { 1 } else { t.split('\n').map(|l| ((l.chars().count() as i32 * cw + max_w - 1) / max_w).max(1)).sum::<i32>() };
+            (if cap { w } else { w.min(max_w) }, lines * lh)
+        };
+        let width = s(760);
+        let full = keys_layout_in(&en, &en[0], width, dpi, false, &measure);
+        let whole = keys_layout(&en, width, dpi, false, &measure);
+        assert_eq!((full.h, full.rows.len(), full.titles), (whole.h, whole.rows.len(), whole.titles));
+        let pad = s(KEYS_PAD);
+        let pick = |a: &[usize], b: &[usize]| [a.iter().map(|&j| en[0][j].clone()).collect(), b.iter().map(|&j| en[1][j].clone()).collect()];
+        let first_mouse = full.rows.iter().find(|r| r.sec == 1).unwrap();
+        // only mouse rows: no keyboard title above, the description column where it was
+        let g = keys_layout_in(&pick(&[], &[0, 1]), &en[0], width, dpi, false, &measure);
+        assert_eq!(g.rows.len(), 2);
+        assert!(g.rows.iter().all(|r| r.sec == 1) && g.titles[1].top == pad && g.titles[0] == RECT::default());
+        assert_eq!((g.rows[0].desc.left, g.rows[0].keys[0].right), (first_mouse.desc.left, first_mouse.keys[0].right));
+        assert_eq!(g.h, g.rows[1].row.bottom + pad);
+        // one row of each: the mouse title after the usual gap
+        let g = keys_layout_in(&pick(&[ren], &[0]), &en[0], width, dpi, false, &measure);
+        assert_eq!(g.rows.len(), 2);
+        assert_eq!(g.titles[1].top, g.rows[0].row.bottom + s(6) + s(14));
+        assert_eq!(g.rows[0].desc.left, full.rows[ren].desc.left);
+        let bands = keys_bands(&g, dpi);
+        assert_eq!((bands[0].0, bands[1].1, bands[0].1), (0, g.h, bands[1].0));
+        // without titles: the first row starts at the padding and its item is shorter by the title and its gap
+        let bare = keys_layout_at(&pick(&[ren], &[0]), &en[0], width, dpi, false, false, &measure);
+        assert_eq!(bare.titles, [RECT::default(); 2]);
+        assert_eq!(bare.rows[0].row.top, pad);
+        assert_eq!(keys_bands(&bare, dpi)[0].1 + lh + s(6), bands[0].1);
+        // nothing left: no rows, no items
+        let g = keys_layout_in(&pick(&[], &[]), &en[0], width, dpi, false, &measure);
+        assert!(g.rows.is_empty() && keys_bands(&g, dpi).is_empty());
+        // the find box sits between the title and ✕, its edit inside it
+        let (field, edit) = keys_find_rects(width, dpi, s(130), lh);
+        let close = keys_close(width, dpi);
+        assert!(field.left >= pad + s(130) && field.right < close.left && field.right - field.left >= s(200));
+        assert!(edit.left > field.left && edit.right < field.right && edit.top >= field.top && edit.bottom <= field.bottom);
+        assert!(field.bottom <= keys_head(dpi));
+    }
+
     #[test]
     fn address_icon() {
         // the square sits inside the pill, left of where crumbs and edit start; none in a narrow pill

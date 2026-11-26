@@ -25,20 +25,11 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
         }
         return true;
     }
-    // the shortcut list: Esc and Ctrl+/ close it (focus goes back), every other key is the list's (no pane shortcuts behind it)
+    // the shortcut list: Esc (after emptying its find box) and Ctrl+/ close it (focus goes back), Tab / Ctrl+F move
+    // between the list and the find box; every other key is theirs (no pane shortcuts behind it)
     let keys = app(|a| a.keys_popup);
     if !keys.0.is_null() && (m.hwnd == keys || IsChild(keys, m.hwnd).as_bool()) {
-        match VIRTUAL_KEY(m.wParam.0 as u16) {
-            VK_ESCAPE => close_keys(),
-            // auto-repeat (bit 30) is swallowed: holding Ctrl+/ toggles once
-            VK_OEM_2 if ctrl && !shift && !alt => {
-                if m.lParam.0 & (1 << 30) == 0 {
-                    close_keys();
-                }
-            }
-            _ => return false,
-        }
-        return true;
+        return keys_key(m, keys, ctrl, shift, alt);
     }
     // the getting started tour: Enter, ←/→, Tab, Esc and Ctrl+/ are its own; other keys stay with its buttons
     if let Some(used) = tour_key(m) {

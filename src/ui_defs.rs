@@ -291,7 +291,7 @@ Alt+PgDn / Alt+PgUp\tNext / previous folder in the same parent folder (Explorer'
 Alt+↓\tRecent folders (all panes, newest first)\n\
 Ctrl+L, Alt+D, F4\tAddress bar: also .. or a subfolder name, a file to open, or a command such as cmd, wt, powershell (runs in this pane's folder), or part of a recent or favourite folder's name\n\
 Ctrl+B\tFavourites list (↑/↓ to choose, Enter to open, Del to remove, Alt+↑/↓ or drag to reorder)\n\
-Ctrl+/\tKeyboard shortcuts (this list)\n\
+Ctrl+/\tKeyboard shortcuts (this list; Ctrl+F or Tab: find box, in English or Korean words)\n\
 Ctrl+Shift+M\tMaximize / restore the active pane (or double-click its header)\n\
 Ctrl+Shift+E\tHide / show the folder tree (its width is kept)\n\
 Ctrl+Shift+O\tOpen the folders of Explorer windows and tabs in panes (panes already showing one stay put)\n\
@@ -347,7 +347,7 @@ Alt+PgDn / Alt+PgUp\t같은 상위 폴더 안의 다음 / 이전 폴더 (탐색�
 Alt+↓\t최근 폴더 (모든 패널, 최근 순)\n\
 Ctrl+L, Alt+D, F4\t주소창: .. 이나 하위 폴더 이름, 열 파일, cmd·wt·powershell 같은 명령도 가능(이 패널 폴더에서 실행), 다녀온 폴더·즐겨찾기 이름 일부\n\
 Ctrl+B\t즐겨찾기 목록 (↑/↓ 고르기, Enter 열기, Del 빼기, Alt+↑/↓ 또는 끌어서 순서 바꾸기)\n\
-Ctrl+/\t단축키 목록 (이 창)\n\
+Ctrl+/\t단축키 목록 (이 창, Ctrl+F 또는 Tab: 찾기 칸, 영어·한국어 낱말 모두)\n\
 Ctrl+Shift+M\t선택한 패널 크게 보기 / 복원 (머리줄 더블클릭도 가능)\n\
 Ctrl+Shift+E\t폴더 트리 숨기기 / 보이기 (폭은 그대로 유지)\n\
 Ctrl+Shift+O\t탐색기 창·탭의 폴더를 패널로 가져오기 (이미 그 폴더를 연 패널은 그대로)\n\

@@ -66,9 +66,12 @@ pub(crate) unsafe fn a11y_name(h: HWND, name: Option<&str>) {
     };
 }
 
+// filter_hint_proc's ref data: the shortcut window's find box (0: a pane's name filter)
+pub(crate) const HINT_KEYS: usize = 1;
+
 // While the name filter is empty and not being typed in, it says what it is and how to get there,
 // in the field's own font and a muted colour that still reads at 4.5:1 or more on the pill in both themes.
-unsafe extern "system" fn filter_hint_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM, _: usize, _: usize) -> LRESULT {
+pub(crate) unsafe extern "system" fn filter_hint_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM, _: usize, which: usize) -> LRESULT {
     let hint = msg == WM_PAINT && GetWindowTextLengthW(h) == 0 && GetFocus() != h;
     if hint {
         _ = InvalidateRect(Some(h), None, true); // a partial repaint would draw the hint twice over itself
@@ -84,7 +87,8 @@ unsafe extern "system" fn filter_hint_proc(h: HWND, msg: u32, wp: WPARAM, lp: LP
         let font = SelectObject(dc, HGDIOBJ(SendMessageW(h, WM_GETFONT, None, None).0 as _));
         SetBkMode(dc, TRANSPARENT);
         SetTextColor(dc, cref(blend(pal().sub, pal().text, 0.2)));
-        let mut hint: Vec<u16> = tr("Filter names  Ctrl+F", "이름 필터  Ctrl+F").encode_utf16().collect();
+        let hint = if which == HINT_KEYS { tr("Find  Ctrl+F", "찾기  Ctrl+F") } else { tr("Filter names  Ctrl+F", "이름 필터  Ctrl+F") };
+        let mut hint: Vec<u16> = hint.encode_utf16().collect();
         DrawTextW(dc, &mut hint, &mut rc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
         SelectObject(dc, font);
         ReleaseDC(Some(h), dc);
