@@ -80,6 +80,9 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
         }
         VK_K if ctrl && !shift && !alt && tabs_on() => dup_tab(a, app(|x| x.s.tab[a])),
         k @ (VK_NEXT | VK_PRIOR) if ctrl && !shift && !alt && tabs_on() => step_tab(a, if k == VK_NEXT { 1 } else { -1 }),
+        k @ (VK_NEXT | VK_PRIOR) if ctrl && shift && !alt && tabs_on() => move_cur_tab(a, if k == VK_NEXT { 1 } else { -1 }),
+        // Alt+1 … Alt+9: the nth tab, 9 the last (as a browser's Ctrl+1 … 9; Ctrl+digits are the panes). Number pad keys stay out.
+        k if alt && !ctrl && !shift && tabs_on() && (VK_1.0..=VK_9.0).contains(&k.0) => pick_nth_tab(a, (k.0 - VK_1.0 + 1) as usize),
         k if ctrl && !shift && !alt && (VK_1.0..=VK_9.0).contains(&k.0) && ((k.0 - VK_1.0) as usize) < app(|x| x.s.panes()) => {
             let i = (k.0 - VK_1.0) as usize;
             set_active(i);

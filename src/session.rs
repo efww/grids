@@ -416,6 +416,25 @@ impl Session {
         Some(to)
     }
 
+    /// Ctrl+Shift+PgUp / PgDn, the tab menu's Move left / right: tab k trades places with its neighbour d (±1)
+    /// away; the current tab follows its own entry. No browsing. False (nothing changes) past either end or with one tab.
+    /// The raw entries swap (not tab_list's), so the current one's stale entry stays its own and paths[i] still shows it.
+    pub(crate) fn move_tab(&mut self, i: usize, k: usize, d: i32) -> bool {
+        let n = self.tabs[i].len();
+        if n < 2 || self.tab[i] >= n || k >= n {
+            return false;
+        }
+        let Some(j) = k.checked_add_signed(d as isize).filter(|&j| j < n && j != k) else { return false };
+        self.tabs[i].swap(k, j);
+        let cur = &mut self.tab[i];
+        if *cur == k {
+            *cur = j;
+        } else if *cur == j {
+            *cur = k;
+        }
+        true
+    }
+
     /// Closes tab k; the last one stays. Closing the current one moves to its right neighbour (else its left):
     /// that folder to browse to.
     pub(crate) fn close_tab(&mut self, i: usize, k: usize) -> Option<String> {

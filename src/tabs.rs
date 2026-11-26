@@ -124,19 +124,46 @@ pub(crate) unsafe fn dup_tab(i: usize, k: usize) {
     tab_go(i, |s| s.dup_tab(i, k));
 }
 
-// Right-click on a tab: duplicate or close that tab.
+// Tab k one place left (d = -1) or right (1); the folder on display stays. At either end: nothing (no wrap).
+unsafe fn move_tab(i: usize, k: usize, d: i32) {
+    if app(|a| a.s.move_tab(i, k, d)) {
+        repaint_tabs(i);
+        rehover_pane(i);
+    }
+}
+
+// Ctrl+Shift+PgUp / Ctrl+Shift+PgDn: the current tab.
+pub(crate) unsafe fn move_cur_tab(i: usize, d: i32) {
+    move_tab(i, app(|a| a.s.tab[i]), d);
+}
+
+// Alt+1 … Alt+8: the nth tab, Alt+9: the last one. No such tab: nothing.
+pub(crate) unsafe fn pick_nth_tab(i: usize, n: usize) {
+    let len = app(|a| a.s.tab_list(i).len());
+    let k = if n >= 9 { len - 1 } else { n - 1 };
+    if k < len {
+        pick_tab(i, k);
+    }
+}
+
+// Right-click on a tab: duplicate, move or close that tab.
 pub(crate) unsafe fn tab_menu(h: HWND, i: usize, k: usize, at: POINT) {
     let n = app(|a| a.s.tab_list(i).len());
     let Ok(menu) = CreatePopupMenu() else { return };
+    let on = |yes: bool| if yes { MF_STRING } else { MF_STRING | MF_GRAYED };
     _ = AppendMenuW(menu, MF_STRING, 1, &HSTRING::from(tr("Duplicate tab\tCtrl+K", "탭 복제\tCtrl+K")));
-    let close = if n > 1 { MF_STRING } else { MF_STRING | MF_GRAYED }; // the last tab stays
-    _ = AppendMenuW(menu, close, 2, &HSTRING::from(tr("Close tab\tCtrl+W", "탭 닫기\tCtrl+W")));
+    _ = AppendMenuW(menu, on(k > 0 && k < n), 3, &HSTRING::from(tr("Move left\tCtrl+Shift+PgUp", "왼쪽으로 옮기기\tCtrl+Shift+PgUp")));
+    _ = AppendMenuW(menu, on(k + 1 < n), 4, &HSTRING::from(tr("Move right\tCtrl+Shift+PgDn", "오른쪽으로 옮기기\tCtrl+Shift+PgDn")));
+    _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
+    _ = AppendMenuW(menu, on(n > 1), 2, &HSTRING::from(tr("Close tab\tCtrl+W", "탭 닫기\tCtrl+W"))); // the last tab stays
     set_active(i);
     let pick = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN, at.x, at.y, None, h, None).0;
     _ = DestroyMenu(menu);
     match pick {
         1 => dup_tab(i, k),
         2 => close_tab(i, k),
+        3 => move_tab(i, k, -1),
+        4 => move_tab(i, k, 1),
         _ => {}
     }
     focus_view(i);

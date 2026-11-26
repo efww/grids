@@ -308,6 +308,8 @@ Ctrl+Shift+F\tSearch the whole PC with Everything, while it runs (or the orange 
 Ctrl+T / Ctrl+W\tNew tab (same folder) / close tab, with tabs on (View menu)\n\
 Ctrl+K\tDuplicate the current tab\n\
 Ctrl+PgDn / Ctrl+PgUp\tNext / previous tab\n\
+Alt+1 … Alt+9\tGo to tab 1–8 of the active pane; Alt+9: its last tab\n\
+Ctrl+Shift+PgDn / Ctrl+Shift+PgUp\tMove the current tab right / left (also on a tab's right-click menu)\n\
 Ctrl+F3 / Ctrl+F5 / Ctrl+F6\tSort by name / date modified / size (again: reverse; the pane keeps it)\n\
 F7\tNew folder\n\
 Shift+F7\tNew text file (named, selected and ready to rename)\n\
@@ -364,6 +366,8 @@ Ctrl+Shift+F\tEverything으로 PC 전체 검색, Everything이 실행 중일 때
 Ctrl+T / Ctrl+W\t새 탭(같은 폴더) / 탭 닫기, 탭을 켰을 때 (보기 메뉴)\n\
 Ctrl+K\t지금 탭 복제\n\
 Ctrl+PgDn / Ctrl+PgUp\t다음 / 이전 탭\n\
+Alt+1 … Alt+9\t지금 패널의 1~8번째 탭으로 이동, Alt+9는 마지막 탭\n\
+Ctrl+Shift+PgDn / Ctrl+Shift+PgUp\t지금 탭을 오른쪽 / 왼쪽으로 옮기기 (탭 오른쪽 클릭 메뉴에도 있음)\n\
 Ctrl+F3 / Ctrl+F5 / Ctrl+F6\t이름 / 수정한 날짜 / 크기순 정렬 (다시 누르면 반대 순서, 패널이 기억)\n\
 F7\t새 폴더\n\
 Shift+F7\t새 텍스트 파일 (이름 짓기 바로 시작)\n\

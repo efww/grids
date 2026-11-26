@@ -2799,6 +2799,37 @@ mod tests {
     }
 
     #[test]
+    fn tabs_move() {
+        // one tab: nothing to move, nothing indexed
+        let mut s = Session::default();
+        s.paths[0] = "a".into();
+        assert!(!s.move_tab(0, 0, 1) && !s.move_tab(0, 0, -1));
+        assert!(s.tabs[0].is_empty());
+        // x y z, y current (its entry stale: the pane is still showing "Y" while a switch is on its way)
+        s.tabs[0] = vec!["x".into(), "stale".into(), "z".into()];
+        (s.tab[0], s.paths[0]) = (1, "Y".into());
+        assert!(s.move_tab(0, 1, 1)); // the current one goes right
+        assert_eq!((s.tabs[0].clone(), s.tab[0]), (vec!["x".to_string(), "z".into(), "stale".into()], 2));
+        assert_eq!(s.tab_list(0), vec!["x", "z", "Y"]); // paths[0] stays in the current tab, no other one gets it
+        assert!(!s.move_tab(0, 2, 1)); // past the end: no wrap
+        assert!(s.move_tab(0, 1, 1)); // its neighbour moves onto it: the current one steps back
+        assert_eq!((s.tab_list(0), s.tab[0]), (vec!["x".to_string(), "Y".into(), "z".into()], 1));
+        assert!(!s.move_tab(0, 0, -1)); // before the first: nothing (no usize underflow)
+        assert!(s.move_tab(0, 0, 1)); // a tab other than the current one
+        assert_eq!((s.tab_list(0), s.tab[0]), (vec!["Y".to_string(), "x".into(), "z".into()], 0));
+        assert!(s.move_tab(0, 2, -1)); // the last one left; the current one stays put
+        assert_eq!((s.tab_list(0), s.tab[0]), (vec!["Y".to_string(), "z".into(), "x".into()], 0));
+        assert!(!s.move_tab(0, 9, -1) && !s.move_tab(0, 1, 0)); // no such tab, no step
+        assert_eq!(s.paths[0], "Y"); // no browsing
+        // the new order is what the session saves
+        s.paths[0] = r"C:\a".into();
+        s.tabs[0] = vec![r"C:\a".into(), r"D:\b".into(), r"E:\c".into()];
+        s.tab[0] = 0;
+        assert!(s.move_tab(0, 0, 1));
+        assert!(s.to_ini().contains("b0=1|D:\\b|C:\\a|E:\\c\n"), "{}", s.to_ini());
+    }
+
+    #[test]
     fn tabs_ini() {
         let mut s = Session::default();
         s.tabs_on = true;
