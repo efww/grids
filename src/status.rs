@@ -737,14 +737,26 @@ unsafe fn selection_size(i: usize, path: &str, fv: &IFolderView2, sel: i32, busy
         // a copy only pauses: the stored paths are summed again once it's done
         want_size(&[], busy);
         if sel <= 0 {
-            app(forget_sel);
+            // nothing selected now: the paths go to Num/'s memory (Esc, a click on empty space)
+            app(|a| {
+                if let Some((k, s)) = a.sel_cache.take() {
+                    remember_sel(&mut a.sel_prev, &k.1, s, &[]);
+                }
+                forget_sel(a);
+            });
         }
         return (None, true);
     }
     let key: SelKey = (i, path.to_string(), sel, SEL_REV[i].load(Ordering::Relaxed), fv.GetFocusedItem().unwrap_or(-1));
     let (cache, seen) = app(|a| (a.sel_cache.take(), a.sel_seen.take()));
-    // another pane or folder: its paths go (up to 10k strings)
-    let cache = cache.filter(|(k, _)| k.0 == key.0 && k.1 == key.1);
+    // another pane or folder: its paths go (up to 10k strings), to Num/'s memory under the folder they were in
+    let (cache, gone) = match cache {
+        Some(c) if c.0 .0 == key.0 && c.0 .1 == key.1 => (Some(c), None),
+        c => (None, c),
+    };
+    if let Some((k, s)) = gone {
+        app(|a| remember_sel(&mut a.sel_prev, &k.1, s, &[]));
+    }
     let since = seen.filter(|(k, _)| *k == key).map(|(_, t)| t);
     match sel_step(cache.as_ref().is_some_and(|(k, _)| *k == key), sel, since.map(|t| t.elapsed())) {
         SelStep::Wait => {
@@ -759,7 +771,15 @@ unsafe fn selection_size(i: usize, path: &str, fv: &IFolderView2, sel: i32, busy
         step => {
             let (k, s) = match (step, cache) {
                 (SelStep::Reuse, Some(c)) => c,
-                _ => (key, selected_size(fv)),
+                (_, old) => {
+                    let s = selected_size(fv);
+                    // the selection it replaces goes to Num/'s memory, unless the new one holds all its items
+                    // (a selection being grown: each step would push the real earlier choice out)
+                    if let Some((ok, os)) = old.filter(|(_, os)| !sub_sel(&os.paths, &s.paths)) {
+                        app(|a| remember_sel(&mut a.sel_prev, &ok.1, os, &s.paths));
+                    }
+                    (key, s)
+                }
             };
             // reused too: after a copy the target was cleared, so the same paths are summed again
             want_size(&s.paths, false);

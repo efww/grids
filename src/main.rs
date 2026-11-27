@@ -576,7 +576,7 @@ mod tests {
             assert_eq!(open_in_pick(ID_WM_PANE + k), OpenPick::Shell);
             menu.extend([ID_OPEN_TO + k, ID_COPY_TO + k, ID_MOVE_TO + k, ID_SWAP_TO + k, ID_WM_PANE + k]);
         }
-        let shell = [ID_INUSE, ID_WM_PAIR, ID_HASH, ID_GROUP, ID_STAMP, ID_ORG, ID_ORG + 1, ID_ORG + 2, ID_EMPTY, ID_USAGE, ID_LIST, ID_CLIPADD, ID_EXPLORER, ID_PHOTO, ID_PHOTO + 1, ID_PHOTO + 2];
+        let shell = [ID_INUSE, ID_WM_PAIR, ID_HASH, ID_GROUP, ID_STAMP, ID_ORG, ID_ORG + 1, ID_ORG + 2, ID_EMPTY, ID_USAGE, ID_LIST, ID_CLIPADD, ID_RESTORE, ID_EXPLORER, ID_PHOTO, ID_PHOTO + 1, ID_PHOTO + 2];
         for p in shell {
             assert_eq!(open_in_pick(p), OpenPick::Shell, "{p}");
         }
@@ -3434,8 +3434,8 @@ mod tests { tr("in", "안") }
 
     // Every ⇄ menu item that can show at the top level at the same time: one letter each, none a pane digit,
     // none the first letter of an unmarked item (the grey title, "Pane 10" …), in both languages.
-    fn menu_slots() -> [&'static [(&'static str, &'static str)]; 15] {
-        [&[M_SWAP], &[M_COPY], &[M_MOVE], &[M_INUSE], &[M_HASH, M_HASH_STOP], &[M_ORG], &[M_PHOTO], &[M_GROUP_N, M_GROUP], &[M_STAMP_N, M_STAMP], &[M_EMPTY], &[M_USAGE], &[M_LIST_N, M_LIST], &[M_CLIPADD_N, M_CLIPADD], &[M_EXPLORER_SEL, M_EXPLORER], &[M_WM_PAIR, M_WM_PANE]]
+    fn menu_slots() -> [&'static [(&'static str, &'static str)]; 16] {
+        [&[M_SWAP], &[M_COPY], &[M_MOVE], &[M_INUSE], &[M_HASH, M_HASH_STOP], &[M_ORG], &[M_PHOTO], &[M_GROUP_N, M_GROUP], &[M_STAMP_N, M_STAMP], &[M_EMPTY], &[M_USAGE], &[M_LIST_N, M_LIST], &[M_CLIPADD_N, M_CLIPADD], &[M_RESTORE], &[M_EXPLORER_SEL, M_EXPLORER], &[M_WM_PAIR, M_WM_PANE]]
     }
 
     // X is Explorer's own letter: no other ⇄ item (nor the title, a pane row or a digit) takes it
@@ -5240,6 +5240,7 @@ mod tests { tr("in", "안") }
             "Num+" => VK_ADD,
             "Num\u{2212}" => VK_SUBTRACT,
             "Num*" => VK_MULTIPLY,
+            "Num/" => VK_DIVIDE,
             _ if f.is_some() => VIRTUAL_KEY(VK_F1.0 + f.unwrap() - 1),
             _ if k.len() == 1 && (k.as_bytes()[0].is_ascii_uppercase() || k.as_bytes()[0].is_ascii_digit()) => VIRTUAL_KEY(k.as_bytes()[0] as u16),
             _ => panic!("can't read the key {cap:?}"),
@@ -5316,6 +5317,8 @@ mod tests { tr("in", "안") }
         assert_eq!(route("addr", "Ctrl+Alt+L"), Typing); // AltGr+L
         assert_eq!((l("Ctrl+Alt+←"), l("Alt+Shift+←"), l("Ctrl+Alt+Shift+↓")), (Nudge(-1, 0), MovePane(-1, 0), Swap(0, 1)));
         assert_eq!((l("Ctrl+Insert"), l("Ctrl+Num+")), (Shell, Shell));
+        // Num/: the list's; the boxes type a '/', Ctrl+Num/ stays the view's
+        assert_eq!((l("Num/"), l("Shift+Num/"), route("addr", "Num/"), l("Ctrl+Num/")), (RestoreSel, RestoreSel, BoxKey, Shell));
         assert_eq!(route_with("", "Space", true, 9, Some(Duration::from_millis(300))), Shell);
         assert_eq!(l("Space"), Peek);
         assert_eq!((l("Ctrl+Shift+S"), l("Ctrl+F4"), l("Shift+Num+"), l("Num\u{2212}")), (Save, FocusAddr, Match(false), Match(true)));

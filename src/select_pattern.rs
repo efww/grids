@@ -297,6 +297,128 @@ pub(crate) unsafe fn invert_selection(i: usize) {
     }
 }
 
+// ---------- Num/: the earlier selection back (Total Commander's / Directory Opus's "Restore selection") ----------
+
+pub(crate) const ID_RESTORE: usize = 1158; // ⇄ menu (1155–1157 are ID_PHOTO's)
+const PREV_PER_DIR: usize = 2; // two per folder: the one just lost and the one before, so Num/ goes back and forth
+const PREV_DIRS: usize = 16;
+const PREV_PATHS: usize = 20_000; // in all folders; the oldest selections go first
+
+// The same items, in any order and case (the view hands them back in its own order).
+pub(crate) fn same_sel(a: &[String], b: &[String]) -> bool {
+    if a == b {
+        return true;
+    }
+    if a.len() != b.len() {
+        return false;
+    }
+    let set: std::collections::HashSet<String> = a.iter().map(|p| p.to_lowercase()).collect();
+    b.iter().all(|p| set.contains(&p.to_lowercase()))
+}
+
+// Every item of `a` is also in `b` (any order and case): a selection being grown by Ctrl+click or Shift+arrow.
+pub(crate) fn sub_sel(a: &[String], b: &[String]) -> bool {
+    if a.len() > b.len() {
+        return false;
+    }
+    let set: std::collections::HashSet<String> = b.iter().map(|p| p.to_lowercase()).collect();
+    a.iter().all(|p| set.contains(&p.to_lowercase()))
+}
+
+fn same_dir(a: &str, b: &str) -> bool {
+    a.len() == b.len() && a.to_lowercase() == b.to_lowercase()
+}
+
+// A selection the status line lets go of (deselected, replaced, its pane or folder left) is kept, newest first:
+// not one item (the click that entered a folder must not push out a real choice), not a partial one (over 10k items,
+// items with no path), not the same items as `now` (the selection taking its place), each only once per folder.
+// Two per folder, 16 folders, 20k paths in all.
+pub(crate) fn remember_sel(mem: &mut Vec<(String, Vec<String>)>, dir: &str, s: Sel, now: &[String]) {
+    if s.paths.len() < 2 || s.partial || same_sel(&s.paths, now) {
+        return;
+    }
+    mem.retain(|(d, p)| !(same_dir(d, dir) && same_sel(p, &s.paths)));
+    mem.insert(0, (dir.to_string(), s.paths));
+    let mut dirs: Vec<String> = Vec::new();
+    let mut per = Vec::new(); // how many of each kept folder's
+    mem.retain(|(d, _)| match dirs.iter().position(|x| same_dir(x, d)) {
+        Some(k) => {
+            per[k] += 1;
+            per[k] <= PREV_PER_DIR
+        }
+        None if dirs.len() < PREV_DIRS => {
+            dirs.push(d.clone());
+            per.push(1);
+            true
+        }
+        None => false,
+    });
+    let mut total: usize = mem.iter().map(|(_, p)| p.len()).sum();
+    while total > PREV_PATHS && mem.len() > 1 {
+        total -= mem.pop().map_or(0, |(_, p)| p.len());
+    }
+}
+
+// The selection Num/ brings back in `dir`: the newest kept there that isn't what is selected now.
+pub(crate) fn prev_sel<'a>(mem: &'a [(String, Vec<String>)], dir: &str, now: &[String]) -> Option<&'a Vec<String>> {
+    mem.iter().find(|(d, p)| same_dir(d, dir) && !same_sel(p, now)).map(|(_, p)| p)
+}
+
+// The status line after Num/: `got` of the `want` kept items were found in the folder.
+pub(crate) fn restore_note(ko: bool, got: usize, want: usize) -> String {
+    match (ko, got == want) {
+        (false, true) => format!("Restored the earlier selection ({got})"),
+        (true, true) => format!("이전 선택 {got}개 되살림"),
+        (false, false) => format!("Restored {got} of {want} ({} not here)", want - got),
+        (true, false) => format!("이전 선택 {want}개 중 {got}개 되살림 ({}개 없음)", want - got),
+    }
+}
+
+// The ⇄ menu's item, only while this folder keeps a selection other than the one now (`picked`).
+// Not when the selection now can't be read whole (over 10k items, items with no path): it might be the kept one.
+pub(crate) fn restore_menu(menu: HMENU, src: usize, picked: &std::result::Result<Vec<String>, Pick>) {
+    let Ok(now) = picked else { return };
+    let n = app(|a| prev_sel(&a.sel_prev, &a.s.paths[src], now).map(|p| p.len()));
+    if let Some(n) = n {
+        let label = tr2(M_RESTORE).replace("{n}", &n.to_string());
+        _ = unsafe { AppendMenuW(menu, MF_STRING, ID_RESTORE, &HSTRING::from(label)) };
+    }
+}
+
+// Num/ (or the ⇄ menu's T) in pane i: the kept selection's items still in the view are selected, the rest not,
+// the first one focused and shown. What was selected before (2 or more) is kept in turn, so Num/ again goes back.
+// Nothing kept or none of it here: a beep, and the selection stays as it is.
+pub(crate) unsafe fn restore_selection(i: usize) {
+    let Some(fv) = view_of::<IFolderView2>(i) else { return };
+    let dir = app(|a| a.s.paths[i].clone());
+    let now = selected_size(&fv);
+    let none = || warn(tr("No earlier selection in this folder", "이 폴더에 되살릴 이전 선택 없음").into());
+    let Some(want) = app(|a| prev_sel(&a.sel_prev, &dir, &now.paths).cloned()) else { return none() };
+    let n = fv.ItemCount(SVGIO_ALLVIEW).unwrap_or(0).max(0);
+    if n as u32 > SEND_MAX {
+        _ = bulk_select(&fv, |_| false); // touches nothing: only says why
+        return;
+    }
+    let keys: std::collections::HashSet<String> = want.iter().map(|p| p.to_lowercase()).collect();
+    let path = |k: i32| Some(pwstr(fv.GetItem::<IShellItem>(k).ok()?.GetDisplayName(SIGDN_FILESYSPATH).ok()?).to_lowercase());
+    // first which items are here, so a folder where none is left keeps its selection
+    let hits: Vec<i32> = (0..n).filter(|&k| path(k).is_some_and(|p| keys.contains(&p))).collect();
+    let Some(&first) = hits.first() else { return none() };
+    app(|a| remember_sel(&mut a.sel_prev, &dir, now, &want));
+    // the first one clears the rest (SVSI_DESELECTOTHERS), so nothing is deselected one by one
+    _ = bulk_select(&fv, |k| {
+        let flags = if k == first {
+            SVSI_SELECT.0 | SVSI_DESELECTOTHERS.0 | SVSI_FOCUSED.0 | SVSI_ENSUREVISIBLE.0
+        } else if hits.binary_search(&k).is_ok() {
+            SVSI_SELECT.0
+        } else {
+            return false;
+        };
+        fv.SelectItem(k, flags as u32).is_ok()
+    });
+    set_note(restore_note(KO.load(Ordering::Relaxed), hits.len(), want.len()));
+}
+
 // Insert, as in Total Commander: (the focused item's flags, the next item's). The focused item flips and keeps
 // the focus (so the last item stays focused); the next one takes the focus without losing its own selection,
 // since SelectItem without SVSI_SELECT deselects (SVSI_DESELECT is 0).
@@ -365,5 +487,84 @@ pub(crate) extern "system" fn match_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPAR
             _ => return DefWindowProcW(h, msg, wp, lp),
         }
         LRESULT(0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sel(names: &[&str]) -> Sel {
+        Sel { paths: names.iter().map(|n| format!(r"C:\a\{n}")).collect(), partial: false }
+    }
+
+    fn paths(names: &[&str]) -> Vec<String> {
+        sel(names).paths
+    }
+
+    #[test]
+    fn remember_keeps_real_choices() {
+        let mut m = Vec::new();
+        // one item (the click into a folder), a partial selection, the same items as now: not kept
+        remember_sel(&mut m, r"C:\a", sel(&["x"]), &[]);
+        remember_sel(&mut m, r"C:\a", Sel { partial: true, ..sel(&["x", "y"]) }, &[]);
+        remember_sel(&mut m, r"C:\a", sel(&["x", "y"]), &paths(&["Y", "x"]).iter().map(|p| p.to_uppercase()).collect::<Vec<_>>());
+        assert!(m.is_empty());
+        remember_sel(&mut m, r"C:\a", sel(&["x", "y"]), &paths(&["x"]));
+        remember_sel(&mut m, r"C:\a", sel(&["p", "q", "r"]), &[]);
+        // the same items again move to the front instead of taking a second place
+        remember_sel(&mut m, r"c:\A", sel(&["y", "x"]), &[]);
+        assert_eq!(m.iter().map(|(_, p)| p.len()).collect::<Vec<_>>(), [2, 3]);
+        // a third in that folder pushes out its oldest
+        remember_sel(&mut m, r"C:\a", sel(&["s", "t"]), &[]);
+        assert_eq!(m, [(r"C:\a".to_string(), paths(&["s", "t"])), (r"c:\A".to_string(), paths(&["y", "x"]))]);
+    }
+
+    #[test]
+    fn remember_bounds() {
+        let mut m = Vec::new();
+        for k in 0..20 {
+            remember_sel(&mut m, &format!(r"C:\d{k}"), sel(&["x", "y"]), &[]);
+        }
+        // 16 folders, the ones used longest ago gone
+        assert_eq!(m.len(), 16);
+        assert_eq!((m[0].0.as_str(), m[15].0.as_str()), (r"C:\d19", r"C:\d4"));
+        // 20k paths in all: the oldest selections go, the newest always stays
+        let big = |n: usize| Sel { paths: (0..n).map(|k| format!(r"C:\b\{k}")).collect(), partial: false };
+        remember_sel(&mut m, r"C:\b", big(10_000), &[]);
+        remember_sel(&mut m, r"C:\c", big(9_990), &[]);
+        assert!(m.iter().map(|(_, p)| p.len()).sum::<usize>() <= 20_000);
+        assert_eq!((m[0].0.as_str(), m[1].0.as_str(), m.len()), (r"C:\c", r"C:\b", 7));
+    }
+
+    #[test]
+    fn growing_is_a_subset() {
+        // Ctrl+click / Shift+arrow adding items: the step before is not kept
+        assert!(sub_sel(&paths(&["x", "y"]), &paths(&["Y", "z", "x"]).iter().map(|p| p.to_uppercase()).collect::<Vec<_>>()));
+        assert!(sub_sel(&paths(&["x", "y"]), &paths(&["y", "x"])));
+        // one taken away, or another choice: kept
+        assert!(!sub_sel(&paths(&["x", "y", "z"]), &paths(&["x", "y"])));
+        assert!(!sub_sel(&paths(&["x", "y"]), &paths(&["x", "z", "w"])));
+    }
+
+    #[test]
+    fn restore_picks_another() {
+        let mut m = Vec::new();
+        remember_sel(&mut m, r"C:\a", sel(&["x", "y"]), &[]);
+        remember_sel(&mut m, r"C:\a", sel(&["p", "q", "r"]), &[]);
+        remember_sel(&mut m, r"C:\b", sel(&["z", "w"]), &[]);
+        assert_eq!(prev_sel(&m, r"C:\a", &[]), Some(&paths(&["p", "q", "r"])));
+        // what is selected now is skipped: Num/ again goes back and forth
+        assert_eq!(prev_sel(&m, r"c:\a", &paths(&["r", "q", "p"])), Some(&paths(&["x", "y"])));
+        assert_eq!(prev_sel(&m, r"C:\c", &[]), None);
+        assert_eq!(prev_sel(&m, r"C:\b", &paths(&["w", "z"])), None);
+    }
+
+    #[test]
+    fn restore_notes() {
+        assert_eq!(restore_note(false, 30, 30), "Restored the earlier selection (30)");
+        assert_eq!(restore_note(false, 28, 30), "Restored 28 of 30 (2 not here)");
+        assert_eq!(restore_note(true, 30, 30), "이전 선택 30개 되살림");
+        assert_eq!(restore_note(true, 28, 30), "이전 선택 30개 중 28개 되살림 (2개 없음)");
     }
 }

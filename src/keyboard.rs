@@ -332,6 +332,11 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
             app(|x| x.held = Some(vk.0));
             invert_selection(a);
         }
+        // held, it restores once (a repeat would go straight back)
+        KeyRoute::RestoreSel => {
+            app(|x| x.held = Some(vk.0));
+            restore_selection(a);
+        }
         KeyRoute::Recent => recent_menu(a),
         KeyRoute::NewFolder => {
             if !repeat {
@@ -425,6 +430,7 @@ pub(crate) enum KeyRoute {
     MoveMenu,
     Match(bool),
     Invert,
+    RestoreSel,
     Recent,
     NewFolder,
     NewText,
@@ -537,6 +543,8 @@ pub(crate) fn key_route(vk: VIRTUAL_KEY, ctrl: bool, shift: bool, alt: bool, c: 
             VK_MULTIPLY => Invert,
             _ => Match(k == VK_SUBTRACT),
         },
+        // Num/: the selection lost last in this folder back, as in Total Commander (Ctrl+Num/ stays the view's)
+        VK_DIVIDE if !ctrl && !alt && list() => RestoreSel,
         VK_A if ctrl && shift && !alt && list() => Match(false),
         VK_DOWN if alt && !ctrl && !shift => Recent,
         VK_F3 if !ctrl && !shift && !alt && list() => Peek,

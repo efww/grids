@@ -57,6 +57,8 @@ pub(crate) struct App {
     // key first seen changed with when (it's gathered once it stays for SEL_REST)
     pub(crate) sel_cache: Option<(SelKey, Sel)>,
     pub(crate) sel_seen: Option<(SelKey, Instant)>,
+    // selections the status line let go of, (pane folder, paths), newest first: Num/ brings one back. Memory only.
+    pub(crate) sel_prev: Vec<(String, Vec<String>)>,
     // items text before the selection size, Some(partial while collecting) = a selection to size (the worker sums it),
     // middle zone, drive (label, free, total)
     #[allow(clippy::type_complexity)]
@@ -180,6 +182,7 @@ thread_local! {
         status_key: String::new(),
         sel_cache: None,
         sel_seen: None,
+        sel_prev: Vec::new(),
         status_base: Default::default(),
         view_menu: HMENU::default(),
         accent_chips: None,

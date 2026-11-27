@@ -1262,6 +1262,7 @@ pub(crate) unsafe fn shell_menu(menu: HMENU, src: usize, picked: &std::result::R
     _ = AppendMenuW(menu, flags, ID_USAGE, &HSTRING::from(tr2(M_USAGE)));
     list_menu(menu, src); // the selection, or with none the whole view
     clip_menu(menu, picked); // before the WinMerge lookup too
+    restore_menu(menu, src, picked); // only while this folder keeps another selection
     explorer_menu(menu, src);
     let exe = winmerge_exe()?;
     match picked {
@@ -1350,7 +1351,7 @@ pub(crate) unsafe fn reveal_in_explorer(src: usize) {
 }
 
 pub(crate) fn is_shell_pick(p: usize) -> bool {
-    p == ID_INUSE || p == ID_WM_PAIR || p == ID_HASH || p == ID_GROUP || p == ID_STAMP || p == ID_EMPTY || p == ID_USAGE || p == ID_LIST || p == ID_CLIPADD || p == ID_EXPLORER || is_org_pick(p) || is_photo_pick(p) || (ID_WM_PANE..ID_WM_PANE + MAXP).contains(&p)
+    p == ID_INUSE || p == ID_WM_PAIR || p == ID_HASH || p == ID_GROUP || p == ID_STAMP || p == ID_EMPTY || p == ID_USAGE || p == ID_LIST || p == ID_CLIPADD || p == ID_RESTORE || p == ID_EXPLORER || is_org_pick(p) || is_photo_pick(p) || (ID_WM_PANE..ID_WM_PANE + MAXP).contains(&p)
 }
 
 pub(crate) unsafe fn shell_pick(h: HWND, src: usize, p: usize, picked: std::result::Result<Vec<String>, Pick>, exe: Option<String>, others: &[(usize, HSTRING, String)]) {
@@ -1367,6 +1368,7 @@ pub(crate) unsafe fn shell_pick(h: HWND, src: usize, p: usize, picked: std::resu
         (ID_USAGE, _, _) => open_usage(src),
         (ID_LIST, _, _) => copy_list(src), // the view's selection (or all its items), read again now
         (ID_CLIPADD, picked, _) => add_to_clip(picked), // the selection the menu counted
+        (ID_RESTORE, _, _) => restore_selection(src), // the menu's pane, looked up again in its folder now
         (ID_EXPLORER, _, _) => reveal_in_explorer(src), // the pane's folder and selection, read again now
         (ID_WM_PAIR, Ok(two), Some(exe)) if two.len() == 2 => run_winmerge(&exe, &two[0], &two[1]),
         (p, _, Some(exe)) if p >= ID_WM_PANE => {
