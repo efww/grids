@@ -2090,6 +2090,61 @@ mod tests {
     }
 
     #[test]
+    fn human_unit_boundaries() {
+        // just under the next unit shows as "1.0" of it, never "1024.0" of the one below
+        let table: [(u64, &str); 12] = [
+            (0, "0 B"),
+            (1023, "1023 B"),
+            (1024, "1.0 KB"),
+            (1_048_524, "1023.9 KB"),
+            (1_048_525, "1.0 MB"),
+            (1_048_575, "1.0 MB"),
+            (1_073_689_395, "1023.9 MB"),
+            (1_073_689_396, "1.0 GB"),
+            ((1 << 30) - 1, "1.0 GB"),
+            ((1 << 40) - 1, "1.0 TB"),
+            (1 << 40, "1.0 TB"),
+            (5 << 40, "5.0 TB"),
+        ];
+        for (b, want) in table {
+            assert_eq!(human(b), want, "{b}");
+        }
+        assert!(human(u64::MAX).ends_with(" TB")); // TB is the top unit, no panic
+
+        // property: sizes up to 2^50 around every unit edge and at random never print "1024.0 X" below TB,
+        // and a bigger size never gets a smaller unit
+        let units = ["B", "KB", "MB", "GB", "TB"];
+        let mut sizes: Vec<u64> = Vec::new();
+        for e in 10..=50 {
+            let edge = 1u64 << e;
+            sizes.extend((0..64).flat_map(|d| [edge - d, edge + d]));
+        }
+        for k in 1..=3 {
+            let t = (1023.95 * 1024f64.powi(k)) as u64;
+            sizes.extend(t - 3..=t + 3);
+        }
+        let mut x = 0x9E37_79B9_7F4A_7C15u64; // fixed-seed xorshift
+        for _ in 0..5000 {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            // 50 random bits shifted down 0..=40 places, so B..TB all get random sizes (not ~all TB)
+            sizes.push((x >> 14) >> (x % 41));
+        }
+        sizes.sort_unstable();
+        sizes.dedup();
+        let mut last = 0;
+        for b in sizes {
+            let s = human(b);
+            let (num, unit) = s.rsplit_once(' ').unwrap();
+            let u = units.iter().position(|&n| n == unit).unwrap();
+            assert!(u == 4 || !num.starts_with("1024.0"), "{b} -> {s}");
+            assert!(u >= last, "{b} -> {s}");
+            last = u;
+        }
+    }
+
+    #[test]
     fn folder_size_text() {
         let kb = human(1024);
         // running: a folder met shows "calculating", bytes so far show with "…"

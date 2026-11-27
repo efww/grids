@@ -882,7 +882,9 @@ pub(crate) fn sessions_dir() -> PathBuf {
 
 pub(crate) fn human(b: u64) -> String {
     let (mut v, mut k) = (b as f64, 0);
-    while v >= 1024.0 && k < 4 {
+    // step up at 1023.95, not 1024: anything below that constant prints "1023.9" and anything at or above
+    // it becomes "1.0" of the next unit, so "1024.0 KB/MB/GB" never shows (bytes are whole, so 1024 B is still 1.0 KB)
+    while v >= 1023.95 && k < 4 {
         v /= 1024.0;
         k += 1;
     }
