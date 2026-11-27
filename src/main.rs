@@ -3256,6 +3256,14 @@ mod tests { tr("in", "안") }
             assert!(r.left > a.left && r.right < a.left + s(26) && r.top >= a.top && r.bottom <= a.bottom, "{dpi}");
             assert_eq!((r.right - r.left, r.bottom - r.top), (s(16), s(16)));
             assert_eq!(crumb_field(a, dpi).left, a.left + s(26));
+            // a press on the icon drags the folder out; just off it (or in a narrow pill) it stays a crumb-pill press
+            assert!(on_addr_icon(a, dpi, r.left, r.top) && on_addr_icon(a, dpi, r.right - 1, r.bottom - 1), "{dpi}");
+            assert!(on_addr_icon(a, dpi, (r.left + r.right) / 2, (r.top + r.bottom) / 2));
+            for (x, y) in [(r.left - 1, r.top), (r.right, r.top), (r.left, r.top - 1), (r.left, r.bottom), (crumb_field(a, dpi).left, r.top)] {
+                assert!(!on_addr_icon(a, dpi, x, y), "{dpi}: ({x}, {y})");
+            }
+            let narrow = addr(s(90) - 1);
+            assert!(!on_addr_icon(narrow, dpi, narrow.left + s(6), narrow.top + s(8)), "{dpi}");
         }
         // one waiting lookup per pane: a newer one replaces it, its PIDL comes back exactly once
         let mut q = Vec::new();

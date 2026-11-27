@@ -321,6 +321,11 @@ pub(crate) fn addr_icon(addr: RECT, dpi: i32) -> Option<RECT> {
     Some(RECT { left, top, right: left + s(16), bottom: top + s(16) })
 }
 
+// A pane-client point on that icon: where a press starts dragging the pane's folder out. False in a narrow pill.
+pub(crate) fn on_addr_icon(addr: RECT, dpi: i32, x: i32, y: i32) -> bool {
+    addr_icon(addr, dpi).is_some_and(|r| x >= r.left && x < r.right && y >= r.top && y < r.bottom)
+}
+
 // Where crumbs go in the address pill: the edit's horizontal span, a little inside the pill vertically.
 pub(crate) fn crumb_field(addr: RECT, dpi: i32) -> RECT {
     let s = |v: i32| v * dpi / 96;

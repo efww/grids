@@ -1879,12 +1879,54 @@ pub(crate) unsafe fn drop_items(d: &Ref<IDataObject>) -> Option<IShellItemArray>
 // Explorer's rules (same drive moves, Ctrl copies, Shift moves, Alt links, a right-button drag asks), with the
 // shell's conflict dialog, progress and Ctrl+Z; the Recycle Bin's deletes. None: the place takes no drops.
 pub(crate) unsafe fn folder_drop_target(place: &str) -> Option<IDropTarget> {
-    let item: IShellItem = if place == RECYCLE_BIN {
-        SHGetKnownFolderItem(&FOLDERID_RecycleBinFolder, KF_FLAG_DEFAULT, None).ok()?
+    place_item(place)?.BindToHandler(None, &BHID_SFUIObject).ok()
+}
+
+// A pane place as a shell item: a path or ::{GUID} parses; the Recycle Bin is the known folder.
+unsafe fn place_item(place: &str) -> Option<IShellItem> {
+    if place == RECYCLE_BIN {
+        SHGetKnownFolderItem(&FOLDERID_RecycleBinFolder, KF_FLAG_DEFAULT, None).ok()
     } else {
-        SHCreateItemFromParsingName(&HSTRING::from(place), None).ok()?
+        SHCreateItemFromParsingName(&HSTRING::from(place), None).ok()
+    }
+}
+
+// The folder a pane shows, dragged out from its address bar icon as from Explorer's: the shell's own data
+// object, so Explorer, the desktop, a browser's upload box, an editor, a terminal or another pane's header take
+// it as that folder. Copy or link only, never move (what the pane shows stays put); link is offered as the
+// preferred effect, as Explorer's address icon makes a shortcut. The drag runs its own message loop: never
+// inside app(), and nothing about the pane is used again after it (the pane may have changed meanwhile).
+pub(crate) unsafe fn drag_folder_out(h: HWND, place: &str) {
+    let Some(data) = place_item(place).and_then(|it| it.BindToHandler::<_, IDataObject>(None, &BHID_DataObject).ok()) else {
+        fail(Fail::DragCant, "");
+        return;
     };
-    item.BindToHandler(None, &BHID_SFUIObject).ok()
+    prefer_link(&data);
+    _ = SHDoDragDrop(Some(h), &data, None, DROPEFFECT_COPY | DROPEFFECT_LINK);
+}
+
+// "Preferred DropEffect" = link on a drag's data: targets that follow it (Explorer, the desktop) default to
+// a shortcut; others pick for themselves. Best effort: without it the drag still works.
+unsafe fn prefer_link(data: &IDataObject) {
+    let Ok(g) = GlobalAlloc(GMEM_MOVEABLE, 4) else { return };
+    let p = GlobalLock(g) as *mut u32;
+    if p.is_null() {
+        _ = GlobalFree(Some(g));
+        return;
+    }
+    *p = DROPEFFECT_LINK.0;
+    _ = GlobalUnlock(g);
+    let fmt = FORMATETC {
+        cfFormat: RegisterClipboardFormatW(w!("Preferred DropEffect")) as u16,
+        ptd: std::ptr::null_mut(),
+        dwAspect: DVASPECT_CONTENT.0,
+        lindex: -1,
+        tymed: TYMED_HGLOBAL.0 as u32,
+    };
+    let med = STGMEDIUM { tymed: TYMED_HGLOBAL.0 as u32, u: STGMEDIUM_0 { hGlobal: g }, pUnkForRelease: std::mem::ManuallyDrop::new(None) };
+    if data.SetData(&fmt, &med, true).is_err() {
+        _ = GlobalFree(Some(g)); // taken only when it succeeds
+    }
 }
 
 // A drag passed on to one folder's shell drop target at a time. Its target is made once on entering that folder

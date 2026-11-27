@@ -600,6 +600,23 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
     }
 }
 
+// A press on pane i's address icon, while it is drawn and the crumbs show (not the edit): the folder to drag out.
+unsafe fn icon_drag_place(h: HWND, i: usize, x: i32, y: i32) -> Option<String> {
+    if GetDlgItem(Some(h), ID_EDIT).is_ok_and(|e| IsWindowVisible(e).as_bool()) {
+        return None;
+    }
+    let (dpi, icon, place) = app(|a| (a.dpi, a.panes[i].as_ref().map_or(-1, |p| p.icon), a.s.paths[i].clone()));
+    (icon >= 0 && on_addr_icon(addr_rect(h, dpi), dpi, x, y)).then_some(place)
+}
+
+// Windows' own test of a press becoming a drag (the system's drag distance, before the button is let go).
+// It runs a message loop while the button is down: never inside app().
+unsafe fn drag_begins(h: HWND, x: i32, y: i32) -> bool {
+    let mut p = POINT { x, y };
+    _ = ClientToScreen(h, &mut p);
+    DragDetect(h, p).as_bool()
+}
+
 pub(crate) extern "system" fn pane_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     unsafe {
         let nav = |flags: u32| -> bool {
@@ -660,7 +677,21 @@ pub(crate) extern "system" fn pane_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                         kind_menu(i);
                         head_rehover(h); // the menu may close with the pointer elsewhere
                     }
-                    Some(i) => crumb_click(h, i, x, y),
+                    // the address icon: dragged, it carries this folder out; just pressed, it types a path as before
+                    Some(i) => match icon_drag_place(h, i, x, y) {
+                        Some(place) if drag_begins(h, x, y) => {
+                            drag_folder_out(h, &place);
+                            if IsWindow(Some(h)).as_bool() {
+                                head_rehover(h); // the drag held the mouse: shade what is under it now
+                            }
+                        }
+                        Some(_) => {
+                            if let Some(i) = pane_of(h) {
+                                crumb_click(h, i, x, y);
+                            }
+                        }
+                        None => crumb_click(h, i, x, y),
+                    },
                     None => {}
                 }
             }
