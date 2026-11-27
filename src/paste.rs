@@ -1,6 +1,6 @@
 use crate::*;
 use windows::Win32::Graphics::Imaging::*;
-use windows::Win32::System::DataExchange::IsClipboardFormatAvailable;
+use windows::Win32::System::DataExchange::{GetOpenClipboardWindow, IsClipboardFormatAvailable};
 use windows::Win32::System::Memory::GlobalSize;
 use windows::Win32::System::Power::{PowerClearRequest, PowerCreateRequest, PowerRequestSystemRequired, PowerSetRequest};
 use windows::Win32::System::Shutdown::{ShutdownBlockReasonCreate, ShutdownBlockReasonDestroy};
@@ -256,9 +256,104 @@ pub(crate) fn collect_all(n: u32, mut get: impl FnMut(u32) -> Option<String>) ->
     }
 }
 
+// ---------- the clipboard, opened with a few short retries ----------
+
+// Clipboard history (Win+V), clipboard managers, rdpclip, Office and password managers open the clipboard for a
+// moment after every change; a press at that moment would fail. So: up to 10 tries 25 ms apart (≤ ~225 ms, only
+// while it is held), as .NET's Clipboard and Chromium's ScopedClipboard retry.
+pub(crate) const CLIP_TRIES: u32 = 10;
+const CLIP_WAIT: Duration = Duration::from_millis(25);
+
+/// The clipboard is open while this lives; dropping it closes it, on every return path.
+pub(crate) struct ClipGuard(());
+
+impl Drop for ClipGuard {
+    fn drop(&mut self) {
+        unsafe { _ = CloseClipboard() };
+    }
+}
+
+/// The clipboard stayed held by another program: its exe name, "" when that can't be told.
+#[derive(Debug, PartialEq)]
+pub(crate) struct ClipBusy(pub(crate) String);
+
+/// Calls `open` up to `tries` times with `sleep` between tries, never after the last. True: one succeeded.
+pub(crate) fn retry_open(mut open: impl FnMut() -> bool, mut sleep: impl FnMut(), tries: u32) -> bool {
+    for k in 0..tries {
+        if open() {
+            return true;
+        }
+        if k + 1 < tries {
+            sleep();
+        }
+    }
+    false
+}
+
+pub(crate) unsafe fn clip_open(owner: HWND) -> std::result::Result<ClipGuard, ClipBusy> {
+    clip_open_with(owner, CLIP_TRIES, || std::thread::sleep(CLIP_WAIT))
+}
+
+unsafe fn clip_open_with(owner: HWND, tries: u32, sleep: impl FnMut()) -> std::result::Result<ClipGuard, ClipBusy> {
+    if retry_open(|| OpenClipboard(Some(owner)).is_ok(), sleep, tries) {
+        return Ok(ClipGuard(()));
+    }
+    // asked right after the last try; no window (opened without one, or let go since) or Grids itself: no name
+    let mut pid = 0;
+    if let Some(h) = GetOpenClipboardWindow().ok().filter(|h| !h.0.is_null()) {
+        GetWindowThreadProcessId(h, Some(&mut pid));
+    }
+    Err(ClipBusy(if pid == 0 || pid == GetCurrentProcessId() { String::new() } else { exe_name(pid) }))
+}
+
+/// The status line's note when the clipboard stayed held (a program run as administrator gives no name).
+pub(crate) fn clip_busy_note(ko: bool, holder: &str) -> String {
+    match (ko, holder) {
+        (false, "") => "Another program is using the clipboard — try again".into(),
+        (true, "") => "다른 프로그램이 클립보드를 쓰고 있음 — 다시 해 보세요".into(),
+        (false, h) => format!("The clipboard is in use by {h} — try again"),
+        (true, h) => format!("클립보드를 {h}에서 쓰고 있음 — 다시 해 보세요"),
+    }
+}
+
+/// Text put on the clipboard (`tries` opens at most). Busy: held by another program; Failed: anything else.
+pub(crate) enum ClipFail {
+    Busy(String),
+    Failed,
+}
+
+pub(crate) unsafe fn put_clip(text: &str, tries: u32) -> std::result::Result<(), ClipFail> {
+    let text: Vec<u16> = text.encode_utf16().chain([0]).collect();
+    let Ok(h) = GlobalAlloc(GMEM_MOVEABLE, text.len() * 2) else { return Err(ClipFail::Failed) };
+    let mut r = Err(ClipFail::Failed);
+    let p = GlobalLock(h) as *mut u16;
+    if !p.is_null() {
+        std::ptr::copy_nonoverlapping(text.as_ptr(), p, text.len());
+        _ = GlobalUnlock(h);
+        r = match clip_open_with(app(|x| x.main), tries, || std::thread::sleep(CLIP_WAIT)) {
+            Ok(_open) if EmptyClipboard().is_ok() && SetClipboardData(CF_UNICODETEXT.0 as u32, Some(HANDLE(h.0))).is_ok() => Ok(()),
+            Ok(_) => Err(ClipFail::Failed),
+            Err(ClipBusy(who)) => Err(ClipFail::Busy(who)),
+        };
+    }
+    if r.is_err() {
+        _ = GlobalFree(Some(h)); // after a successful SetClipboardData the system owns it
+    }
+    r
+}
+
+/// put_clip's failure told: who holds the clipboard in the status line, else a beep.
+pub(crate) unsafe fn clip_failed(e: ClipFail) {
+    match e {
+        ClipFail::Busy(who) => warn(clip_busy_note(KO.load(Ordering::Relaxed), &who)),
+        ClipFail::Failed => _ = MessageBeep(MB_ICONWARNING),
+    }
+}
+
 // Ctrl+Shift+C in a file list: the selected items' paths (or the folder's), quoted, one per line.
 // Virtual items without a file path are skipped. The clipboard is only touched once the text is ready.
-pub(crate) unsafe fn copy_paths(a: usize) {
+// A held key's repeats try the clipboard once: no wait at every repeat while another program holds it.
+pub(crate) unsafe fn copy_paths(a: usize, repeat: bool) {
     let Some(fv) = view_of::<IFolderView2>(a) else { return };
     let path = |it: IShellItem| it.GetDisplayName(SIGDN_FILESYSPATH).ok().map(|p| pwstr(p));
     let mut paths: Vec<String> = Vec::new();
@@ -272,26 +367,9 @@ pub(crate) unsafe fn copy_paths(a: usize) {
         _ = MessageBeep(MB_ICONWARNING);
         return;
     }
-    let text: Vec<u16> = paths.iter().map(|p| format!("\"{p}\"")).collect::<Vec<_>>().join("\r\n").encode_utf16().chain([0]).collect();
-    let main = app(|x| x.main);
-    let mut ok = false;
-    if let Ok(h) = GlobalAlloc(GMEM_MOVEABLE, text.len() * 2) {
-        let p = GlobalLock(h) as *mut u16;
-        if !p.is_null() {
-            std::ptr::copy_nonoverlapping(text.as_ptr(), p, text.len());
-            _ = GlobalUnlock(h);
-            if OpenClipboard(Some(main)).is_ok() {
-                ok = EmptyClipboard().is_ok() && SetClipboardData(CF_UNICODETEXT.0 as u32, Some(HANDLE(h.0))).is_ok();
-                _ = CloseClipboard();
-            }
-        }
-        if !ok {
-            _ = GlobalFree(Some(h)); // after a successful SetClipboardData the system owns it
-        }
-    }
-    if !ok {
-        _ = MessageBeep(MB_ICONWARNING);
-        return;
+    let text = paths.iter().map(|p| format!("\"{p}\"")).collect::<Vec<_>>().join("\r\n");
+    if let Err(e) = put_clip(&text, if repeat { 1 } else { CLIP_TRIES }) {
+        return clip_failed(e);
     }
     let n = paths.len();
     let note = match (KO.load(Ordering::Relaxed), n) {
@@ -312,9 +390,11 @@ pub(crate) unsafe fn copy_paths(a: usize) {
 // Cut, links, virtual items and anything else stay with the shell.
 pub(crate) unsafe fn try_paste(a: usize) -> bool {
     let (dst, main) = app(|x| (x.s.paths[a].clone(), x.main));
-    if !is_fs(&dst) || OpenClipboard(Some(main)).is_err() {
+    if !is_fs(&dst) {
         return false;
     }
+    // still held after the retries: the shell gets the paste, as before
+    let Ok(open) = clip_open(main) else { return false };
     let mut srcs = Vec::new();
     if let Ok(h) = GetClipboardData(CF_HDROP.0 as u32) {
         let drop = HDROP(h.0);
@@ -337,7 +417,7 @@ pub(crate) unsafe fn try_paste(a: usize) -> bool {
     let has_text = IsClipboardFormatAvailable(CF_UNICODETEXT.0 as u32).is_ok();
     let text = text_only(!srcs.is_empty(), idlist, fgd, has_text, clip_private()).then(|| clip_text()).flatten();
     let pic = (text.is_none() && picture_only(!srcs.is_empty(), idlist, fgd, has_text)).then(|| clip_picture()).flatten();
-    _ = CloseClipboard();
+    drop(open); // closed before saving or copying starts: other programs aren't kept off it meanwhile
     match text {
         Some(Ok(t)) if !t.trim().is_empty() => {
             save_text(a, &dst, &t);
@@ -1072,6 +1152,84 @@ pub(crate) unsafe fn choose_folder(owner: HWND, start: &str, mv: bool) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clipboard_retry_bounds() {
+        // never opens: every try made, a wait between each and none after the last (9 × 25 ms at most)
+        let (mut opens, mut sleeps) = (0, 0);
+        assert!(!retry_open(|| { opens += 1; false }, || sleeps += 1, CLIP_TRIES));
+        assert_eq!((opens, sleeps), (10, 9));
+        assert!(CLIP_WAIT * sleeps <= Duration::from_millis(250));
+        // opens on the third: stops there
+        let (mut opens, mut sleeps) = (0, 0);
+        assert!(retry_open(|| { opens += 1; opens == 3 }, || sleeps += 1, CLIP_TRIES));
+        assert_eq!((opens, sleeps), (3, 2));
+        // a held key's repeat: one try, no wait
+        let (mut opens, mut sleeps) = (0, 0);
+        assert!(!retry_open(|| { opens += 1; false }, || sleeps += 1, 1));
+        assert_eq!((opens, sleeps), (1, 0));
+    }
+
+    #[test]
+    fn clipboard_busy_notes() {
+        assert_eq!(clip_busy_note(false, "Ditto.exe"), "The clipboard is in use by Ditto.exe — try again");
+        assert_eq!(clip_busy_note(true, "Ditto.exe"), "클립보드를 Ditto.exe에서 쓰고 있음 — 다시 해 보세요");
+        assert_eq!(clip_busy_note(false, ""), "Another program is using the clipboard — try again");
+        assert_eq!(clip_busy_note(true, ""), "다른 프로그램이 클립보드를 쓰고 있음 — 다시 해 보세요");
+    }
+
+    // The real clipboard: held by another thread, clip_open gives up with no name (opened without a window, and in
+    // this process); let go while it waits, it opens. Steps by channel, not by timing. Skipped where the clipboard
+    // can't be opened at all, or where another thread's hold doesn't keep this one out.
+    #[test]
+    fn clipboard_open_waits_for_holder() {
+        use std::sync::mpsc::channel;
+        unsafe {
+            if OpenClipboard(None).is_err() {
+                return;
+            }
+            _ = CloseClipboard();
+        }
+        let (held_tx, held_rx) = channel::<bool>();
+        let (go_tx, go_rx) = channel::<()>();
+        let (gone_tx, gone_rx) = channel::<()>();
+        let holder = std::thread::spawn(move || unsafe {
+            let ok = OpenClipboard(None).is_ok();
+            _ = held_tx.send(ok);
+            if ok {
+                _ = go_rx.recv();
+                _ = CloseClipboard();
+            }
+            _ = gone_tx.send(());
+        });
+        if !held_rx.recv().unwrap_or(false) {
+            _ = holder.join();
+            return;
+        }
+        unsafe {
+            match clip_open_with(HWND::default(), 3, || {}) {
+                Ok(open) => {
+                    drop(open);
+                    _ = go_tx.send(());
+                    _ = holder.join();
+                    return;
+                }
+                Err(busy) => assert_eq!(busy, ClipBusy(String::new())),
+            }
+            let mut first = true;
+            let got = clip_open_with(HWND::default(), CLIP_TRIES, || {
+                if std::mem::take(&mut first) {
+                    _ = go_tx.send(());
+                    _ = gone_rx.recv();
+                } else {
+                    // a real wait between later tries: another test or process opening it for a moment doesn't fail this
+                    std::thread::sleep(CLIP_WAIT);
+                }
+            });
+            assert!(got.is_ok(), "the clipboard, let go, should open on the next try");
+        }
+        _ = holder.join();
+    }
 
     #[test]
     fn done_notice_never_silent_in_back() {

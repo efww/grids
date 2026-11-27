@@ -120,8 +120,11 @@ pub(crate) unsafe fn copy_list(src: usize) {
         rows.push(Row { name, date, kind, size, path });
     }
     let ko = KO.load(Ordering::Relaxed);
-    if rows.is_empty() || !put_clip(&list_table(&rows, ko)) {
+    if rows.is_empty() {
         return beep();
+    }
+    if let Err(e) = put_clip(&list_table(&rows, ko), CLIP_TRIES) {
+        return clip_failed(e);
     }
     let n = rows.len();
     set_note(if ko { format!("{n}개 항목을 표로 복사함 — 엑셀에 붙여 넣기") } else { format!("Copied a table of {n} items — paste it into Excel") });

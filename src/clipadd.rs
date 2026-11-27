@@ -193,16 +193,10 @@ pub(crate) unsafe fn add_to_clip(picked: std::result::Result<Vec<String>, Pick>)
         return;
     };
     let ko = KO.load(Ordering::Relaxed);
-    let r = if OpenClipboard(Some(app(|x| x.main))).is_ok() {
-        let r = add_open(&add);
-        _ = CloseClipboard();
-        Some(r)
-    } else {
-        None
-    };
+    let r = clip_open(app(|x| x.main)).map(|_open| add_open(&add));
     let note = match r {
-        Some(Added::Done { added, total, folders, same }) => return set_note(clip_note(ko, added, total, folders, same)),
-        Some(Added::AllThere(n)) => {
+        Ok(Added::Done { added, total, folders, same }) => return set_note(clip_note(ko, added, total, folders, same)),
+        Ok(Added::AllThere(n)) => {
             if ko {
                 format!("이미 클립보드에 있음 — 모두 {n}개")
             } else {
@@ -210,19 +204,19 @@ pub(crate) unsafe fn add_to_clip(picked: std::result::Result<Vec<String>, Pick>)
                 format!("Already on the clipboard — {n} {items} in all")
             }
         }
-        Some(Added::Cut) => tr(
+        Ok(Added::Cut) => tr(
             "Not added: the clipboard holds cut items — paste them first, or start again with Ctrl+C",
             "더하지 않음: 클립보드에 잘라낸 항목이 있음 — 먼저 붙여 넣거나 Ctrl+C로 새로 시작하세요",
         )
         .into(),
-        Some(Added::Virtual) => tr(
+        Ok(Added::Virtual) => tr(
             "Not added: the clipboard holds items with no file path (a phone, a ZIP …) — paste them first",
             "더하지 않음: 클립보드에 파일 경로가 없는 항목(휴대폰·ZIP 안 등)이 있음 — 먼저 붙여 넣으세요",
         )
         .into(),
-        Some(Added::TooMany) => tr("Not added: the clipboard would hold over 10,000 items", "더하지 않음: 클립보드 항목이 1만 개를 넘게 됨").into(),
-        Some(Added::Failed) => tr("Could not write to the clipboard", "클립보드에 쓰지 못함").into(),
-        None => tr("Another program is using the clipboard — try again", "다른 프로그램이 클립보드를 쓰고 있음 — 다시 해 보세요").into(),
+        Ok(Added::TooMany) => tr("Not added: the clipboard would hold over 10,000 items", "더하지 않음: 클립보드 항목이 1만 개를 넘게 됨").into(),
+        Ok(Added::Failed) => tr("Could not write to the clipboard", "클립보드에 쓰지 못함").into(),
+        Err(ClipBusy(who)) => clip_busy_note(ko, &who),
     };
     _ = MessageBeep(MB_ICONWARNING);
     set_note(note);

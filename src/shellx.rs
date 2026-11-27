@@ -671,7 +671,7 @@ pub(crate) unsafe fn holders(paths: &[String]) -> Option<Vec<Holder>> {
     out
 }
 
-unsafe fn exe_name(pid: u32) -> String {
+pub(crate) unsafe fn exe_name(pid: u32) -> String {
     let Ok(p) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else { return String::new() };
     let (mut buf, mut n) = ([0u16; 1024], 1024u32);
     let ok = QueryFullProcessImageNameW(p, PROCESS_NAME_WIN32, PWSTR(buf.as_mut_ptr()), &mut n).is_ok();

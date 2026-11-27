@@ -233,10 +233,11 @@ pub(crate) struct HashJob {
     note: String, // last progress note shown, taken down when it ends
     paths: Vec<String>,
     clip: String,
+    held: Option<String>, // the clipboard's text could not be read: held by this program ("" unknown)
     rows: Vec<Got>,
 }
 
-static JOB: Mutex<HashJob> = Mutex::new(HashJob { gen: 0, busy: false, done: 0, total: 0, name: String::new(), note: String::new(), paths: Vec::new(), clip: String::new(), rows: Vec::new() });
+static JOB: Mutex<HashJob> = Mutex::new(HashJob { gen: 0, busy: false, done: 0, total: 0, name: String::new(), note: String::new(), paths: Vec::new(), clip: String::new(), held: None, rows: Vec::new() });
 static HASH_GEN: AtomicUsize = AtomicUsize::new(0);
 
 fn job() -> std::sync::MutexGuard<'static, HashJob> {
@@ -303,9 +304,12 @@ fn worker(main: isize, gen: usize, paths: Vec<String>) {
     }
 }
 
-unsafe fn clip_text() -> String {
+// Ok(""): no text on the clipboard (nothing to check against); Err: there is text but the clipboard stayed held
+// by another program (its exe name, or "").
+unsafe fn clip_text() -> std::result::Result<String, String> {
     let mut s = String::new();
-    if IsClipboardFormatAvailable(CF_UNICODETEXT.0 as u32).is_ok() && OpenClipboard(Some(app(|a| a.main))).is_ok() {
+    if IsClipboardFormatAvailable(CF_UNICODETEXT.0 as u32).is_ok() {
+        let _open = clip_open(app(|a| a.main)).map_err(|ClipBusy(who)| who)?;
         if let Ok(h) = GetClipboardData(CF_UNICODETEXT.0 as u32) {
             let p = GlobalLock(HGLOBAL(h.0)) as *const u16;
             if !p.is_null() {
@@ -317,28 +321,8 @@ unsafe fn clip_text() -> String {
                 _ = GlobalUnlock(HGLOBAL(h.0));
             }
         }
-        _ = CloseClipboard();
     }
-    s
-}
-
-pub(crate) unsafe fn put_clip(text: &str) -> bool {
-    let text: Vec<u16> = text.encode_utf16().chain([0]).collect();
-    let Ok(h) = GlobalAlloc(GMEM_MOVEABLE, text.len() * 2) else { return false };
-    let mut ok = false;
-    let p = GlobalLock(h) as *mut u16;
-    if !p.is_null() {
-        std::ptr::copy_nonoverlapping(text.as_ptr(), p, text.len());
-        _ = GlobalUnlock(h);
-        if OpenClipboard(Some(app(|x| x.main))).is_ok() {
-            ok = EmptyClipboard().is_ok() && SetClipboardData(CF_UNICODETEXT.0 as u32, Some(HANDLE(h.0))).is_ok();
-            _ = CloseClipboard();
-        }
-    }
-    if !ok {
-        _ = GlobalFree(Some(h)); // after a successful SetClipboardData the system owns it
-    }
-    ok
+    Ok(s)
 }
 
 fn drop_note(mine: &str) {
@@ -368,10 +352,13 @@ pub(crate) unsafe fn hash_pick(picked: std::result::Result<Vec<String>, Pick>) {
         _ = MessageBeep(MB_ICONWARNING);
         return;
     };
-    let clip = clip_text();
+    let (clip, held) = match clip_text() {
+        Ok(t) => (t, None),
+        Err(who) => (String::new(), Some(who)),
+    };
     let gen = {
         let mut j = job();
-        *j = HashJob { gen: j.gen + 1, busy: true, paths: paths.clone(), clip, ..Default::default() };
+        *j = HashJob { gen: j.gen + 1, busy: true, paths: paths.clone(), clip, held, ..Default::default() };
         HASH_GEN.store(j.gen, Ordering::Relaxed);
         j.gen
     };
@@ -400,16 +387,17 @@ pub(crate) unsafe fn hash_msg(h: HWND, gen: usize, fin: bool) {
         set_progress_note(note);
         return;
     }
-    let Some(Done { paths, rows, clip, mine }) = finish(gen) else { return };
+    let Some(Done { paths, rows, clip, held, mine }) = finish(gen) else { return };
     drop_note(&mine);
     update_status();
-    show_result(h, &paths, &rows, &clip);
+    show_result(h, &paths, &rows, &clip, held.as_deref());
 }
 
 struct Done {
     paths: Vec<String>,
     rows: Vec<Got>,
     clip: String,
+    held: Option<String>,
     mine: String, // the progress note to take down
 }
 
@@ -421,10 +409,10 @@ fn finish(gen: usize) -> Option<Done> {
         return None;
     }
     j.busy = false;
-    Some(Done { paths: std::mem::take(&mut j.paths), rows: std::mem::take(&mut j.rows), clip: std::mem::take(&mut j.clip), mine: std::mem::take(&mut j.note) })
+    Some(Done { paths: std::mem::take(&mut j.paths), rows: std::mem::take(&mut j.rows), clip: std::mem::take(&mut j.clip), held: j.held.take(), mine: std::mem::take(&mut j.note) })
 }
 
-unsafe fn show_result(h: HWND, paths: &[String], rows: &[Got], clip: &str) {
+unsafe fn show_result(h: HWND, paths: &[String], rows: &[Got], clip: &str, held: Option<&str>) {
     let names: Vec<String> = paths.iter().map(|p| base_name(p).to_string()).collect();
     let clip = clip_hashes(clip);
     let ms = marks(&names, rows, &clip);
@@ -452,12 +440,17 @@ unsafe fn show_result(h: HWND, paths: &[String], rows: &[Got], clip: &str) {
     if names.len() > 1 && clip.named.is_empty() && !clip.lone.is_empty() {
         body.push(tr("(A single hash on the clipboard is checked only when one file is selected.)", "(클립보드에 해시 하나만 있으면 파일을 하나 골랐을 때만 대조합니다.)").into());
     }
+    // not "no hash on the clipboard": there may well be one, it just couldn't be read
+    if let Some(who) = held {
+        let not = tr("Couldn't read the clipboard, so nothing was checked against it", "클립보드를 읽지 못해 대조하지 않음");
+        body.push(format!("({not}: {})", clip_busy_note(KO.load(Ordering::Relaxed), who)));
+    }
     let lines = copy_lines(&names, rows);
     let n = rows.iter().filter(|g| matches!(g, Got::Sum(_))).count();
     let (title, head_h, body_h) = (HSTRING::from("Grids — SHA-256"), HSTRING::from(head.as_str()), HSTRING::from(body.join("\n")));
     let label = HSTRING::from(tr("Copy", "복사"));
     let button = [TASKDIALOG_BUTTON { nButtonID: BTN_COPY, pszButtonText: PCWSTR(label.as_ptr()) }];
-    let good = ms.iter().all(|m| matches!(m, Mark::Same | Mark::Plain)) && n == rows.len();
+    let good = ms.iter().all(|m| matches!(m, Mark::Same | Mark::Plain)) && n == rows.len() && held.is_none();
     let mut cfg = TASKDIALOGCONFIG {
         cbSize: size_of::<TASKDIALOGCONFIG>() as u32,
         hwndParent: h,
@@ -474,12 +467,13 @@ unsafe fn show_result(h: HWND, paths: &[String], rows: &[Got], clip: &str) {
     }
     match task_dialog(&cfg) {
         Some((BTN_COPY, _)) => {
-            if put_clip(&lines) {
-                let note = tr("Copied {n} checksums", "체크섬 {n}개 복사함").replace("{n}", &n.to_string());
-                app(|x| x.note = Some((note, Instant::now() + Duration::from_secs(3))));
-                update_status();
-            } else {
-                _ = MessageBeep(MB_ICONWARNING);
+            match put_clip(&lines, CLIP_TRIES) {
+                Ok(()) => {
+                    let note = tr("Copied {n} checksums", "체크섬 {n}개 복사함").replace("{n}", &n.to_string());
+                    app(|x| x.note = Some((note, Instant::now() + Duration::from_secs(3))));
+                    update_status();
+                }
+                Err(e) => clip_failed(e),
             }
         }
         Some(_) => {}

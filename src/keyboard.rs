@@ -304,7 +304,7 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
                 sort_by(a, kind);
             }
         }
-        KeyRoute::CopyPaths => copy_paths(a),
+        KeyRoute::CopyPaths => copy_paths(a, repeat),
         // held, it opens once (and the repeats don't reach the view)
         KeyRoute::Edit => {
             if !repeat {
