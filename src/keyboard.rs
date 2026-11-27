@@ -354,6 +354,12 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
                 return shell();
             }
         }
+        // held, it goes once
+        KeyRoute::PasteGo => {
+            if !repeat {
+                paste_go(a);
+            }
+        }
         KeyRoute::Shell => return shell(),
     }
     true
@@ -419,6 +425,7 @@ pub(crate) enum KeyRoute {
     Group,
     Stamp,
     Paste,
+    PasteGo,
     Shell,
 }
 
@@ -531,6 +538,8 @@ pub(crate) fn key_route(vk: VIRTUAL_KEY, ctrl: bool, shift: bool, alt: bool, c: 
         // Shift+F5: dated copies next to the selected items (Total Commander's copy-in-place); plain F5 is Refresh above
         VK_F5 if !ctrl && shift && !alt && list() => Stamp,
         VK_V if ctrl && !shift && !alt && list() => Paste,
+        // Ctrl+Shift+V: go to the path on the clipboard, from the list only (an edit box's Ctrl+Shift+V stays a paste)
+        VK_V if ctrl && shift && !alt && list() => PasteGo,
         _ => Shell,
     }
 }

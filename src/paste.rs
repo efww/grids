@@ -357,6 +357,189 @@ pub(crate) unsafe fn try_paste(a: usize) -> bool {
     start_copy(srcs, dst, rename, false)
 }
 
+// ---------- Ctrl+Shift+V: go to the path on the clipboard ----------
+
+// Only the start of the text is read: the path is its first line.
+const CLIP_PATH_MAX: usize = 8192;
+
+// The clipboard's path candidates, best first: its first non-blank line, unwrapped from "…", '…' or <…>, a file://
+// URL turned into its path, %NAME% expanded by `var`, / made \, a bare "C:" made "C:\". The second, if any, also
+// drops a trailing ":line" / ":line:col" (a compiler's or a log's) and a closing . , ; : tried only when the first
+// isn't there. Empty: not a path (another URL scheme, a sentence with a ':' or with characters no path holds).
+// Relative ones stay relative: the caller puts them under the pane's folder and takes them only when there.
+pub(crate) fn clip_paths(text: &str, var: impl Fn(&str) -> Option<String>) -> Vec<String> {
+    let mut s = text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
+    for (open, close) in [('"', '"'), ('\'', '\''), ('<', '>')] {
+        if s.len() >= 2 && s.starts_with(open) && s.ends_with(close) {
+            s = s[1..s.len() - 1].trim();
+        }
+    }
+    let s = match s.get(..5) {
+        Some(p) if p.eq_ignore_ascii_case("file:") => match file_url(&s[5..]) {
+            Some(p) => p,
+            None => return Vec::new(),
+        },
+        _ if url_scheme(s) => return Vec::new(),
+        _ => s.to_string(),
+    };
+    let mut s = expand_vars(&s, var).replace('/', "\\");
+    if s.len() == 2 && s.as_bytes()[0].is_ascii_alphabetic() && s.ends_with(':') {
+        s.push('\\');
+    }
+    let cut = cut_line_end(&s).to_string();
+    let mut out = Vec::new();
+    for c in [s, cut] {
+        if path_shaped(&c) && !out.contains(&c) {
+            out.push(c);
+        }
+    }
+    out
+}
+
+// "name:" before anything but a digit ("https:", "mailto:", "Note: …"); a drive letter is one character and
+// "main.rs:120" a file with its line.
+fn url_scheme(s: &str) -> bool {
+    let Some((head, rest)) = s.split_once(':') else { return false };
+    head.len() >= 2
+        && head.starts_with(|c: char| c.is_ascii_alphabetic())
+        && head.chars().all(|c| c.is_ascii_alphanumeric() || "+.-".contains(c))
+        && !rest.starts_with(|c: char| c.is_ascii_digit())
+}
+
+// What follows "file:": ///C:/a%20b → C:/a b, //server/share → //server/share, //localhost/C:/x → C:/x.
+fn file_url(rest: &str) -> Option<String> {
+    let rest = rest.split(['?', '#']).next().unwrap_or("");
+    let path = match rest.strip_prefix("//") {
+        Some(r) => match r.split_once('/').unwrap_or((r, "")) {
+            (host, p) if host.is_empty() || host.eq_ignore_ascii_case("localhost") => p.to_string(),
+            (host, p) => format!("//{host}/{p}"),
+        },
+        None => rest.trim_start_matches('/').to_string(),
+    };
+    let b = path.as_bytes();
+    let (mut out, mut k) = (Vec::with_capacity(b.len()), 0);
+    while k < b.len() {
+        let hex = path.get(k + 1..k + 3).filter(|h| h.bytes().all(|c| c.is_ascii_hexdigit()));
+        match hex.filter(|_| b[k] == b'%').and_then(|h| u8::from_str_radix(h, 16).ok()) {
+            Some(v) => {
+                out.push(v);
+                k += 3;
+            }
+            None => {
+                out.push(b[k]);
+                k += 1;
+            }
+        }
+    }
+    String::from_utf8(out).ok().filter(|p| !p.is_empty())
+}
+
+// Less a trailing ":line" / ":line:col" (and gcc's last ':'), never the drive's colon, then a closing . , ;
+fn cut_line_end(s: &str) -> &str {
+    let mut t = s.strip_suffix(':').unwrap_or(s);
+    for _ in 0..2 {
+        match t.rsplit_once(':') {
+            Some((head, n)) if head.len() > 1 && !n.is_empty() && n.bytes().all(|c| c.is_ascii_digit()) => t = head,
+            _ => break,
+        }
+    }
+    t.trim_end_matches(['.', ',', ';']).trim_end()
+}
+
+// A drive path (C:\…), a share (\\server\…) or a relative one; no ':' past the drive, nothing Windows refuses.
+fn path_shaped(p: &str) -> bool {
+    let b = p.as_bytes();
+    let drive = b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] == b'\\';
+    let unc = p.len() > 2 && p.starts_with(r"\\");
+    !p.is_empty()
+        && p.len() < 32_000
+        && (drive || unc || !p.starts_with('\\'))
+        && !p.chars().enumerate().any(|(k, c)| c < ' ' || "<>\"|?*".contains(c) || (c == ':' && !(drive && k == 1)))
+}
+
+// The clipboard's first copied file (Ctrl+C in a pane or in Explorer), else the start of its text; never text a
+// password manager marked to be kept out of clipboard monitors. The clipboard is open only while they are read.
+// Ok: a copied file's real path, to be taken as it is; Err: text, still to be read as a path.
+unsafe fn clip_first() -> Option<std::result::Result<String, String>> {
+    OpenClipboard(Some(app(|x| x.main))).ok()?;
+    let mut got = None;
+    if let Ok(h) = GetClipboardData(CF_HDROP.0 as u32) {
+        let drop = HDROP(h.0);
+        if DragQueryFileW(drop, u32::MAX, None) > 0 {
+            let mut buf = vec![0u16; DragQueryFileW(drop, 0, None) as usize + 1];
+            let n = DragQueryFileW(drop, 0, Some(&mut buf)) as usize;
+            got = Some(Ok(String::from_utf16_lossy(&buf[..n])));
+        }
+    }
+    if got.is_none() && !clip_private() {
+        if let Ok(h) = GetClipboardData(CF_UNICODETEXT.0 as u32) {
+            let h = HGLOBAL(h.0);
+            let p = GlobalLock(h) as *const u16;
+            if !p.is_null() {
+                let all = std::slice::from_raw_parts(p, (GlobalSize(h) / 2).min(CLIP_PATH_MAX));
+                let n = all.iter().position(|&c| c == 0).unwrap_or(all.len());
+                got = Some(Err(String::from_utf16_lossy(&all[..n])));
+                _ = GlobalUnlock(h);
+            }
+        }
+    }
+    _ = CloseClipboard();
+    got
+}
+
+// Ctrl+Shift+V in a file list: the pane goes to the clipboard's path, a file shown selected in its folder and never
+// opened (a browser's "Paste and go", Explorer's "Open file location"). A path that isn't there on a local drive
+// opens its nearest folder that is; on a share, "can't open".
+pub(crate) unsafe fn paste_go(a: usize) {
+    // a copied file's path is real already: no %NAME%, quotes or ":line" to undo in it
+    let cands = match clip_first() {
+        Some(Ok(file)) => vec![file],
+        Some(Err(text)) => clip_paths(&text, |v| std::env::var(v).ok()),
+        None => Vec::new(),
+    };
+    let cur = Some(app(|x| x.s.paths[a].clone())).filter(|c| is_fs(c));
+    // std::path::absolute is GetFullPathNameW: folds `..`, `.` and doubled \ so the path matches the pane's own
+    let full = |c: &String| -> Option<String> {
+        let p = match is_rel(c) {
+            true => Path::new(cur.as_ref()?).join(c),
+            false => Path::new(c).to_path_buf(),
+        };
+        std::path::absolute(p).ok().map(|p| p.to_string_lossy().into_owned())
+    };
+    let found = cands.iter().filter_map(full).find_map(|p| std::fs::metadata(&p).ok().map(|m| (p, m.is_dir())));
+    let went = |name: &str| set_note(format!("{}: {name}", tr("Went to the clipboard's path", "클립보드 경로로 이동")));
+    match found {
+        // the note goes first: a folder that won't open puts show_in_pane's "Can't open" over it
+        Some((p, true)) => {
+            went(Path::new(&p).file_name().map_or(p.clone(), |n| n.to_string_lossy().into_owned()).as_str());
+            show_in_pane(a, p, None);
+        }
+        Some((p, false)) => {
+            let path = Path::new(&p);
+            let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else { return fail(Fail::ClipNoPath, "") };
+            let name = name.to_string_lossy().into_owned();
+            went(&name);
+            show_in_pane(a, dir.display().to_string(), Some(name));
+        }
+        None => {
+            let Some(miss) = cands.last().filter(|c| !is_rel(c)) else { return fail(Fail::ClipNoPath, "") };
+            // local drives only, so the parent probe never blocks (as go_near)
+            let local = miss.get(1..3) == Some(":\\") && matches!(GetDriveTypeW(&HSTRING::from(&miss[..3])), 2 | 3); // DRIVE_REMOVABLE, DRIVE_FIXED
+            match local.then(|| near_dir(miss, |p| std::fs::metadata(p).map(|m| m.is_dir()))).flatten() {
+                Some(up) => {
+                    _ = MessageBeep(MB_ICONWARNING);
+                    set_note(match KO.load(Ordering::Relaxed) {
+                        true => format!("없는 경로: {miss} · {up} 엶"),
+                        false => format!("Not found: {miss} · opened {up}"),
+                    });
+                    show_in_pane(a, up, None);
+                }
+                None => fail(Fail::FolderCantOpen, miss),
+            }
+        }
+    }
+}
+
 // ---------- a copied picture pasted as a PNG file ----------
 
 // Only a bare picture: files, virtual files (Outlook attachments) and text (Office copies) stay with the shell.

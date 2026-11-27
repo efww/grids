@@ -1123,6 +1123,11 @@ pub(crate) fn icon_location(s: &str, var: impl Fn(&str) -> Option<String>) -> Op
     if file.is_empty() {
         return None;
     }
+    Some((expand_vars(file, var), at))
+}
+
+// %NAME% expanded by `var`, left as it is when unknown (as ExpandEnvironmentStrings does).
+pub(crate) fn expand_vars(file: &str, var: impl Fn(&str) -> Option<String>) -> String {
     let (mut out, mut rest) = (String::new(), file);
     while let Some(a) = rest.find('%') {
         out.push_str(&rest[..a]);
@@ -1139,7 +1144,7 @@ pub(crate) fn icon_location(s: &str, var: impl Fn(&str) -> Option<String>) -> Op
         }
     }
     out.push_str(rest);
-    Some((out, at))
+    out
 }
 
 // Set while the Ctrl+G menu is open, for its WM_MENUCHAR (Ctrl still held while the letter is typed).

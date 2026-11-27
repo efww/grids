@@ -4985,6 +4985,45 @@ mod tests { tr("in", "안") }
         // Ctrl+P: from the list and both boxes; Ctrl+Shift+P stays the view's / the box's
         assert_eq!((l("Ctrl+P"), route("addr", "Ctrl+P"), route("filter", "Ctrl+P")), (Switch, Switch, Switch));
         assert_eq!((l("Ctrl+Shift+P"), route("addr", "Ctrl+Shift+P")), (Shell, BoxKey));
+        // Ctrl+Shift+V: the list's paste-and-go; the boxes and an edit box in the list (F2 rename) keep their paste
+        assert_eq!((l("Ctrl+Shift+V"), l("Ctrl+V"), route("addr", "Ctrl+Shift+V"), route("filter", "Ctrl+Shift+V")), (PasteGo, Paste, BoxKey, BoxKey));
+        assert_eq!((route("rename", "Ctrl+Shift+V"), l("Ctrl+Alt+Shift+V")), (Shell, Typing)); // AltGr+Shift+V: a character
+    }
+
+    // Ctrl+Shift+V's reading of the clipboard: the paths to try, best first; none for what is no path.
+    #[test]
+    fn clip_path_reads() {
+        let var = |v: &str| match v {
+            "TEMP" => Some(r"C:\Users\x\AppData\Local\Temp".to_string()),
+            "USERPROFILE" => Some(r"C:\Users\x".to_string()),
+            _ => None,
+        };
+        let p = |t: &str| clip_paths(t, var);
+        assert_eq!(p(r#""C:\My Docs\a.txt""#), [r"C:\My Docs\a.txt"]);
+        assert_eq!(p("  <C:\\a b\\c>  "), [r"C:\a b\c"]);
+        assert_eq!(p("'D:\\x'"), [r"D:\x"]);
+        assert_eq!(p("file:///C:/My%20Docs/a.txt"), [r"C:\My Docs\a.txt"]);
+        assert_eq!(p("FILE:///C:/%EB%AC%B8%EC%84%9C/x.txt#top"), [r"C:\문서\x.txt"]);
+        assert_eq!(p("file://server/share/a%25b.txt"), [r"\\server\share\a%b.txt"]);
+        assert_eq!(p("file://localhost/C:/x"), [r"C:\x"]);
+        assert_eq!(p(r"src\main.rs:120:5"), [r"src\main.rs"]);
+        assert_eq!(p(r"C:\proj\a.cs:120"), [r"C:\proj\a.cs"]);
+        assert_eq!(p("src/lib.rs:7:3:"), [r"src\lib.rs"]);
+        assert_eq!(p("C:/Users/x"), [r"C:\Users\x"]);
+        assert_eq!(p(r"%TEMP%\a"), [r"C:\Users\x\AppData\Local\Temp\a"]);
+        assert_eq!(p(r"%USERPROFILE%\Desktop\"), [r"C:\Users\x\Desktop\"]);
+        assert_eq!(p(r"\\server\share\x"), [r"\\server\share\x"]);
+        assert_eq!(p("\r\n\n  C:\\first\\line  \r\nC:\\second\r\n"), [r"C:\first\line"]);
+        // the name as it is first, less its closing punctuation only if that isn't there
+        assert_eq!(p(r"C:\a\b.txt."), [r"C:\a\b.txt.", r"C:\a\b.txt"]);
+        assert_eq!(p("notes.txt"), ["notes.txt"]);
+        assert_eq!(p(".."), [".."]);
+        assert_eq!((p("C:"), p("c:/")), (vec![r"C:\".to_string()], vec![r"c:\".to_string()]));
+        // an unknown variable stays as it is (as ExpandEnvironmentStrings)
+        assert_eq!(p(r"%NOPE%\x"), [r"%NOPE%\x"]);
+        for no in ["https://example.com/a.txt", "mailto:a@b.c", "Note: see the log", "Is this a path?", "", "  \r\n ", "C:foo", "\\x", "/usr/bin", "<>", "a\tb", "file://"] {
+            assert!(p(no).is_empty(), "{no:?} → {:?}", p(no));
+        }
     }
 
     // Ctrl+E never runs a file: its edit verb, else text by its first bytes (by its type when online-only, never read).
