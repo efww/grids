@@ -141,12 +141,16 @@ pub(crate) fn join<T: Display>(v: &[T]) -> String {
     v.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(",")
 }
 
-// Ratios from a hand-edited ini can be anything: wrong length, zero, negative -> fall back to equal.
+// Ratios from a hand-edited ini can be anything: wrong length, zero, negative, NaN, inf (f64 parses "inf",
+// "NaN", "1e309"), or finite values whose sum overflows to inf -> fall back to equal.
 pub(crate) fn fix(r: Vec<f64>, n: usize) -> Vec<f64> {
-    if r.len() != n || r.iter().any(|x| !(*x > 0.0)) {
+    if r.len() != n || r.iter().any(|x| !(x.is_finite() && *x > 0.0)) {
         return even(n);
     }
     let sum: f64 = r.iter().sum();
+    if !sum.is_finite() {
+        return even(n);
+    }
     r.iter().map(|x| x / sum).collect()
 }
 
@@ -1039,6 +1043,45 @@ mod tests {
     }
     fn strs(v: &[&str]) -> Vec<String> {
         v.iter().map(|x| x.to_string()).collect()
+    }
+
+    // finite, positive, summing to 1 (within rounding)
+    fn sane(r: &[f64]) -> bool {
+        r.iter().all(|x| x.is_finite() && *x > 0.0) && (r.iter().sum::<f64>() - 1.0).abs() < 1e-9
+    }
+
+    #[test]
+    fn fix_rejects_inf_nan_and_overflowing_sums() {
+        let inf = f64::INFINITY;
+        for bad in [vec![inf, 1.0], vec![f64::NAN, 1.0], vec![-inf, 1.0], vec![1e308, 1e308], vec![1.0, 1.0, 1.0]] {
+            assert_eq!(fix(bad.clone(), 2), even(2), "{bad:?}");
+        }
+        // normal ratios keep the same x / sum result, bit for bit
+        assert_eq!(fix(vec![0.25, 0.75], 2), vec![0.25, 0.75]);
+        assert_eq!(fix(vec![1.0, 3.0], 2), vec![1.0 / 4.0, 3.0 / 4.0]);
+    }
+
+    #[test]
+    fn inf_and_nan_ratios_in_a_file_open_as_even_panes() {
+        // two columns of two panes, so colr and every rowr group line up and reach fix()'s new checks
+        for text in [
+            "cols=2,2\ncolr=inf,1\nrowr=inf,1|1e309,1",
+            "cols=2,2\ncolr=1e308,1e308\nrowr=1e308,1e308|1,NaN",
+            "cols=2,2\ncolr= Infinity , 1\nrowr= nan ,1|-inf,1",
+        ] {
+            let mut s = Session::parse(text);
+            assert_eq!(s.heights, vec![2, 2], "{text}");
+            assert_eq!(s.colr, even(2), "{text}");
+            assert!(s.rowr.iter().all(|g| *g == even(2)), "{text}");
+            assert!(sane(&s.colr) && s.rowr.iter().all(|g| sane(g)), "{text}");
+            for r in std::iter::once(&s.colr).chain(&s.rowr) {
+                assert!(cells(0, 800, r, 4).iter().all(|(a, b)| b > a), "{text}");
+            }
+            // moving a boundary (splitter drag, Ctrl+Alt+arrow) must not panic and keeps the ratios sane
+            drag_ratio(&mut s.colr, 0, 300, 0, 800, 4, 40);
+            drag_ratio(&mut s.rowr[1], 0, 9999, 0, 600, 4, 40);
+            assert!(sane(&s.colr) && sane(&s.rowr[1]), "{text}");
+        }
     }
 
     #[test]
