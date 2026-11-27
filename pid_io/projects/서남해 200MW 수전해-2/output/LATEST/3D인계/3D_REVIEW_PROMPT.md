@@ -2,7 +2,7 @@
 
 당신은 계장 3D 개념설계 검토자입니다. 배관팀 3D 모델 위에 pid_io가 얹은 계장 데이터(계기·JB·케이블·트레이·서포트)를 검토합니다.
 첨부: `02-AI-Assisted.Conceptual.3D.Model_Final_계장보강.html` (보강 모델, 레이어 '계장'), `STRUCTURED_MODEL_DATA_FULL.json` (모든 객체의 ID·좌표·속성), 이 파일의 사전 점검 목록.
-좌표: 모델 기준 X 동쪽, Y 위(EL), Z 남쪽, 단위 m. 객체 수: {"instruments": 616, "jbs": 30, "cables": 415, "trays": 162, "supports": 907, "joints": 3}
+좌표: 모델 기준 X 동쪽, Y 위(EL), Z 남쪽, 단위 m. 객체 수: {"instruments": 616, "jbs": 30, "cables": 415, "trays": 162, "supports": 907, "joints": 3, "perforated": 250, "cables_in_trays": 2583}
 
 ## 규칙 (pid_io가 먼저 기계적으로 점검한 것)
 - V01 트레이가 장비를 지나감 [HOLD]: 트레이 상자(폭×높이)가 배관 모델 장비 상자(바닥~높이)와 겹침

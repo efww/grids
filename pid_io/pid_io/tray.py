@@ -54,6 +54,7 @@ SCHEMA = [
                     "코어 수:외경 (외장 추정 = 비외장 + 4 mm). 비외장 예전 기본 4:12,7:14,10:16,12:17,19:20,24:23,30:25"), "T13"),
          _code(_num("od_fo", "광케이블", 15, "mm", "외장(SWA) 12C 14.5~16.2 mm, 철 테이프 외장 7.5~8.3 mm"), "T14"),
          _code(_num("od_rs485", "RS-485 통신", 10, "mm", "1P 외장 추정 (차폐 1P 외장 12 mm 안팎보다 조금 작게)"), "T15"),
+         _code(_num("od_eth", "Cu Ethernet (CAT6A 외장)", 12, "mm", "CAT6A S/FTP 비외장 7.5~8.5 mm, 외장(SWA) 11~13 mm 추정"), "T15E"),
      ]},
     {"id": "pt", "title": "UG · Perforated",
      "lead": "랙을 타지 않는 간선 구간은 UG(트렌치) 물량으로, JB에서 각 계기까지는 Perforated 트레이(케이블 길이와 같게)로 냅니다.",
@@ -91,6 +92,8 @@ def od(spec: str, v) -> float:
         return float(v["od_fo"])
     if s.startswith("RS-485"):
         return float(v["od_rs485"])
+    if s.startswith("CAT"):
+        return float(v.get("od_eth", 12))
     m = re.match(r"(\d+)\s*([PTC])", s)
     if not m:
         return 10.0
@@ -289,6 +292,7 @@ def build(res, layout, s, dec=None):
                     used_over.add(sid)
                     w, n = int(o[0]), int(o[1])
                 seg["trays"].append({"no": seg["no"] + CLS_SUFFIX[name], "cls": name, "count": len(cls[name]),
+                                     "cables": [c["no"] for c in cls[name]],
                                      "area": round(a_), "width": w, "tiers": n, "auto": list(auto), "user": bool(o),
                                      "fill": round(fill(a_, w, n, v), 3)})
         out["segments"].append(seg)
@@ -478,6 +482,55 @@ def checklist(v):
     return out
 
 
+# ------------------------------------------------------------------ v13.3 cable arrangement in the tray cross-section
+def arrange(cables, width_mm: float, tiers: int, height_mm: float, gap_mm: float = 5.0, wall_mm: float = 10.0):
+    """lay cables in a tray / trench cross-section (conceptual, for the 3D section view and Tray_Section sheet).
+
+    cables: [(cable no, OD mm)]. Biggest first; tiers get cables in turn to the least-filled tier (by area);
+    in a tier the cables lie side by side on the floor from the left wall (gap between), a new layer on top
+    when the row is full. x = centre from the left wall (mm), y = centre above the tier floor (mm).
+    Returns [{"no", "od", "tier", "layer", "x", "y"}] and the highest layer top per tier."""
+    tiers = max(1, int(tiers or 1))
+    W = max(50.0, float(width_mm or 300))
+    load = [0.0] * tiers
+    per = [[] for _ in range(tiers)]
+    for no, d in sorted(cables, key=lambda c: (-c[1], c[0])):
+        k = min(range(tiers), key=lambda i: load[i])
+        load[k] += d * d
+        per[k].append((no, d))
+    out, top = [], []
+    for k, cs in enumerate(per):
+        x, y0, row_h, layer, t_ = wall_mm, 0.0, 0.0, 1, 0.0
+        for no, d in cs:
+            if x + d > W - wall_mm + 1e-6 and x > wall_mm:          # row full -> next layer on top
+                y0 += row_h
+                x, row_h, layer = wall_mm, 0.0, layer + 1
+            out.append({"no": no, "od": round(d, 1), "tier": k + 1, "layer": layer,
+                        "x": round(x + d / 2, 1), "y": round(y0 + d / 2, 1)})
+            x += d + gap_mm
+            row_h = max(row_h, d)
+            t_ = max(t_, y0 + d)
+        top.append(round(t_, 1))
+    return out, top
+
+
+def sections(t: dict, v) -> list:
+    """one arrangement per tray / trench segment (same order as Tray_Segments)."""
+    odb = {c["cable"]: c["od"] for c in (t.get("by_cable") or {}).values()}
+    h = float(v["tray_height"])
+    res = []
+    for s in t["segments"]:
+        if s["kind"] == "UG":
+            lay, top = arrange([(c, odb.get(c, 10.0)) for c in s["cables"]], s["width"], s["tiers"], float(v["ug_height"]))
+            res.append({"no": s["no"], "kind": "UG 트렌치", "width": s["width"], "tiers": s["tiers"],
+                        "height": float(v["ug_height"]), "lay": lay, "top": top})
+        for tr in s["trays"]:
+            lay, top = arrange([(c, odb.get(c, 10.0)) for c in tr.get("cables") or []], tr["width"], tr["tiers"], h)
+            res.append({"no": tr["no"], "kind": "사다리 (랙)" if s["kind"] == "랙" else "사다리 (AG 서포트)", "width": tr["width"],
+                        "tiers": tr["tiers"], "height": h, "lay": lay, "top": top})
+    return res
+
+
 def write_sheets(wb, t, v, sheet):
     sm = t["summary"]
     data = [["사다리 트레이", f"{x['cls']} {x['width']}×{int(v['tray_height'])}", x["length"], x["order"]] for x in sm["ladder"]]
@@ -497,7 +550,7 @@ def write_sheets(wb, t, v, sheet):
             rows.append([tr["no"], "사다리 (랙)" if s["kind"] == "랙" else "사다리 (AG 서포트)", tr["cls"], tr["width"],
                          tr["tiers"], s["length"], tr["count"], tr["area"], tr["fill"],
                          ("사용자 " if tr["user"] else "자동 ") + f"(자동 {tr['auto'][0]}×{tr['auto'][1]}단)", s["unit"],
-                         f"{s['poly'][0]} → {s['poly'][1]}", ", ".join(c for c in s["cables"])])
+                         f"{s['poly'][0]} → {s['poly'][1]}", ", ".join(tr.get("cables") or s["cables"])])
     sheet(wb.create_sheet("Tray_Segments"), ["Tray No", "종류", "트레이 구분", "폭 (mm)", "단 수", "길이 (m)", "케이블 수",
                                              "단면적 합 (mm²)", "Fill", "크기 결정", "Unit", "구간 (PLOT pt)", "케이블"],
           rows, [14, 16, 10, 8, 6, 8, 8, 12, 7, 22, 6, 30, 80])
@@ -511,6 +564,15 @@ def write_sheets(wb, t, v, sheet):
     sheet(wb.create_sheet("Cable_Tray_Route"), ["Cable No", "구분", "From", "To", "Cable Spec", "외경 (mm)", "트레이 구분",
                                                 "사다리 (m)", "UG (m)", "구간 수", "트레이 경로 (출발 → 룸)"],
           cr, [22, 7, 18, 8, 26, 9, 9, 9, 8, 7, 120])
+    rows = []
+    for x in sections(t, v):
+        over = [i + 1 for i, h_ in enumerate(x["top"]) if h_ > x["height"] + 1e-6]
+        for c in x["lay"]:
+            rows.append([x["no"], x["kind"], x["width"], x["tiers"], c["tier"], c["layer"], c["no"], c["od"], c["x"], c["y"],
+                         "레일 높이 넘음 (확인)" if c["tier"] in over else ""])
+    sheet(wb.create_sheet("Tray_Section"), ["Tray No", "종류", "폭 (mm)", "단 수", "단", "층", "Cable No", "외경 (mm)",
+                                            "X (왼쪽 벽에서 mm)", "Y (단 바닥에서 mm)", "확인"],
+          rows, [14, 16, 8, 6, 5, 5, 22, 9, 14, 14, 18])
     sheet(wb.create_sheet("Trench_Runs"), ["Trench No", "폭 (mm)", "브래킷 단", "길이 (m)", "구간 수", "케이블 수", "Unit"],
           [[r["run"], r["width"], r["tiers"], r["length"], r["parts"], r["cables"], r["unit"]] for r in sm["ug_runs"]],
           [14, 8, 8, 9, 8, 9, 6])

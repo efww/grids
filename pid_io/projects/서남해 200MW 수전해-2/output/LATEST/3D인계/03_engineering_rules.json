@@ -1,7 +1,7 @@
 {
  "profile": "T1-CI",
  "rev": "R20261127",
- "source": "pid_io v13.1 (STEP 3 체크리스트 + STEP 6~9 설정)",
+ "source": "pid_io v13.3 (STEP 3 체크리스트 + STEP 6~9 설정)",
  "formulas": {
   "R-IO-SPARE": "spare = ceil(n(system, io) × rate H01~H04; RTD = H01)",
   "R-CB-BRANCH": "IO 1점 = 분기 1가닥; length = round_up((수평 × 우회 + 높이) × (1 + 여유), 올림)",
@@ -185,6 +185,15 @@
    "default": "RS-485 1P x 0.75SQ IS-OS",
    "unit": "",
    "note": "패키지를 동선으로 할 때, 그리고 MCC 통신 포트"
+  },
+  {
+   "id": "ETH_spec",
+   "group": "IO별 케이블 (계기 → JB)",
+   "name": "Cu Ethernet 통신 케이블 사양",
+   "value": "CAT6A S/FTP 4P x 23AWG Armoured",
+   "default": "CAT6A S/FTP 4P x 23AWG Armoured",
+   "unit": "",
+   "note": "체크리스트 C03 = Cu Ethernet일 때 패키지 통신 포트"
   },
   {
    "id": "multi_sq",
@@ -860,6 +869,15 @@
    "default": 10,
    "unit": "mm",
    "note": "1P 외장 추정 (차폐 1P 외장 12 mm 안팎보다 조금 작게)"
+  },
+  {
+   "id": "T15E",
+   "group": "케이블 외경",
+   "name": "Cu Ethernet (CAT6A 외장)",
+   "value": 12,
+   "default": 12,
+   "unit": "mm",
+   "note": "CAT6A S/FTP 비외장 7.5~8.5 mm, 외장(SWA) 11~13 mm 추정"
   },
   {
    "id": "T20",
@@ -1622,7 +1640,7 @@
     "formula": "케이블 물량 산출용",
     "basis": "사용자 언급(파이버 옵틱)",
     "status": "기록용",
-    "note": "기록용 - 케이블 물량 산출 시 사용 예정"
+    "note": "케이블로 연결 - STEP 6 '패키지 PLC 통신 케이블'이 이 값을 따름 (IO 수량에는 영향 없음)"
    },
    {
     "rule_id": "C04",
@@ -2172,8 +2190,8 @@
     "changes": "스페어 IO · 카드 수",
     "formula": "IS 배리어/카드 물량 분리",
     "basis": "수소 설비 (확정 필요)",
-    "status": "미적용 (구현 전)",
-    "note": "미적용 - 위험지역 구분도 연동과 인덱스 IS 열 필요"
+    "status": "기록용",
+    "note": "케이블로 연결 - STEP 6 IS / Non-IS(JB·멀티·트레이 분리)가 이 값을 따름. '위험지역 계기 IS'는 위험지역 구분도가 없어 전부 Non-IS로 계산 (가정). IO 수량에는 영향 없음"
    },
    {
     "rule_id": "I01",
@@ -2566,7 +2584,8 @@
     "default": "광케이블 (Fiber Optic)",
     "options": [
      "광케이블 (Fiber Optic)",
-     "RS-485 동선"
+     "RS-485 동선",
+     "Cu Ethernet 동선"
     ],
     "unit": "",
     "reads": "F-PID (IO 종류)",
@@ -2627,6 +2646,23 @@
     "changes": "케이블 사양 · 트레이 단면적",
     "formula": "IO 종류별 구성 × 굵기 × 차폐 = 분기 케이블 사양",
     "basis": "패키지를 동선으로 할 때, 그리고 MCC 통신 포트",
+    "status": "적용",
+    "note": ""
+   },
+   {
+    "rule_id": "R-CB-SPEC:ETH_spec",
+    "source": "STEP 6~10 설정 · IO별 케이블 (계기 → JB)",
+    "group": "R-CB-SPEC",
+    "name": "Cu Ethernet 통신 케이블 사양",
+    "key": "ETH_spec",
+    "value": "CAT6A S/FTP 4P x 23AWG Armoured",
+    "default": "CAT6A S/FTP 4P x 23AWG Armoured",
+    "options": [],
+    "unit": "",
+    "reads": "F-PID (IO 종류)",
+    "changes": "케이블 사양 · 트레이 단면적",
+    "formula": "IO 종류별 구성 × 굵기 × 차폐 = 분기 케이블 사양",
+    "basis": "체크리스트 C03 = Cu Ethernet일 때 패키지 통신 포트",
     "status": "적용",
     "note": ""
    },
@@ -4021,6 +4057,23 @@
     "changes": "트레이·트렌치 폭",
     "formula": "사양 글자 → 페어/코어 수 → 외경 표",
     "basis": "1P 외장 추정 (차폐 1P 외장 12 mm 안팎보다 조금 작게)",
+    "status": "적용",
+    "note": ""
+   },
+   {
+    "rule_id": "T15E",
+    "source": "STEP 6~10 설정 · 케이블 외경",
+    "group": "R-OD",
+    "name": "Cu Ethernet (CAT6A 외장)",
+    "key": "od_eth",
+    "value": 12,
+    "default": 12,
+    "options": [],
+    "unit": "mm",
+    "reads": "F-CAT",
+    "changes": "트레이·트렌치 폭",
+    "formula": "사양 글자 → 페어/코어 수 → 외경 표",
+    "basis": "CAT6A S/FTP 비외장 7.5~8.5 mm, 외장(SWA) 11~13 mm 추정",
     "status": "적용",
     "note": ""
    },

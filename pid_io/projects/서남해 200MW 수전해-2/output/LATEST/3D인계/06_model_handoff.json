@@ -12,8 +12,8 @@
  "applied_scope": "계장 개략 물량·배치 (계기·JB·케이블·트레이·트렌치·서포트)",
  "SUPPLEMENTED_MODEL": {
   "file": "02-AI-Assisted.Conceptual.3D.Model_Final_계장보강.html",
-  "sha256": "8f31ac255a60be38a3ba902b93c6afece5cf34a4f30ce35c88025f6a508b7374",
-  "bytes": 1758051,
+  "sha256": "1bf81adca98a72df81c1bf403830b34e43acf0f57b1987c0ba80ed2b5017b83d",
+  "bytes": 1935991,
   "how": "base HTML unchanged + one block appended to its module script (layers 계장 · ...)",
   "layers": [
    "inst_tray",
@@ -25,7 +25,7 @@
  },
  "STRUCTURED_MODEL_DATA": {
   "file": "STRUCTURED_MODEL_DATA_FULL.json",
-  "sha256": "6db0a26ba3c30c59cb262b891aa06715e6786e3c81a476fc936205f77d68b04c",
+  "sha256": "3ebd46323b1671e3b4c0ca747f4c3b022cb6d5b8924ec0fcf92146d80f2e0d37",
   "kind": "FULL"
  },
  "changes": {
@@ -34,7 +34,9 @@
   "cables": 415,
   "trays": 162,
   "supports": 907,
-  "joints": 3
+  "joints": 3,
+  "perforated": 250,
+  "cables_in_trays": 2583
  },
  "clash": {
   "other": null,

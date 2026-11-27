@@ -215,7 +215,7 @@ def to_model(d3: dict, tf: dict, base: dict, v: dict) -> dict:
         return [round(X, 2), round(Y, 2), round(Z, 2)]
 
     out = {"frame": "model (X east, Y up EL, Z south) m", "transform": tf, "instruments": [], "jbs": [], "cables": [],
-           "trays": [], "supports": [], "joints": [], "rooms": []}
+           "trays": [], "supports": [], "joints": [], "rooms": [], "perforated": []}
     for x in d3["instruments"]:
         out["instruments"].append({"id": x["tag"], "p": P(x), "est": x["estimated"],
                                    "props": {"Tag No": x["tag"], "JB": x["jb"], "위치 근거": x["src"],
@@ -286,8 +286,14 @@ def to_model(d3: dict, tf: dict, base: dict, v: dict) -> dict:
                 i_ = 0 if abs(b[2] - a[2]) >= abs(b[0] - a[0]) else 2
                 a[i_] = round(a[i_] + side, 2)
                 b[i_] = round(b[i_] + side, 2)
+        ug = t["kind"] == "ug_trench"
         out["trays"].append({"id": t["no"], "kind": t["kind"], "a": a, "b": b, "w": (t.get("width_mm") or 300) / 1000,
                              "tiers": t.get("tiers") or 1,
+                             # v13.3 real shape + cables laid in the cross-section (a / b = floor of tier 1, centre line)
+                             "h": round((t.get("height_mm") or (200 if ug else 150)) / 1000, 3),
+                             "pitch": round((float(v.get("ug_height", 200)) + 100 if ug else float(v.get("sp_tier_gap", 300))) / 1000, 3),
+                             "lay": [[c["no"], c["tier"], round(c["x"] / 1000, 4), round(c["y"] / 1000, 4), c["od"]]
+                                     for c in t.get("lay") or []],
                              "props": {"Tray No": t["no"], "구간": t["seg"], "트렌치 줄": t.get("run") or "", "종류": t["kind"],
                                        "구분": t.get("class", ""), "폭 (mm)": t.get("width_mm"), "단": t.get("tiers"),
                                        "Fill": f"{round((t.get('fill') or 0) * 100)}%", "길이 (m)": t["length_m"],
@@ -295,6 +301,20 @@ def to_model(d3: dict, tf: dict, base: dict, v: dict) -> dict:
                                        "케이블 수": len(t["cables"]), "케이블": ", ".join(t["cables"][:40]) + (" …" if len(t["cables"]) > 40 else "")}})
     order = {t["no"]: i for i, t in enumerate(d3["trays"])}
     out["trays"].sort(key=lambda x: order.get(x["id"], 0))
+    for x in d3.get("perforated") or []:                 # v13.3 perforated tray under each branch cable (JB -> instrument)
+        if not x.get("path"):
+            continue
+        pts = []
+        for q in (P(p) for p in x["path"]):
+            if pts:
+                p0 = pts[-1]
+                if abs(q[1] - p0[1]) > 0.05 and (abs(q[0] - p0[0]) > 0.05 or abs(q[2] - p0[2]) > 0.05):
+                    pts.append([q[0], p0[1], q[2]] if p0[1] < q[1] else [p0[0], q[1], p0[2]])
+            pts.append(q)
+        out["perforated"].append({"id": x["no"], "w": (x.get("width_mm") or 100) / 1000, "path": pts,
+                                  "props": {"PT No": x["no"], "계기": x.get("tag", ""), "JB": x.get("jb", ""),
+                                            "폭 (mm)": x.get("width_mm"), "길이 (m)": x.get("length_m"),
+                                            "브래킷": x.get("brackets") or ""}})
     for x in d3["supports"]:
         p = P(x, el=x["top_el"])
         out["supports"].append({"id": x["no"], "type": x["type"], "p": p, "base": 0 if x["type"] in ("L", "T", "H") else None,
@@ -305,7 +325,8 @@ def to_model(d3: dict, tf: dict, base: dict, v: dict) -> dict:
         out["joints"].append({"id": j["no"], "p": P(j), "props": {"EJ No": j["no"], "구간": j["seg"], "트레이": ", ".join(j["trays"])}})
     for r in d3["rooms"]:
         out["rooms"].append({"id": r["id"], "p": P(r), "props": {"이름": r["name"], "근거": r.get("src", "")}})
-    out["counts"] = {k: len(out[k]) for k in ("instruments", "jbs", "cables", "trays", "supports", "joints")}
+    out["counts"] = {k: len(out[k]) for k in ("instruments", "jbs", "cables", "trays", "supports", "joints", "perforated")}
+    out["counts"]["cables_in_trays"] = sum(len(t["lay"]) for t in out["trays"])
     return out
 
 
@@ -335,7 +356,7 @@ def load_other(path: Path) -> dict:
 
 def _tray_box(t, gap):
     a, b = t["a"], t["b"]
-    h = 0.1 + 0.3 * (t.get("tiers", 1) - 1)
+    h = t.get("h", 0.1) + t.get("pitch", 0.3) * (t.get("tiers", 1) - 1)
     lo = [min(a[0], b[0]), min(a[1], b[1]) - 0.05, min(a[2], b[2])]
     hi = [max(a[0], b[0]), max(a[1], b[1]) + h, max(a[2], b[2])]
     if abs(a[0] - b[0]) >= abs(a[2] - b[2]):
@@ -446,16 +467,172 @@ INJECT = r"""
     const o = new THREE.Mesh(new THREE.BoxGeometry(w, h, len), m);
     o.position.copy(A).add(B).multiplyScalar(0.5); o.lookAt(B); g.add(o); if (kind) pick(o, kind, d); return o;
   }
+  // ---- v13.3 real shapes: ladder = 2 C-rails + rungs @300, trench = concrete U + cover, perforated = channel;
+  //      cables laid in each tray cross-section (lay = [cable, tier, x from left wall m, y above tier floor m, OD mm])
+  const Y0 = new THREE.Vector3(0, 1, 0);
+  M.lad.side = THREE.DoubleSide; M.ladAg.side = THREE.DoubleSide;
+  M.multi.side = THREE.DoubleSide; M.comm.side = THREE.DoubleSide; M.branch.side = THREE.DoubleSide;
+  M.conc = mat(0x9ca3af, { metal: 0, rough: 0.95, side: THREE.DoubleSide });
+  M.cover = mat(0x6b7280, { metal: 0.2, rough: 0.7, transparent: true, opacity: 0.35, depthWrite: false });
+  M.perf = mat(0x7dd3fc, { metal: 0.6, rough: 0.4, side: THREE.DoubleSide });
+  const G2 = new THREE.Group(); G2.name = 'inst_cpath'; G2.visible = false; scene.add(G2); G.inst_cpath = G2;
+  { const row = document.createElement('div'); row.className = 'row';
+    row.innerHTML = '<input type="checkbox" id="ly_inst_cpath"><label for="ly_inst_cpath">계장 · 간선 케이블 중심선 (경로)</label>';
+    layerBox.appendChild(row); row.querySelector('input').addEventListener('change', ev => { G2.visible = ev.target.checked; }); }
+  function basis(dir) {                                   // across, up, along for a run in direction dir
+    const d = dir.clone().normalize(); let ac = new THREE.Vector3().crossVectors(d, Y0);
+    if (ac.lengthSq() < 1e-6) ac = new THREE.Vector3(1, 0, 0); ac.normalize();
+    const up = new THREE.Vector3().crossVectors(ac, d).normalize();
+    return { d, ac, up, q: new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(ac, up, d)) };
+  }
+  function merged(parts, m) {                             // parts: [[w, h, len, centre, quat]] -> one mesh
+    const pos = [], nor = [], mx = new THREE.Matrix4();
+    for (const [w, h, l, c, q] of parts) {
+      const g = new THREE.BoxGeometry(w, h, l).toNonIndexed(); mx.compose(c, q, new THREE.Vector3(1, 1, 1)); g.applyMatrix4(mx);
+      pos.push(...g.attributes.position.array); nor.push(...g.attributes.normal.array); g.dispose();
+    }
+    const bg = new THREE.BufferGeometry();
+    bg.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); bg.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+    bg.computeBoundingSphere(); return new THREE.Mesh(bg, m);
+  }
+  const at = (A, B, k) => A.clone().add(B.clone().sub(A).multiplyScalar(k));
+  const kindOf = {}; for (const c of INST.cables) kindOf[c.id] = c;
+  const cylG = new THREE.CylinderGeometry(1, 1, 1, 12, 1, false);
+  const TRAY_BY = {};
   for (const t of INST.trays) {
-    const m = t.kind === 'ug_trench' ? M.ug : t.kind === 'ladder_on_rack' ? M.lad : M.ladAg;
-    for (let i = 0; i < (t.tiers || 1); i++) {
-      const a = [t.a[0], t.a[1] + i * 0.3, t.a[2]], b = [t.b[0], t.b[1] + i * 0.3, t.b[2]];
-      bar(a, b, t.w, t.kind === 'ug_trench' ? 0.3 : 0.1, m, G.inst_tray, '트레이', t);
+    TRAY_BY[t.id] = t;
+    const A = V(t.a), B = V(t.b), len = Math.max(A.distanceTo(B), 0.05), F = basis(B.clone().sub(A)), mid = at(A, B, 0.5);
+    const ug = t.kind === 'ug_trench', w = t.w, h = t.h || 0.15, pitch = t.pitch || 0.3, n = t.tiers || 1;
+    const P0 = (x, y, k = 0.5) => at(A, B, k).add(F.ac.clone().multiplyScalar(x)).add(F.up.clone().multiplyScalar(y));
+    const parts = [];
+    if (ug) {
+      const depth = Math.max(0.3, -A.y + 0.05) ;                       // walls up to grade
+      parts.push([w + 0.3, 0.1, len, P0(0, -0.05), F.q]);              // floor slab
+      for (const sx of [-1, 1]) parts.push([0.1, depth, len, P0(sx * (w / 2 + 0.05), depth / 2), F.q]);
+      for (let i = 1; i < n; i++) parts.push([w, 0.01, len, P0(0, i * pitch), F.q]);   // bracket shelf
+      const o = merged(parts, M.conc); G.inst_tray.add(o); pick(o, '트레이', t);
+      const cv = new THREE.Mesh(new THREE.BoxGeometry(w + 0.3, 0.05, len), M.cover); cv.position.copy(P0(0, depth + 0.025)); cv.quaternion.copy(F.q);
+      G.inst_tray.add(cv);
+    } else {
+      for (let i = 0; i < n; i++) {
+        const y = i * pitch;
+        for (const sx of [-1, 1]) {                                   // C-rail: web + top / bottom flange (lips inward)
+          parts.push([0.004, h, len, P0(sx * w / 2, y + h / 2), F.q]);
+          parts.push([0.03, 0.004, len, P0(sx * (w / 2 - 0.015), y + h), F.q]);
+          parts.push([0.03, 0.004, len, P0(sx * (w / 2 - 0.015), y + 0.002), F.q]);
+        }
+        const nr = Math.max(1, Math.floor(len / 0.3));               // rungs @300 mm
+        for (let k = 0; k < nr; k++) parts.push([w, 0.02, 0.04, P0(0, y + 0.012, (k + 0.5) / nr), F.q]);
+      }
+      const o = merged(parts, t.kind === 'ladder_on_rack' ? M.lad : M.ladAg); G.inst_tray.add(o); pick(o, '트레이', t);
+    }
+    // cables in the cross-section: one instanced mesh per tray and kind (click = the tray, popup shows the section)
+    const byM = new Map();
+    for (const [no, tier, x, y, od] of t.lay || []) {
+      const c = kindOf[no], m = c && c.kind === '통신' ? M.comm : M.multi;
+      if (!byM.has(m)) byM.set(m, []); byM.get(m).push([x, y + (tier - 1) * pitch + (ug ? 0 : 0.022), od]);
+    }
+    const qc = new THREE.Quaternion().setFromUnitVectors(Y0, F.d), mx = new THREE.Matrix4();
+    for (const [m, arr] of byM) {
+      const im = new THREE.InstancedMesh(cylG, m, arr.length);
+      arr.forEach(([x, y, od], k) => { const r = od / 2000; mx.compose(P0(x - w / 2, y), qc, new THREE.Vector3(r, len, r)); im.setMatrixAt(k, mx); });
+      im.instanceMatrix.needsUpdate = true; im.computeBoundingSphere(); G.inst_cable.add(im); pick(im, '트레이', t);
     }
   }
-  for (const c of INST.cables) {
-    const m = c.kind === '분기' ? M.branch : c.kind === '통신' ? M.comm : M.multi, r = Math.max(0.012, (c.od || 15) / 2000);
-    for (let i = 1; i < c.path.length; i++) bar(c.path[i - 1], c.path[i], r * 2, r * 2, m, G.inst_cable, '케이블', c);
+  for (const c of INST.cables) {          // branch cables in full; trunk cables: risers only (the tray part is laid above)
+    const m = c.kind === '분기' ? M.branch : c.kind === '통신' ? M.comm : M.multi, r = Math.max(0.006, (c.od || 15) / 2000);
+    for (let i = 1; i < c.path.length; i++) {
+      const a = c.path[i - 1], b = c.path[i], vert = Math.abs(a[1] - b[1]) > 0.05 && Math.abs(a[0] - b[0]) < 0.05 && Math.abs(a[2] - b[2]) < 0.05;
+      if (c.kind === '분기' || vert) bar(a, b, r * 2, r * 2, m, G.inst_cable, '케이블', c);
+      if (c.kind !== '분기') bar(a, b, r * 2, r * 2, m, G2, '케이블', c);
+    }
+  }
+  for (const x of INST.perforated || []) {  // perforated channel under the branch cable
+    const parts = [];
+    for (let i = 1; i < x.path.length; i++) {
+      const A = V(x.path[i - 1]), B = V(x.path[i]), len = A.distanceTo(B); if (len < 0.05) continue;
+      const F = basis(B.clone().sub(A)), C = at(A, B, 0.5).add(F.up.clone().multiplyScalar(-0.012));
+      parts.push([x.w, 0.002, len, C, F.q]);
+      for (const sx of [-1, 1]) parts.push([0.002, 0.05, len, C.clone().add(F.ac.clone().multiplyScalar(sx * x.w / 2)).add(F.up.clone().multiplyScalar(0.025)), F.q]);
+    }
+    if (parts.length) { const o = merged(parts, M.perf); G.inst_tray.add(o); pick(o, 'Perforated', x); }
+  }
+  // ---- vertical section (Section view): cut across a tray, or at an X / Z position; combines with the base Y section
+  const VS = { on: false, axis: 'x', pos: 0, flip: false, tray: null };
+  const vPlane = new THREE.Plane(new THREE.Vector3(1, 0, 0), 0);
+  const bb = new THREE.Box3(); INST.trays.forEach(t => { bb.expandByPoint(V(t.a)); bb.expandByPoint(V(t.b)); });
+  function syncClip() {
+    if (VS.tray) { const t = VS.tray, A = V(t.a), B = V(t.b), d = B.clone().sub(A).normalize(); if (VS.flip) d.negate();
+      vPlane.setFromNormalAndCoplanarPoint(d, at(A, B, 0.5)); }
+    else { const n = VS.axis === 'x' ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 0, 1); if (VS.flip) n.negate();
+      vPlane.setFromNormalAndCoplanarPoint(n, VS.axis === 'x' ? new THREE.Vector3(VS.pos, 0, 0) : new THREE.Vector3(0, 0, VS.pos)); }
+    renderer.clippingPlanes = [...(state.section ? [clipPlane] : []), ...(VS.on ? [vPlane] : [])];
+    if (typeof requestShadow === 'function') requestShadow();
+  }
+  window.__pidClip = p => !VS.on || vPlane.distanceToPoint(p) >= -0.02;
+  const _aa = applyAppearance; applyAppearance = function () { _aa(); syncClip(); };
+  const sr = document.createElement('div'); sr.className = 'row'; sr.style.flexWrap = 'wrap';
+  sr.innerHTML = `<input type="checkbox" id="vsOn"><label for="vsOn">수직 단면 (Section view)</label>
+    <select id="vsAx" style="background:rgba(0,0,0,.25);color:#e6eefc;border:1px solid rgba(125,211,252,.35);border-radius:6px"><option value="x">X 위치 (동서)</option><option value="z">Z 위치 (남북)</option></select>
+    <input type="range" id="vsPos" style="width:100%" step="0.1"><span id="vsV" style="font-size:11px"></span>
+    <button type="button" class="btn" id="vsFlip">반대쪽</button><button type="button" class="btn" id="vsFree">트레이 단면 풀기</button>
+    <div style="font-size:11px;opacity:.8;width:100%">트레이를 클릭 → 팝업의 '이 트레이 단면 보기'로 트레이 직각 단면 (케이블 배열이 보임)</div>`;
+  layerBox.insertBefore(sr, hd.nextSibling);
+  const vsPos = sr.querySelector('#vsPos'), vsAx = sr.querySelector('#vsAx');
+  const range = () => { const lo = VS.axis === 'x' ? bb.min.x : bb.min.z, hi = VS.axis === 'x' ? bb.max.x : bb.max.z;
+    vsPos.min = Math.floor(lo - 5); vsPos.max = Math.ceil(hi + 5); };
+  const label = () => { sr.querySelector('#vsV').textContent = VS.tray ? `트레이 ${VS.tray.id} 직각 단면` : `${VS.axis.toUpperCase()} = ${(+VS.pos).toFixed(1)} m`; };
+  range(); VS.pos = +vsPos.value; label();
+  sr.querySelector('#vsOn').addEventListener('change', ev => { VS.on = ev.target.checked; CAPS.visible = VS.on; if (!VS.on) labelsOff(false); syncClip(); });
+  vsAx.addEventListener('change', () => { VS.axis = vsAx.value; VS.tray = null; CAPS.clear(); range(); VS.pos = +vsPos.value; label(); syncClip(); });
+  vsPos.addEventListener('input', () => { VS.tray = null; CAPS.clear(); VS.pos = +vsPos.value; label(); syncClip(); });
+  sr.querySelector('#vsFlip').addEventListener('click', () => { VS.flip = !VS.flip; if (VS.tray) cutTray(VS.tray); else syncClip(); });
+  sr.querySelector('#vsFree').addEventListener('click', () => { VS.tray = null; CAPS.clear(); labelsOff(false); label(); syncClip(); });
+  let labelsWas = null;                              // labels hide the cut face: off while a tray section is shown
+  function labelsOff(on) {
+    if (!G.labels) return;
+    if (on && labelsWas === null) { labelsWas = G.labels.visible; G.labels.visible = false; }
+    if (!on && labelsWas !== null) { G.labels.visible = labelsWas; labelsWas = null; }
+    const cb = document.getElementById('ly_labels'); if (cb) cb.checked = G.labels.visible;
+  }
+  const CAPS = new THREE.Group(); CAPS.name = 'inst_caps'; scene.add(CAPS);
+  const capG = new THREE.CircleGeometry(1, 20);
+  const capM = { [M.multi.uuid]: new THREE.MeshBasicMaterial({ color: 0xa855f7 }), [M.comm.uuid]: new THREE.MeshBasicMaterial({ color: 0xec4899 }) };
+  function caps(t, d) {                              // filled discs on the cut face so the cables read as solid circles
+    CAPS.clear();
+    const A = V(t.a), B = V(t.b), F = basis(B.clone().sub(A)), pitch = t.pitch || 0.3, ug = t.kind === 'ug_trench';
+    const C = at(A, B, 0.5).add(d.clone().multiplyScalar(0.003)), q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), d.clone().negate());
+    for (const [no, tier, x, y, od] of t.lay || []) {
+      const c = kindOf[no], m = capM[(c && c.kind === '통신' ? M.comm : M.multi).uuid], r = od / 2000;
+      const o = new THREE.Mesh(capG, m); o.scale.set(r, r, 1); o.quaternion.copy(q);
+      o.position.copy(C).add(F.ac.clone().multiplyScalar(x - t.w / 2)).add(F.up.clone().multiplyScalar(y + (tier - 1) * pitch + (ug ? 0 : 0.022)));
+      CAPS.add(o);
+    }
+  }
+  function cutTray(t) {
+    VS.tray = t; VS.on = true; CAPS.visible = true; sr.querySelector('#vsOn').checked = true; label(); syncClip(); hidePopup();
+    const A = V(t.a), B = V(t.b), M_ = at(A, B, 0.5), d = B.clone().sub(A).normalize(); if (VS.flip) d.negate();
+    caps(t, d);
+    const top = M_.clone().add(new THREE.Vector3(0, (t.h || 0.15) / 2 + (t.pitch || 0.3) * ((t.tiers || 1) - 1) / 2, 0));
+    const eye = top.clone().sub(d.clone().multiplyScalar(Math.max(1.2, t.w * 1.6)));
+    labelsOff(true);
+    tween(eye, top);
+  }
+  function sectionSvg(t) {                         // 2D cross-section drawing of one tray: tiers, rails, numbered cables
+    const lay = t.lay || [], n = t.tiers || 1, w = t.w, h = t.h || 0.15, pitch = t.pitch || 0.3, ug = t.kind === 'ug_trench';
+    const top = Math.max(h, ...lay.map(c => c[3] + c[4] / 2000)) ;
+    const H = (n - 1) * pitch + top + 0.04, S = Math.min(280 / w, 150 / H), PW = w * S + 40, PH = H * S + 20;
+    const X = x => 20 + x * S, Yp = y => PH - 10 - y * S;
+    let g = '';
+    for (let i = 0; i < n; i++) { const y = i * pitch;
+      g += ug ? `<rect x="${X(0)}" y="${Yp(y)}" width="${w * S}" height="3" fill="#9ca3af"/>`
+              : `<rect x="${X(0)}" y="${Yp(y) - 3}" width="${w * S}" height="3" fill="#38bdf8"/><rect x="${X(0) - 2}" y="${Yp(y + h)}" width="2" height="${h * S}" fill="#38bdf8"/><rect x="${X(w)}" y="${Yp(y + h)}" width="2" height="${h * S}" fill="#38bdf8"/>`; }
+    if (ug) g += `<rect x="${X(0) - 6}" y="${Yp(H)}" width="6" height="${H * S + 3}" fill="#9ca3af"/><rect x="${X(w)}" y="${Yp(H)}" width="6" height="${H * S + 3}" fill="#9ca3af"/>`;
+    lay.forEach(([no, tier, x, y, od], k) => { const c = kindOf[no], col = c && c.kind === '통신' ? '#f472b6' : '#c084fc';
+      const cy = (tier - 1) * pitch + y + (ug ? 0 : 0.02), r = Math.max(1.5, od / 2000 * S);
+      g += `<circle cx="${X(x)}" cy="${Yp(cy)}" r="${r}" fill="${col}" stroke="#1e1b4b" stroke-width=".6"><title>${k + 1}. ${esc(no)} · OD ${od} mm</title></circle>`;
+      if (r > 5) g += `<text x="${X(x)}" y="${Yp(cy) + 3}" font-size="8" text-anchor="middle" fill="#111">${k + 1}</text>`; });
+    return `<svg width="${PW}" height="${PH}" style="background:rgba(255,255,255,.92);border-radius:6px;display:block;margin:6px 0">${g}</svg>`;
   }
   for (const j of INST.jbs) { const o = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.8, 0.35), M.jb); o.position.copy(V(j.p)); G.inst_jb.add(o); pick(o, 'JB', j); }
   const sg = new THREE.SphereGeometry(0.28, 12, 8);
@@ -490,6 +667,14 @@ INJECT = r"""
       <table>${rows.map(([a, b]) => `<tr><td>${esc(a)}</td><td>${esc(String(b))}</td></tr>`).join('')}
       <tr><td>좌표 (X / Y / Z m)</td><td>${(d.p || d.a || [0, 0, 0]).map(n => (+n).toFixed(1)).join(' / ')}</td></tr>
       <tr><td>출처</td><td>pid_io ${esc(INST.version)} · ${esc(INST.project)} · 좌표 맞춤 ${esc(INST.transform.formula)}</td></tr></table>`;
+    if (d.cat === '트레이' && TRAY_BY[d.id]) {
+      const t = TRAY_BY[d.id];
+      popup.insertAdjacentHTML('beforeend', `<div class="ph" style="margin-top:6px"><div class="k">단면 (케이블 ${(t.lay || []).length}가닥 · 폭 ${Math.round(t.w * 1000)} · ${t.tiers || 1}단)</div>
+        <button type="button" class="btn" id="cutHere">이 트레이 단면 보기</button></div>${sectionSvg(t)}
+        <details><summary style="cursor:pointer">케이블 배열 목록</summary><table>${(t.lay || []).map(([no, tier, x, y, od], k) =>
+          `<tr><td>${k + 1}. ${esc(no)}</td><td>${tier}단 · X ${Math.round(x * 1000)} · Y ${Math.round(y * 1000)} mm · OD ${od}</td></tr>`).join('')}</table></details>`);
+      popup.querySelector('#cutHere').addEventListener('click', () => cutTray(t));
+    }
     popup.classList.add('show'); popup.querySelector('.close').addEventListener('click', hidePopup);
   };
   console.log('[pid_io] INST layer', INST.counts);
@@ -499,6 +684,8 @@ INJECT = r"""
 
 def build_html(base_path: Path, inst: dict) -> str:
     s = Path(base_path).read_text(encoding="utf-8")
+    s = s.replace("(!state.section || h.point.y <= state.sectionH)",          # v13.3: clicks ignore what the vertical section hides
+                  "(!state.section || h.point.y <= state.sectionH) && (!window.__pidClip || window.__pidClip(h.point))", 1)
     i = s.find('<script type="module">')
     if i < 0:
         raise ValueError("3D 모델에 <script type=\"module\">이 없습니다 (Three.js 모듈 형식이 아님)")

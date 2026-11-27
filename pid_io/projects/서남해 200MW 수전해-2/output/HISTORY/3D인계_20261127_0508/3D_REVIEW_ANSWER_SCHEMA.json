@@ -1,0 +1,94 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "title": "pid_io 3D review answer",
+ "type": "object",
+ "required": [
+  "review_version",
+  "checked",
+  "added"
+ ],
+ "properties": {
+  "review_version": {
+   "const": "pid_io-3d-review 0.1"
+  },
+  "checked": {
+   "type": "array",
+   "description": "precheck 항목마다 하나",
+   "items": {
+    "type": "object",
+    "required": [
+     "issue_id",
+     "verdict",
+     "reason"
+    ],
+    "properties": {
+     "issue_id": {
+      "type": "string"
+     },
+     "verdict": {
+      "enum": [
+       "CONFIRMED",
+       "FALSE_ALARM",
+       "NEEDS_PERSON"
+      ]
+     },
+     "reason": {
+      "type": "string",
+      "description": "한국어, 근거가 된 객체 ID·값"
+     },
+     "fix": {
+      "type": "string"
+     }
+    }
+   }
+  },
+  "added": {
+   "type": "array",
+   "description": "precheck에 없던 새 지적 (객체 ID 필수)",
+   "items": {
+    "type": "object",
+    "required": [
+     "objects",
+     "title",
+     "severity",
+     "reason"
+    ],
+    "properties": {
+     "objects": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+       "type": "string"
+      }
+     },
+     "title": {
+      "type": "string"
+     },
+     "severity": {
+      "enum": [
+       "HOLD",
+       "INFO"
+      ]
+     },
+     "where": {
+      "type": "array",
+      "items": {
+       "type": "number"
+      },
+      "minItems": 3,
+      "maxItems": 3
+     },
+     "reason": {
+      "type": "string"
+     },
+     "fix": {
+      "type": "string"
+     }
+    }
+   }
+  },
+  "overall": {
+   "type": "string"
+  }
+ }
+}

@@ -940,6 +940,7 @@ async function renderOutput(m) {
 /* ---------------------------------------------------------------- 6 cable */
 const CK = {tab:0, view:"spec", data:null};
 function ckCtl(it, v) {
+  if (it.from_concept) return `<span class="mono">${esc(v)}</span><span class="def" title="중복 설정을 합쳤습니다 (v13.3). 바꾸려면 STEP 4 개념 체크리스트">체크리스트 ${esc(it.from_concept)}에서</span>`;
   if (it.on) return `<button class="tog ${String(v)===it.on?"on":""}" data-cktog="${it.id}"></button><span class="def" style="width:84px">${esc(v)}</span>`;
   if (it.type === "select") return `<select data-ck="${it.id}">${it.options.map(o=>`<option ${o===String(v)?"selected":""}>${esc(o)}</option>`).join("")}</select>`;
   if (it.type === "text") return `<input type="text" data-ck="${it.id}" value="${esc(v)}" style="width:230px">`;

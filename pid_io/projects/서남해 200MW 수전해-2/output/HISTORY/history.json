@@ -30,5 +30,45 @@
   "fid": "532784d97f54",
   "state": "e6fa68da0057",
   "sha256": ""
+ },
+ {
+  "kind": "index",
+  "file": "HISTORY/Instrument_Index_서남해 200MW 수전해-2_20261127_0500.xlsx",
+  "at": "2026-11-27 05:00",
+  "fid": "d1b52cbdec2c",
+  "state": "72dc820e9856",
+  "sha256": "a49ce1482529a0b4f922bae0956930631eeaa0d55c5d35c0dd4ab5f28cb09f1a"
+ },
+ {
+  "kind": "twin",
+  "file": "HISTORY/3D인계_20261127_0508",
+  "at": "2026-11-27 05:08",
+  "fid": "578ff3de9c18",
+  "state": "eae1d4b1fb80",
+  "sha256": ""
+ },
+ {
+  "kind": "cable",
+  "file": "HISTORY/Cable_Schedule_서남해 200MW 수전해-2_20261127_0512.xlsx",
+  "at": "2026-11-27 05:12",
+  "fid": "39300034cc11",
+  "state": "eae1d4b1fb80",
+  "sha256": "9a91d76e3b712d8a121c0cc29f86611b56fb693a08a166e14b0b0c12eb6b2ae4"
+ },
+ {
+  "kind": "index",
+  "file": "HISTORY/Instrument_Index_서남해 200MW 수전해-2_20261127_0512.xlsx",
+  "at": "2026-11-27 05:12",
+  "fid": "9bf535977e3a",
+  "state": "eae1d4b1fb80",
+  "sha256": "dedc708a6e45b40bcb5d9d7573dab1a73f11d1de2afe8f96588e63b8c6b97a9d"
+ },
+ {
+  "kind": "basis",
+  "file": "HISTORY/산출근거_서남해 200MW 수전해-2_20261127_0514.xlsx",
+  "at": "2026-11-27 05:14",
+  "fid": "c40fcefb180a",
+  "state": "eae1d4b1fb80",
+  "sha256": "cc650d447ae62480774799024b0179548df3c215bc8720eed7292345738f54d9"
  }
 ]

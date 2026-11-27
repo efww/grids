@@ -29,7 +29,10 @@ KINDS_TRUNK = ("멀티", "패키지", "MCC", "통신")
 
 
 # ------------------------------------------------------------------ one full calculation
-def chain(rows, s, area_map, layout, dec, obstacles):
+def chain(rows, s, area_map, layout, dec, obstacles, concept=None):
+    if concept is not None:                                # checklist C03 / C04 / H06 drive the linked cable settings
+        s = {**s, "values": dict(s["values"])}
+        cable.apply_concept(s["values"], concept)
     res = cable.build(rows, s, area_map, layout)
     tr = cable.TR.build(res, layout, s, dec)
     sp = cable.SP.build(tr, s["values"], layout.m_per_pt if layout else None, dec, obstacles)
@@ -247,15 +250,16 @@ REVIEW = {   # findings from the v12 audit (2026-11-26), keyed by checklist id
     "F03": ("정상 (설명)", "제어밸브 SOV 25점이 ESD로 → ESD 분리 때문에 ESD JB 9개 새로 (멀티 9가닥 추가). 분기는 PLOT 위치가 있는 21가닥"),
     "A02": ("해당 없음", "이 도면에서 F&G 시스템 계기가 인식되지 않아 변화 없음 (시스템: DCS·ESD뿐)"),
     "D04": ("해당 없음", "비상정지 HS가 붙은 모터가 없음"), "D03": ("조건부", "VFD 모터(D01=MTR-VFD)일 때만 영향"),
-    "H06": ("미적용 + 중복", "체크리스트 H06은 미적용(위험지역 연동 필요). 케이블 쪽 'IS / Non-IS' 설정(STEP 6)이 따로 있어 JB·트레이 IS 분리는 그 값으로 됨. 하나로 합치기 제안"),
-    "C03": ("기록용 + 중복", "체크리스트 C03은 기록용. 실제 케이블 종류는 STEP 6 '패키지 PLC 통신 케이블'(광/RS-485) 설정. 하나로 합치기 제안"),
-    "C04": ("정상 + 중복", "통신 포트 B(이중화) IO 제거 → 광케이블도 같이 감소. STEP 6 '통신 이중화'(포트마다/패키지당)도 따로 있어 둘이 다르면 헷갈림. 케이블 쪽이 C04를 따르게 하기 제안"),
+    "H06": ("정상 (합침 v13.3)", "STEP 6 IS / Non-IS가 H06을 따름. '위험지역 계기 IS'는 위험지역 구분도가 없어 전부 Non-IS로 계산(가정) → 변화 없음이 맞음. "
+                       "'아날로그는 IS' / '전부 IS'로 바꾸면 IS JB·멀티·트레이가 따로 생김"),
+    "C03": ("정상 (합침 v13.3)", "STEP 6 패키지 PLC 통신 케이블이 C03을 따름 (광 / RS-485 / Cu Ethernet). IO는 그대로, 통신 케이블 사양·외경만 바뀜"),
+    "C04": ("정상 (합침 v13.3)", "통신 포트 B(이중화) IO 제거 → 광케이블도 같이 감소. STEP 6 '통신 이중화'도 C04를 따름 (따로 바꾸는 곳 없음)"),
 }
 
 
 def concept_sensitivity(syms, proto, concept, notes, decs, s, am, lay, dec, obst, progress=None):
     r0, _ = assign(syms, proto, concept, notes, decisions=decs)
-    base = metrics(r0, *chain(r0, s, am, lay, dec, obst), concept)
+    base = metrics(r0, *chain(r0, s, am, lay, dec, obst, concept), concept)
     out = []
     items = [(iid, it) for iid, it in concept.items.items() if not iid.startswith("I")]
     for k, (iid, it) in enumerate(items):
@@ -269,7 +273,7 @@ def concept_sensitivity(syms, proto, concept, notes, decs, s, am, lay, dec, obst
             it["value"] = alt
             try:
                 rr, _ = assign(syms, proto, concept, notes, decisions=decs)
-                m = metrics(rr, *chain(rr, s, am, lay, dec, obst), concept)
+                m = metrics(rr, *chain(rr, s, am, lay, dec, obst, concept), concept)
             except Exception as e:                                   # noqa: BLE001
                 m = {"오류": repr(e)}
             finally:
@@ -284,7 +288,7 @@ CABLE_ALTS = {"jb_sizes": ["60", "80", "24,48"], "multi_std": ["24,48"], "tray_w
               "od_multi": ["2:10,4:12,6:15,10:18,12:20,16:22,20:24,24:26,30:28,36:30,40:32,48:34,60:38,80:44"],
               "od_single": ["1P:9,1T:10,2P:12,2C:10,3C:11"], "ug_widths": ["600,1200"],
               "sp_rules": ["L:300:1:2,T:600:1:2,H:1500:4:2"]}
-SKIP_CABLE = {"FO_spec", "COMM_spec", "room_DCS", "room_ESD", "room_F&G", "jb_gas", "jb_material", "sp_member",
+SKIP_CABLE = {"FO_spec", "COMM_spec", "ETH_spec", "room_DCS", "room_ESD", "room_F&G", "jb_gas", "jb_material", "sp_member",
               "sp_typ_L", "sp_typ_T", "sp_typ_H", "sp_typ_RT", "sp_typ_UB", "sp_typ_PB", "sp_typ_RF"}
 CABLE_EXPECT = {
     "jb_sizes": "JB 크기를 키우면 JB·멀티 수 감소, 멀티 규격 증가", "jb_spare": "스페어를 늘리면 JB 크기·수 증가",
@@ -300,7 +304,7 @@ def cable_sensitivity(rows, s, am, lay, dec, obst, concept, progress=None):
     base = metrics(rows, *chain(rows, s, am, lay, dec, obst), concept)
     out = []
     items = [it for g in cable.SCHEMA + cable.JB.SCHEMA + cable.TR.SCHEMA + cable.SP.SCHEMA for it in g["items"]
-             if it["id"] not in SKIP_CABLE]
+             if it["id"] not in SKIP_CABLE and not it.get("from_concept")]
     for k, it in enumerate(items):
         cur = s["values"][it["id"]]
         if it["type"] == "select":

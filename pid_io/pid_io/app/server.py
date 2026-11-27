@@ -35,7 +35,7 @@ from ..pipeline import ORIGINS, PROTO, apply_overrides, compute, impact, load_ex
 
 STATIC = Path(__file__).resolve().parent / "static"
 HOME = Path(os.environ.get("PID_IO_HOME", Path.cwd() / "projects")).resolve()
-VERSION = "v13.2"                                      # pid_io version shown in handoff files
+VERSION = "v13.3"                                      # pid_io version shown in handoff files
 
 KINDS = {"pdf": ".pdf", "template": ".xlsx", "ref": ".xlsx", "concept": ".xlsx", "plot": ".pdf", "plotref": ".pdf",
          "model3d": ".html", "other3d": ".json"}
@@ -976,6 +976,10 @@ def cable_result(name: str, values: dict | None = None, dec: dict | None = None)
     s = cable.load(pdir(name))
     if values:
         s["values"] = {**s["values"], **values}
+    try:                                                   # v13.3: C03 / C04 / H06 are the one place for these
+        s["concept_notes"] = cable.apply_concept(s["values"], concept(name))
+    except Exception:                                      # noqa: BLE001 - checklist unreadable: keep STEP 6 values
+        s["concept_notes"] = []
     if s["values"].get("rack_el_src", "").startswith("3D"):     # tray EL from the model's cable tier (not saved)
         try:
             mr = model_racks(name)

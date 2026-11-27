@@ -2,8 +2,8 @@
  "profile": "T1-CI",
  "skill": "ai3d-t1-ci-r9",
  "project": "서남해 200MW 수전해-2",
- "made": "2026-11-27 04:06",
- "pid_io": "v13.1",
+ "made": "2026-11-27 05:08",
+ "pid_io": "v13.3",
  "rev": {
   "scope": "R20261127",
   "rule": "R20261127",
@@ -44,7 +44,7 @@
    "sha256": "4406245cefb8c4a0eb21fc889f0051bb552bb5ecf82d6308f8c7ff0455e5d87f"
   },
   "03_engineering_rules.json": {
-   "sha256": "70697619d8d9dd8b53bb87f79d3ad99344f3a202f4bb49f9cf54d387644c992f"
+   "sha256": "67b58a878de15dd85d2899bf57107fdacfd5368bbbd88951e6ac53fad6a4c674"
   },
   "04_test_inputs.json": {
    "sha256": "315bfe42ccdf00bcbbbd5ae62753a50346d2de3032d2c82ae5990b412bc93f19"
@@ -53,7 +53,7 @@
    "sha256": "a9646943c9a6f51bd9afba56e4eb1f4db07fccdd437041f83556c3d73684c285"
   },
   "06_model_handoff.json": {
-   "sha256": "e438e3b70c19e2787962242a4eb85874fcf37baa5a5657992f25ed5eb894370b"
+   "sha256": "8d6c1aea8859d311f2bdf8190f65ee857c314b4c575e60c6d170718b7ec80b1f"
   }
  },
  "model_required_scope_ids": [

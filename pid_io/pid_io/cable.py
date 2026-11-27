@@ -42,13 +42,15 @@ SCHEMA = [
                + _io_items("DI", "1P", "1.25", "OS (전체 차폐)", ["1P", "2C", "3C"])
                + _io_items("DO", "2C", "2.0", "OS (전체 차폐)", ["1P", "2C", "3C"])
                + _io_items("RTD", "1T", "1.25", "OS (전체 차폐)", ["1T", "2P"])
-               + [_sel("comm_pkg", "패키지 PLC 통신 케이블", ["광케이블 (Fiber Optic)", "RS-485 동선"],
+               + [_sel("comm_pkg", "패키지 PLC 통신 케이블", ["광케이블 (Fiber Optic)", "RS-485 동선", "Cu Ethernet 동선"],
                        "광케이블 (Fiber Optic)", "벤더PLC+통신 / 혼합 패키지의 통신 포트 → DCS. 포트(이중화 A/B)마다 1가닥"),
                   _sel("comm_redund", "통신 이중화", ["이중화 (포트마다 1가닥)", "단일 (패키지당 1가닥)"],
                        "이중화 (포트마다 1가닥)", "이중화면 A/B 포트마다 1가닥, 단일이면 패키지(유닛)마다 1가닥", on="이중화 (포트마다 1가닥)"),
                   _txt("FO_spec", "광케이블 사양", "FO 12C SM Armoured", "코어 수·모드·외장"),
                   _txt("COMM_spec", "RS-485 통신 케이블 사양", "RS-485 1P x 0.75SQ IS-OS",
-                       "패키지를 동선으로 할 때, 그리고 MCC 통신 포트")])},
+                       "패키지를 동선으로 할 때, 그리고 MCC 통신 포트"),
+                  _txt("ETH_spec", "Cu Ethernet 통신 케이블 사양", "CAT6A S/FTP 4P x 23AWG Armoured",
+                       "체크리스트 C03 = Cu Ethernet일 때 패키지 통신 포트")])},
     {"id": "multi", "title": "멀티 케이블 (JB → 룸)",
      "lead": "JB에 모인 페어가 멀티페어 케이블 하나로 랙을 타고 룸까지 갑니다. 페어 수(크기)와 스페어는 STEP 7 JB에서 정합니다.",
      "items": [
@@ -121,6 +123,44 @@ from . import tray as TR  # noqa: E402  (STEP 8 too)
 from . import support as SP  # noqa: E402  (and STEP 9)
 from . import twin as TW  # noqa: E402  (and STEP 10 lanes / clash)
 
+# v13.3 (사용자 결정 2026-11-27 '합쳐'): one value per decision. These STEP 6 items follow the concept checklist
+# (C03 통신 매체, C04 통신 이중화, H06 IS / Non-IS) - the checklist is the single place to change them.
+CONCEPT_LINK = {
+    "comm_pkg": ("C03", {"광케이블": "광케이블 (Fiber Optic)", "RS-485": "RS-485 동선", "Cu Ethernet": "Cu Ethernet 동선"}),
+    "comm_redund": ("C04", {"ON": "이중화 (포트마다 1가닥)", "OFF": "단일 (패키지당 1가닥)"}),
+    "is_rule": ("H06", {"전부 Non-IS": "전부 Non-IS", "아날로그(AI·AO·RTD)는 IS": "아날로그(AI·AO·RTD)는 IS",
+                        "전부 IS": "전부 IS",
+                        # no hazardous-area drawing yet -> counted as 전부 Non-IS (index decision 7), marked 가정
+                        "위험지역 계기 IS": "전부 Non-IS"}),
+}
+for _g in SCHEMA:
+    for _it in _g["items"]:
+        if _it["id"] in CONCEPT_LINK:
+            _it["from_concept"] = CONCEPT_LINK[_it["id"]][0]
+
+
+def apply_concept(values: dict, concept) -> list:
+    """overwrite the linked STEP 6 values with the checklist (C03 / C04 / H06). Returns notes for the screen."""
+    notes = []
+    if concept is None:
+        return notes
+    for k, (iid, mp) in CONCEPT_LINK.items():
+        raw = concept.get(iid)
+        if raw is None:
+            continue
+        raw = str(raw).strip()
+        if raw.upper() in ("ON", "OFF"):
+            raw = raw.upper()
+        val = mp.get(raw)
+        if val is None:
+            notes.append(f"체크리스트 {iid} '{raw}'는 케이블 선택지에 없어 '{values.get(k)}' 유지")
+            continue
+        values[k] = val
+        if iid == "H06" and raw == "위험지역 계기 IS":
+            notes.append("H06 '위험지역 계기 IS': 위험지역 구분도가 없어 전부 Non-IS로 계산 (가정)")
+    return notes
+
+
 ITEMS = {it["id"]: it for g in SCHEMA + JB.SCHEMA + TR.SCHEMA + SP.SCHEMA + TW.SCHEMA for it in g["items"]}
 DEFAULTS = {k: v["default"] for k, v in ITEMS.items()}
 
@@ -142,6 +182,8 @@ def set_value(s: dict, k: str, v):
     it = ITEMS.get(k)
     if not it:
         raise ValueError(f"알 수 없는 케이블 설정: {k}")
+    if it.get("from_concept"):
+        raise ValueError(f"{it['name']}: 체크리스트 {it['from_concept']}에서 정합니다 (STEP 4 개념 체크리스트에서 바꿔 주세요)")
     if it["type"] == "number":
         v = float(v)
         if v < 0:
@@ -584,12 +626,13 @@ def build(rows, s: dict, area_map: dict | None = None, layout=None):
             if p:
                 tl, how = G.run(p, float(v["jb_el"]), float(v["room_el"]), "comm", f"COMM {src}")
         fo = r.location != "MCC" and v["comm_pkg"].startswith("광")
+        eth = r.location != "MCC" and v["comm_pkg"].startswith("Cu")
         cables.append({"no": uniq(f"{'FO' if fo else 'CB'}-{r.tag}"), "kind": "통신", "frm": src,
                        "frm_type": "MCC" if r.location == "MCC" else "패키지", "to": room(r.system if r.system in SYS_LETTER else "DCS"),
-                       "to_type": "룸", "spec": v["FO_spec"] if fo else v["COMM_spec"], "io": r.io, "system": r.system, "is": "Non-IS",
+                       "to_type": "룸", "spec": v["FO_spec"] if fo else v["ETH_spec"] if eth else v["COMM_spec"], "io": r.io, "system": r.system, "is": "Non-IS",
                        "length": _round_len(tl, v), "area": area, "dwg": r.dwg, "coord": r.coord, "unit": r.unit,
                        "tags": share.get(id(r), [r.tag]),
-                       "basis": f"{'패키지 PLC 통신 (광)' if fo else '통신 포트 직결'} · {v['comm_redund'].split(' ')[0]} · {how}"})
+                       "basis": f"{'패키지 PLC 통신 (광)' if fo else '패키지 PLC 통신 (Cu Ethernet)' if eth else '통신 포트 직결'} · {v['comm_redund'].split(' ')[0]} · {how}"})
 
     order = {"분기": 0, "멀티": 0, "패키지": 1, "MCC": 2, "통신": 3}   # JB branches stay next to their multi
     cables.sort(key=lambda c: order[c["kind"]])
