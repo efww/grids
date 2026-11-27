@@ -110,9 +110,75 @@ pub(crate) unsafe fn draw_thumb(dc: HDC, r: RECT, s: &Session, font: HFONT, dpi:
     }
 }
 
+pub(crate) const LOAD_EMPTY: (&str, &str) = ("No saved sessions", "저장된 세션이 없습니다");
+pub(crate) const LOAD_SAVE_LABEL: (&str, &str) = ("+ Save as new", "+ 새 이름으로 저장");
+pub(crate) const LOAD_FOLDER_LABEL: (&str, &str) = ("Open sessions folder", "세션 폴더 열기");
+
+// What a screen reader hears for card k of n: "Work, 6 panes, 5 min ago, 2/4", and whether it's the session you're in.
+pub(crate) fn load_speech(name: &str, panes: usize, ago: &str, k: usize, n: usize, is_current: bool, ko: bool) -> String {
+    let at = format!("{}/{n}", k + 1);
+    let cur = match (is_current, ko) {
+        (false, _) => "",
+        (true, true) => ", 지금 세션",
+        (true, false) => ", current session",
+    };
+    match (ko, panes) {
+        (true, p) => format!("{name}, 패널 {p}개, {ago}, {at}{cur}"),
+        (false, 1) => format!("{name}, 1 pane, {ago}, {at}{cur}"),
+        (false, p) => format!("{name}, {p} panes, {ago}, {at}{cur}"),
+    }
+}
+
+// The popup's name: the pick's words (a card's, or a link's as drawn), after the count when `whole` (on opening).
+// With no cards it's the empty note as drawn and the way on ("+ Save as new" unless a link is picked).
+pub(crate) fn load_popup_speech(n: usize, pick: Option<&str>, whole: bool, ko: bool) -> String {
+    let lang = |p: (&'static str, &'static str)| if ko { p.1 } else { p.0 };
+    let list = match (n, ko) {
+        (0, _) => return format!("{} · {}", lang(LOAD_EMPTY), pick.unwrap_or(lang(LOAD_SAVE_LABEL))),
+        (n, true) => format!("세션, {n}개"),
+        (1, false) => "Sessions, 1 saved".to_string(),
+        (n, false) => format!("Sessions, {n} saved"),
+    };
+    match pick {
+        None => list,
+        Some(p) if whole => format!("{list} · {p}"),
+        Some(p) => p.to_string(),
+    }
+}
+
+// The card of the session you're in (usize::MAX = none), found once when the cards are read, so moving the pick
+// doesn't resolve paths again (a session on a network share that's gone would stall every key).
+static LOAD_CUR: AtomicUsize = AtomicUsize::new(usize::MAX);
+
+fn current_card(cards: &[(PathBuf, Session, String)], file: &str) -> Option<usize> {
+    cards.iter().position(|c| c.0.to_string_lossy() == file || same_file(&c.0, file))
+}
+
+// Names the popup after its pick (Enter / F2 / Del's target; a ✕ the mouse lit counts as its card). Said out loud
+// only when the keys moved it, the mouse's pick just keeps it right. Never inside app(): the reader may call back.
+unsafe fn load_tell(h: HWND, say: bool, whole: bool) {
+    let ko = KO.load(Ordering::Relaxed);
+    let lang = |p: (&'static str, &'static str)| if ko { p.1 } else { p.0 };
+    let (n, pick) = app(|a| {
+        let k = a.load_hot.map(|k| if (LOAD_DEL..LOAD_DEL + LOAD_MAX).contains(&k) { k - LOAD_DEL } else { k });
+        let card = k.and_then(|k| a.cards.get(k).map(|(p, s, t)| (k, p.clone(), s.panes(), t.clone())));
+        (a.cards.len(), card.map(Ok).or(k.map(Err)))
+    });
+    let pick = match pick {
+        Some(Ok((k, path, panes, when))) => {
+            let is_cur = LOAD_CUR.load(Ordering::Relaxed) == k;
+            Some(load_speech(&path.file_stem().unwrap_or_default().to_string_lossy(), panes, &when, k, n, is_cur, ko))
+        }
+        Some(Err(LOAD_SAVE_AS)) => Some(lang(LOAD_SAVE_LABEL).to_string()),
+        Some(Err(LOAD_FOLDER)) => Some(lang(LOAD_FOLDER_LABEL).to_string()),
+        _ => None,
+    };
+    a11y_say(h, &load_popup_speech(n, pick.as_deref(), whole, ko), say);
+}
+
 // The Load button: nothing picked, as before (the mouse picks).
 pub(crate) unsafe fn open_load() {
-    open_load_as(false);
+    open_load_as(false, None);
 }
 
 // Ctrl+O: opens the popup with the session you're in picked (the first card if none; "+ Save as new" with no
@@ -124,7 +190,7 @@ pub(crate) unsafe fn toggle_load() {
         return;
     }
     app(|a| a.load_closed = None);
-    open_load_as(true);
+    open_load_as(true, None);
 }
 
 // The card picked when Ctrl+O opens the popup.
@@ -132,7 +198,8 @@ pub(crate) fn load_first_pick(cur: Option<usize>, n: usize) -> usize {
     cur.filter(|&k| k < n).unwrap_or(if n > 0 { 0 } else { LOAD_SAVE_AS })
 }
 
-unsafe fn open_load_as(keys: bool) {
+// `keep`: the card to pick when it opens again after a delete (clamped to the cards there are now).
+unsafe fn open_load_as(keys: bool, keep: Option<usize>) {
     let (main, dpi, open, closed, file) = app(|a| (a.main, a.dpi, a.load, a.load_closed, a.s.file.clone()));
     // a click on the button first deactivates (closes) the popup; don't reopen it right away
     if !open.0.is_null() || closed.is_some_and(|t| t.elapsed().as_millis() < 300) {
@@ -144,18 +211,29 @@ unsafe fn open_load_as(keys: bool) {
     if let Ok(b) = GetDlgItem(Some(main), ID_TB_LOAD) {
         _ = GetWindowRect(b, &mut rc);
     }
-    let cur = cards.iter().position(|c| c.0.to_string_lossy() == file.as_str() || same_file(&c.0, &file));
-    let hot = keys.then(|| load_first_pick(cur, cards.len()));
+    let cur = current_card(&cards, &file);
+    LOAD_CUR.store(cur.unwrap_or(usize::MAX), Ordering::Relaxed);
+    let n = cards.len();
+    let hot = keys.then(|| load_first_pick(keep.map_or(cur, |k| Some(k.min(n.saturating_sub(1)))), n));
     let mut at = POINT::default();
     _ = GetCursorPos(&mut at);
     app(|a| (a.cards, a.load_hot, a.load_keys, a.load_cursor) = (cards, hot, keys, (at.x, at.y)));
-    let style = WS_POPUP | WS_VISIBLE | WS_CLIPCHILDREN;
+    // hidden until a screen reader has its role and name, so the first thing it reads is the list and its pick
+    let style = WS_POPUP | WS_CLIPCHILDREN;
     let y = rc.bottom + 6 * dpi / 96;
     let Ok(h) = CreateWindowExW(WS_EX_TOOLWINDOW, w!("GridsLoad"), w!(""), style, rc.left, y, g.w, g.h, Some(main), None, None, None) else {
         return;
     };
     let square = DWMWCP_DONOTROUND;
     _ = DwmSetWindowAttribute(h, DWMWA_WINDOW_CORNER_PREFERENCE, &square as *const _ as _, 4);
+    a11y_role(h, ROLE_SYSTEM_LIST);
+    load_tell(h, false, true);
+    let keys_help = tr(
+        "Arrows to pick, Enter opens, 1 … 9 opens that one, F2 renames, Del deletes, Esc closes",
+        "방향키로 고르기, Enter 열기, 1~9 바로 열기, F2 이름 바꾸기, Del 삭제, Esc 닫기",
+    );
+    a11y_desc(h, Some(keys_help));
+    _ = ShowWindow(h, SW_SHOW);
     app(|a| a.load = h);
 }
 
@@ -192,12 +270,21 @@ pub(crate) unsafe fn fit_load() {
 }
 
 // Read again after a delete / rename. While the keyboard is choosing, `pick` says which card stays picked
-// (clamped to the cards there are now); for the mouse nothing is, as before.
-unsafe fn reload_cards(pick: impl FnOnce(&[(PathBuf, Session, String)]) -> Option<usize>) {
+// (clamped to the cards there are now); for the mouse nothing is, as before. `say`: read the new pick out loud
+// (false when the focus coming back will read it anyway).
+unsafe fn reload_cards(pick: impl FnOnce(&[(PathBuf, Session, String)]) -> Option<usize>, say: bool) {
     let cards = session_cards();
+    let file = app(|a| a.s.file.clone());
+    LOAD_CUR.store(current_card(&cards, &file).unwrap_or(usize::MAX), Ordering::Relaxed);
     let hot = app(|a| a.load_keys).then(|| pick(&cards)).flatten().map(|k| load_first_pick(Some(k.min(cards.len().saturating_sub(1))), cards.len()));
-    app(|a| (a.cards, a.load_hot) = (cards, hot));
+    let h = app(|a| {
+        (a.cards, a.load_hot) = (cards, hot);
+        a.load
+    });
     fit_load();
+    if !h.0.is_null() {
+        load_tell(h, say && hot.is_some(), false); // the card now picked (keys), else just the new count
+    }
 }
 
 // Same file on disk (case, short names); false when either can't be resolved, e.g. no current session.
@@ -280,20 +367,10 @@ unsafe fn delete_card(h: HWND, k: usize) {
     let keys = app(|a| a.load_keys);
     delete_session(&path);
     if app(|a| a.load == h) {
-        reload_cards(|_| Some(k)); // the next card moves up into its place
+        reload_cards(|_| Some(k), true); // the next card moves up into its place
     } else {
         app(|a| a.load_closed = None);
-        open_load_as(keys);
-        if keys {
-            let h = app(|a| {
-                let n = a.cards.len();
-                a.load_hot = Some(load_first_pick(Some(k.min(n.saturating_sub(1))), n));
-                a.load
-            });
-            if !h.0.is_null() {
-                _ = InvalidateRect(Some(h), None, false);
-            }
-        }
+        open_load_as(keys, Some(k)); // the next card moves up into its place, and is what it reads first
     }
 }
 
@@ -319,6 +396,7 @@ unsafe fn start_rename(h: HWND, k: usize) {
     let Some(name) = name else { return };
     if edit.0.is_null() {
         edit = child(h, w!("EDIT"), w!(""), ES_AUTOHSCROLL as u32, WINDOW_EX_STYLE(0), 1, font);
+        a11y_name(edit, Some(tr("Rename session · Enter saves, Esc cancels", "세션 이름 바꾸기 · Enter 저장, Esc 취소")));
     }
     _ = SetWindowTextW(edit, &HSTRING::from(name));
     app(|a| (a.load_edit, a.load_editing, a.load_hot) = (edit, Some(k), None));
@@ -331,6 +409,12 @@ unsafe fn start_rename(h: HWND, k: usize) {
 // Esc, a click or focus leaving: the box goes, nothing renamed. Taken first, so the EN_KILLFOCUS this causes
 // does nothing. Some = was renaming.
 pub(crate) unsafe fn end_rename() -> Option<usize> {
+    end_rename_then(|| {})
+}
+
+// `first` runs before the focus comes back (a rename reads the cards again there), so the reader reads the popup's
+// name once, and the new one.
+unsafe fn end_rename_then(first: impl FnOnce()) -> Option<usize> {
     let (h, edit, k) = app(|a| {
         let k = a.load_editing.take();
         if a.load_keys && k.is_some() {
@@ -339,6 +423,8 @@ pub(crate) unsafe fn end_rename() -> Option<usize> {
         (a.load, a.load_edit, k)
     });
     if k.is_some() {
+        first();
+        load_tell(h, false, false); // read as the focus comes back: the card picked again
         if GetFocus() == edit {
             _ = SetFocus(Some(h));
         }
@@ -357,16 +443,18 @@ pub(crate) unsafe fn commit_rename() {
         _ = MessageBeep(MB_ICONWARNING);
         return;
     };
-    end_rename();
     if new == old {
+        end_rename();
         return;
     }
-    refresh_jump_list(true);
-    let relinked = app(|a| file_after_rename(&before, &a.s.file, was_cur, &new.to_string_lossy()).map(|f| a.s.file = f).is_some());
-    if relinked {
-        refresh_save_button();
-    }
-    reload_cards(|cards| cards.iter().position(|c| c.0 == new)); // renamed: it may have moved
+    end_rename_then(|| {
+        refresh_jump_list(true);
+        let relinked = app(|a| file_after_rename(&before, &a.s.file, was_cur, &new.to_string_lossy()).map(|f| a.s.file = f).is_some());
+        if relinked {
+            refresh_save_button();
+        }
+        reload_cards(|cards| cards.iter().position(|c| c.0 == new), false); // renamed: it may have moved
+    });
 }
 
 pub(crate) unsafe fn paint_load(h: HWND) {
@@ -376,12 +464,13 @@ pub(crate) unsafe fn paint_load(h: HWND) {
     });
     let g = load_geo(cards.len(), dpi);
     let s = |v: i32| v * dpi / 96;
+    let lang = |p: (&'static str, &'static str)| if KO.load(Ordering::Relaxed) { p.1 } else { p.0 };
     buffered(h, |dc, rc| {
         fill(dc, rc, pal().card);
         frame(dc, rc, 1, pal().line);
         if cards.is_empty() {
             let r = RECT { bottom: g.save_as.top, ..rc };
-            text(dc, r, tr("No saved sessions", "저장된 세션이 없습니다"), font, pal().sub, DT_CENTER);
+            text(dc, r, lang(LOAD_EMPTY), font, pal().sub, DT_CENTER);
         }
         for (k, ((path, sess, when), (card, thumb, del))) in cards.iter().zip(&g.cards).enumerate() {
             let on = hot == Some(k) || hot == Some(LOAD_DEL + k);
@@ -424,8 +513,8 @@ pub(crate) unsafe fn paint_load(h: HWND) {
             }
             text(dc, r, label, font, if on { pal().text } else { accent }, align);
         };
-        link(g.save_as, tr("+ Save as new", "+ 새 이름으로 저장"), LOAD_SAVE_AS, DT_LEFT);
-        link(g.folder, tr("Open sessions folder", "세션 폴더 열기"), LOAD_FOLDER, DT_RIGHT);
+        link(g.save_as, lang(LOAD_SAVE_LABEL), LOAD_SAVE_AS, DT_LEFT);
+        link(g.folder, lang(LOAD_FOLDER_LABEL), LOAD_FOLDER, DT_RIGHT);
     });
 }
 
@@ -550,7 +639,12 @@ unsafe fn load_key(h: HWND, vk: VIRTUAL_KEY, repeat: bool) -> bool {
             }
         }
         _ => {
-            app(|a| a.load_hot = load_step(cur, n, vk));
+            // read out only when the pick moved: held at the last card, the repeats stay quiet
+            let next = load_step(cur, n, vk);
+            app(|a| a.load_hot = next);
+            if next != cur {
+                load_tell(h, true, false);
+            }
             _ = InvalidateRect(Some(h), None, false);
         }
     }
@@ -575,6 +669,7 @@ pub(crate) extern "system" fn load_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 let (x, y) = xy(lp);
                 let hot = load_hit(&g, x, y);
                 if app(|a| std::mem::replace(&mut a.load_hot, hot)) != hot {
+                    load_tell(h, false, false); // Enter / F2 / Del act on it too
                     _ = InvalidateRect(Some(h), None, false);
                 }
             }
@@ -618,10 +713,17 @@ pub(crate) extern "system" fn load_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             WM_COMMAND if ((wp.0 >> 16) & 0xffff) as u32 == EN_KILLFOCUS => _ = end_rename(),
             WM_KEYDOWN if load_key(h, VIRTUAL_KEY(wp.0 as u16), lp.0 & (1 << 30) != 0) => {}
             WM_ACTIVATE if (wp.0 & 0xffff) as u32 == WA_INACTIVE => _ = PostMessageW(Some(h), WM_CLOSE, WPARAM(0), LPARAM(0)),
-            WM_DESTROY => app(|a| {
-                (a.load, a.load_closed) = (HWND::default(), Some(Instant::now()));
-                (a.load_edit, a.load_editing) = (HWND::default(), None);
-            }),
+            WM_DESTROY => {
+                let edit = app(|a| a.load_edit);
+                if !edit.0.is_null() {
+                    a11y_name(edit, None);
+                }
+                a11y_clear(h);
+                app(|a| {
+                    (a.load, a.load_closed) = (HWND::default(), Some(Instant::now()));
+                    (a.load_edit, a.load_editing) = (HWND::default(), None);
+                });
+            }
             _ => return DefWindowProcW(h, msg, wp, lp),
         }
         LRESULT(0)

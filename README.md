@@ -107,7 +107,7 @@ The exe is not code-signed, so Windows SmartScreen may warn the first time: choo
 | Ctrl+Shift+PgDn / Ctrl+Shift+PgUp | Move the current tab right / left (also on a tab's right-click menu) |
 | Ctrl+V | With a copied picture (screenshot, browser image): save it here as a PNG file; with copied text: save it as a text file named after its first line, ready to rename |
 | Ctrl+S | Save the current session |
-| Ctrl+O | Saved sessions (as the Load button), with the one you're in picked: arrow keys or Home/End to choose, Enter to switch to it, 1 … 9 opens the numbered card at once, F2 to rename, Del to delete, Esc or Ctrl+O to close |
+| Ctrl+O | Saved sessions (as the Load button), with the one you're in picked: arrow keys or Home/End to choose, Enter to switch to it, 1 … 9 opens the numbered card at once, F2 to rename, Del to delete, Esc or Ctrl+O to close; screen readers are given the list's name and the card picked ("Work, 6 panes, 5 min ago, 2/4") |
 | Ctrl+B | Favourites list (↑/↓ or Home/End, Enter to open, 1 … 9 opens the numbered row at once, Del to remove, Alt+↑/↓ or drag to reorder); screen readers are given the list's name and the row picked ("Documents, C:\Users\…\Documents, 2/5") |
 | Ctrl+Shift+B | Add the active pane's folder to favourites, or remove it if it is one (as ☆+ in its header); the status bar says which |
 | Ctrl+/ | Keyboard shortcuts (this list; also View > Keyboard shortcuts): ↑/↓, PgUp/PgDn, Home/End step through it a row at a time, and screen readers read each row's keys and description. Its find box (Ctrl+F or Tab) keeps only the rows with every word typed, in English or Korean; ↓ / Enter goes to the first match. Esc empties the box, then closes |

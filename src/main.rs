@@ -714,6 +714,33 @@ mod tests {
     }
 
     #[test]
+    fn load_speech_names() {
+        // one card: name, panes, when, place in the list, and the session you're in
+        assert_eq!(load_speech("Work", 6, "5 min ago", 1, 4, false, false), "Work, 6 panes, 5 min ago, 2/4");
+        assert_eq!(load_speech("업무", 6, "5분 전", 1, 4, true, true), "업무, 패널 6개, 5분 전, 2/4, 지금 세션");
+        assert_eq!(load_speech("Solo", 1, "just now", 0, 1, true, false), "Solo, 1 pane, just now, 1/1, current session");
+        assert_eq!(load_speech("Last", 16, "2 d ago", 8, LOAD_MAX, false, false), "Last, 16 panes, 2 d ago, 9/9");
+        // English and Korean carry the same numbers, in the same order
+        let nums = |s: String| s.split(|c: char| !c.is_ascii_digit()).filter(|t| !t.is_empty()).map(String::from).collect::<Vec<_>>();
+        for (p, k, n, cur) in [(1, 0, 1, false), (6, 1, 4, true), (16, 8, 9, false)] {
+            assert_eq!(nums(load_speech("a", p, "", k, n, cur, false)), nums(load_speech("a", p, "", k, n, cur, true)));
+            assert_eq!(nums(load_popup_speech(n, None, true, false)), nums(load_popup_speech(n, None, true, true)));
+        }
+        // the whole popup: the count, then the pick on opening; the pick alone after that
+        assert_eq!(load_popup_speech(3, None, true, false), "Sessions, 3 saved");
+        assert_eq!(load_popup_speech(1, None, false, false), "Sessions, 1 saved");
+        assert_eq!(load_popup_speech(3, Some("업무, 패널 6개, 5분 전, 2/3"), true, true), "세션, 3개 · 업무, 패널 6개, 5분 전, 2/3");
+        assert_eq!(load_popup_speech(3, Some("Work, 6 panes, 5 min ago, 2/3"), false, false), "Work, 6 panes, 5 min ago, 2/3");
+        // the two links read as drawn
+        assert_eq!(load_popup_speech(2, Some(LOAD_FOLDER_LABEL.0), false, false), "Open sessions folder");
+        assert_eq!(load_popup_speech(2, Some(LOAD_SAVE_LABEL.1), true, true), "세션, 2개 · + 새 이름으로 저장");
+        // no cards: the empty note as drawn and the way on, never said twice
+        assert_eq!(load_popup_speech(0, None, true, false), "No saved sessions · + Save as new");
+        assert_eq!(load_popup_speech(0, Some(LOAD_SAVE_LABEL.1), true, true), "저장된 세션이 없습니다 · + 새 이름으로 저장");
+        assert_eq!(load_popup_speech(0, Some(LOAD_FOLDER_LABEL.0), false, false), "No saved sessions · Open sessions folder");
+    }
+
+    #[test]
     fn fav_reorder() {
         let v = |s: &[&str]| s.iter().map(|x| x.to_string()).collect::<Vec<_>>();
         // gaps are 0..=n; a row's own two gaps leave it in place
