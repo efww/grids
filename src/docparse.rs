@@ -457,11 +457,26 @@ pub(crate) fn xlsx_rows(sheet: &str, strings: &[String], max_r: usize, max_c: us
 }
 
 /// "0.30000000000000004" -> "0.3": Excel stores doubles; show them the way it would, roughly.
+/// Like Excel's General format, a tiny or huge value is shown in E notation with 6 significant digits
+/// ("5.5511151231257827E-17" -> "5.55112E-17") instead of "0" or digits that were never stored.
 pub(crate) fn tidy_number(v: &str) -> String {
+    let digits = v.strip_prefix(['-', '+']).unwrap_or(v);
+    let integer = !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit());
     match v.parse::<f64>() {
-        Ok(x) if v.len() > 12 && x.is_finite() => {
+        Ok(x) if v.len() > 12 && x.is_finite() && !integer => {
+            if x != 0.0 && (x.abs() < 1e-9 || x.abs() >= 1e15) {
+                // {:.5e} rounds properly (9.99999999E-10 -> "1.00000e-9"); then Excel's shape
+                let s = format!("{:.5e}", x);
+                let (m, e) = s.split_once('e').unwrap_or((&s, "0"));
+                let m = if m.contains('.') { m.trim_end_matches('0').trim_end_matches('.') } else { m };
+                let e: i32 = e.parse().unwrap_or(0);
+                return format!("{}E{}{:02}", m, if e < 0 { '-' } else { '+' }, e.abs());
+            }
             let s = format!("{:.10}", x);
-            s.trim_end_matches('0').trim_end_matches('.').to_string()
+            match s.trim_end_matches('0').trim_end_matches('.') {
+                "-0" => "0".into(),
+                t => t.to_string(),
+            }
         }
         _ => v.to_string(),
     }

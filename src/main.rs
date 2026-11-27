@@ -5129,6 +5129,41 @@ mod tests { tr("in", "안") }
         assert!(xlsx_rows(sheet, &ss, 1, 3).1); // the inline string in row 2
     }
 
+    // Excel's General format: short values as stored, long ones tidied, tiny or huge ones in E notation.
+    #[test]
+    fn tidy_number_rules() {
+        let long_text = "not a number at all";
+        let residual = format!("{:e}", 0.1 + 0.2 - 0.3).to_uppercase(); // what a formula leaves behind
+        for (v, want) in [
+            ("42", "42"),
+            ("3.5", "3.5"),
+            ("1E-20", "1E-20"),
+            ("-7", "-7"),
+            ("0.30000000000000004", "0.3"),
+            ("45678.123456789012", "45678.123456789"),
+            ("-0.1000000000000000055", "-0.1"),
+            ("123456789012345", "123456789012345"),
+            ("1234567890123456", "1234567890123456"),
+            ("20261128123456789012", "20261128123456789012"), // an all-digit ID keeps every digit
+            ("0001234567890123", "0001234567890123"),
+            ("5.5511151231257827E-17", "5.55112E-17"),
+            (residual.as_str(), "5.55112E-17"),
+            ("-2.7755575615628914E-17", "-2.77556E-17"),
+            ("1.2345678901234567E+19", "1.23457E+19"),
+            ("1.0000000000000001E-12", "1E-12"),
+            ("9.99999999E-10", "1E-09"), // rounding up carries into the exponent
+            ("-0.0000000000000", "0"),
+            (long_text, long_text),
+            ("NaN", "NaN"),
+            ("inf", "inf"),
+            ("1.0000000000E+400", "1.0000000000E+400"),
+        ] {
+            assert_eq!(tidy_number(v), want, "{v}");
+        }
+        let sheet = r#"<row r="1"><c r="A1"><v>-2.7755575615628914E-17</v></c></row>"#;
+        assert!(xlsx_rows(sheet, &[], 10, 10).0 == vec![vec!["-2.77556E-17"]]);
+    }
+
     // Values past the row or column limit say "more"; cells only formatted out there do not.
     #[test]
     fn xlsx_limit_says_when_cells_left_out() {
