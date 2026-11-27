@@ -16,6 +16,10 @@ pub(crate) const TIMER_DLG_RETRY: usize = 1141; // timers on main (numbers from 
 pub(crate) const TIMER_DLG_RESTORE: usize = 1142;
 const RETRIES: u8 = 5; // a dialog just shown may not have its file name box yet: look again a few times
 const RESTORE_TICKS: u8 = 12;
+const RESTORE_WAITS: u8 = 40; // looks the busy dialog didn't answer (one a second): it may take ~40 s to reach a slow share
+const TICK_MS: u32 = 150;
+const WAIT_MS: u32 = 1000;
+const SEND_MS: u32 = 200; // how long Grids waits on the dialog's thread for one message
 
 #[derive(Default)]
 struct Watch {
@@ -23,7 +27,7 @@ struct Watch {
     live: bool,     // hotkey registered on main
     retries: u8,
     seen: HWND,     // the window the last foreground event named: GetForegroundWindow may not say so yet
-    restore: Option<(HWND, String, String, u8)>, // dialog, name to put back, folder typed, ticks left
+    restore: Option<(HWND, String, String, u8, u8)>, // dialog, name to put back, folder typed, ticks left, waits left
 }
 
 thread_local! {
@@ -67,6 +71,18 @@ pub(crate) fn should_restore(prev: &str) -> bool {
     !t.is_empty() && !is_fs(t)
 }
 
+/// One look at the file name box after the jump: (put the name back now, (ticks, waits) left to look again with).
+/// `now` None: the dialog didn't answer (still moving to a slow folder). That look costs a wait, not a tick.
+/// The name goes back while the box is empty or still holds the folder; anything else the user typed ends it.
+pub(crate) fn restore_step(now: Option<&str>, prev: &str, folder: &str, left: u8, waits: u8) -> (bool, Option<(u8, u8)>) {
+    let Some(now) = now else {
+        return (false, (waits > 1).then(|| (left, waits - 1)));
+    };
+    let ours = now.trim().is_empty() || jump_text(now).eq_ignore_ascii_case(folder);
+    let next = ((now == prev || ours) && left > 1).then(|| (left - 1, waits));
+    (now != prev && ours, next)
+}
+
 /// (pane, folder) for the menu: active pane first, then the rest in order; shell places skipped, each folder once.
 pub(crate) fn jump_list(paths: &[String], active: usize) -> Vec<(usize, String)> {
     let mut out: Vec<(usize, String)> = Vec::new();
@@ -93,13 +109,29 @@ unsafe fn class_of(h: HWND) -> String {
     String::from_utf16_lossy(&b[..n.max(0) as usize])
 }
 
-// WM_GETTEXT, not GetWindowTextW: that one gives another process' edit box its caption, not what is typed in it
-unsafe fn text_of(h: HWND) -> String {
+// Every message to the dialog has a time limit: its thread may be stuck moving to a slow (network) folder, and a
+// plain SendMessageW would hold Grids' UI thread, every pane included, until it is done. None: no answer in time.
+// No SMTO_BLOCK: while waiting, messages sent to us still get through (the dialog's thread may be joined to ours).
+unsafe fn send_timeout(h: HWND, msg: u32, wp: usize, lp: isize) -> Option<isize> {
+    let mut out = 0usize;
+    let ok = SendMessageTimeoutW(h, msg, WPARAM(wp), LPARAM(lp), SMTO_ABORTIFHUNG, SEND_MS, Some(&mut out));
+    (ok.0 != 0).then_some(out as isize)
+}
+
+// Right after send_timeout gave None: the dialog belongs to an app run as administrator and UIPI turned the
+// message away at once. It isn't hung: go on as before the time limits (the message just has no effect).
+unsafe fn refused() -> bool {
+    GetLastError() == ERROR_ACCESS_DENIED
+}
+
+// WM_GETTEXT, not GetWindowTextW: that one gives another process' edit box its caption, not what is typed in it.
+// The box is always in another process, so the system copies into our buffer only if the answer comes in time.
+unsafe fn text_of(h: HWND) -> Option<String> {
     // another process answers: a path box never holds more than this, whatever it claims
-    let n = (SendMessageW(h, WM_GETTEXTLENGTH, None, None).0.max(0) as usize).min(32 * 1024);
+    let n = (send_timeout(h, WM_GETTEXTLENGTH, 0, 0)?.max(0) as usize).min(32 * 1024);
     let mut b = vec![0u16; n + 1];
-    let got = SendMessageW(h, WM_GETTEXT, Some(WPARAM(b.len())), Some(LPARAM(b.as_mut_ptr() as isize))).0.max(0) as usize;
-    String::from_utf16_lossy(&b[..got.min(n)])
+    let got = send_timeout(h, WM_GETTEXT, b.len(), b.as_mut_ptr() as isize)?.max(0) as usize;
+    Some(String::from_utf16_lossy(&b[..got.min(n)]))
 }
 
 unsafe extern "system" fn each_child(h: HWND, lp: LPARAM) -> BOOL {
@@ -283,15 +315,23 @@ fn key(vk: u16, unit: u16, up: bool) -> INPUT {
 /// Folder typed into the file name box + Enter: the dialog moves and stays open; the name typed before comes back.
 unsafe fn go(dlg: HWND, path: &str) {
     let Some(edit) = name_box(dlg).filter(|_| IsWindow(Some(dlg)).as_bool()) else { return };
-    let prev = text_of(edit);
+    // Is the dialog answering at all? Asked first: AttachThreadInput and SetFocus wait on its thread without a limit.
+    // Not answering (still moving to a slow folder, or hung): nothing joined, focused or typed; the user can retry.
+    let alive = send_timeout(dlg, WM_NULL, 0, 0).is_some() || refused();
+    let prev = if alive { text_of(edit).or_else(|| refused().then(String::new)) } else { None };
+    let Some(prev) = prev else {
+        fail(Fail::DlgBusy, "");
+        return;
+    };
     let text = jump_text(path);
     let (me, them) = (GetCurrentThreadId(), GetWindowThreadProcessId(dlg, None));
     let joined = AttachThreadInput(me, them, true).as_bool(); // SetFocus across threads needs the joined input
     _ = SetForegroundWindow(dlg);
     _ = SetFocus(Some(edit));
     let ok = GetForegroundWindow() == dlg;
-    if ok {
-        SendMessageW(edit, EM_SETSEL, Some(WPARAM(0)), Some(LPARAM(-1)));
+    // the box not selectable in time: typing would add the folder to the name instead of replacing it
+    let busy = ok && send_timeout(edit, EM_SETSEL, 0, -1).is_none() && !refused();
+    if ok && !busy {
         let keys: Vec<INPUT> = text.encode_utf16().flat_map(|u| [key(0, u, false), key(0, u, true)]).collect();
         SendInput(&keys, size_of::<INPUT>() as i32);
         std::thread::sleep(Duration::from_millis(60)); // the characters first, then Enter
@@ -300,28 +340,32 @@ unsafe fn go(dlg: HWND, path: &str) {
     if joined {
         _ = AttachThreadInput(me, them, false);
     }
-    if !ok {
+    if busy {
+        fail(Fail::DlgBusy, "");
+    } else if !ok {
         _ = MessageBeep(MB_ICONWARNING); // nothing typed anywhere else
     } else if should_restore(&prev) {
-        with(|w| w.restore = Some((dlg, prev, text, RESTORE_TICKS)));
-        SetTimer(Some(app(|a| a.main)), TIMER_DLG_RESTORE, 150, None);
+        with(|w| w.restore = Some((dlg, prev, text, RESTORE_TICKS, RESTORE_WAITS)));
+        SetTimer(Some(app(|a| a.main)), TIMER_DLG_RESTORE, TICK_MS, None);
     }
 }
 
 // The dialog clears the box (or leaves the folder in it) once it has moved: put the name back, for a while,
-// unless the user has typed something else since.
+// unless the user has typed something else since. While it is busy moving, look again about once a second.
 unsafe fn restore_tick(main: HWND) {
-    let Some((dlg, prev, folder, left)) = with(|w| w.restore.take()) else { return };
+    let Some((dlg, prev, folder, left, waits)) = with(|w| w.restore.take()) else { return };
     let Some(edit) = name_box(dlg).filter(|_| IsWindow(Some(dlg)).as_bool()) else { return };
     let now = text_of(edit);
-    let ours = now.trim().is_empty() || jump_text(&now).eq_ignore_ascii_case(&folder);
-    if now != prev && ours {
-        let w = HSTRING::from(&prev); // WM_SETTEXT: SetWindowTextW can't set another process' control
-        SendMessageW(edit, WM_SETTEXT, None, Some(LPARAM(w.as_ptr() as isize)));
+    let (put, next) = restore_step(now.as_deref(), &prev, &folder, left, waits);
+    if put {
+        // WM_SETTEXT: SetWindowTextW can't set another process' control. Not answered in time, it still arrives
+        // later; it isn't sent again: the next look decides, so whatever the user types meanwhile stays.
+        let w = HSTRING::from(&prev);
+        _ = send_timeout(edit, WM_SETTEXT, 0, w.as_ptr() as isize);
     }
-    if (now == prev || ours) && left > 1 {
-        with(|w| w.restore = Some((dlg, prev, folder, left - 1)));
-        SetTimer(Some(main), TIMER_DLG_RESTORE, 150, None);
+    if let Some((left, waits)) = next {
+        with(|w| w.restore = Some((dlg, prev, folder, left, waits)));
+        SetTimer(Some(main), TIMER_DLG_RESTORE, if now.is_some() { TICK_MS } else { WAIT_MS }, None);
     }
 }
 
@@ -356,6 +400,22 @@ mod tests {
         assert_eq!(jump_text(r"\\srv\share\"), r"\\srv\share");
         assert!(should_restore("notes.txt") && should_restore("*.txt"));
         assert!(!should_restore("  ") && !should_restore(r"C:\work") && !should_restore(r"\\srv\share"));
+    }
+
+    #[test]
+    fn restore_steps() {
+        let (prev, folder) = ("notes.txt", r"\\nas\share");
+        // the dialog answered: cleared, or the folder still in the box → the name goes back, a tick used
+        assert_eq!(restore_step(Some(""), prev, folder, 12, 40), (true, Some((11, 40))));
+        assert_eq!(restore_step(Some(r"\\NAS\share\"), prev, folder, 12, 40), (true, Some((11, 40))));
+        assert_eq!(restore_step(Some(prev), prev, folder, 5, 40), (false, Some((4, 40))));
+        assert_eq!(restore_step(Some(""), prev, folder, 1, 40), (true, None)); // last tick
+        // no answer in time (moving to a slow share): ticks kept, one wait used; none left → give up
+        assert_eq!(restore_step(None, prev, folder, 12, 40), (false, Some((12, 39))));
+        assert_eq!(restore_step(None, prev, folder, 12, 1), (false, None));
+        // the user typed something else meanwhile: leave it and stop
+        assert_eq!(restore_step(Some("other.txt"), prev, folder, 12, 40), (false, None));
+        assert_eq!(restore_step(Some("other.txt"), prev, folder, 12, 3), (false, None));
     }
 
     #[test]

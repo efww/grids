@@ -143,15 +143,16 @@ pub(crate) enum Fail {
     DragCant,
     ClipNoPath,
     NoClosedTab,
+    DlgBusy,
 }
 
 #[cfg(test)] // every kind, for the fail_texts test
-pub(crate) const FAILS: [Fail; 27] = {
+pub(crate) const FAILS: [Fail; 28] = {
     use Fail::*;
     [
         AddrNotFound, AddrQuotes, AddrCantOpen, FolderCantOpen, LastTab, DriveCantOpen, SortHere, PaneMin, NoBorder, GroupEmpty, GroupTooMany,
         GroupCant, GroupBusy, NewFileHere, NewFolder, SendChanged, SendCant, PatternEmpty, StampEmpty, StampTooMany, StampCant, StampBusy,
-        EditNone, EditOnline, DragCant, ClipNoPath, NoClosedTab,
+        EditNone, EditOnline, DragCant, ClipNoPath, NoClosedTab, DlgBusy,
     ]
 };
 
@@ -185,6 +186,7 @@ pub(crate) fn fail_pair(kind: Fail) -> (&'static str, &'static str) {
         Fail::EditOnline => ("Online-only files are skipped · keep them on this device first", "온라인 전용 파일은 건너뜀 · 먼저 이 장치에 내려받으세요"),
         Fail::DragCant => ("This place can't be dragged out · drag a folder from the file list instead", "이 위치는 끌어 낼 수 없음 · 파일 목록에서 폴더를 끌어 보세요"),
         Fail::ClipNoPath => ("No folder or file path on the clipboard · copy a path, then Ctrl+Shift+V", "클립보드에 폴더·파일 경로가 없음 · 경로를 복사한 뒤 Ctrl+Shift+V"),
+        Fail::DlgBusy => ("The dialog isn't responding · try again in a moment", "대화 상자가 응답하지 않음 · 잠시 뒤 다시 해 보세요"),
     }
 }
 
