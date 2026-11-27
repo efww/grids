@@ -134,11 +134,45 @@ unsafe fn file_dialog(h: HWND) -> Option<HWND> {
     (class == "#32770" && looks_like_file_dialog(&class, GetCurrentProcessId(), pid, name_box(h).is_some())).then_some(h)
 }
 
+/// What Ctrl+Alt+G (AltGr+G) types on this keyboard layout: Some(']') on Czech, Hungarian, Croatian …, Some(empty)
+/// for a dead key, None where it types nothing (US, Korean, German …) or the layout is unknown.
+pub(crate) unsafe fn altgr_g(layout: HKL) -> Option<Vec<u16>> {
+    if layout.is_invalid() {
+        return None;
+    }
+    let mut keys = [0u8; 256];
+    for vk in [VK_CONTROL, VK_LCONTROL, VK_MENU, VK_RMENU] {
+        keys[vk.0 as usize] = 0x80;
+    }
+    let mut out = [0u16; 8];
+    let scan = MapVirtualKeyExW(VK_G.0 as u32, MAPVK_VK_TO_VSC, Some(layout));
+    // 0x4: leave the keyboard state (a pending dead key) as it is (Windows 10 1607 and later)
+    let n = ToUnicodeEx(VK_G.0 as u32, scan, &keys, &mut out, 0x4, Some(layout));
+    match n {
+        n if n < 0 => Some(Vec::new()),
+        0 => None,
+        n => {
+            let got = &out[..(n as usize).min(out.len())];
+            got.iter().all(|&u| u >= 0x20 && u != 0x7F).then(|| got.to_vec())
+        }
+    }
+}
+
+/// The keyboard layout the dialog's thread types with now (0 when that can't be told).
+unsafe fn dialog_layout(h: HWND) -> HKL {
+    let tid = if h.is_invalid() { 0 } else { GetWindowThreadProcessId(h, None) };
+    if tid == 0 { HKL::default() } else { GetKeyboardLayout(tid) }
+}
+
 /// Hotkey on while a foreign file dialog is in front, off otherwise.
 unsafe fn sync() {
     let fg = GetForegroundWindow();
     let (main, on) = app(|a| (a.main, a.s.dlgjump));
-    let want = on && file_dialog(fg).is_some();
+    let is_dlg = on && file_dialog(fg).is_some();
+    // Windows sends AltGr as Ctrl+Alt: where AltGr+G types a character the key stays with the dialog.
+    // Switching to such a layout with the dialog open is caught in on_hotkey; switching away from one
+    // leaves the key free until a dialog next comes to the front.
+    let want = is_dlg && altgr_g(dialog_layout(fg)).is_none();
     let live = with(|w| w.live);
     if want && !live {
         let ok = RegisterHotKey(Some(main), DLG_HOTKEY_ID, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'G' as u32).is_ok();
@@ -150,7 +184,7 @@ unsafe fn sync() {
     // a #32770 of another app that has no file name box yet: maybe it is still being built, or the event
     // named it before the foreground caught up (a dialog opened from a console window does that)
     let seen = with(|w| w.seen);
-    if on && !want && (class_of(fg) == "#32770" || class_of(seen) == "#32770") && with(|w| w.retries > 0) {
+    if on && !is_dlg && (class_of(fg) == "#32770" || class_of(seen) == "#32770") && with(|w| w.retries > 0) {
         with(|w| w.retries -= 1);
         SetTimer(Some(main), TIMER_DLG_RETRY, 200, None);
     }
@@ -198,7 +232,10 @@ pub(crate) unsafe fn on_timer(id: usize) {
 pub(crate) unsafe fn on_hotkey() {
     let fg = GetForegroundWindow();
     let list = app(|a| jump_list(&a.s.paths[..a.s.panes()], a.s.active));
-    if let (Some(dlg), false) = (file_dialog(fg), list.is_empty()) {
+    // the layout was switched (Win+Space) with the dialog open and AltGr+G now types a character: no menu,
+    // and sync() lets the key go so the next press reaches the dialog
+    let types = altgr_g(dialog_layout(fg)).is_some();
+    if let (Some(dlg), false, false) = (file_dialog(fg), list.is_empty(), types) {
         if let Some(path) = pick(dlg, &list) {
             go(dlg, &path);
         }
@@ -334,6 +371,32 @@ mod tests {
         let mut cur = base.clone();
         cur.take_layout(&Session::parse("dialog_jump=0\n"));
         assert!(cur.dlgjump);
+    }
+
+    #[test]
+    fn altgr_g_layouts() {
+        unsafe {
+            let installed = |extra: usize| {
+                let mut v = vec![HKL::default(); GetKeyboardLayoutList(None).max(0) as usize + extra];
+                let n = GetKeyboardLayoutList(Some(&mut v)).max(0) as usize;
+                v.truncate(n);
+                v
+            };
+            let before = installed(0);
+            let cases = [("0000040E", Some(vec![']' as u16])), ("00000405", Some(vec![']' as u16])), ("00000409", None), ("00000412", None), ("00000407", None)];
+            for (klid, want) in cases {
+                let lang = u16::from_str_radix(&klid[4..], 16).unwrap();
+                // a layout that can't be loaded may come back as the default one: only judge the one asked for
+                let Ok(hkl) = LoadKeyboardLayoutW(&HSTRING::from(klid), KLF_NOTELLSHELL) else { continue };
+                if (hkl.0 as usize & 0xFFFF) as u16 == lang {
+                    assert_eq!(altgr_g(hkl), want, "{klid}");
+                }
+                if !before.contains(&hkl) {
+                    _ = UnloadKeyboardLayout(hkl);
+                }
+            }
+            assert_eq!(altgr_g(HKL::default()), None);
+        }
     }
 
     #[test]
