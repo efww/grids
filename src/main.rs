@@ -87,6 +87,7 @@ mod usage;
 mod listing;
 mod clipadd;
 mod switcher;
+mod photos;
 
 use ui_defs::*;
 // explicit, so it wins over the same name glob-imported from windows (a glob clash would turn match patterns into bindings)
@@ -129,6 +130,7 @@ use usage::*;
 use listing::*;
 use clipadd::*;
 use switcher::*;
+use photos::*;
 
 /// Let a drive with no disk (empty card reader slot, DVD drive, pulled USB stick) just fail the file call,
 /// instead of Windows' "No Disk" system box freezing the calling thread until it is answered.
@@ -533,6 +535,7 @@ fn main() -> Result<()> {
         unregister_restart(); // closed by the user: not to come back after a reboot
         // The window is gone; copies still running finish first. Waiting keeps COM calls and messages
         // moving, in case a shell extension calls back into this apartment.
+        PHOTOS_STOP.store(true, Ordering::Relaxed); // smaller photo copies: the one being made is the last
         for job in JOBS.take() {
             if !job.is_finished() {
                 let h = HANDLE(std::os::windows::io::AsRawHandle::as_raw_handle(&job));
@@ -573,7 +576,7 @@ mod tests {
             assert_eq!(open_in_pick(ID_WM_PANE + k), OpenPick::Shell);
             menu.extend([ID_OPEN_TO + k, ID_COPY_TO + k, ID_MOVE_TO + k, ID_SWAP_TO + k, ID_WM_PANE + k]);
         }
-        let shell = [ID_INUSE, ID_WM_PAIR, ID_HASH, ID_GROUP, ID_STAMP, ID_ORG, ID_ORG + 1, ID_ORG + 2, ID_EMPTY, ID_USAGE, ID_LIST, ID_CLIPADD, ID_EXPLORER];
+        let shell = [ID_INUSE, ID_WM_PAIR, ID_HASH, ID_GROUP, ID_STAMP, ID_ORG, ID_ORG + 1, ID_ORG + 2, ID_EMPTY, ID_USAGE, ID_LIST, ID_CLIPADD, ID_EXPLORER, ID_PHOTO, ID_PHOTO + 1, ID_PHOTO + 2];
         for p in shell {
             assert_eq!(open_in_pick(p), OpenPick::Shell, "{p}");
         }
@@ -2828,7 +2831,7 @@ mod tests {
 
     // Every source file, compiled in: the test exe runs on the Windows runner without the source tree.
     // A new module must be listed here too (ui_text_pairs_match checks this against main.rs's `mod` lines).
-    const SOURCES: [(&str, &str); 43] = [
+    const SOURCES: [(&str, &str); 44] = [
         ("main.rs", include_str!("main.rs")),
         ("autostart.rs", include_str!("autostart.rs")),
         ("clipadd.rs", include_str!("clipadd.rs")),
@@ -2853,6 +2856,7 @@ mod tests {
         ("panes.rs", include_str!("panes.rs")),
         ("paste.rs", include_str!("paste.rs")),
         ("peek.rs", include_str!("peek.rs")),
+        ("photos.rs", include_str!("photos.rs")),
         ("preview.rs", include_str!("preview.rs")),
         ("rename.rs", include_str!("rename.rs")),
         ("rename_rules.rs", include_str!("rename_rules.rs")),
@@ -3260,8 +3264,8 @@ mod tests { tr("in", "안") }
 
     // Every ⇄ menu item that can show at the top level at the same time: one letter each, none a pane digit,
     // none the first letter of an unmarked item (the grey title, "Pane 10" …), in both languages.
-    fn menu_slots() -> [&'static [(&'static str, &'static str)]; 14] {
-        [&[M_SWAP], &[M_COPY], &[M_MOVE], &[M_INUSE], &[M_HASH, M_HASH_STOP], &[M_ORG], &[M_GROUP_N, M_GROUP], &[M_STAMP_N, M_STAMP], &[M_EMPTY], &[M_USAGE], &[M_LIST_N, M_LIST], &[M_CLIPADD_N, M_CLIPADD], &[M_EXPLORER_SEL, M_EXPLORER], &[M_WM_PAIR, M_WM_PANE]]
+    fn menu_slots() -> [&'static [(&'static str, &'static str)]; 15] {
+        [&[M_SWAP], &[M_COPY], &[M_MOVE], &[M_INUSE], &[M_HASH, M_HASH_STOP], &[M_ORG], &[M_PHOTO], &[M_GROUP_N, M_GROUP], &[M_STAMP_N, M_STAMP], &[M_EMPTY], &[M_USAGE], &[M_LIST_N, M_LIST], &[M_CLIPADD_N, M_CLIPADD], &[M_EXPLORER_SEL, M_EXPLORER], &[M_WM_PAIR, M_WM_PANE]]
     }
 
     // X is Explorer's own letter: no other ⇄ item (nor the title, a pane row or a digit) takes it

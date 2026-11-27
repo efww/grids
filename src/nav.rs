@@ -759,6 +759,7 @@ pub(crate) const M_INUSE: (&str, &str) = ("&Which program is using this?", "어�
 pub(crate) const M_HASH: (&str, &str) = ("Chec&ksum (SHA-256) of the selected files", "선택한 파일의 체크섬(SHA-256)(&K)");
 pub(crate) const M_HASH_STOP: (&str, &str) = ("Stop the chec&ksum ({p}%)", "체크섬 계산 중지(&K) ({p}%)");
 pub(crate) const M_ORG: (&str, &str) = ("Sort the selected files into &date folders", "선택한 파일을 날짜별 폴더로 정리(&D)");
+pub(crate) const M_PHOTO: (&str, &str) = ("Make smaller copies of the selected p&hotos", "선택한 사진의 크기 줄인 사본 만들기(&H)");
 pub(crate) const M_GROUP_N: (&str, &str) = ("Move {n} selected items into a &new folder  (Ctrl+F7)", "선택한 {n}개를 새 폴더로 묶기(&N)  (Ctrl+F7)");
 pub(crate) const M_GROUP: (&str, &str) = ("Move the selected items into a &new folder  (Ctrl+F7)", "선택한 항목을 새 폴더로 묶기(&N)  (Ctrl+F7)");
 pub(crate) const M_STAMP_N: (&str, &str) = ("Make a dated &backup copy of {n} selected items  (Shift+F5)", "선택한 {n}개의 날짜 붙인 사본 만들기(&B)  (Shift+F5)");

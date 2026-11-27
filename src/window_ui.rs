@@ -584,7 +584,11 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             }
             // Windows restart / sign-out: no WM_CLOSE comes. Refused only while a copy or move of ours runs,
             // with the reason on Windows' "this app is preventing restart" screen.
-            WM_QUERYENDSESSION => return query_end_session(h, lp),
+            // Smaller photo copies stop after the one being made, so they hold the restart only that long.
+            WM_QUERYENDSESSION => {
+                PHOTOS_STOP.store(true, Ordering::Relaxed);
+                return query_end_session(h, lp);
+            }
             WM_ENDSESSION if wp.0 != 0 => save_session(),
             WM_ENDSESSION => release_shutdown(h), // the restart was cancelled
             WM_TOUR => open_tour(),

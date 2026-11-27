@@ -1243,6 +1243,7 @@ pub(crate) unsafe fn shell_menu(menu: HMENU, src: usize, picked: &std::result::R
     // before the WinMerge lookup: it ends this function early on a PC without WinMerge
     let here = app(|a| a.s.paths[src].clone());
     org_menu(menu, org_ok(picked, no_dirs, &here));
+    photo_menu(menu, photo_ok(picked, no_dirs, &here));
     let label = match picked {
         Ok(p) if group_ok(p, &here) => {
             let t = tr2(M_GROUP_N);
@@ -1349,7 +1350,7 @@ pub(crate) unsafe fn reveal_in_explorer(src: usize) {
 }
 
 pub(crate) fn is_shell_pick(p: usize) -> bool {
-    p == ID_INUSE || p == ID_WM_PAIR || p == ID_HASH || p == ID_GROUP || p == ID_STAMP || p == ID_EMPTY || p == ID_USAGE || p == ID_LIST || p == ID_CLIPADD || p == ID_EXPLORER || is_org_pick(p) || (ID_WM_PANE..ID_WM_PANE + MAXP).contains(&p)
+    p == ID_INUSE || p == ID_WM_PAIR || p == ID_HASH || p == ID_GROUP || p == ID_STAMP || p == ID_EMPTY || p == ID_USAGE || p == ID_LIST || p == ID_CLIPADD || p == ID_EXPLORER || is_org_pick(p) || is_photo_pick(p) || (ID_WM_PANE..ID_WM_PANE + MAXP).contains(&p)
 }
 
 pub(crate) unsafe fn shell_pick(h: HWND, src: usize, p: usize, picked: std::result::Result<Vec<String>, Pick>, exe: Option<String>, others: &[(usize, HSTRING, String)]) {
@@ -1360,6 +1361,7 @@ pub(crate) unsafe fn shell_pick(h: HWND, src: usize, p: usize, picked: std::resu
         (ID_GROUP, picked, _) => group_into_folder(src, picked),
         (ID_STAMP, picked, _) => start_stamp_copy(src, picked),
         (p, picked, _) if is_org_pick(p) => organize(src, p - ID_ORG, picked),
+        (p, picked, _) if is_photo_pick(p) => shrink_photos(src, p - ID_PHOTO, picked),
         // no selection needed: the folder the pane shows now, checked again there
         (ID_EMPTY, _, _) => remove_empty(src),
         (ID_USAGE, _, _) => open_usage(src),
