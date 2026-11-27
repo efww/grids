@@ -1,4 +1,6 @@
 use crate::*;
+use windows::Win32::System::SystemInformation::GetSystemTimeAsFileTime;
+use windows::Win32::UI::Controls::EM_SETCUEBANNER;
 
 // ---------- select by pattern (Num+ / Num− / Num*, like Total Commander's Select group) ----------
 
@@ -86,7 +88,9 @@ pub(crate) unsafe fn open_match(i: usize, desel: bool) {
     _ = MoveWindow(edit, e.left, e.top, e.right - e.left, e.bottom - e.top, false);
     // Num+ and Num− sound different to a screen reader (taken off in WM_DESTROY, however the popup goes)
     a11y_name(edit, Some(if desel { tr("Deselect by pattern", "패턴으로 선택 해제") } else { tr("Select by pattern", "패턴으로 선택") }));
-    a11y_desc(edit, Some(tr("*.jpg;*.png or part of a name · Enter apply · Shift+Enter the other way · Esc close", "*.jpg;*.png 또는 이름 일부 · Enter 적용 · Shift+Enter 반대로 · Esc 닫기")));
+    a11y_desc(edit, Some(tr("*.jpg;*.png, part of a name, >10MB or <7d · Enter apply · Shift+Enter the other way · Esc close", "*.jpg;*.png, 이름 일부, >10MB 또는 <7d · Enter 적용 · Shift+Enter 반대로 · Esc 닫기")));
+    let cue = HSTRING::from(tr("e.g. *.jpg; >5MB; <7d", "예: *.jpg; >5MB; <7d"));
+    SendMessageW(edit, EM_SETCUEBANNER, Some(WPARAM(1)), Some(LPARAM(cue.as_ptr() as isize)));
     app(|a| a.matcher = Some(Matcher { h, edit, pane: i, path, desel }));
     _ = SetFocus(Some(edit));
     SendMessageW(edit, EM_SETSEL, Some(WPARAM(0)), Some(LPARAM(-1)));
@@ -137,6 +141,7 @@ pub(crate) enum Fail {
     SendChanged,
     SendCant,
     PatternEmpty,
+    PatternCond,
     StampEmpty,
     StampTooMany,
     StampCant,
@@ -151,12 +156,12 @@ pub(crate) enum Fail {
 }
 
 #[cfg(test)] // every kind, for the fail_texts test
-pub(crate) const FAILS: [Fail; 29] = {
+pub(crate) const FAILS: [Fail; 30] = {
     use Fail::*;
     [
         AddrNotFound, AddrQuotes, AddrCantOpen, FolderCantOpen, LastTab, DriveCantOpen, SortHere, PaneMin, NoBorder, GroupEmpty, GroupTooMany,
         GroupCant, GroupBusy, NewFileHere, NewFolder, SendChanged, SendCant, PatternEmpty, StampEmpty, StampTooMany, StampCant, StampBusy,
-        EditNone, EditOnline, DragCant, ClipNoPath, NoClosedTab, DlgBusy, ExplorerCant,
+        EditNone, EditOnline, DragCant, ClipNoPath, NoClosedTab, DlgBusy, ExplorerCant, PatternCond,
     ]
 };
 
@@ -182,6 +187,7 @@ pub(crate) fn fail_pair(kind: Fail) -> (&'static str, &'static str) {
         Fail::SendChanged => ("Not sent · that pane now shows another folder", "보내지 않음 · 그 패널이 다른 폴더로 바뀌었음"),
         Fail::SendCant => ("Can't send there", "그곳으로는 보낼 수 없음"),
         Fail::PatternEmpty => ("Type a pattern first, e.g. *.jpg", "패턴을 먼저 입력하세요 (예: *.jpg)"),
+        Fail::PatternCond => ("Can't read '{name}' · use >10MB, <500KB, <7d, >2w", "'{name}'을(를) 읽을 수 없음 · >10MB, <500KB, <7d, >2w 처럼"),
         Fail::StampEmpty => ("Select the items to make dated copies of first", "날짜 붙인 사본을 만들 항목을 먼저 고르세요"),
         Fail::StampTooMany => ("Too many items to copy (over 10,000)", "사본을 만들 항목이 너무 많음 (1만 개 초과)"),
         Fail::StampCant => ("Dated copies can't be made of these items here", "이 항목들은 여기서 날짜 붙인 사본을 만들 수 없음"),
@@ -228,7 +234,79 @@ pub(crate) unsafe fn bulk_select(fv: &IFolderView2, mut each: impl FnMut(i32) ->
     Some(done)
 }
 
-// Enter in the box (Shift+Enter: the other mode). Files and ZIPs whose name matches; folders are left alone.
+// A size or age piece of the select box (XYplorer's size:/age: selection filter, Directory Opus' advanced select).
+// Sizes in bytes; ages in FILETIME's 100 ns steps.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Cond {
+    Bigger(u64),
+    Smaller(u64),
+    Older(u64),  // modified longer ago than this
+    Newer(u64),  // modified within this
+}
+
+const HOUR: u64 = 3600 * 10_000_000;
+
+// `t` starts with '<' or '>'. ">10MB", "<1.5gb", "<7d", "> 2 w": a number (digits and one '.') and a unit, B/KB/MB/GB/TB (1024 steps, as the
+// status line) or h/d/w. No unit, a bare "m" (minutes? months? MB?), signs, "1e3", "inf": None, nothing guessed.
+fn parse_cond(t: &str) -> Option<Cond> {
+    let (op, rest) = t.split_at(1);
+    let rest = rest.trim_start();
+    let end = rest.find(|c: char| !(c.is_ascii_digit() || c == '.')).unwrap_or(rest.len());
+    let (num, unit) = rest.split_at(end);
+    if !num.contains(|c: char| c.is_ascii_digit()) || num.matches('.').count() > 1 {
+        return None;
+    }
+    let num: f64 = num.parse().ok()?;
+    let k = 1024u64;
+    let (mult, age) = match unit.trim().to_ascii_lowercase().as_str() {
+        "b" => (1, false),
+        "kb" => (k, false),
+        "mb" => (k * k, false),
+        "gb" => (k * k * k, false),
+        "tb" => (k * k * k * k, false),
+        "h" => (HOUR, true),
+        "d" => (24 * HOUR, true),
+        "w" => (7 * 24 * HOUR, true),
+        _ => return None,
+    };
+    let v = (num * mult as f64).min(u64::MAX as f64) as u64; // `as` keeps it in u64 (and rounds down)
+    Some(match (op == ">", age) {
+        (true, false) => Cond::Bigger(v),
+        (false, false) => Cond::Smaller(v),
+        (true, true) => Cond::Older(v),
+        (false, true) => Cond::Newer(v),
+    })
+}
+
+// The select box's text: the name pattern (filter_spec of the pieces that aren't conditions) and the conditions,
+// pieces starting with '<' or '>' (neither can be in a Windows file name, so no pattern reads differently).
+// Err: the first condition that can't be read.
+pub(crate) fn parse_match(text: &str) -> std::result::Result<(String, Vec<Cond>), String> {
+    let (mut names, mut conds) = (Vec::new(), Vec::new());
+    for part in text.split(';').map(str::trim) {
+        if part.starts_with(['<', '>']) {
+            conds.push(parse_cond(part).ok_or_else(|| part.to_string())?);
+        } else {
+            names.push(part);
+        }
+    }
+    Ok((filter_spec(&names.join(";")), conds))
+}
+
+// One condition against a file's size and date modified (FILETIME, UTC like `now`); a value not read (or a zero
+// date) never matches. A date after `now` counts as just modified: never "older than".
+pub(crate) fn cond_ok(c: Cond, size: Option<u64>, time: Option<u64>, now: u64) -> bool {
+    let age = time.filter(|&t| t != 0).map(|t| now.saturating_sub(t));
+    match c {
+        Cond::Bigger(b) => size.is_some_and(|s| s > b),
+        Cond::Smaller(b) => size.is_some_and(|s| s < b),
+        Cond::Older(d) => age.is_some_and(|a| a > d),
+        Cond::Newer(d) => age.is_some_and(|a| a < d),
+    }
+}
+
+// Enter in the box (Shift+Enter: the other mode). Files and ZIPs whose name matches (and every condition);
+// folders are left alone.
 pub(crate) unsafe fn run_match(flip: bool) {
     let Some((h, edit, i, path, desel)) = app(|a| a.matcher.as_ref().map(|m| (m.h, m.edit, m.pane, m.path.clone(), m.desel))) else { return };
     let desel = desel != flip;
@@ -240,13 +318,21 @@ pub(crate) unsafe fn run_match(flip: bool) {
         return;
     };
     let text = text_of(edit).trim().to_string();
-    let spec = filter_spec(&text);
-    if spec.is_empty() {
+    let (spec, conds) = match parse_match(&text) {
+        Ok(v) => v,
+        Err(bad) => return fail(Fail::PatternCond, &bad),
+    };
+    if spec.is_empty() && conds.is_empty() {
         fail(Fail::PatternEmpty, "");
         return;
     }
     app(|a| a.match_last = text.clone());
-    let spec = HSTRING::from(spec);
+    // conditions only: every file; an empty spec would match nothing
+    let spec = (!spec.is_empty()).then(|| HSTRING::from(spec));
+    let need_size = conds.iter().any(|c| matches!(c, Cond::Bigger(_) | Cond::Smaller(_)));
+    let need_time = conds.iter().any(|c| matches!(c, Cond::Older(_) | Cond::Newer(_)));
+    let ft = GetSystemTimeAsFileTime();
+    let now = ((ft.dwHighDateTime as u64) << 32) | ft.dwLowDateTime as u64;
     let mut first = !desel;
     let n = bulk_select(&fv, |k| {
         let Ok(it) = fv.GetItem::<IShellItem>(k) else { return false };
@@ -254,9 +340,21 @@ pub(crate) unsafe fn run_match(flip: bool) {
         if real_folder(attr) {
             return false;
         }
-        let Ok(name) = it.GetDisplayName(SIGDN_PARENTRELATIVEPARSING).map(|p| pwstr(p)) else { return false };
-        if !PathMatchSpecW(&HSTRING::from(name), &spec).as_bool() {
-            return false;
+        if let Some(spec) = &spec {
+            let Ok(name) = it.GetDisplayName(SIGDN_PARENTRELATIVEPARSING).map(|p| pwstr(p)) else { return false };
+            if !PathMatchSpecW(&HSTRING::from(name), spec).as_bool() {
+                return false;
+            }
+        }
+        // the properties the view already holds, read only when a condition asks (and the name matched)
+        if !conds.is_empty() {
+            use windows::Win32::Storage::EnhancedStorage::{PKEY_DateModified, PKEY_Size};
+            let Ok(it2) = it.cast::<IShellItem2>() else { return false };
+            let size = if need_size { it2.GetUInt64(&PKEY_Size).ok() } else { None };
+            let time = if need_time { it2.GetFileTime(&PKEY_DateModified).ok().map(|t| ((t.dwHighDateTime as u64) << 32) | t.dwLowDateTime as u64) } else { None };
+            if !conds.iter().all(|&c| cond_ok(c, size, time, now)) {
+                return false;
+            }
         }
         let flags = match (desel, first) {
             (true, _) => SVSI_DESELECT.0,
@@ -735,6 +833,46 @@ mod tests {
 
     fn paths(names: &[&str]) -> Vec<String> {
         sel(names).paths
+    }
+
+    #[test]
+    fn match_conditions() {
+        use Cond::*;
+        const DAY: u64 = 24 * HOUR;
+        // 1024 steps, any case, a fraction, spaces around the number
+        assert_eq!(parse_match(">1KB"), Ok((String::new(), vec![Bigger(1024)])));
+        assert_eq!(parse_match("<1.5gb"), Ok((String::new(), vec![Smaller(1024 * 1024 * 1024 * 3 / 2)])));
+        assert_eq!(parse_match("> 10 Mb ; <2B; >1tb"), Ok((String::new(), vec![Bigger(10 << 20), Smaller(2), Bigger(1 << 40)])));
+        assert_eq!(parse_match("<7d;>2W;>12h;<.5d"), Ok((String::new(), vec![Newer(7 * DAY), Older(14 * DAY), Older(12 * HOUR), Newer(DAY / 2)])));
+        // names and conditions mixed: the names make the same spec as before
+        assert_eq!(parse_match("*.mp4; >500MB; holiday"), Ok(("*.mp4;*holiday*".to_string(), vec![Bigger(500 << 20)])));
+        // what can't be read is said back as typed (no guessing what a bare m or no unit means)
+        for bad in [">abc", "<5XB", "<5m", ">10", ">", "<-5MB", ">1e3KB", ">infKB", ">1.2.3MB", "<7 days", ">=5MB"] {
+            assert_eq!(parse_match(&format!("*.jpg; {bad}")), Err(bad.to_string()), "{bad}");
+        }
+        // no '<' or '>': exactly the spec it was before
+        for t in ["*.jpg;*.png", "pdf; *.txt", "a b", "", " ; ", "x?.doc"] {
+            assert_eq!(parse_match(t), Ok((filter_spec(t), vec![])), "{t}");
+        }
+        // far too big: kept in u64
+        assert_eq!(parse_match(">99999999999999999999TB"), Ok((String::new(), vec![Bigger(u64::MAX)])));
+    }
+
+    #[test]
+    fn condition_checks() {
+        use Cond::*;
+        const NOW: u64 = 133_000_000_000_000_000;
+        const DAY: u64 = 24 * HOUR;
+        assert!(cond_ok(Bigger(10), Some(11), None, NOW) && !cond_ok(Bigger(10), Some(10), None, NOW));
+        assert!(cond_ok(Smaller(10), Some(9), None, NOW) && !cond_ok(Smaller(10), Some(10), None, NOW));
+        assert!(cond_ok(Newer(7 * DAY), None, Some(NOW - 6 * DAY), NOW) && !cond_ok(Newer(7 * DAY), None, Some(NOW - 8 * DAY), NOW));
+        assert!(cond_ok(Older(30 * DAY), None, Some(NOW - 31 * DAY), NOW) && !cond_ok(Older(30 * DAY), None, Some(NOW - DAY), NOW));
+        // a date in the future is just modified, never "older"
+        assert!(!cond_ok(Older(30 * DAY), None, Some(NOW + DAY), NOW) && cond_ok(Newer(DAY), None, Some(NOW + DAY), NOW));
+        // not read, or a zero date: no match either way
+        for c in [Bigger(0), Smaller(u64::MAX), Older(0), Newer(u64::MAX)] {
+            assert!(!cond_ok(c, None, None, NOW) && !cond_ok(c, None, Some(0), NOW), "{c:?}");
+        }
     }
 
     #[test]
