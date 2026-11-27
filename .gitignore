@@ -8,3 +8,9 @@ docs/motion/
 
 # Internal notes (keep local only)
 000000_*.md*
+
+# pid_io runtime files (per PC)
+pid_io/projects/_timing.json
+pid_io/projects/_app.json
+pid_io/projects/_app.log
+pid_io/projects/_appwin/

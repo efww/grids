@@ -70,5 +70,37 @@
   "fid": "c40fcefb180a",
   "state": "eae1d4b1fb80",
   "sha256": "cc650d447ae62480774799024b0179548df3c215bc8720eed7292345738f54d9"
+ },
+ {
+  "kind": "basis",
+  "file": "HISTORY/산출근거_서남해 200MW 수전해-2_20261127_0626.xlsx",
+  "at": "2026-11-27 06:26",
+  "fid": "72e27682f0b0",
+  "state": "eae1d4b1fb80",
+  "sha256": "5f5677ea05bf45b691fd83b85fcc92d9e6160749f4653baeccf5ef59bb298724"
+ },
+ {
+  "kind": "index",
+  "file": "HISTORY/Instrument_Index_서남해 200MW 수전해-2_20261127_0628.xlsx",
+  "at": "2026-11-27 06:28",
+  "fid": "ba6de8809df0",
+  "state": "a2094d737515",
+  "sha256": "cdb87cc71582bbfebc65094c1c4cc51ec85af397a21524c5064d7c1cc751520d"
+ },
+ {
+  "kind": "index",
+  "file": "HISTORY/Instrument_Index_서남해 200MW 수전해-2_20261127_0629.xlsx",
+  "at": "2026-11-27 06:29",
+  "fid": "c335caca32de",
+  "state": "a2094d737515",
+  "sha256": "47410337715cd5cf4ee07c54a6e166298de218e572391d32f543f6cfd4ec381d"
+ },
+ {
+  "kind": "index",
+  "file": "HISTORY/Instrument_Index_서남해 200MW 수전해-2_20261127_0630.xlsx",
+  "at": "2026-11-27 06:30",
+  "fid": "70d2a60a50b3",
+  "state": "a2094d737515",
+  "sha256": "38323ba74e79ce5cc499af1a5ec606f30b384578d078436df4eabdc8950829c4"
  }
 ]

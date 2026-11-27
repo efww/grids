@@ -143,7 +143,7 @@ def build(project, res, layout, tray, sup, s, plot=None):
     secs = {x["no"]: x for x in sections(tray, v)} if tray else {}
     for sg in (tray or {}).get("segments") or []:
         a, b = sg["poly"]
-        el = rack_el if sg["kind"] == "랙" else off_el
+        el = rack_el if sg["kind"] == "랙" else (-float(v["ug_depth"]) if sg["kind"] == "UG" else float(v["sup_el"]))
         base = {"seg": sg["no"], "run": sg.get("run"), "kind": {"랙": "ladder_on_rack", "AG": "ladder_on_supports", "UG": "ug_trench"}[sg["kind"]],
                 "start": P(a[0], a[1], el), "end": P(b[0], b[1], el), "length_m": sg["length"], "cables": sg["cables"]}
         if sg["kind"] == "UG":

@@ -172,10 +172,13 @@ def slots(layout, v, width_m=6.0):
             return True
         if any(o[0] - pad < x < o[2] + pad and o[1] - pad < y < o[3] + pad for o in eq3d):   # 3D model equipment (J1A)
             return True
-        return not rack_ok and any(r[0] < x < r[2] and r[1] < y < r[3] for r in rects)
+        t = 0.3 / m                                      # rounding of the slot coordinates must not put it on the rack
+        return not rack_ok and any(r[0] - t < x < r[2] + t and r[1] - t < y < r[3] + t for r in rects)
 
     if v["slot_rack"] == "사용":
         off = float(v["rack_off"]) / m
+        from .plot import RACK_PAD_M                     # v13.4: PLOT racks reach RACK_PAD_M past the column line
+        poff = max(off, (RACK_PAD_M + 0.5) / m)
         cols = layout.plot.get("rack_cols") or []
         for i, r in enumerate(layout.racks_auto):
             if r[-1] or i >= len(cols):
@@ -183,9 +186,9 @@ def slots(layout, v, width_m=6.0):
             x0, y0, x1, y1, ax = r[:5]
             for k, (x, y) in enumerate(sorted(cols[i], key=lambda p: (p[0], p[1])), 1):
                 if ax == "H":
-                    p = (x, y - off) if abs(y - y0) <= abs(y - y1) else (x, y + off)
+                    p = (x, y - poff) if abs(y - y0) <= abs(y - y1) else (x, y + poff)
                 else:
-                    p = (x - off, y) if abs(x - x0) <= abs(x - x1) else (x + off, y)
+                    p = (x - poff, y) if abs(x - x0) <= abs(x - x1) else (x + poff, y)
                 if not blocked(*p, rack_ok=False):
                     out.append({"id": f"R{i + 1}-{k}", "kind": "랙", "x": round(p[0], 1), "y": round(p[1], 1),
                                 "label": f"랙 {i + 1} 기둥 {k}"})

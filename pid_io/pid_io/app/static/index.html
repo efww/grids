@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>계장 개념설계 IO 산출</title>
+<link rel="icon" href="/favicon.ico"><link rel="manifest" href="/manifest.webmanifest"><meta name="theme-color" content="#15ad60">
 <style>
 /*FONTFACE*/
 :root{
@@ -151,6 +152,22 @@ details summary::marker{color:var(--green)}
 #bigview .bigbox{background:#fff;padding:14px;max-width:80vw;max-height:86vh;display:flex;flex-direction:column;gap:8px;border-top:4px solid var(--green)}
 #bigview img{max-width:76vw;max-height:76vh;object-fit:contain}
 #bigview .cap{font-size:12.5px;color:var(--sub);cursor:pointer}
+/* v13.4 resolution: never let columns collapse into one-letter lines */
+html{min-width:1024px}
+nav .st{white-space:nowrap}
+table.mini th{white-space:nowrap}
+.g7{grid-template-columns:repeat(auto-fit,minmax(118px,1fr))}
+.g5{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+.g4{grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}
+.g3{grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}
+.g2{grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
+.panel{min-width:0;overflow-wrap:break-word}
+.panel table.mini{max-width:100%}
+div:has(> .side){flex-wrap:wrap}
+div:has(> .side) > div:first-child{min-width:560px}
+@media (max-width:1180px){.side{width:100%;position:static}}
+#busy{position:fixed;inset:0;background:rgba(20,24,28,.18);display:none;align-items:center;justify-content:center;z-index:80;cursor:progress}
+#busy .busycard{background:#fff;border:1px solid var(--line);border-top:4px solid var(--green);padding:16px 20px;width:420px;max-width:calc(100vw - 32px);box-shadow:0 12px 40px rgba(0,0,0,.18)}
 .toast{position:fixed;right:24px;bottom:24px;background:#111;color:#fff;padding:12px 18px;font-size:13.5px;z-index:50;display:none;max-width:420px}
 .toast.err{background:var(--red)}
 .hidden{display:none!important}
@@ -163,6 +180,25 @@ details summary::marker{color:var(--green)}
   <div class="mark"></div>
   <div class="brand"><b>계장 개념설계</b> IO 산출<span>INSTRUMENTATION · CONCEPT I/O</span></div>
   <div class="proj"><span>프로젝트</span><b id="pname">선택 안 됨</b><span id="phome" class="mono"></span></div>
+  <button class="btn sm line" id="setbtn" title="설정" style="margin-left:8px">⚙ 설정</button>
+</div>
+<div id="setdlg" style="position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;align-items:flex-start;justify-content:flex-end;z-index:70">
+  <div class="panel" style="margin:64px 24px 0 0;width:400px;max-width:calc(100vw - 32px)">
+    <div style="display:flex;justify-content:space-between;align-items:center"><b style="font-size:16px">설정</b><button class="btn sm line" id="setclose">닫기</button></div>
+    <div style="display:flex;gap:12px;align-items:flex-start;margin-top:14px">
+      <button class="tog" id="simpletog"></button>
+      <div><b>간이 모드 (개략 케이블 · JB)</b><div style="font-size:12.5px;color:var(--sub);line-height:1.6;margin-top:2px">
+        STEP 6~10 확장 메뉴(케이블·JB·트레이·서포트·3D)를 숨기고, 인덱스 IO와 지역(유닛) 인식 결과로 <b>PLOT PLAN 위에 JB와 케이블 경로를 개략으로</b> 보여 주는 화면 하나만 둡니다. 시연·외부 공개용. 끄면 원래대로.</div></div>
+    </div>
+    <div style="display:flex;gap:12px;align-items:flex-start;margin-top:14px">
+      <button class="tog" id="fittog"></button>
+      <div><b>화면 맞춤</b><div style="font-size:12.5px;color:var(--sub);line-height:1.6;margin-top:2px">
+        창이 좁거나 배율(125·150%)이 다른 모니터로 옮겨도 열이 깨지지 않게, 화면 전체를 창 너비에 맞춰 줄입니다.</div></div>
+    </div>
+    <div id="setmore"></div>
+    <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--line-l);display:flex;justify-content:space-between;align-items:center">
+      <span style="font-size:12px;color:var(--sub)">창을 닫아도 프로그램이 종료됩니다</span><button class="btn sm line" id="quitbtn">프로그램 종료</button></div>
+  </div>
 </div>
 <div class="wrap">
   <nav id="nav">
@@ -176,6 +212,7 @@ details summary::marker{color:var(--green)}
     <div class="st ext" data-s="tray"><i>8</i>트레이<span class="chip" style="margin-left:auto;font-size:10.5px;padding:0 6px">확장</span></div>
     <div class="st ext" data-s="support"><i>9</i>서포트<span class="chip" style="margin-left:auto;font-size:10.5px;padding:0 6px">확장</span></div>
     <div class="st ext" data-s="twin"><i>10</i>3D 인계<span class="chip" style="margin-left:auto;font-size:10.5px;padding:0 6px">확장</span></div>
+    <div class="st ext" data-s="simple" style="display:none"><i>6</i>케이블 · JB<span class="chip" style="margin-left:auto;font-size:10.5px;padding:0 6px">개략</span></div>
     <div class="st" data-s="ai" style="margin-top:14px;border-top:1px solid var(--line-l)"><i>AI</i>AI 연결 설정</div>
     <div class="foot">도면 인식은 한 번,<br>체크리스트를 바꾸면 IO가<br>즉시 다시 계산됩니다.<br><br><span class="mono">IO 1점 = 인덱스 1행</span><br><br><span id="fontst"></span></div>
   </nav>
@@ -190,12 +227,58 @@ const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const fmt = n => (n ?? 0).toLocaleString("ko-KR");
 
+/* v13.4 진행 표시: every API call carries an op id; if it takes a while a card shows what is being done and 0 -> 100 %.
+   Real % when the server reports it (prog()), otherwise estimated from how long the same work took last time. */
+const OPS = new Map();
+const OP_NAME = {"":"프로젝트 불러오기", summary:"IO 요약 계산", review:"검토 목록 만들기", concept:"체크리스트 반영", decisions:"검토 판단 반영",
+  export:"인덱스 엑셀 만들기", basis_export:"산출근거 계산 (체크리스트·설정 영향 포함)", cable:"케이블 · JB 계산", cable_export:"케이블 스케줄 엑셀 만들기",
+  twin:"3D 인계 화면 준비", "twin/export":"3D 인계 파일 만들기", export_3d:"3D 데이터 만들기", simple:"케이블 · JB 개략 계산", ref_score:"레퍼런스 채점",
+  upload:"파일 올리는 중", extract:"추출 시작", plot:"PLOT PLAN 읽기", impact:"영향 계산", orders:"주문 반영 · 다음 3D 파일", gate:"3D 반영 제안 계산",
+  revisions:"리비전 비교", outputs:"출력 목록", warm:"준비 중", identify:"파일 확인", review3d:"3D 리뷰 준비", data3d:"3D 데이터", projects:"프로젝트 목록"};
+function opLabel(path) { const a = path.split("?")[0].split("/"); const act = a[0] === "p" ? (a[2] || "") : a[0];
+  return OP_NAME[a[0] === "p" && a[3] ? act + "/" + a[3] : act] || OP_NAME[act] || "처리 중"; }
+function progUI() {
+  let el = $("#busy");
+  const live = [...OPS.values()].filter(o => o.shown);
+  if (!live.length) { if (el) el.style.display = "none"; return; }
+  if (!el) { el = document.createElement("div"); el.id = "busy"; document.body.appendChild(el); }
+  const o = live.sort((a, b) => a.t0 - b.t0)[0], pct = Math.round(o.pct);
+  el.style.display = "flex";
+  el.innerHTML = `<div class="busycard"><div style="display:flex;justify-content:space-between;gap:12px;align-items:baseline">
+      <b>${esc(o.label)}</b><span class="mono" style="font-size:20px;font-weight:700">${pct}%</span></div>
+    <div class="prog" style="margin:10px 0 6px"><i style="width:${pct}%;transition:width .35s"></i></div>
+    <div style="font-size:12px;color:var(--sub);display:flex;justify-content:space-between;gap:10px"><span>${esc(o.msg || (o.real ? "" : o.expect ? "지난번 " + o.expect.toFixed(1) + "초 걸린 작업" : "처음 하는 작업이라 시간 추정 중"))}</span><span>${((performance.now() - o.t0) / 1000).toFixed(1)}초</span></div></div>`;
+}
+function progTick(o) {
+  const t = (performance.now() - o.t0) / 1000;
+  if (!o.real) { const e = o.expect || 6;                      // estimate: ~90 % at the usual time, then creep toward 99
+    o.pct = t <= e ? 90 * t / e : 90 + 9 * (1 - Math.exp(-(t - e) / e)); }
+  progUI();
+}
+async function progPoll(id) {
+  const o = OPS.get(id); if (!o || o.done) return;
+  try { const r = await (await fetch("/api/progress?id=" + id)).json();
+    if (r.expect && !o.expect) o.expect = r.expect;
+    if (r.pct != null && !r.done) { o.real = true; o.pct = Math.max(o.pct, r.pct); o.msg = r.msg; }
+  } catch (e) {}
+  if (OPS.has(id) && !o.done) o.poll = setTimeout(() => progPoll(id), 450);
+}
 async function api(path, opt={}) {
-  const r = await fetch("/api/" + path, opt);
-  const ct = r.headers.get("content-type") || "";
-  const body = ct.includes("json") ? await r.json() : await r.blob();
-  if (!r.ok) throw new Error(body.error || r.statusText);
-  return body;
+  const id = Math.random().toString(36).slice(2, 10), post_ = (opt.method || "GET") === "POST";
+  const o = {t0: performance.now(), pct: 0, label: opLabel(path), shown: false, real: false};
+  OPS.set(id, o);
+  o.show = setTimeout(() => { o.shown = true; progTick(o); o.tick = setInterval(() => progTick(o), 200); progPoll(id); }, post_ ? 250 : 700);
+  try {
+    const r = await fetch("/api/" + path, {...opt, headers: {...(opt.headers || {}), "X-Op-Id": id}});
+    const ct = r.headers.get("content-type") || "";
+    const body = ct.includes("json") ? await r.json() : await r.blob();
+    if (!r.ok) throw new Error(body.error || r.statusText);
+    return body;
+  } finally {
+    o.done = true; clearTimeout(o.show); clearTimeout(o.poll); clearInterval(o.tick);
+    if (o.shown) { o.pct = 100; o.msg = "완료"; progUI(); await new Promise(res => setTimeout(res, 250)); }
+    OPS.delete(id); progUI();
+  }
 }
 const post = (path, data) => api(path, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(data||{})});
 const P = p => `p/${encodeURIComponent(S.project)}/${p}`;
@@ -209,10 +292,16 @@ function navState() {
   document.querySelectorAll("#nav .st").forEach(el => {
     const s = el.dataset.s;
     el.classList.toggle("on", s === S.screen);
-    el.classList.toggle("dis", (!S.project && !["projects","ai"].includes(s)) || (!ex && ["concept","review","output","cable","jb","tray","support","twin"].includes(s)));
+    el.classList.toggle("dis", (!S.project && !["projects","ai"].includes(s)) || (!ex && ["concept","review","output","cable","jb","tray","support","twin","simple"].includes(s)));
+    if (["cable","jb","tray","support","twin"].includes(s)) el.style.display = APP.simple ? "none" : "";
+    if (s === "simple") el.style.display = APP.simple ? "" : "none";
     el.classList.toggle("done", (s==="projects" && S.project) || (s==="extract" && ex));
   });
   $("#pname").textContent = S.project || "선택 안 됨";
+  const rs = S.project && S.state && S.state.ref_score, ex2 = document.querySelector('#nav .st[data-s="extract"]');
+  if (ex2) { let b = ex2.querySelector(".refb"); if (!b) { b = document.createElement("span"); b.className = "refb chip"; b.style.cssText = "margin-left:auto;font-size:10.5px;padding:0 6px;cursor:pointer"; ex2.appendChild(b); }
+    b.style.display = rs && rs.grade ? "" : "none"; if (rs && rs.grade) { b.textContent = `${rs.grade} ${Math.round(rs.total)}%`; b.title = "레퍼런스 채점 (STEP 2 아래 카드)";
+      b.style.background = {A:"#d9f2e3",B:"#e3eefa",C:"#fff3cd",D:"#fde2e1"}[rs.grade]; } }
 }
 
 async function loadState() { if (S.project) S.state = await api(P("")); navState(); }
@@ -234,7 +323,118 @@ async function render() {
     if (S.screen === "tray") return await renderTray(m);
     if (S.screen === "support") return await renderSupport(m);
     if (S.screen === "twin") return await renderTwin(m);
+    if (S.screen === "simple") return await renderSimple(m);
   } catch (e) { toast(e.message, true); }
+}
+
+/* ---------------------------------------------------------------- v13.4 설정 · 간이 모드 */
+const APP = {simple:false, fit:true};
+async function loadApp() { try { Object.assign(APP, await api("app_settings")); } catch(e) {} navState(); setTog(); fitZoom(); }
+function setTog() { const t = $("#simpletog"); if (t) t.classList.toggle("on", !!APP.simple); const f = $("#fittog"); if (f) f.classList.toggle("on", APP.fit !== false); }
+/* v13.4 화면 맞춤: the layout is drawn for 1440 CSS px; a narrower window (or a 125-150 % monitor) scales the whole page
+   instead of squeezing the columns. Re-checked on resize and when the window moves to a monitor with another scale. */
+const DESIGN_W = 1440;
+function fitZoom() {
+  const z = APP.fit === false ? 1 : Math.max(0.6, Math.min(1, window.innerWidth / DESIGN_W));
+  document.documentElement.style.zoom = z === 1 ? "" : z.toFixed(3);
+}
+let _fitT = null, _dprMq = null;
+window.addEventListener("resize", () => { clearTimeout(_fitT); _fitT = setTimeout(fitZoom, 120); });
+function watchDpr() { if (_dprMq) _dprMq.removeEventListener("change", onDpr); _dprMq = matchMedia(`(resolution: ${devicePixelRatio}dppx)`); _dprMq.addEventListener("change", onDpr); }
+function onDpr() { fitZoom(); watchDpr(); if (["cable","jb","tray","support","simple"].includes(S.screen)) render(); }
+watchDpr();
+$("#fittog").onclick = async () => { Object.assign(APP, await post("app_settings", {fit: APP.fit === false})); setTog(); fitZoom(); };
+$("#quitbtn").onclick = async () => { if (!confirm("프로그램을 종료할까요? (작업 결과는 모두 저장되어 있습니다)")) return;
+  try { await post("shutdown"); } catch(e) {} document.body.innerHTML = `<div style="padding:80px;text-align:center;font-size:18px">프로그램을 종료했습니다. 이 창을 닫아 주세요.</div>`; setTimeout(() => window.close(), 400); };
+setInterval(() => fetch("/api/ping").catch(() => {}), 60000); fetch("/api/ping").catch(() => {});
+$("#setbtn").onclick = () => { $("#setdlg").style.display = "flex"; setTog(); };
+$("#setclose").onclick = () => $("#setdlg").style.display = "none";
+$("#setdlg").onclick = e => { if (e.target.id === "setdlg") $("#setdlg").style.display = "none"; };
+$("#simpletog").onclick = async () => {
+  Object.assign(APP, await post("app_settings", {simple: !APP.simple})); setTog(); navState();
+  if (APP.simple && ["cable","jb","tray","support","twin"].includes(S.screen)) go("simple");
+  else if (!APP.simple && S.screen === "simple") go("cable");
+  toast(APP.simple ? "간이 모드: 케이블 · JB 개략 화면만 보입니다" : "간이 모드를 껐습니다"); };
+async function renderSimple(m) {
+  m.innerHTML = `<div class="head"><div><div class="eyebrow">STEP 6</div><h1>케이블 · JB (개략)</h1>
+    <p class="lead">인덱스 IO와 지역(유닛) 인식 결과로 JB를 묶고, PLOT PLAN 위에 케이블 경로를 개략으로 그렸습니다. 숫자는 어림값입니다.</p></div></div><div class="empty">계산 중…</div>`;
+  const t = S.tok; let d;
+  try { d = await api(P("simple")); } catch(e) { m.querySelector(".empty").textContent = e.message; return; }
+  if (t !== S.tok) return;
+  const sm = d.summary, pp = d.plot;
+  const stat = (k, v, c) => `<div class="panel stat"><div class="k">${k}</div><div class="v" ${c?`style="color:${c}"`:""}>${v}</div></div>`;
+  m.innerHTML = `<div class="head"><div><div class="eyebrow">STEP 6</div><h1>케이블 · JB (개략)</h1>
+    <p class="lead">인덱스 IO와 지역(유닛) 인식 결과로 JB를 묶고, PLOT PLAN 위에 케이블 경로를 개략으로 그렸습니다. 숫자는 어림값입니다.</p></div></div>
+    <div class="grid g5" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
+      ${stat("IO 합계", fmt(d.io_total))}${stat("지역 (유닛)", fmt(sm.units.length))}${stat("JB", "약 " + fmt(sm.jb), "#f08a24")}
+      ${stat("간선 케이블", "약 " + fmt(sm.trunk) + "가닥", "#7e66cb")}${stat("케이블 길이", "약 " + sm.km + " km")}</div>
+    <div class="panel" style="margin-top:14px;font-size:12.5px;display:flex;gap:16px;flex-wrap:wrap;align-items:center">
+      <span><i style="display:inline-block;width:10px;height:10px;background:#f08a24"></i> JB</span><span><i style="display:inline-block;width:18px;height:3px;background:#f08a24;vertical-align:middle"></i> JB → 제어실</span>
+      <span><i style="display:inline-block;width:18px;height:3px;background:#d1335d;vertical-align:middle"></i> 패키지</span><span><i style="display:inline-block;width:18px;height:3px;background:#4fa1e0;vertical-align:middle"></i> 통신</span>
+      <span><i style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#15ad60"></i> 계기</span><span class="def">지역: ${esc(sm.units.join(", "))}</span></div>
+    ${pp ? `<div class="viewer" style="margin-top:14px;height:calc(100vh - 330px)"><div style="position:relative;width:100%;max-width:${Math.round(pp.size[0]*50/72)*2}px"><img src="/api/${P("plot_png")}?v=${encodeURIComponent(pp.file)}" style="width:100%;display:block">${plotOverlay(pp)}</div></div>`
+         : `<div class="empty" style="margin-top:14px">PLOT PLAN을 올리면 (STEP 2) 도면 위에 JB와 경로가 그려집니다.</div>`}`;
+  m.querySelectorAll("#plsvg [data-rid]").forEach(el => el.style.pointerEvents = "none");
+}
+loadApp();
+
+/* ---------------------------------------------------------------- v13.4 레퍼런스 채점 카드 */
+let REFEDIT = false;
+const colL = i => (i >= 26 ? String.fromCharCode(64 + Math.floor(i / 26)) : "") + String.fromCharCode(65 + i % 26);
+async function refCard(data) {
+  const box = $("#refbox"); if (!box) return;
+  if (!data) { box.innerHTML = `<div class="panel" style="font-size:13px;color:var(--sub)">레퍼런스 채점 중…</div>`; try { data = await api(P("ref_score")); } catch(e) { box.innerHTML = `<div class="panel" style="color:var(--red)">${esc(e.message)}</div>`; return; } }
+  if (!$("#refbox") || data.none) return;
+  const sc = data.score, inf = data.info || {}, L = data.labels || {};
+  const gcol = {A:"var(--green)",B:"#2c7fc0",C:"var(--yellow)",D:"var(--red)"}[sc&&sc.grade] || "var(--sub)";
+  const cell = (l, v, sub, dim) => `<div style="flex:1;min-width:150px;background:#f6f7f6;padding:8px 10px;${dim?"opacity:.55":""}"><div style="font-size:11.5px;color:var(--sub)">${l}</div><div style="font-size:22px;font-weight:700">${v}</div><div style="font-size:11px;color:var(--sub)">${sub||""}</div></div>`;
+  const mapRows = Object.entries(inf.map||{}).map(([k,v])=>`<tr><td>${esc(v.label)}</td><td class="mono">${colL(v.col)}열</td><td>${esc(String(v.caption).replace(/\n/g," "))}</td></tr>`).join("");
+  let h = `<div class="panel" style="border-top:4px solid ${gcol}">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+      <div><b style="font-size:16px">레퍼런스 채점</b> <span class="def">${esc(data.file||"")}${data.at?" · "+esc(data.at):""}</span></div>
+      <div style="display:flex;gap:6px"><button class="btn sm line" id="refedit">${REFEDIT?"열 지정 닫기":"열 지정 (인식 고치기)"}</button><button class="btn sm line" id="refre">다시 채점</button></div></div>`;
+  if (data.error) h += `<p style="color:var(--red);margin:10px 0">${esc(data.error)}</p>`;
+  if (sc) {
+    const t = sc.tag, f = sc.func, io = sc.io;
+    h += `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;align-items:stretch">
+      <div style="min-width:120px;padding:8px 14px;background:${gcol};color:#fff;text-align:center"><div style="font-size:11.5px">종합</div><div style="font-size:30px;font-weight:800">${sc.grade||"-"}</div><div style="font-size:13px">${sc.total??"-"}%</div></div>
+      ${cell("IO 점수 일치 (AI·AO·DI·DO)", (io.pct??"-")+"%", `레퍼런스 ${fmt(io.ref)} · 우리 ${fmt(io.ours)}`)}
+      ${cell("기능코드 개수 일치", (f.pct??"-")+"%", `레퍼런스 ${fmt(f.ref)} · 우리 ${fmt(f.ours)}`)}
+      ${cell("태그 일치", (t.pct??"-")+"%", t.used?`${fmt(t.hit)}/${fmt(t.ref)} · 우리만 ${fmt(t.extra)}`:`레퍼런스 태그 ${fmt(t.placeholder)}개가 XXXX 같은 미정 번호라 종합에서 뺌`, !t.used)}
+    </div>
+    <div style="font-size:12px;color:var(--sub);margin-top:6px;line-height:1.6">채점 기준: 둘 다 <b>플랜트 전체</b>(트레인·대수 포함, 스페어 제외). 일치 = 항목마다 min(레퍼런스, 우리) ÷ 레퍼런스. 종합 = 세 점수 평균 (A ≥ 95, B ≥ 85, C ≥ 70). 레퍼런스가 이전 리비전이면 낮게 나오는 게 정상일 수 있습니다 - 아래 차이 표로 이유를 보세요.</div>
+    <div class="grid g2" style="margin-top:10px;gap:12px">
+      <div><b style="font-size:13px">IO 종류별</b><table class="mini" style="margin-top:4px"><tr><th>IO</th><th>레퍼런스</th><th>우리</th><th>차이</th></tr>
+        ${io.rows.map(([k,a,b])=>`<tr><td>${k}</td><td>${fmt(a)}</td><td>${fmt(b)}</td><td style="color:${b<a?"var(--red)":b>a?"#b7791f":"inherit"}">${b-a>0?"+":""}${fmt(Math.round(b-a))}</td></tr>`).join("")}</table>
+        <b style="font-size:13px;display:block;margin-top:10px">어떻게 읽었나</b>
+        <div style="font-size:12px;color:var(--sub)">시트 <b>${esc(inf.sheet)}</b> · 머리글 ${inf.row}행 · 데이터 ${inf.data_row}행부터 · ${fmt(inf.rows)}행 (삭제 표시 ${fmt(inf.deleted)}행 제외)${inf.override?" · <b>사람이 지정한 열</b>":" · 자동 인식"}</div>
+        ${(inf.missing||[]).length?`<div style="font-size:12px;color:var(--red)">못 찾은 열: ${esc(inf.missing.join(", "))}</div>`:""}
+        <table class="mini" style="margin-top:4px"><tr><th>항목</th><th>열</th><th>머리글</th></tr>${mapRows}</table></div>
+      <div><b style="font-size:13px">기능코드 차이 (큰 순)</b><table class="mini" style="margin-top:4px"><tr><th>코드</th><th>레퍼런스</th><th>우리</th><th>판정</th></tr>
+        ${f.rows.filter(([k,a,b])=>a!==b).slice(0,18).map(([k,a,b])=>`<tr><td class="mono">${esc(k)}</td><td>${fmt(a)}</td><td>${fmt(b)}</td><td style="font-size:11.5px">${!b?"우리에 없음 (P&ID 밖 / 미인식)":!a?"레퍼런스에 없음 (새 계기 / 코드 다름)":b<a?"우리가 적음":"우리가 많음"}</td></tr>`).join("")}</table>
+        ${t.used&&t.missing.length?`<div style="font-size:11.5px;color:var(--sub);margin-top:6px">레퍼런스에만 있는 태그 예: <span class="mono">${esc(t.missing.slice(0,15).join(", "))}</span></div>`:""}</div>
+    </div>`;
+  }
+  if (REFEDIT || data.error) {
+    const caps = inf.captions || [], cur = Object.fromEntries(Object.entries(inf.map||{}).map(([k,v])=>[k,v.col]));
+    const opt = k => `<option value="-1">(없음)</option>` + caps.map((c,i)=>`<option value="${i}" ${cur[k]===i?"selected":""}>${colL(i)} · ${esc(String(c).replace(/\n/g," ").slice(0,24))}</option>`).join("");
+    h += `<div style="margin-top:12px;padding-top:10px;border-top:1px dashed var(--line)"><b style="font-size:13px">열 지정</b> <span class="def">자동 인식이 틀린 것만 고르면 됩니다. 저장하면 이 프로젝트에 기억합니다.</span>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin:8px 0;font-size:12.5px;align-items:center">시트 <select id="rfsheet">${(inf.sheets||[]).map(n=>`<option ${n===inf.sheet?"selected":""}>${esc(n)}</option>`).join("")}</select>
+        머리글 행 <input type="number" id="rfrow" value="${inf.row||""}" min="1" style="width:60px"> <button class="btn sm line" id="rfauto">자동으로 되돌리기</button></div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:6px 14px;font-size:12.5px">
+        ${Object.keys(L).map(k=>`<label style="display:flex;justify-content:space-between;gap:6px;align-items:center">${esc(L[k])}<select data-rf="${k}" style="max-width:150px">${opt(k)}</select></label>`).join("")}</div>
+      <div style="text-align:right;margin-top:8px"><button class="btn sm" id="rfsave">저장하고 다시 채점</button></div></div>`;
+  }
+  box.innerHTML = h + `</div>`;
+  $("#refedit").onclick = () => { REFEDIT = !REFEDIT; refCard(data); };
+  $("#refre").onclick = () => refCard();
+  const sv = $("#rfsave"); if (sv) sv.onclick = async () => {
+    const cols = {}; document.querySelectorAll("[data-rf]").forEach(el => cols[el.dataset.rf] = +el.value);
+    const map = {sheet: $("#rfsheet").value, row: +$("#rfrow").value || null, cols};
+    try { REFEDIT = false; refCard(await post(P("ref_score"), {map})); toast("열 지정을 저장했습니다"); } catch(e) { toast(e.message, true); } };
+  const re = async () => { try { refCard(await post(P("ref_score"), {map:{sheet:$("#rfsheet").value, row:+$("#rfrow").value||null, cols:{}}})); } catch(e) { toast(e.message, true); } };
+  if ($("#rfsheet")) { $("#rfsheet").onchange = () => { $("#rfrow").value = ""; re(); }; $("#rfrow").onchange = re; }
+  const au = $("#rfauto"); if (au) au.onclick = async () => { try { REFEDIT = false; refCard(await post(P("ref_score"), {map:{}})); } catch(e) { toast(e.message, true); } };
 }
 
 /* ---------------------------------------------------------------- 1 projects */
@@ -345,8 +545,9 @@ async function renderExtract(m) {
   <div class="grid g3">
     ${fileCard("pdf","P&ID PDF","레전드 포함 벡터 PDF",true)}
     ${fileCard("template","인덱스 양식",`표준 Instrument Index 양식 (.xlsx). 열 순서·머리글이 표준과 같아야 합니다. <a href="/api/template_std" download>표준 양식 받기</a>`,true)}
-    ${fileCard("ref","레퍼런스 인덱스","채점용 (INDEX 시트). 없어도 결과 동일",false)}
+    ${fileCard("ref","레퍼런스 인덱스","채점용 (기존·이전 리비전 인덱스, 양식 자유). 열은 이름으로 자동 인식 → 아래 채점 카드에서 확인·수정. 없어도 결과 동일",false)}
   </div>
+  ${fl.ref?`<div id="refbox" style="margin-top:16px"></div>`:""}
   <div class="grid g3" style="margin-top:16px">
     ${fileCard("plot","PLOT PLAN","벡터 PDF (선택). 올리면 STEP 6~9에서 도면 좌표로 JB·경로·트레이·서포트를 잡습니다. 추출과 상관없이 언제 올려도 됩니다",false)}
     ${fileCard("plotref","축척 참고 PLOT (선택)","축척 표기가 없는 확대본이면, 축척(1:N)이 적힌 이전 PLOT PLAN을 올리면 같은 장비 크기로 축척을 맞춥니다",false)}
@@ -394,6 +595,7 @@ async function renderExtract(m) {
       inp.click(); return; }
     try { await post(P("extract")); S.summary=null; S.review=null; S.impact=null; S.concept=null; S.warmed=false; if (S.screen==="extract") render(); } catch(e) { toast(e.message, true); } };
   const nx = $("#next"); if (nx) nx.onclick = () => go("concept");
+  if (fl.ref && !running) refCard();
   clearTimeout(pollH);
   if (running || (st.cache_job && st.cache_job.state === "running")) pollH = setTimeout(() => { if (S.screen==="extract") render(); }, 1500);
 }
@@ -1379,9 +1581,17 @@ function trayOverlay(d) {
 function traySegCard(d) {
   const t = d.tray, V = d.values, s = t.segments.find(x => x.id === TM.sel), ws = (String(V.tray_widths).match(/\d+/g)||["300","600","900"]).map(Number).sort((a,b)=>a-b);
   if (!s) return `<div class="ritem" style="cursor:default;background:#f7faf8"><div class="b">선을 누르면 그 구간의 케이블과 트레이 크기를 보여 줍니다. 폭·단 수를 바꾸면 Fill ratio가 바로 다시 계산되고, '적용'을 누르면 물량에 들어갑니다.</div></div>`;
+  const KN = {"UG":"UG 트렌치","랙":"사다리 (랙)","AG":"사다리 (AG 서포트)"};
+  const swap = `<div style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--line);font-size:12px">
+    <b>트렌치 ↔ 트레이 바꾸기</b>${s.kind_user?` <span class="chip b" style="font-size:10px;padding:0 4px">변경 (자동: ${esc(KN[s.auto_kind])})</span>`:""}
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
+      ${["UG","랙","AG"].filter(k=>k!==s.kind).map(k=>`<button class="btn sm line" data-trkind="${k}">${KN[k]}로</button>`).join("")}
+      ${s.kind_user?`<button class="btn sm line" data-trkind="">자동으로</button>`:""}</div>
+    ${s.kind==="UG"&&s.parts>1?`<label style="display:flex;gap:6px;align-items:center;margin-top:6px"><input type="checkbox" id="trkrun" checked>트렌치 한 줄 ${esc(s.run)} 전체 (${s.parts}구간)</label>`:""}
+    <div style="color:var(--sub);margin-top:4px">사람 결정으로 저장 · 폭·서포트·3D가 바뀐 종류로 다시 계산됩니다</div></div>`;
   if (s.kind === "UG") return `<div class="ritem on" style="cursor:default"><div class="a"><b>${esc(s.run)}</b><span class="chip y">UG 트렌치 ${s.width}${s.tiers>1?" × "+s.tiers+"단":""}</span></div>
     <div class="b">${s.parts>1?`트렌치 한 줄 ${esc(s.run)}의 구간 ${esc(s.no)} (${s.parts}구간) · `:""}${s.length} m · 케이블 ${s.cables.length}가닥 · 단면적 ${fmt(s.area)} mm² · Fill ${Math.round(s.fill*100)}%<br><span style="font-size:11.5px">${esc(s.cables.slice(0,12).join(", "))}${s.cables.length>12?" …":""}</span></div>
-    <div style="margin-top:8px"><button class="btn sm line" id="trsx">선택 해제</button></div></div>`;
+    <div style="margin-top:8px"><button class="btn sm line" id="trsx">선택 해제</button></div>${swap}</div>`;
   const rows = s.trays.map((x, i) => { const e = TM.edit[x.cls] || [x.width, x.tiers]; const f = trFill(x.area, e[0], e[1], V);
     return `<tr><td style="min-width:110px"><b class="mono" style="white-space:nowrap">${esc(x.no)}</b><br><span style="font-size:11px;color:var(--sub);white-space:nowrap">${esc(x.cls)} · ${x.count}가닥</span><br><span style="font-size:11px;color:var(--sub)">${fmt(x.area)} mm²</span></td>
       <td><select data-trw="${esc(x.cls)}">${ws.map(w=>`<option ${w===e[0]?"selected":""}>${w}</option>`).join("")}</select></td>
@@ -1392,7 +1602,7 @@ function traySegCard(d) {
     <div class="b">${s.length} m · 케이블 ${s.cables.length}가닥 · 높이 ${V.tray_height} mm · 기준 Fill ${Math.round(V.tray_fill*100)}%</div>
     <table class="mini" style="margin-top:6px"><tr><th>트레이</th><th>폭</th><th>단</th><th>Fill</th><th></th></tr>${rows}</table>
     <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap"><button class="btn sm" id="trapply">적용</button>${s.trays.some(x=>x.user)?`<button class="btn sm line" id="trreset">자동 크기로</button>`:""}<button class="btn sm line" id="trsx">선택 해제</button></div>
-    <div style="font-size:11.5px;color:var(--sub);margin-top:8px">${esc(s.cables.slice(0,14).join(", "))}${s.cables.length>14?" …":""}</div></div>`;
+    <div style="font-size:11.5px;color:var(--sub);margin-top:8px">${esc(s.cables.slice(0,14).join(", "))}${s.cables.length>14?" …":""}</div>${swap}</div>`;
 }
 function traySide(d) {
   const sm = d.tray.summary;
@@ -1477,6 +1687,11 @@ async function renderTray(m) {
     for (const [cls, [w, n]] of ch) { try { CK.data = await post(P("plot"), {tray_size: {seg: s.id, cls, w, n}}); CK.data._p = S.project; } catch(e) { return toast(e.message, true); } }
     TM.edit = {}; renderTray(m); };
   if ($("#trreset")) $("#trreset").onclick = () => plotUpd({tray_reset: s.id});
+  m.querySelectorAll("[data-trkind]").forEach(b => b.onclick = async () => {
+    const all = $("#trkrun") && $("#trkrun").checked, segs = all ? d.tray.segments.filter(x => x.run === s.run).map(x => x.id) : [s.id];
+    await plotUpd({tray_kind: {segs, kind: b.dataset.trkind || null}});
+    TM.sel = segs[0]; renderTray(m);
+    toast(b.dataset.trkind ? `${segs.length}구간을 ${b.textContent.replace(/로$/,"")}(으)로 바꿨습니다` : "자동 판정으로 되돌렸습니다"); });
 }
 
 /* ---------------------------------------------------------------- 9 support */

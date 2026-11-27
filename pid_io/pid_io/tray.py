@@ -179,6 +179,8 @@ def build(res, layout, s, dec=None):
     g = res.get("geo")
     dec = dec or {}
     over = dec.get("tray_size") or {}
+    kind_over = dec.get("tray_kind") or {}
+    used_kind = set()
     out = {"segments": [], "pt": [], "summary": {}, "lost_overrides": 0}
     # perforated trays: one per branch cable (JB -> instrument), numbered per unit
     pt_n = Counter()
@@ -264,11 +266,17 @@ def build(res, layout, s, dec=None):
         if b < a:
             a, b = b, a
         sid = f"{a[0]}_{a[1]}_{b[0]}_{b[1]}"
+        auto_kind = kind
+        ko = kind_over.get(sid)                      # v13.4 사람 결정: 트렌치 <-> 트레이 (STEP 8 구간 선택)
+        if ko in ("UG", "AG", "랙") and ko != kind:
+            kind = ko
+        if ko:
+            used_kind.add(sid)
         cs = [trunk[i] for i in sorted(cset)]
         units = Counter((c.get("unit") or "00") for c in cs)
         u = units.most_common(1)[0][0] if units else "00"
         length = len(chain) - 1
-        seg = {"id": sid, "kind": kind, "length": length, "unit": u, "_ends": (a, b),
+        seg = {"id": sid, "kind": kind, "auto_kind": auto_kind, "kind_user": kind != auto_kind, "length": length, "unit": u, "_ends": (a, b),
                "poly": [[round(a[0] / m, 1), round(a[1] / m, 1)], [round(b[0] / m, 1), round(b[1] / m, 1)]],
                "cables": [c["no"] for c in cs], "trays": []}
         if kind == "UG":
@@ -332,7 +340,8 @@ def build(res, layout, s, dec=None):
                                         "spec": c["spec"], "od": round(od(c["spec"], v), 1), "cls": cls,
                                         "ladder_m": sum(x["m"] for x in legs if x["kind"] == "사다리"),
                                         "ug_m": sum(x["m"] for x in legs if x["kind"] == "UG"), "legs": legs}
-    out["lost_overrides"] = len(set(over) - used_over)
+    out["lost_overrides"] = len(set(over) - used_over) + len(set(kind_over) - used_kind)
+    out["kind_changed"] = sum(1 for sg in out["segments"] if sg.get("kind_user"))
     out["summary"] = _summary(out, v)
     return out
 

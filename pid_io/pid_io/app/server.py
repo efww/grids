@@ -228,7 +228,7 @@ def recognition_kpi(name: str, syms, c):
     if files.get("ref") and c:
         try:
             from ..export import load_reference
-            ref = load_reference(pdir(name) / "input" / files["ref"])
+            ref = load_reference(pdir(name) / "input" / files["ref"], meta(name).get("ref_map"))
             norm = lambda t: re.sub(r"^\d{2}-", "", str(t).upper().replace(" ", ""))
             ours = {norm(r.tag) for r in c[4] if r.kind == "instrument"}
             rt = {norm(r["tag"]) for r in ref if "XXXX" not in str(r["tag"]).upper()}
@@ -238,6 +238,39 @@ def recognition_kpi(name: str, syms, c):
         except Exception as e:                             # noqa: BLE001
             k["ref"] = {"error": str(e)}
     return k
+
+
+def ref_check(name: str, override: dict | None = None, save: bool = False):
+    """v13.4 레퍼런스 채점: how the reference file was read (sheet / header / columns) + the score."""
+    from .. import refindex
+    m = meta(name)
+    f = (m.get("files") or {}).get("ref")
+    if not f:
+        return {"none": True}
+    if save:
+        m["ref_map"] = override or {}
+        save_meta(name, m)
+    ov = m.get("ref_map") if override is None else override
+    try:
+        rows, info = refindex.read(pdir(name) / "input" / f, ov)
+    except Exception as e:                                 # noqa: BLE001 - show the reason + let the user pick
+        try:
+            from ..directopen import load_workbook as _lw
+            wb = _lw(pdir(name) / "input" / f, data_only=True)
+            sheets = wb.sheetnames
+            sh = (ov or {}).get("sheet") or sheets[0]
+            r = int((ov or {}).get("row") or 1)
+            caps = [str(c or "") for c in next(wb[sh].iter_rows(min_row=r, max_row=r, max_col=80, values_only=True), ())]
+        except Exception:                                  # noqa: BLE001
+            sheets, caps = [], []
+        return {"file": f, "error": str(e), "info": {"sheets": sheets, "captions": caps, "map": {}, "sheet": (ov or {}).get("sheet"),
+                                                     "row": (ov or {}).get("row")}, "labels": refindex.LABEL}
+    c = computed(name)
+    sc = refindex.score(c[4], rows) if c else None
+    out = {"file": f, "info": info, "score": sc, "labels": refindex.LABEL, "at": time.strftime("%Y-%m-%d %H:%M")}
+    if sc:
+        ait.save(pdir(name) / "cache" / "ref_score.json", {"at": out["at"], "total": sc["total"], "grade": sc["grade"]})
+    return out
 
 
 def ai_run(name: str, kind: str):
@@ -423,7 +456,8 @@ def project_state(name: str):
     d = pdir(name)
     st = {"meta": m, "job": JOBS.get(name, {"state": "idle"}), "extracted": (d / "extract.json").exists(),
           "protected": protect.scan(d, {**m.get("files", {}), "concept": "concept.xlsx"}),
-          "pages_cached": pagecache.ready(d), "cache_job": JOBS.get(name + ":raster", {"state": "idle"})}
+          "pages_cached": pagecache.ready(d), "cache_job": JOBS.get(name + ":raster", {"state": "idle"}),
+          "ref_score": ait.load(d / "cache" / "ref_score.json", None) if (m.get("files") or {}).get("ref") else None}
     if m.get("files", {}).get("pdf") and not st["pages_cached"] and "pdf" not in st["protected"]:
         cache_pages(name)                          # PDF readable right now: save the page images
     ex = extracted(name)
@@ -939,6 +973,14 @@ def plot_update(name: str, b: dict):
     if b.get("tray_size"):                           # STEP 8: {seg, cls, w, n}
         t = b["tray_size"]
         dd.setdefault("tray_size", {}).setdefault(str(t["seg"]), {})[str(t["cls"])] = [int(t["w"]), max(1, int(t["n"]))]
+    if b.get("tray_kind"):                           # v13.4 STEP 8: {segs: [segment ids], kind: UG / AG / 랙 / null(auto)}
+        t = b["tray_kind"]
+        ko = dd.setdefault("tray_kind", {})
+        for sid in t.get("segs") or []:
+            if t.get("kind") in ("UG", "AG", "랙"):
+                ko[str(sid)] = t["kind"]
+            else:
+                ko.pop(str(sid), None)
     if b.get("sup_over"):                            # STEP 9: {seg (tray segment id), type?, span?}
         o = b["sup_over"]
         cur = dd.setdefault("sup_over", {}).setdefault(str(o["seg"]), {})
@@ -1027,6 +1069,63 @@ def plot_view(name: str, lay, res):
             "file": meta(name)["files"].get("plot"), "ref": meta(name)["files"].get("plotref"),
             "size": pl["size"], "m_per_pt": m, "questions": q, "geo": g,
             "located": st, "unlocated": g.get("unlocated", 0), "equipment": len(pl["equipment"])}
+
+
+# ------------------------------------------------------------------ v13.4 progress of long requests
+PROG: dict = {}                     # op id -> {key, t0, pct, msg, expect, done}
+_TL = threading.local()
+try:
+    TIMING: dict = json.loads((HOME / "_timing.json").read_text(encoding="utf-8"))
+except Exception:                                          # noqa: BLE001
+    TIMING = {}
+
+
+def _save_timing():
+    try:
+        HOME.mkdir(parents=True, exist_ok=True)
+        (HOME / "_timing.json").write_text(json.dumps(TIMING, ensure_ascii=False, indent=0), encoding="utf-8")
+    except Exception:                                      # noqa: BLE001
+        pass
+
+
+def prog(pct: float, msg: str = ""):
+    """report progress of the current request (0-100) and what it is doing."""
+    oid = getattr(_TL, "oid", None)
+    if oid and oid in PROG:
+        PROG[oid]["pct"] = max(0, min(99, round(pct, 1)))
+        if msg:
+            PROG[oid]["msg"] = msg
+
+
+# ------------------------------------------------------------------ v13.4 app settings + 간이 모드 (개략 케이블 · JB)
+def app_settings(upd: dict | None = None) -> dict:
+    f = HOME / "_app.json"
+    st = {"simple": False, "fit": True}
+    try:
+        st.update(json.loads(f.read_text(encoding="utf-8")))
+    except Exception:                                      # noqa: BLE001 - first run / broken file
+        pass
+    if upd:
+        st.update({k: v for k, v in upd.items() if k in ("simple", "fit")})
+        HOME.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps(st, ensure_ascii=False, indent=1), encoding="utf-8")
+    return st
+
+
+def simple_view(name: str):
+    """IO + area -> JBs and cable routes on the plot plan, numbers rounded ('약'). No settings, no edit tools."""
+    from collections import Counter
+    s, res, lay = cable_result(name)
+    pp = plot_view(name, lay, res)
+    c = computed(name)
+    io = Counter(r.io for r in c[4] if r.kind != "function" and r.origin != "스페어" and r.io in ("AI", "AO", "DI", "DO"))
+    trunk = [x for x in res["cables"] if x["kind"] != "분기"]
+    rnd = lambda n, k=5: int(round(n / k) * k) if n >= 20 else int(n)
+    total_m = sum(x["length"] for x in res["cables"])
+    units = sorted({j["area"] for j in res["jbs"] if j.get("area")})
+    return {"plot": pp, "io": dict(io), "io_total": sum(io.values()),
+            "summary": {"jb": len(res["jbs"]), "trunk": rnd(len(trunk)), "branch": rnd(sum(1 for x in res["cables"] if x["kind"] == "분기")),
+                        "km": round(total_m / 1000, 0) if total_m >= 10000 else round(total_m / 1000, 1), "units": units}}
 
 
 def typical_dir(name: str) -> Path:
@@ -1157,8 +1256,10 @@ def export_basis(name: str, sensitivity: bool = True):
     if not c:
         raise ValueError("먼저 추출을 실행해 주세요")
     data, syms, notes, con, rows, log = c
+    prog(2, "케이블 · JB 계산")
     s, res, lay = cable_result(name)
     dd, am, ob = _plot_dec(name), _area_map(name), _obstacles(lay)
+    prog(6, "트레이 · 서포트 계산")
     tr = cable.TR.build(res, lay, s, dd)
     sp = cable.SP.build(tr, s["values"], lay.m_per_pt if lay else None, dd, ob)
     imap = cable.index_map(res, tr, sp)
@@ -1167,8 +1268,11 @@ def export_basis(name: str, sensitivity: bool = True):
         ov = overrides(name)
         ps, proto = _ao(syms, load_protocol(PROTO / "io_rules.yaml"), ov)
         con2 = concept(name)
-        sc = basis.concept_sensitivity(ps, proto, con2, notes, (ov or {}).get("decisions"), s, am, lay, dd, ob)
-        sk = basis.cable_sensitivity(rows, s, am, lay, dd, ob, con)
+        sc = basis.concept_sensitivity(ps, proto, con2, notes, (ov or {}).get("decisions"), s, am, lay, dd, ob,
+                                       progress=lambda k, n: prog(10 + 40 * k / max(1, n), f"체크리스트 영향 {k}/{n}"))
+        sk = basis.cable_sensitivity(rows, s, am, lay, dd, ob, con,
+                                     progress=lambda k, n: prog(50 + 42 * k / max(1, n), f"설정 영향 {k}/{n}"))
+    prog(93, "엑셀 쓰는 중")
     out = _hist(name, "basis", ".xlsx")
     r = basis.write(out, name, rows, con, s, res, tr, sp, imap, sc, sk)
     _finish(name, "basis", out)
@@ -1231,6 +1335,7 @@ def export_twin(name: str):
         jj = jbi.get(j["no"]) or {}
         j["extra"] = {"멀티": jj.get("multi", ""), "멀티 크기": jj.get("multi_size", ""), "스페어": jj.get("spare", ""),
                       "단자": jj.get("terminals", ""), "태그": ", ".join(jj.get("tags") or [])[:300]}
+    prog(20, "3D 모델 읽기 · 좌표 맞추기")
     base_path = pdir(name) / "input" / files["model3d"]
     base = twin.parse_base(base_path)
     tf = twin.fit(plot_read(name) or {}, d3["racks"], base)
@@ -1246,6 +1351,7 @@ def export_twin(name: str):
     od = _hist(name, "twin", "", stamp)
     od.mkdir(parents=True, exist_ok=True)
     model_file = od / f"{Path(files['model3d']).stem}_계장보강.html"
+    prog(45, "모델에 계장 레이어 넣기")
     model_file.write_text(twin.build_html(base_path, inst), encoding="utf-8")
     data_file = od / "STRUCTURED_MODEL_DATA_FULL.json"
     data_file.write_text(json.dumps(inst, ensure_ascii=False), encoding="utf-8")
@@ -1262,6 +1368,7 @@ def export_twin(name: str):
                 ("PASS" if not left else "HOLD") if other else "NOT_APPLICABLE", "pid_io twin.avoid",
                 "; ".join(f"{m_['tray']} {m_['action']}" for m_ in moves[:20])])
     from .. import review3d
+    prog(65, "3D 사전 점검")
     rv = review3d.write_packet(od, name, inst, base, s["values"], model_file.name, data_file.name)
     sm = rv["summary"]
     val.append(["T-NORMAL", "3D 사전 점검 (장비 관통·랙 밖·떠 있는 트레이·겹침·JB 위치·남은 충돌)", "HOLD 0",
@@ -1652,6 +1759,7 @@ def export(name: str, body: dict):
         cmap = cable.index_map(cres, ctr, csp)
     except Exception:
         cmap = None
+    prog(35, "인덱스 엑셀 쓰는 중")
     write_template(rows, d / "input" / files["template"], out, files["pdf"], data.get("sheets"), con, log,
                    m.get("scenarios"), imp, area_map=area, cable_map=cmap)
     made = [out.name]
@@ -1664,11 +1772,13 @@ def export(name: str, body: dict):
             pt = None
             warn.append("레퍼런스 비교 시트는 빠졌습니다: " + str(e))
         if pt is not None:
-            compare(rows, load_reference(d / "input" / files["ref"]), out, pt)
+            prog(65, "레퍼런스 비교 시트")
+            compare(rows, load_reference(d / "input" / files["ref"], m.get("ref_map")), out, pt)
     _finish(name, "index", _idx_out)
     if body.get("overlay"):
         protect.require_pdf(d / "input" / files["pdf"], "검토용 P&ID PDF는 원본 도면 위에 그려야 하는데 P&ID PDF에 보안이 걸려 있는데",
                             "검토용 PDF 체크를 끄고 만들거나, P&ID를 다시 올린 직후에 만들어 주세요")
+        prog(75, "검토용 P&ID PDF 그리는 중")
         from ..overlay import write_overlay
         ov = _hist(name, "pid_review", ".pdf", stamp)
         write_overlay(d / "input" / files["pdf"], syms, ov)
@@ -1701,9 +1811,7 @@ def _check_xlsx(data: bytes, kind: str, fn: str, path: Path | None = None):
                 raise ValueError("표준 인덱스 양식과 머리글(2행)이 다릅니다 - " + "; ".join(bad[:5])
                                  + (f" 외 {len(bad) - 5}곳" if len(bad) > 5 else "")
                                  + ". 프로그램은 열 위치대로 값을 쓰므로, '표준 양식 받기'로 받은 양식을 써 주세요")
-        if kind == "ref":
-            from ..export import find_reference_sheet
-            find_reference_sheet(wb)
+        # kind == "ref": any layout is accepted (v13.4) - columns are found / chosen on the 채점 card
     except ValueError as e:
         raise ValueError(f"{fn}: {e}")
     finally:
@@ -1810,6 +1918,15 @@ class H(BaseHTTPRequestHandler):
                     return self._send(404, {"error": "no font"})
                 ctype = {".otf": "font/otf", ".woff": "font/woff", ".woff2": "font/woff2"}.get(f.suffix.lower(), "font/ttf")
                 return self._send(200, f.read_bytes(), ctype, {"Cache-Control": "max-age=86400"})
+            if method == "GET" and parts[:1] in (["icon.png"], ["icon192.png"], ["favicon.ico"]):
+                f = STATIC / ("pid_io.ico" if parts[0] == "favicon.ico" else parts[0])
+                return self._send(200, f.read_bytes(), "image/x-icon" if f.suffix == ".ico" else "image/png", {"Cache-Control": "max-age=86400"})
+            if method == "GET" and parts[:1] == ["manifest.webmanifest"]:
+                return self._send(200, json.dumps({"name": "계장 개념설계 IO 산출", "short_name": "계장 IO", "start_url": "/",
+                                                   "display": "standalone", "background_color": "#ffffff", "theme_color": "#15ad60",
+                                                   "icons": [{"src": "/icon192.png", "sizes": "192x192", "type": "image/png"},
+                                                             {"src": "/icon.png", "sizes": "512x512", "type": "image/png"}]},
+                                                  ensure_ascii=False), "application/manifest+json")
             if method == "GET" and parts[:1] == ["viewer3d"]:
                 return self._send(200, (STATIC / "viewer3d.html").read_text(encoding="utf-8").replace("/*FONTFACE*/", font_css()),
                                   "text/html; charset=utf-8")
@@ -1832,6 +1949,14 @@ class H(BaseHTTPRequestHandler):
                     return self._send(200, {"projects": out, "home": str(HOME)})
                 create_project(self._json()["name"])
                 return self._send(200, {"ok": True})
+            if parts[1:] == ["ping"]:
+                LAST_PING[0] = time.time()
+                return self._send(200, {"ok": True})
+            if parts[1:] == ["shutdown"] and method == "POST":
+                _shutdown(0.5)
+                return self._send(200, {"ok": True})
+            if parts[1:] == ["app_settings"]:
+                return self._send(200, app_settings(self._json() if method == "POST" else None))
             if parts[1:] == ["font"]:
                 return self._send(200, {"found": {k: str(v) for k, v in FONTS.items()}})
             if parts[1:] == ["template_std"]:                 # the standard index template to fill in
@@ -1954,6 +2079,13 @@ class H(BaseHTTPRequestHandler):
                     (d / "cache" / "page_texts.json").unlink(missing_ok=True)
                     cache_pages(name)                    # readable now: save page images for later
                 return self._send(200, {"ok": True, "meta": m})
+            if act == "simple":
+                return self._send(200, simple_view(name))
+            if act == "ref_score":                       # v13.4 레퍼런스 채점 (+ 열 지정 저장)
+                if method == "POST":
+                    b = self._json()
+                    return self._send(200, ref_check(name, b.get("map") or {}, save=True))
+                return self._send(200, ref_check(name))
             if act == "extract" and method == "POST":
                 start_extract(name)
                 return self._send(200, {"ok": True})
@@ -2185,22 +2317,121 @@ class H(BaseHTTPRequestHandler):
             except OSError:
                 return
 
+    def _tracked(self, method):
+        """v13.4 progress: every API call with an X-Op-Id header is timed; long ones report % (prog())."""
+        oid = self.headers.get("X-Op-Id")
+        u = urlparse(self.path)
+        parts = [unquote(p) for p in u.path.strip("/").split("/") if p]
+        if not oid or parts[:2] == ["api", "progress"]:
+            return self._route(method)
+        key = method + " " + (parts[3] if len(parts) > 3 and parts[1] == "p" else "/".join(parts[1:2]))
+        if len(parts) > 4 and parts[1] == "p" and parts[3] in ("twin", "ai", "plot", "cable"):
+            key += "/" + parts[4]
+        PROG[oid] = {"key": key, "t0": time.time(), "pct": None, "msg": "", "expect": TIMING.get(key)}
+        _TL.oid = oid
+        try:
+            self._route(method)
+        finally:
+            dt = time.time() - PROG[oid]["t0"]
+            if dt > 0.3:
+                old = TIMING.get(key)
+                TIMING[key] = round(dt if old is None else 0.6 * old + 0.4 * dt, 2)
+                _save_timing()
+            PROG[oid].update(done=True, pct=100)
+            _TL.oid = None
+            for k in [k for k, v in PROG.items() if v.get("done") and time.time() - v["t0"] > 120]:
+                PROG.pop(k, None)
+
     def do_GET(self):
-        self._route("GET")
+        u = urlparse(self.path)
+        if u.path == "/api/progress":
+            oid = parse_qs(u.query).get("id", [""])[0]
+            x = PROG.get(oid) or {}
+            return self._send(200, {"pct": x.get("pct"), "msg": x.get("msg", ""), "expect": x.get("expect"), "key": x.get("key"),
+                                    "elapsed": round(time.time() - x["t0"], 1) if x else 0, "done": bool(x.get("done"))})
+        self._tracked("GET")
 
     def do_POST(self):
-        self._route("POST")
+        self._tracked("POST")
+
+
+def _app_browser():
+    """Edge (or Chrome) for an app window: no address bar / tabs, own icon and title. Windows paths first."""
+    import shutil as _sh
+    cands = []
+    for base in (os.environ.get("ProgramFiles(x86)"), os.environ.get("ProgramFiles"), os.environ.get("LOCALAPPDATA")):
+        if base:
+            cands += [Path(base) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
+                      Path(base) / "Google" / "Chrome" / "Application" / "chrome.exe"]
+    for c in cands:
+        if c.exists():
+            return str(c)
+    for n in ("msedge", "microsoft-edge", "google-chrome", "chromium", "chromium-browser"):
+        if _sh.which(n):
+            return _sh.which(n)
+    return None
+
+
+SRV = None
+
+
+def _shutdown(delay: float = 0.3):
+    threading.Timer(delay, lambda: SRV and SRV.shutdown()).start()
+
+
+def open_app_window(url: str) -> bool:
+    """v13.4 app mode: a separate browser profile so the window is its own process; closing it ends the program."""
+    import subprocess
+    exe = _app_browser()
+    if not exe or os.environ.get("PID_IO_BROWSER") == "default":
+        webbrowser.open(url)
+        return False
+    prof = HOME / "_appwin"
+    prof.mkdir(parents=True, exist_ok=True)
+    try:
+        proc = subprocess.Popen([exe, f"--app={url}", f"--user-data-dir={prof}", "--window-size=1600,1000",
+                                 "--no-first-run", "--no-default-browser-check", "--disable-features=Translate"])
+    except Exception:                                      # noqa: BLE001
+        webbrowser.open(url)
+        return False
+
+    def watch():
+        t0 = time.time()
+        proc.wait()
+        if time.time() - t0 < 5:                           # handed over to an already running instance: keep serving
+            return
+        print("창을 닫아 프로그램을 종료합니다")
+        _shutdown(0.1)
+    threading.Thread(target=watch, daemon=True).start()
+    return True
+
+
+LAST_PING = [time.time()]
 
 
 def main(port: int = 8765, open_browser: bool = True):
+    global SRV
     HOME.mkdir(parents=True, exist_ok=True)
-    srv = ThreadingHTTPServer(("127.0.0.1", port), H)
+    try:
+        SRV = srv = ThreadingHTTPServer(("127.0.0.1", port), H)
+    except OSError:                                        # already running: just show the window again
+        if open_browser:
+            open_app_window(f"http://127.0.0.1:{port}/")
+        return
     url = f"http://127.0.0.1:{port}/"
-    print(f"계장 개념설계 IO 산출 - {url}  (프로젝트 폴더: {HOME})  종료: Ctrl+C")
+    print(f"계장 개념설계 IO 산출 - {url}  (프로젝트 폴더: {HOME})  종료: Ctrl+C 또는 창 닫기")
     print("글꼴: " + (", ".join(f"{k}={v}" for k, v in FONTS.items()) if FONTS else
                       "현대하모니 파일을 찾지 못함 → 맑은 고딕 (fonts 폴더에 ttf/otf를 넣으면 적용)"))
     if open_browser:
-        threading.Timer(0.8, lambda: webbrowser.open(url)).start()
+        threading.Timer(0.6, lambda: open_app_window(url)).start()
+    if os.environ.get("PID_IO_NOCONSOLE"):                # no console to close: stop when no window has pinged for 10 min
+        def idle():
+            while True:
+                time.sleep(30)
+                if time.time() - LAST_PING[0] > 600:
+                    _shutdown(0)
+                    return
+        threading.Thread(target=idle, daemon=True).start()
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

@@ -418,33 +418,10 @@ def find_reference_sheet(wb):
                      + ", ".join(wb.sheetnames[:12]) + ")")
 
 
-def load_reference(path: Path):
-    wb = load_workbook(path, data_only=True)
-    ws, hrow = find_reference_sheet(wb)
-    hdr = [str(c.value or "").replace("\n", " ").strip() for c in ws[hrow]]
-    col = {h: i for i, h in enumerate(hdr)}
-    for need in ("Tag No.", "P&ID Title", "DWG. No.", "To (System)", "Instrument Description"):
-        if need not in col:
-            raise ValueError(f"레퍼런스 '{ws.title}' 시트 {hrow}행에 '{need}' 열이 없습니다")
-    out = []
-    for r in ws.iter_rows(min_row=hrow + 1, values_only=True):
-        tag = r[col["Tag No."]]
-        if not tag or str(r[0]).startswith("DEL"):
-            continue
-        func = str(tag).split("-")[0].strip()
-        io = [k for k, i in zip(IO_COLS, range(13, 20)) if r[i] not in (None, "-", 0, "0")]
-        qty = r[5] if isinstance(r[5], (int, float)) else 1
-        train = r[6] if isinstance(r[6], (int, float)) and r[6] else qty
-        # IO cells hold points x trains; bring them back to one drawing instance
-        io_base = {}
-        for k, i in zip(IO_COLS, range(13, 20)):
-            v = r[i]
-            if isinstance(v, (int, float)) and v:
-                io_base[k] = v * qty / train if train else v
-        out.append(dict(tag=str(tag), func=func, title=r[col["P&ID Title"]], dwg=r[col["DWG. No."]],
-                        system=r[col["To (System)"]], io=io, io_base=io_base, qty=qty,
-                        desc=r[col["Instrument Description"]]))
-    return out
+def load_reference(path: Path, override: dict | None = None):
+    """v13.4: any layout - header / columns found by caption (refindex). Returns the reference rows."""
+    from .refindex import read
+    return read(path, override)[0]
 
 
 def compare(rows: list[Row], ref: list[dict], out_wb: Path, pages: dict, overrides: dict | None = None):

@@ -365,7 +365,11 @@ class Layout:
         if self.rack_src == "3D 모델 랙" and self.racks_model:
             out = [list(r) for r in self.racks_model]
         else:
-            out = [r[:4] for r in self.racks_auto if not r[-1]]
+            # v13.4: a PLOT rack is read from the column marks (column centre lines); the rack itself (beams,
+            # cable tier) reaches past them. Without this pad a route running along the column line sat 0.4 m
+            # "outside" the rack and was counted as UG (사용자 지적 2026-11-27, Rack C).
+            pad = RACK_PAD_M / self.m_per_pt if self.m_per_pt else 0
+            out = [[r[0] - pad, r[1] - pad, r[2] + pad, r[3] + pad] for r in self.racks_auto if not r[-1]]
             if self.rack_src == "둘 다":                   # 3D fact > PLOT auto: a PLOT rack only where the model has none
                 def cover(r):
                     area = max(1e-6, (r[2] - r[0]) * (r[3] - r[1]))
@@ -432,6 +436,9 @@ class Layout:
 
 
 # ------------------------------------------------------------------ pipe racks and obstacles
+RACK_PAD_M = 1.0                     # PLOT rack: beyond the column centre lines (m)
+
+
 def detect_racks(page, m_per_pt: float, tol=1.5, cols_out: list | None = None):
     """Pipe racks seen from above look like ladders: two rows of column markers (a ~1 m box
     around an H-beam) at a steady bay (2-13 m), the rows 3-12 m apart. Returns rects in pt:

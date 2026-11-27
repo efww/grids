@@ -20,7 +20,7 @@ PRIORITY = ["사람 결정", "3D 팩트", "PLOT 자동 인식", "체크리스트
 
 DECISION_KINDS = {
     "racks_add": "PLOT에 직접 그린 랙", "routes_edit": "끌어서 고친 경로", "jb_moves": "옮긴 JB",
-    "tray_size": "바꾼 트레이 크기", "sup_over": "구간별 서포트 형식·간격", "racks_off": "끈 자동 인식 랙",
+    "tray_size": "바꾼 트레이 크기", "tray_kind": "트렌치 ↔ 트레이 바꾼 구간", "sup_over": "구간별 서포트 형식·간격", "racks_off": "끈 자동 인식 랙",
     "room": "제어실 위치", "irp": "IRP 위치", "m_per_pt": "축척",
 }
 
@@ -82,7 +82,7 @@ def affected(dd: dict, res_new: dict, lay_new, tr_new=None) -> list:
                         "choices": ["내 결정 유지", "3D 따르기 (수정 지움)"]})
     if tr_new is not None:
         segs = {str(sg.get("id")) for sg in tr_new.get("segments") or []}
-        for k, label in (("tray_size", "바꾼 트레이 크기"), ("sup_over", "구간별 서포트 형식·간격")):
+        for k, label in (("tray_size", "바꾼 트레이 크기"), ("tray_kind", "트렌치 ↔ 트레이 바꾼 구간"), ("sup_over", "구간별 서포트 형식·간격")):
             for seg in (dd.get(k) or {}):
                 if segs and seg not in segs:
                     out.append({"kind": k, "key": seg, "label": label, "problem": f"{seg}: 새 계산에 이 구간이 없음 (경로가 바뀜)",
