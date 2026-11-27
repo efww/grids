@@ -1263,6 +1263,7 @@ pub(crate) unsafe fn shell_menu(menu: HMENU, src: usize, picked: &std::result::R
     list_menu(menu, src); // the selection, or with none the whole view
     clip_menu(menu, picked); // before the WinMerge lookup too
     restore_menu(menu, src, picked); // only while this folder keeps another selection
+    diff_submenu(menu, src, others); // Shift+F2's, without WinMerge too
     explorer_menu(menu, src);
     let exe = winmerge_exe()?;
     match picked {

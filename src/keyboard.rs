@@ -337,6 +337,11 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
             app(|x| x.held = Some(vk.0));
             restore_selection(a);
         }
+        // held, it compares once
+        KeyRoute::Diff => {
+            app(|x| x.held = Some(vk.0));
+            diff_key(a);
+        }
         KeyRoute::Recent => recent_menu(a),
         KeyRoute::NewFolder => {
             if !repeat {
@@ -431,6 +436,7 @@ pub(crate) enum KeyRoute {
     Match(bool),
     Invert,
     RestoreSel,
+    Diff,
     Recent,
     NewFolder,
     NewText,
@@ -545,6 +551,9 @@ pub(crate) fn key_route(vk: VIRTUAL_KEY, ctrl: bool, shift: bool, alt: bool, c: 
         },
         // Num/: the selection lost last in this folder back, as in Total Commander (Ctrl+Num/ stays the view's)
         VK_DIVIDE if !ctrl && !alt && list() => RestoreSel,
+        // Shift+F2: select the files that differ from another pane's (Total Commander's Compare Directories); only
+        // in the list, so a rename box's Shift+F2 stays its own
+        VK_F2 if shift && !ctrl && !alt && list() => Diff,
         VK_A if ctrl && shift && !alt && list() => Match(false),
         VK_DOWN if alt && !ctrl && !shift => Recent,
         VK_F3 if !ctrl && !shift && !alt && list() => Peek,
@@ -604,6 +613,7 @@ pub(crate) unsafe fn pre_translate(m: &MSG) -> bool {
         WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN | WM_XBUTTONDOWN | WM_NCLBUTTONDOWN | WM_NCRBUTTONDOWN | WM_NCMBUTTONDOWN | WM_NCXBUTTONDOWN | WM_MOUSEWHEEL | WM_MOUSEHWHEEL
     ) {
         MENU_ARM.set(None);
+        DIFF_KEY.set(None);
     }
     if matches!(m.message, WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN | WM_XBUTTONDOWN) {
         let t = in_tree();
@@ -646,6 +656,11 @@ pub(crate) unsafe fn pre_translate(m: &MSG) -> bool {
             let held = |k: VIRTUAL_KEY| GetKeyState(k.0 as i32) < 0;
             let mods = [held(VK_CONTROL), held(VK_SHIFT), held(VK_MENU), held(VK_LWIN) || held(VK_RWIN)];
             let in_main = m.hwnd == main || IsChild(main, m.hwnd).as_bool();
+            // Shift+F2's pane list waits for F2 and Shift to be let go; any other key (or Shift pressed anew) drops it,
+            // and so does a fresh F2 without Shift (a missed key-up must not turn a rename into the compare list)
+            if !((vk == VK_F2.0 && (repeat || mods[1])) || (vk == VK_SHIFT.0 && repeat)) {
+                DIFF_KEY.set(None);
+            }
             let (armed, _) = menu_key_step(MENU_ARM.get(), true, vk, repeat, mods);
             MENU_ARM.set(armed.filter(|_| in_main));
             // F10 opens the view menu when let go: never the view's accelerator nor Windows' hidden menu bar
@@ -703,6 +718,16 @@ pub(crate) unsafe fn pre_translate(m: &MSG) -> bool {
                 if let Some((i, h)) = pane.and_then(|i| app(|a| a.panes.iter().take(a.s.panes()).nth(i)?.as_ref().map(|p| (i, p.hwnd)))) {
                     open_in_menu(h, i);
                     return true;
+                }
+            }
+            // Shift+F2 with several panes to compare: their list once both F2 and Shift are up, so the pane digit
+            // isn't typed as '@'
+            let up = VIRTUAL_KEY(m.wParam.0 as u16);
+            let down = |k: VIRTUAL_KEY| k != up && GetKeyState(k.0 as i32) < 0;
+            if matches!(up, VK_F2 | VK_SHIFT) && !down(VK_F2) && !down(VK_SHIFT) {
+                if let Some((i, h)) = DIFF_KEY.take().and_then(|i| app(|a| a.panes.iter().take(a.s.panes()).nth(i)?.as_ref().map(|p| (i, p.hwnd)))) {
+                    diff_menu(h, i);
+                    return up == VK_F2;
                 }
             }
             // Ctrl+Alt+arrow: the panes take the moved splitter once the arrow, Ctrl or Alt is let go

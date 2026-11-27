@@ -870,6 +870,7 @@ pub(crate) const M_CLIPADD: (&str, &str) = ("&Add the selected items to the clip
 pub(crate) const M_EXPLORER_SEL: (&str, &str) = ("Open in E&xplorer (with the selection)", "탐색기에서 열기(&X) (선택 그대로)");
 pub(crate) const M_EXPLORER: (&str, &str) = ("Open in E&xplorer", "탐색기에서 열기(&X)");
 pub(crate) const M_RESTORE: (&str, &str) = ("Res&tore the earlier selection ({n})  (Num/)", "이전 선택 {n}개 되살리기(&T)  (Num/)");
+pub(crate) const M_DIFF: (&str, &str) = ("Select the files d&ifferent from  (Shift+F2)", "다른 패널과 비교해 다른 파일 선택(&I)  (Shift+F2)");
 pub(crate) const M_USAGE: (&str, &str) = ("Folder &usage: what takes up space here  (Ctrl+Shift+U)", "이 폴더 용량 분석(&U)  (Ctrl+Shift+U)");
 pub(crate) const M_WM_PAIR: (&str, &str) = ("Compa&re the 2 selected items with WinMerge", "선택한 2개를 WinMerge로 비교(&R)");
 pub(crate) const M_WM_PANE: (&str, &str) = ("Compa&re this folder with WinMerge", "이 폴더를 WinMerge로 비교(&R)");
@@ -897,6 +898,7 @@ pub(crate) enum OpenPick {
     Nothing,                     // menu closed
     Open(usize),                 // open in pane k
     Swap(usize),                 // swap places with pane k
+    Diff(usize),                 // select the files that differ from pane k's (Shift+F2)
     Shell,                       // shell_pick's: which program, checksum, date folders, new folder, WinMerge
     Elsewhere,                   // send_pick's: a favourite / recent folder or "Choose another folder…"
     Send { mv: bool, k: usize }, // copy / move the selection to pane k's folder
@@ -913,6 +915,8 @@ pub(crate) fn open_in_pick(p: usize) -> OpenPick {
         OpenPick::Open(k)
     } else if let Some(k) = row(ID_SWAP_TO) {
         OpenPick::Swap(k)
+    } else if let Some(k) = row(ID_DIFF_TO) {
+        OpenPick::Diff(k)
     } else if is_shell_pick(p) {
         OpenPick::Shell
     } else if send_pick(p).is_some() {
@@ -1017,7 +1021,7 @@ pub(crate) unsafe fn open_in_menu(h: HWND, src: usize) {
     let mut chips = MenuSwatches::new(app(|a| a.dpi)); // dropped after DestroyMenu
     for (k, _, _, t) in &items {
         if let Some(c) = tint_color(*t) {
-            for base in [ID_OPEN_TO, ID_SWAP_TO, ID_COPY_TO, ID_MOVE_TO, ID_WM_PANE] {
+            for base in [ID_OPEN_TO, ID_SWAP_TO, ID_COPY_TO, ID_MOVE_TO, ID_DIFF_TO, ID_WM_PANE] {
                 chips.put(menu, base + k, Some(c));
             }
         }
@@ -1037,6 +1041,7 @@ pub(crate) unsafe fn open_in_menu(h: HWND, src: usize) {
         (OpenPick::Nothing, _) => {}
         (OpenPick::Open(k), _) => open_in(src, k),
         (OpenPick::Swap(k), _) => swap_panes(src, k),
+        (OpenPick::Diff(k), _) => diff_pick(src, k, &here, &others),
         (OpenPick::Shell, picked) => shell_pick(h, src, p, picked, wm, &others),
         (OpenPick::Elsewhere, picked) => {
             let sent = match (send_pick(p), picked) {

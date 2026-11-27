@@ -463,6 +463,231 @@ pub(crate) unsafe fn mark_and_next(i: usize) {
     }
 }
 
+// ---------- Shift+F2: the files that differ from another pane's, selected on both sides ----------
+// Total Commander's Mark > Compare Directories (Shift+F2), Directory Opus' and FreeCommander's Compare: files only
+// on one side, or newer there, are selected in both panes, so Ctrl+M, C copies them over next.
+
+pub(crate) const ID_DIFF_TO: usize = 601; // ⇄ menu: + pane index (601–616)
+const DIFF_SLACK: u64 = 20_000_000; // 2 seconds in FILETIME's 100 ns steps: FAT keeps times to 2 seconds
+
+// One file of a pane: its name on disk (extension and all), size and date modified (FILETIME); None: not read.
+pub(crate) type DiffItem = (String, Option<u64>, Option<u64>);
+
+#[derive(Debug, PartialEq)]
+pub(crate) struct DiffMarks {
+    pub(crate) a: Vec<bool>, // a's files to select
+    pub(crate) b: Vec<bool>,
+    pub(crate) same: usize, // files on both sides left alone
+}
+
+// Names match in any case. Only on one side: marked there. On both: the one more than 2 seconds newer is marked;
+// times alike (or one not read) but sizes known and different: both. A date not read never counts as newer.
+pub(crate) fn diff_marks(a: &[DiffItem], b: &[DiffItem]) -> DiffMarks {
+    let index: std::collections::HashMap<String, usize> = b.iter().enumerate().map(|(j, (n, ..))| (n.to_lowercase(), j)).collect();
+    let mut m = DiffMarks { a: vec![false; a.len()], b: vec![true; b.len()], same: 0 };
+    for (i, (name, size, time)) in a.iter().enumerate() {
+        let Some(&j) = index.get(&name.to_lowercase()) else {
+            m.a[i] = true;
+            continue;
+        };
+        m.b[j] = false;
+        let (_, bsize, btime) = &b[j];
+        match (time, btime) {
+            (Some(x), Some(y)) if x.abs_diff(*y) > DIFF_SLACK => {
+                if x > y {
+                    m.a[i] = true;
+                } else {
+                    m.b[j] = true;
+                }
+            }
+            _ if size.is_some() && bsize.is_some() && size != bsize => {
+                m.a[i] = true;
+                m.b[j] = true;
+            }
+            _ => m.same += 1,
+        }
+    }
+    m
+}
+
+// The status line after a compare with pane `pane` (0-based): how many were selected on each side.
+pub(crate) fn diff_note(ko: bool, here: usize, there: usize, pane: usize, same: usize, filtered: bool) -> String {
+    let p = pane + 1;
+    let note = match (ko, here + there == 0, same == 0) {
+        (false, false, _) => format!("Selected the different files: {here} here · {there} in pane {p} ({same} the same)"),
+        (true, false, _) => format!("다른 파일 선택: 여기 {here}개 · 패널 {p}에 {there}개 (같은 파일 {same}개)"),
+        // only folders (or nothing) on both sides
+        (false, true, true) => "No files to compare in either folder".to_string(),
+        (true, true, true) => "두 폴더 모두 비교할 파일이 없습니다".to_string(),
+        (false, true, false) => format!("The files in both folders are the same (by name, size and date modified, {same})"),
+        (true, true, false) => format!("두 폴더의 파일이 같습니다 (이름·크기·수정한 날짜 기준, {same}개)"),
+    };
+    // a filter hides files from the compare: one hidden on one side shows up as "only on the other"
+    match (filtered, ko) {
+        (false, _) => note,
+        (true, false) => note + " · filter on",
+        (true, true) => note + " · 필터 적용 중",
+    }
+}
+
+// Something to compare: both folders on disk, and not the same one.
+pub(crate) fn diff_ok(here: &str, there: &str) -> bool {
+    is_fs(here) && is_fs(there) && !crate::session::same_dir(here, there)
+}
+
+// The pane rows (pane, menu label, folder it showed) under ID_DIFF_TO, grey where there is nothing to compare.
+pub(crate) unsafe fn diff_rows(menu: HMENU, here: &str, others: &[(usize, HSTRING, String)]) {
+    for (k, label, path) in others {
+        let flags = if diff_ok(here, path) { MF_STRING } else { MF_STRING | MF_GRAYED };
+        _ = AppendMenuW(menu, flags, ID_DIFF_TO + k, label);
+    }
+}
+
+// The ⇄ menu's submenu (letter I), before the WinMerge lookup so it is there without WinMerge too.
+pub(crate) unsafe fn diff_submenu(menu: HMENU, src: usize, others: &[(usize, HSTRING, String)]) {
+    let here = app(|a| a.s.paths[src].clone());
+    let Ok(sub) = CreatePopupMenu() else { return };
+    diff_rows(sub, &here, others);
+    let flags = if others.iter().any(|(_, _, p)| diff_ok(&here, p)) { MF_POPUP } else { MF_POPUP | MF_GRAYED };
+    _ = AppendMenuW(menu, flags, sub.0 as usize, &HSTRING::from(tr2(M_DIFF)));
+}
+
+// The other live panes: (pane, shown name, folder, colour label), and this pane's folder.
+unsafe fn diff_panes(src: usize) -> (String, Vec<(usize, String, String, u8)>) {
+    app(|a| {
+        let live = a.panes.iter().enumerate().take(a.s.panes()).filter(|(k, _)| *k != src);
+        let rows = live.filter_map(|(k, p)| Some((k, p.as_ref()?.disp.clone(), a.s.paths[k].clone(), a.s.tints[k]))).collect();
+        (a.s.paths[src].clone(), rows)
+    })
+}
+
+// The view's files by index (folders and items with no name left out), from the properties it already holds.
+unsafe fn diff_items(fv: &IFolderView2, n: i32) -> (Vec<i32>, Vec<DiffItem>) {
+    use windows::Win32::Storage::EnhancedStorage::{PKEY_DateModified, PKEY_Size};
+    let one = |k: i32| -> Option<DiffItem> {
+        let it = fv.GetItem::<IShellItem>(k).ok()?;
+        let attr = it.GetAttributes(SFGAO_FLAGS(SFGAO_FOLDER.0 | SFGAO_STREAM.0)).unwrap_or_default().0;
+        if real_folder(attr) {
+            return None;
+        }
+        // the parsing name: with extensions hidden, a.txt and a.doc are both "a" on display
+        let name = pwstr(it.GetDisplayName(SIGDN_PARENTRELATIVEPARSING).ok()?);
+        let it2 = it.cast::<IShellItem2>().ok();
+        let size = it2.as_ref().and_then(|i| i.GetUInt64(&PKEY_Size).ok());
+        let time = it2.as_ref().and_then(|i| i.GetFileTime(&PKEY_DateModified).ok()).map(|t| ((t.dwHighDateTime as u64) << 32) | t.dwLowDateTime as u64);
+        Some((name, size, time.filter(|&t| t != 0)))
+    };
+    (0..n).filter_map(|k| one(k).map(|d| (k, d))).unzip()
+}
+
+// `hits` (ascending) selected in pane i's view and nothing else; the first one focused and shown in that view
+// (the keyboard stays where it is). No hits: its selection cleared.
+unsafe fn diff_apply(i: usize, fv: &IFolderView2, hits: &[i32]) {
+    let Some(&first) = hits.first() else {
+        if let Some(sv) = view_of::<IShellView>(i) {
+            _ = sv.SelectItem(std::ptr::null(), SVSI_DESELECTOTHERS.0 as u32);
+        }
+        return;
+    };
+    _ = bulk_select(fv, |k| {
+        let flags = if k == first {
+            SVSI_SELECT.0 | SVSI_DESELECTOTHERS.0 | SVSI_FOCUSED.0 | SVSI_ENSUREVISIBLE.0
+        } else if hits.binary_search(&k).is_ok() {
+            SVSI_SELECT.0
+        } else {
+            return false;
+        };
+        fv.SelectItem(k, flags as u32).is_ok()
+    });
+}
+
+// Compares pane src (showing `here` when asked) with pane k (showing `there`): a beep if either moved on since.
+// Over 10,000 items on either side: nothing touched on both. Otherwise both selections are replaced.
+pub(crate) unsafe fn diff_select(src: usize, k: usize, here: &str, there: &str) {
+    let now = app(|a| (src < a.s.panes() && k < a.s.panes()).then(|| (a.s.paths[src].clone(), a.s.paths[k].clone())));
+    let views = (view_of::<IFolderView2>(src), view_of::<IFolderView2>(k));
+    let (Some((h, t)), (Some(fa), Some(fb))) = (now, views) else {
+        _ = MessageBeep(MB_ICONWARNING);
+        return;
+    };
+    if h != here || t != there || !diff_ok(&h, &t) {
+        _ = MessageBeep(MB_ICONWARNING);
+        return;
+    }
+    let count = |fv: &IFolderView2| fv.ItemCount(SVGIO_ALLVIEW).unwrap_or(0).max(0);
+    let (na, nb) = (count(&fa), count(&fb));
+    if na as u32 > SEND_MAX || nb as u32 > SEND_MAX {
+        warn(tr("Too many items to compare (over 10,000)", "항목이 너무 많아 비교하지 않음 (1만 개 초과)").into());
+        return;
+    }
+    let ((ia, a), (ib, b)) = (diff_items(&fa, na), diff_items(&fb, nb));
+    let m = diff_marks(&a, &b);
+    let hits = |idx: &[i32], marks: &[bool]| idx.iter().zip(marks).filter(|(_, &on)| on).map(|(&k, _)| k).collect::<Vec<i32>>();
+    let (ha, hb) = (hits(&ia, &m.a), hits(&ib, &m.b));
+    diff_apply(src, &fa, &ha);
+    diff_apply(k, &fb, &hb);
+    let filtered = !filter_of(src).is_empty() || !filter_of(k).is_empty();
+    set_note(diff_note(KO.load(Ordering::Relaxed), ha.len(), hb.len(), k, m.same, filtered));
+}
+
+// A diff row picked (⇄ menu or Shift+F2's list): only the folder the menu showed for that pane.
+pub(crate) unsafe fn diff_pick(src: usize, k: usize, here: &str, others: &[(usize, HSTRING, String)]) {
+    match others.iter().find(|(i, ..)| *i == k) {
+        Some((_, _, there)) => diff_select(src, k, here, there),
+        None => _ = MessageBeep(MB_ICONWARNING),
+    }
+}
+
+thread_local! {
+    // Shift+F2 with several panes to compare: the pane it was pressed in; its list opens once F2 and Shift are up
+    pub(crate) static DIFF_KEY: Cell<Option<usize>> = const { Cell::new(None) };
+}
+
+// Shift+F2 in pane src's list: with one other pane to compare, at once; with more, their list when the keys are
+// let go (a Shift still held would type the pane digit as '!', '@' …); with none, why not.
+pub(crate) unsafe fn diff_key(src: usize) {
+    let (here, rows) = diff_panes(src);
+    let ok: Vec<&(usize, String, String, u8)> = rows.iter().filter(|(_, _, p, _)| diff_ok(&here, p)).collect();
+    match ok.as_slice() {
+        [] if !is_fs(&here) => warn(tr("Compare: this pane doesn't show a folder on disk", "비교: 이 패널은 디스크의 폴더가 아님").into()),
+        [] => warn(tr("Compare: no other pane shows another folder on disk", "비교: 다른 폴더를 보여 주는 패널이 없음").into()),
+        [(k, _, there, _)] => diff_select(src, *k, &here, there),
+        _ => DIFF_KEY.set(Some(src)),
+    }
+}
+
+// Shift+F2's pane list, under the pane's ⇄ button as Ctrl+M's menu opens.
+pub(crate) unsafe fn diff_menu(h: HWND, src: usize) {
+    let (here, rows) = diff_panes(src);
+    let label = |k: usize, t: u8, disp: &str| HSTRING::from(pane_label(tr("Pane", "패널"), k, if t == 0 { "" } else { tint_name(t) }, disp));
+    let others: Vec<(usize, HSTRING, String)> = rows.iter().map(|(k, disp, path, t)| (*k, label(*k, *t, disp), path.clone())).collect();
+    let Ok(menu) = CreatePopupMenu() else { return };
+    _ = AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, &HSTRING::from(tr("Compare with (select the files only there or newer):", "비교할 패널 (한쪽에만 있거나 더 새 파일 선택):")));
+    _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
+    diff_rows(menu, &here, &others);
+    let mut chips = MenuSwatches::new(app(|a| a.dpi)); // dropped after DestroyMenu
+    for (k, _, _, t) in &rows {
+        if let Some(c) = tint_color(*t) {
+            chips.put(menu, ID_DIFF_TO + k, Some(c));
+        }
+    }
+    let mut rc = RECT::default();
+    if let Some(b) = pane_ctl(src, ID_OPEN_IN) {
+        _ = GetWindowRect(b, &mut rc);
+    }
+    let pick = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN, rc.left, rc.bottom, None, h, None).0 as usize;
+    // picked with Enter: its auto-repeats would open a file in the list
+    if GetKeyState(VK_RETURN.0 as i32) < 0 {
+        app(|a| a.held = Some(VK_RETURN.0));
+    }
+    _ = DestroyMenu(menu);
+    match open_in_pick(pick) {
+        OpenPick::Nothing => {}
+        OpenPick::Diff(k) => diff_pick(src, k, &here, &others),
+        _ => _ = MessageBeep(MB_ICONWARNING),
+    }
+}
+
 pub(crate) unsafe fn paint_match(h: HWND) {
     let desel = app(|a| a.matcher.as_ref().is_some_and(|m| m.desel));
     let g = match_geo_now(desel);
@@ -566,5 +791,47 @@ mod tests {
         assert_eq!(restore_note(false, 28, 30), "Restored 28 of 30 (2 not here)");
         assert_eq!(restore_note(true, 30, 30), "이전 선택 30개 되살림");
         assert_eq!(restore_note(true, 28, 30), "이전 선택 30개 중 28개 되살림 (2개 없음)");
+    }
+
+    fn item(name: &str, size: Option<u64>, time: Option<u64>) -> DiffItem {
+        (name.to_string(), size, time)
+    }
+
+    #[test]
+    fn diff_marks_rules() {
+        const T: u64 = 133_000_000_000_000_000;
+        // names in any case; a file only on one side is marked there
+        let a = [item("Report.DOCX", Some(10), Some(T)), item("only-a.txt", Some(1), Some(T))];
+        let b = [item("report.docx", Some(10), Some(T)), item("only-b.txt", Some(1), Some(T))];
+        assert_eq!(diff_marks(&a, &b), DiffMarks { a: vec![false, true], b: vec![false, true], same: 1 });
+        // 2 seconds apart (FAT): the same; a step more: the newer side only
+        let a = [item("x", Some(5), Some(T + DIFF_SLACK)), item("y", Some(5), Some(T)), item("z", Some(5), Some(T + DIFF_SLACK + 1))];
+        let b = [item("x", Some(5), Some(T)), item("y", Some(5), Some(T + DIFF_SLACK + 1)), item("z", Some(5), Some(T))];
+        assert_eq!(diff_marks(&a, &b), DiffMarks { a: vec![false, false, true], b: vec![false, true, false], same: 1 });
+        // same time, another size: both; a date not read is never newer (sizes alike: the same; size not read: the same)
+        let a = [item("s", Some(5), Some(T)), item("d", Some(5), None), item("e", Some(5), None), item("n", None, Some(T))];
+        let b = [item("s", Some(6), Some(T)), item("d", Some(5), Some(T + 9 * DIFF_SLACK)), item("e", Some(7), Some(T)), item("n", Some(8), Some(T))];
+        assert_eq!(diff_marks(&a, &b), DiffMarks { a: vec![true, false, true, false], b: vec![true, false, true, false], same: 2 });
+        // extensions keep files apart (parsing names, not display names)
+        let a = [item("a.txt", Some(1), Some(T))];
+        let b = [item("a.doc", Some(1), Some(T))];
+        assert_eq!(diff_marks(&a, &b), DiffMarks { a: vec![true], b: vec![true], same: 0 });
+        // empty folders
+        assert_eq!(diff_marks(&[], &[]), DiffMarks { a: vec![], b: vec![], same: 0 });
+        assert_eq!(diff_marks(&a, &[]), DiffMarks { a: vec![true], b: vec![], same: 0 });
+        assert_eq!(diff_marks(&[], &b), DiffMarks { a: vec![], b: vec![true], same: 0 });
+    }
+
+    #[test]
+    fn diff_notes() {
+        assert_eq!(diff_note(false, 5, 3, 1, 120, false), "Selected the different files: 5 here · 3 in pane 2 (120 the same)");
+        assert_eq!(diff_note(true, 5, 3, 1, 120, true), "다른 파일 선택: 여기 5개 · 패널 2에 3개 (같은 파일 120개) · 필터 적용 중");
+        assert_eq!(diff_note(false, 0, 0, 3, 120, true), "The files in both folders are the same (by name, size and date modified, 120) · filter on");
+        assert_eq!(diff_note(true, 0, 0, 3, 120, false), "두 폴더의 파일이 같습니다 (이름·크기·수정한 날짜 기준, 120개)");
+        assert_eq!(diff_note(false, 0, 0, 1, 0, false), "No files to compare in either folder");
+        assert_eq!(diff_note(true, 0, 0, 1, 0, true), "두 폴더 모두 비교할 파일이 없습니다 · 필터 적용 중");
+        // only on disk folders, not the same one
+        assert!(diff_ok(r"C:\a", r"D:\a") && diff_ok(r"C:\a", r"\\nas\share\a"));
+        assert!(!diff_ok(r"C:\a", r"c:\A\") && !diff_ok("::{20D04FE0-3AEA-1069-A2D8-08002B30309D}", r"C:\a"));
     }
 }
