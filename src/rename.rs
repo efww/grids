@@ -31,6 +31,7 @@ const ID_PMENU: i32 = 3024;
 const ID_UNDO: i32 = 3025;
 const ID_GO: i32 = 3026;
 const ID_CLOSE: i32 = 3027;
+const ID_LIVE: i32 = 3028; // zero size, a polite live region: the counts once typing stops, a batch's start and outcome
 // popup menu picks (TrackPopupMenu returns them, nothing is sent)
 const MENU_ADD: usize = 1120; // + kind
 const MENU_MODE: usize = 1127; // + mode
@@ -54,13 +55,15 @@ struct Rn {
     loading: bool,                  // fields being filled from a rule: their EN_CHANGE is not an edit
     focus: HWND,
     running: Option<Run>,           // a batch (or its undo) on the worker thread: the window is locked
+    desc: String,                   // the counts line as last given to screen readers (Rename's, the preview's description)
+    said: String,                   // the one last read out (or not to be: at opening, after an outcome)
 }
 
 thread_local! {
     static RN: RefCell<Rn> = RefCell::new(Rn {
         h: HWND::default(), pane: 0, rules: vec![Rule::new(Kind::Replace)], cur: 0, ext: false, dirs: Vec::new(), items: Vec::new(),
         existing: Vec::new(), rows: Vec::new(), err: None, note: String::new(), undo: Vec::new(), loading: false, focus: HWND::default(),
-        running: None,
+        running: None, desc: String::new(), said: String::new(),
     });
 }
 
@@ -69,8 +72,22 @@ fn rn<R>(f: impl FnOnce(&mut Rn) -> R) -> R {
     RN.with(|r| f(&mut r.borrow_mut()))
 }
 
+// The UI language now; the _in forms take it, so the tests can ask for both.
+fn ko_now() -> bool {
+    KO.load(Ordering::Relaxed)
+}
+
+fn lang(ko: bool, en: &'static str, k: &'static str) -> &'static str {
+    if ko { k } else { en }
+}
+
 fn kind_name(k: Kind) -> &'static str {
-    match k {
+    kind_name_in(k, ko_now())
+}
+
+fn kind_name_in(kd: Kind, ko: bool) -> &'static str {
+    let tr = |en, k| lang(ko, en, k);
+    match kd {
         Kind::Replace => tr("Replace", "바꾸기"),
         Kind::Insert => tr("Insert text", "글자 넣기"),
         Kind::Remove => tr("Remove", "지우기"),
@@ -90,6 +107,11 @@ struct Spec {
 }
 
 fn spec(k: Kind) -> Spec {
+    spec_in(k, ko_now())
+}
+
+fn spec_in(k: Kind, ko: bool) -> Spec {
+    let tr = |en, k| lang(ko, en, k);
     let place = || vec![tr("Before the name", "이름 앞"), tr("After the name", "이름 뒤"), tr("Instead of the name", "이름 대신")];
     let none = Spec { fields: [""; 4], mode: "", modes: vec![], flags: ["", ""], hint: "" };
     match k {
@@ -134,7 +156,11 @@ fn spec(k: Kind) -> Spec {
 
 // One line in the rule list.
 fn summary(r: &Rule) -> String {
-    let sp = spec(r.kind);
+    summary_in(r, ko_now())
+}
+
+fn summary_in(r: &Rule, ko: bool) -> String {
+    let sp = spec_in(r.kind, ko);
     let mode = sp.modes.get(r.mode as usize).copied().unwrap_or("");
     let detail = match r.kind {
         Kind::Replace => {
@@ -155,7 +181,76 @@ fn summary(r: &Rule) -> String {
         Kind::Case => mode.to_string(),
         Kind::Trim => String::new(),
     };
-    if detail.is_empty() { kind_name(r.kind).into() } else { format!("{}: {detail}", kind_name(r.kind)) }
+    let kind = kind_name_in(r.kind, ko);
+    if detail.is_empty() { kind.into() } else { format!("{kind}: {detail}") }
+}
+
+fn on_word(on: bool, ko: bool) -> &'static str {
+    if on { lang(ko, "on", "켬") } else { lang(ko, "off", "끔") }
+}
+
+// A rule row's text, which screen readers read (the row draws the same number and summary, with a check glyph);
+// the reader adds where it is in the list ("2 of 3").
+fn rule_speech(num: usize, r: &Rule, ko: bool) -> String {
+    format!("{num}. {} · {}", summary_in(r, ko), on_word(r.on, ko))
+}
+
+// The counts line above the preview; also the description of Rename and the preview, read out once typing stops.
+fn sum_text(n: usize, changed: usize, bad: usize, err: Option<&str>, ko: bool) -> String {
+    match (err, ko) {
+        (Some(e), false) => format!("Bad regular expression: {}", e.lines().last().unwrap_or("")),
+        (Some(e), true) => format!("정규식 오류: {}", e.lines().last().unwrap_or("")),
+        (None, false) => format!("{n} items · {changed} to rename · {bad} problems"),
+        (None, true) => format!("{n}개 · 바꿀 것 {changed} · 문제 {bad}"),
+    }
+}
+
+// What a drawn button shows, and whether in the icon font.
+fn button_label(id: i32, rule: Option<&Rule>, ko: bool) -> (String, bool) {
+    let tr = |en, k| lang(ko, en, k);
+    match id {
+        ID_ADD => (format!("{} ▾", tr("Add", "추가")), false),
+        ID_DEL => (tr("Remove", "빼기").into(), false),
+        ID_RUP => ("\u{E74A}".into(), true),
+        ID_RDOWN => ("\u{E74B}".into(), true),
+        ID_ONOFF => (tr("On / off", "켜기/끄기").into(), false),
+        ID_MODE => (rule.map(|r| format!("{} ▾", spec_in(r.kind, ko).modes.get(r.mode as usize).copied().unwrap_or(""))).unwrap_or_default(), false),
+        ID_PSAVE => (tr("Save", "저장").into(), false),
+        ID_PMENU => (format!("{} ▾", tr("Presets", "프리셋")), false),
+        ID_UNDO => (tr("Undo", "되돌리기").into(), false),
+        ID_GO => (tr("Rename", "이름 바꾸기").into(), false),
+        ID_CLOSE => (tr("Close", "닫기").into(), false),
+        _ => (String::new(), false),
+    }
+}
+
+// The same button's name for a screen reader (its window text): words for the arrows, no ▾, and the mode
+// button says what it is for ("Where: At the end").
+fn button_name(id: i32, rule: Option<&Rule>, ko: bool) -> String {
+    match id {
+        ID_RUP => lang(ko, "Move rule up", "규칙 위로").into(),
+        ID_RDOWN => lang(ko, "Move rule down", "규칙 아래로").into(),
+        ID_MODE => match rule.map(|r| (r, spec_in(r.kind, ko))) {
+            Some((r, sp)) if !sp.modes.is_empty() => format!("{}: {}", sp.mode, sp.modes.get(r.mode as usize).copied().unwrap_or("")),
+            _ => String::new(), // hidden: this rule has no mode
+        },
+        _ => button_label(id, rule, ko).0.trim_end_matches(" ▾").to_string(),
+    }
+}
+
+// The drawn check boxes: on or off, and their label. None: not one, or this rule doesn't use it.
+fn check_state(id: i32, rule: Option<&Rule>, ext: bool, ko: bool) -> Option<(bool, &'static str)> {
+    let (on, label) = match id {
+        ID_EXTOK => (ext, lang(ko, "Include extension", "확장자도 바꾸기")),
+        ID_FX | ID_FY => rule.map(|r| (if id == ID_FX { r.x } else { r.y }, spec_in(r.kind, ko).flags[(id - ID_FX) as usize]))?,
+        _ => return None,
+    };
+    (!label.is_empty()).then_some((on, label))
+}
+
+// Their name for a screen reader, the state in it ("Include extension: off"): a drawn button has no checked state.
+fn check_name(id: i32, rule: Option<&Rule>, ext: bool, ko: bool) -> Option<String> {
+    check_state(id, rule, ext, ko).map(|(on, label)| format!("{label}: {}", on_word(on, ko)))
 }
 
 fn status_text(s: Status) -> &'static str {
@@ -431,7 +526,8 @@ pub(crate) unsafe fn open_rename(i: usize) {
     rn(|r| r.h = h);
     let font = app(|a| a.font);
     let tab = WS_TABSTOP.0;
-    let lb = (LBS_OWNERDRAWFIXED | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT) as u32 | WS_VSCROLL.0 | tab;
+    // rows with their text too (rule_speech): drawn from RN, read out by screen readers
+    let lb = (LBS_OWNERDRAWFIXED | LBS_HASSTRINGS | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT) as u32 | WS_VSCROLL.0 | tab;
     child(h, w!("LISTBOX"), w!(""), lb, WINDOW_EX_STYLE(0), ID_RULES, font);
     let btn = BS_OWNERDRAW as u32 | tab;
     for id in [ID_ADD, ID_DEL, ID_RUP, ID_RDOWN, ID_ONOFF] {
@@ -458,13 +554,18 @@ pub(crate) unsafe fn open_rename(i: usize) {
     for id in [ID_PSAVE, ID_PMENU, ID_UNDO, ID_GO, ID_CLOSE] {
         child(h, w!("BUTTON"), w!(""), btn, WINDOW_EX_STYLE(0), id, font);
     }
+    // not in layout(): stays 0 × 0, and no tab stop; a file name's & in an outcome is no access key
+    const SS_NOPREFIX: u32 = 0x80;
+    let live = child(h, w!("STATIC"), w!(""), SS_NOPREFIX, WINDOW_EX_STYLE(0), ID_LIVE, HFONT::default());
+    live_region(live, true);
     rename_theme();
     layout(h);
     fill_rules();
     load_editor();
     update_preview();
     let lbh = item(h, ID_RULES);
-    rn(|r| r.focus = lbh);
+    // the counts at opening are not read out: the window and the rule list are, just then
+    rn(|r| (r.focus, r.said) = (lbh, r.desc.clone()));
     _ = ShowWindow(h, SW_SHOW);
     _ = SetFocus(Some(lbh));
 }
@@ -499,19 +600,156 @@ pub(crate) unsafe fn rename_theme() {
     SendMessageW(item(h, ID_PNAME), EM_SETCUEBANNER, Some(WPARAM(1)), Some(LPARAM(cue.as_ptr() as isize)));
     let title = HSTRING::from(format!("{} - {}", tr("Batch rename", "일괄 이름 바꾸기"), short_name(&rn(|r| r.dirs.first().cloned().unwrap_or_default()))));
     _ = SetWindowTextW(h, &title);
+    // what screen readers read, in the new language (not read out now); rows only if their text changed
+    refresh_rows();
+    refresh_names(h);
+    name_summary(h, true);
     _ = RedrawWindow(Some(h), None, None, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
+}
+
+// The live region's annotation, on when made and off before it goes (as the shortcut list's). Failing only loses the reading.
+unsafe fn live_region(h: HWND, on: bool) {
+    if h.0.is_null() {
+        return;
+    }
+    let Ok(acc) = CoCreateInstance::<_, IAccPropServices>(&CLSID_AccPropServices, None, CLSCTX_INPROC_SERVER) else { return };
+    let (obj, me) = (OBJID_CLIENT.0 as u32, CHILDID_SELF);
+    _ = if on { acc.SetHwndProp(h, obj, me, LiveSetting_Property_GUID, &VARIANT::from(Polite.0)) } else { acc.ClearHwndProps(h, obj, me, &[LiveSetting_Property_GUID]) };
+}
+
+// Read out by itself, wherever the keyboard is. Never inside rn(): the reader may call straight back in.
+unsafe fn say(h: HWND, t: &str) {
+    let live = item(h, ID_LIVE);
+    if t.is_empty() || live.0.is_null() {
+        return;
+    }
+    _ = SetWindowTextW(live, &HSTRING::from(t));
+    NotifyWinEvent(EVENT_OBJECT_LIVEREGIONCHANGED, live, OBJID_CLIENT.0, CHILDID_SELF as i32);
+}
+
+// Names for screen readers, from the rule picked and the language: the buttons' window text (button_name: the
+// drawn ones would read as "button" alone), the check boxes with their state, the fields by their labels.
+// After a rule, its mode or the language changes. Outside rn().
+unsafe fn refresh_names(h: HWND) {
+    let ko = ko_now();
+    let (rule, ext) = rn(|r| (r.rules.get(r.cur).cloned(), r.ext));
+    for id in [ID_ADD, ID_DEL, ID_RUP, ID_RDOWN, ID_ONOFF, ID_MODE, ID_PSAVE, ID_PMENU, ID_UNDO, ID_GO, ID_CLOSE] {
+        let b = item(h, id);
+        let t = button_name(id, rule.as_ref(), ko);
+        if text_of(b) != t {
+            _ = SetWindowTextW(b, &HSTRING::from(t)); // only when it changed: it repaints the button
+        }
+    }
+    for id in [ID_FX, ID_FY, ID_EXTOK] {
+        a11y_name(item(h, id), check_name(id, rule.as_ref(), ext, ko).as_deref());
+    }
+    let sp = rule.as_ref().map(|r| spec_in(r.kind, ko));
+    for k in 0..4 {
+        let label = sp.as_ref().map_or("", |s| s.fields[k]);
+        a11y_name(item(h, ID_F0 + k as i32), (!label.is_empty()).then_some(label));
+    }
+    a11y_name(item(h, ID_PNAME), Some(lang(ko, "Preset name", "프리셋 이름")));
+    let lb = item(h, ID_RULES);
+    a11y_name(lb, Some(lang(ko, "Rules", "규칙 목록")));
+    a11y_desc(lb, Some(lang(ko, "Space on/off · Ins add · Del remove · Alt+↑/↓ move", "Space 켜기/끄기 · Ins 추가 · Del 빼기 · Alt+↑/↓ 순서")));
+    a11y_name(item(h, ID_LIST), Some(lang(ko, "Preview", "미리보기")));
+}
+
+// The counts line as the description of Rename and of the preview (Rename is off, and skipped by Tab, while
+// there are problems or a batch runs; the preview never is). A new one is read out once typing stops
+// (TIMER_SAY, restarted by each change); `settle` gives it without reading it out.
+unsafe fn name_summary(h: HWND, settle: bool) {
+    if h.0.is_null() {
+        return;
+    }
+    let ko = ko_now();
+    let (sum, fresh, quiet) = rn(|r| {
+        let (n, changed, bad) = counts(r);
+        let s = sum_text(n, changed, bad, r.err.as_deref(), ko);
+        let fresh = r.desc != s;
+        r.desc = s.clone();
+        if settle {
+            r.said = s.clone();
+        }
+        let quiet = r.said == s;
+        (s, fresh, quiet)
+    });
+    if fresh {
+        a11y_desc(item(h, ID_GO), Some(&sum));
+        a11y_desc(item(h, ID_LIST), Some(&sum));
+    }
+    if !quiet {
+        SetTimer(Some(h), TIMER_SAY, 400, None);
+    }
+}
+
+// TIMER_SAY: rows typed into get their new text, then the counts, once, if they are still new (never while a
+// batch runs: its start and outcome are read).
+unsafe fn say_summary(h: HWND) {
+    _ = KillTimer(Some(h), TIMER_SAY);
+    refresh_rows();
+    let t = rn(|r| {
+        let new = r.running.is_none() && r.said != r.desc;
+        new.then(|| {
+            r.said = r.desc.clone();
+            r.desc.clone()
+        })
+    });
+    if let Some(t) = t {
+        say(h, &t);
+    }
 }
 
 // ---------- state -> controls ----------
 
 unsafe fn fill_rules() {
-    let (h, n, cur) = rn(|r| (r.h, r.rules.len(), r.cur));
+    let ko = ko_now();
+    let (h, rows, cur) = rn(|r| (r.h, r.rules.iter().enumerate().map(|(k, x)| rule_speech(k + 1, x, ko)).collect::<Vec<_>>(), r.cur));
     let lb = item(h, ID_RULES);
     SendMessageW(lb, LB_RESETCONTENT, None, None);
-    for k in 0..n {
-        SendMessageW(lb, LB_ADDSTRING, None, Some(LPARAM(k as isize)));
+    for t in rows {
+        let t = HSTRING::from(t);
+        SendMessageW(lb, LB_ADDSTRING, None, Some(LPARAM(t.as_ptr() as isize)));
     }
     SendMessageW(lb, LB_SETCURSEL, Some(WPARAM(cur)), None);
+}
+
+// Row texts after rules changed in place (on/off, a field, a mode, the language): the ones that differ are put
+// in again, the picked one still picked, so a reader on the list reads it anew. Same scroll position; none
+// touched when nothing differs (a theme-only switch).
+unsafe fn refresh_rows() {
+    let ko = ko_now();
+    let (h, cur, rows) = rn(|r| (r.h, r.cur, r.rules.iter().enumerate().map(|(k, x)| rule_speech(k + 1, x, ko)).collect::<Vec<_>>()));
+    let lb = item(h, ID_RULES);
+    if SendMessageW(lb, LB_GETCOUNT, None, None).0 != rows.len() as isize {
+        fill_rules();
+        return;
+    }
+    let stale: Vec<usize> = (0..rows.len())
+        .filter(|&k| {
+            let len = SendMessageW(lb, LB_GETTEXTLEN, Some(WPARAM(k)), None).0;
+            if len < 0 {
+                return true;
+            }
+            let mut buf = vec![0u16; len as usize + 1];
+            let n = SendMessageW(lb, LB_GETTEXT, Some(WPARAM(k)), Some(LPARAM(buf.as_mut_ptr() as isize))).0.max(0) as usize;
+            String::from_utf16_lossy(&buf[..n.min(len as usize)]) != rows[k]
+        })
+        .collect();
+    if stale.is_empty() {
+        return;
+    }
+    let top = SendMessageW(lb, LB_GETTOPINDEX, None, None).0.max(0) as usize;
+    SendMessageW(lb, WM_SETREDRAW, Some(WPARAM(0)), None);
+    for k in stale {
+        SendMessageW(lb, LB_DELETESTRING, Some(WPARAM(k)), None);
+        let t = HSTRING::from(rows[k].as_str());
+        SendMessageW(lb, LB_INSERTSTRING, Some(WPARAM(k)), Some(LPARAM(t.as_ptr() as isize)));
+    }
+    SendMessageW(lb, LB_SETTOPINDEX, Some(WPARAM(top)), None);
+    SendMessageW(lb, LB_SETCURSEL, Some(WPARAM(cur)), None);
+    SendMessageW(lb, WM_SETREDRAW, Some(WPARAM(1)), None);
+    _ = InvalidateRect(Some(lb), None, false);
 }
 
 // The fields of the current rule; the ones its kind doesn't use are hidden.
@@ -536,6 +774,7 @@ unsafe fn load_editor() {
         _ = EnableWindow(item(h, id), any);
     }
     rn(|r| r.loading = false);
+    refresh_names(h);
     _ = RedrawWindow(Some(h), None, None, RDW_INVALIDATE | RDW_ALLCHILDREN);
 }
 
@@ -567,6 +806,7 @@ unsafe fn update_preview() {
     _ = EnableWindow(item(h, ID_GO), go);
     _ = EnableWindow(item(h, ID_UNDO), undo);
     _ = InvalidateRect(Some(h), None, false); // summary line
+    name_summary(h, false);
 }
 
 fn counts(r: &Rn) -> (usize, usize, usize) {
@@ -590,12 +830,9 @@ unsafe fn paint(h: HWND) {
         for (k, t) in titles.iter().enumerate() {
             text(dc, g.titles[k], if k == 1 { edit_title.as_str() } else { *t }, small, pal().sub, DT_LEFT);
         }
-        let sum = match (&err, ko) {
-            _ if run.is_some() => run.map_or(String::new(), |(undo, done, total)| progress_text(undo, done, total, ko)),
-            (Some(e), false) => format!("Bad regular expression: {}", e.lines().last().unwrap_or("")),
-            (Some(e), true) => format!("정규식 오류: {}", e.lines().last().unwrap_or("")),
-            (None, false) => format!("{n} items · {changed} to rename · {bad} problems"),
-            (None, true) => format!("{n}개 · 바꿀 것 {changed} · 문제 {bad}"),
+        let sum = match run {
+            Some((undo, done, total)) => progress_text(undo, done, total, ko),
+            None => sum_text(n, changed, bad, err.as_deref(), ko),
         };
         let warn = run.is_none() && (err.is_some() || bad > 0);
         text(dc, g.summary, &sum, small, if warn { red() } else { pal().sub }, DT_RIGHT);
@@ -654,13 +891,9 @@ unsafe fn draw_item(d: &DRAWITEMSTRUCT) {
     let pressed = d.itemState.0 & ODS_SELECTED.0 != 0;
     let hot = hover == d.hwndItem && !off;
     let (rule, ext) = rn(|r| (r.rules.get(r.cur).cloned(), r.ext));
+    let ko = ko_now();
     // check boxes: glyph + label on the ground
-    let check = match id {
-        ID_EXTOK => Some((ext, tr("Include extension", "확장자도 바꾸기"))),
-        ID_FX | ID_FY => rule.as_ref().map(|r| (if id == ID_FX { r.x } else { r.y }, spec(r.kind).flags[(id - ID_FX) as usize])),
-        _ => None,
-    };
-    if let Some((on, label)) = check {
+    if let Some((on, label)) = check_state(id, rule.as_ref(), ext, ko) {
         fill(dc, rc, if hot { blend(pal().card, pal().text, 0.06) } else { pal().card });
         let gl = RECT { left: rc.left + s(4), right: rc.left + s(24), ..rc };
         text(dc, gl, if on { "\u{E73A}" } else { "\u{E739}" }, icon_font, if on { pal().text } else { pal().sub }, DT_CENTER);
@@ -681,20 +914,7 @@ unsafe fn draw_item(d: &DRAWITEMSTRUCT) {
     if focus {
         frame(dc, RECT { left: rc.left + 1, top: rc.top + 1, right: rc.right - 1, bottom: rc.bottom - 1 }, 1, if primary { ink } else { accent });
     }
-    let (label, icon) = match id {
-        ID_ADD => (format!("{} ▾", tr("Add", "추가")), false),
-        ID_DEL => (tr("Remove", "빼기").into(), false),
-        ID_RUP => ("\u{E74A}".into(), true),
-        ID_RDOWN => ("\u{E74B}".into(), true),
-        ID_ONOFF => (tr("On / off", "켜기/끄기").into(), false),
-        ID_MODE => (rule.map(|r| format!("{} ▾", spec(r.kind).modes.get(r.mode as usize).copied().unwrap_or(""))).unwrap_or_default(), false),
-        ID_PSAVE => (tr("Save", "저장").into(), false),
-        ID_PMENU => (format!("{} ▾", tr("Presets", "프리셋")), false),
-        ID_UNDO => (tr("Undo", "되돌리기").into(), false),
-        ID_GO => (tr("Rename", "이름 바꾸기").into(), false),
-        ID_CLOSE => (tr("Close", "닫기").into(), false),
-        _ => (String::new(), false),
-    };
+    let (label, icon) = button_label(id, rule.as_ref(), ko);
     let align = if id == ID_MODE { DT_LEFT } else { DT_CENTER };
     let r = if id == ID_MODE { RECT { left: rc.left + s(8), ..rc } } else { rc };
     text(dc, r, &label, if icon { icon_font } else { font }, ink, align);
@@ -704,7 +924,15 @@ unsafe fn draw_item(d: &DRAWITEMSTRUCT) {
 
 unsafe fn changed(f: impl FnOnce(&mut Rn)) {
     rn(f);
+    refresh_rows();
     update_preview();
+}
+
+// A field typed in: the row text waits until typing stops (TIMER_SAY, restarted by each key), not per letter.
+unsafe fn typed(h: HWND, f: impl FnOnce(&mut Rn)) {
+    rn(f);
+    update_preview();
+    SetTimer(Some(h), TIMER_SAY, 400, None);
 }
 
 unsafe fn pick(h: HWND, id: i32, items: &[(usize, String, bool)]) -> usize {
@@ -763,6 +991,7 @@ unsafe fn pick_mode(h: HWND) {
     let k = pick(h, ID_MODE, &modes);
     if (MENU_MODE..MENU_MODE + modes.len()).contains(&k) {
         changed(|r| r.rules[r.cur].mode = (k - MENU_MODE) as u8);
+        refresh_names(h); // the mode button's name says the new pick
         _ = InvalidateRect(Some(item(h, ID_MODE)), None, false);
     }
 }
@@ -842,9 +1071,12 @@ fn listing(head: &str, lines: &[String]) -> String {
     t
 }
 
+// The outcome is read out; the counts that changed with it are not read again after it.
 unsafe fn report(h: HWND, note: String, details: Option<String>) {
-    rn(|r| r.note = note);
+    rn(|r| r.note = note.clone());
     update_preview();
+    rn(|r| r.said = r.desc.clone());
+    say(h, &note);
     if let Some(t) = details {
         MessageBoxW(Some(h), &HSTRING::from(t), &HSTRING::from(tr("Batch rename", "일괄 이름 바꾸기")), MB_OK | MB_ICONWARNING);
     }
@@ -882,6 +1114,7 @@ unsafe fn do_undo(h: HWND) {
 
 const WM_RENAMED: u32 = WM_APP + 55; // to the rename window: run wParam is over, its outcome is in DONE
 const TIMER_RUN: usize = 1; // the progress line, every 100 ms
+const TIMER_SAY: usize = 2; // typed rows refreshed and the counts read out, 400 ms after the last change
 
 #[derive(Default)]
 struct Prog {
@@ -1061,6 +1294,8 @@ unsafe fn start(h: HWND, job: Job, total: usize, back: Vec<(String, String, Stri
     });
     lock(h, true);
     SetTimer(Some(h), TIMER_RUN, 100, None);
+    // read out once at the start (not every 100 ms), the outcome by report
+    say(h, &progress_text(matches!(job, Job::Undo(_)), 0, total, ko_now()));
     // the worker takes the job from here; if it never starts, this thread does
     let work = Arc::new(Mutex::new(Some((job, items, wdirs))));
     let (w2, p2, hw, busy) = (work.clone(), prog.clone(), h.0 as isize, Busy::new());
@@ -1226,7 +1461,7 @@ unsafe fn command(h: HWND, id: i32, code: u32) {
                 return;
             }
             let t = text_of(item(h, k));
-            changed(|r| {
+            typed(h, |r| {
                 if let Some(rule) = r.rules.get_mut(r.cur) {
                     rule.f[(k - ID_F0) as usize] = t;
                 }
@@ -1250,10 +1485,12 @@ unsafe fn command(h: HWND, id: i32, code: u32) {
                 }
             });
             _ = InvalidateRect(Some(item(h, id)), None, false);
+            say_check(h, id);
         }
         (ID_EXTOK, _) => {
             changed(|r| r.ext ^= true);
             _ = InvalidateRect(Some(item(h, id)), None, false);
+            say_check(h, id);
         }
         (ID_PSAVE, _) => save_preset(h),
         (ID_PMENU, _) => preset_menu(h),
@@ -1264,12 +1501,25 @@ unsafe fn command(h: HWND, id: i32, code: u32) {
     }
 }
 
+// A check box just switched: its name with the new state, read out (the focus stays on it).
+unsafe fn say_check(h: HWND, id: i32) {
+    let (rule, ext) = rn(|r| (r.rules.get(r.cur).cloned(), r.ext));
+    if let Some(name) = check_name(id, rule.as_ref(), ext, ko_now()) {
+        a11y_say(item(h, id), &name, true);
+    }
+}
+
 unsafe fn toggle_rule() {
     changed(|r| {
         if let Some(rule) = r.rules.get_mut(r.cur) {
             rule.on ^= true;
         }
     });
+    // from the list, its row is read anew (refresh_rows); from the On / off button, read out here
+    let (h, t) = rn(|r| (r.h, r.rules.get(r.cur).map(|x| rule_speech(r.cur + 1, x, ko_now()))));
+    if let (Some(t), false) = (t, GetFocus() == item(h, ID_RULES)) {
+        say(h, &t);
+    }
 }
 
 /// Keys for the rename window, from pre_translate. None: not this window's. Esc closes, Ctrl+Enter renames,
@@ -1437,10 +1687,19 @@ pub(crate) extern "system" fn rename_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPA
             WM_CLOSE if rn(|r| r.running.is_some()) => _ = MessageBeep(MB_ICONWARNING),
             WM_CLOSE => _ = DestroyWindow(h),
             WM_TIMER if wp.0 == TIMER_RUN => _ = InvalidateRect(Some(h), None, false),
+            WM_TIMER if wp.0 == TIMER_SAY => say_summary(h),
             WM_RENAMED => finished(h, wp.0),
             WM_CTLCOLORSTATIC => return edit_colors(wp), // a field switched off while a batch runs
             WM_DESTROY => {
                 _ = KillTimer(Some(h), TIMER_RUN);
+                _ = KillTimer(Some(h), TIMER_SAY);
+                // the names, roles, descriptions and the live region off, so a reused HWND value doesn't inherit them
+                live_region(item(h, ID_LIVE), false);
+                let mut c = GetWindow(h, GW_CHILD).unwrap_or_default();
+                while !c.0.is_null() {
+                    a11y_clear(c);
+                    c = GetWindow(c, GW_HWNDNEXT).unwrap_or_default();
+                }
                 let pane = rn(|r| {
                     (r.h, r.focus) = (HWND::default(), HWND::default());
                     r.running = None; // Grids is closing: the outcome has no window left to go to
@@ -1527,6 +1786,53 @@ mod tests {
             let lb = g.ctl.iter().find(|(id, _)| *id == ID_RULES).unwrap().1;
             assert!(lb.bottom - lb.top >= 40 * dpi / 96);
         }
+    }
+
+    #[test]
+    fn rename_a11y_names() {
+        let digits = |s: &str| s.chars().filter(|c| c.is_ascii_digit()).collect::<String>();
+        let buttons = [ID_ADD, ID_DEL, ID_RUP, ID_RDOWN, ID_ONOFF, ID_MODE, ID_PSAVE, ID_PMENU, ID_UNDO, ID_GO, ID_CLOSE];
+        for kind in KINDS {
+            let mut r = Rule::new(kind);
+            r.f = ["ab".into(), "3".into(), "2".into(), "_".into()];
+            for ko in [false, true] {
+                // every button has a name, with no & (it would turn into an underlined access key) and no drawn-only marks
+                for id in buttons.into_iter().filter(|&id| id != ID_MODE || !spec_in(kind, ko).modes.is_empty()) {
+                    let name = button_name(id, Some(&r), ko);
+                    let (label, _) = button_label(id, Some(&r), ko);
+                    assert!(!name.trim().is_empty() && !label.is_empty(), "{id} {kind:?} {ko}");
+                    assert!(!name.contains('&') && !label.contains('&') && !name.contains('▾'), "{id} {kind:?} {ko}");
+                    assert!(!name.chars().any(|c| ('\u{E000}'..='\u{F8FF}').contains(&c)), "{id}: icon glyph in its name");
+                }
+                // check boxes: the state is in the name
+                for (id, on) in [(ID_FX, true), (ID_FY, false), (ID_EXTOK, true)] {
+                    (r.x, r.y) = (on, on);
+                    match check_name(id, Some(&r), on, ko) {
+                        Some(n) => assert!(n.ends_with(on_word(on, ko)) && n.len() > on_word(on, ko).len() + 2, "{n}"),
+                        None => assert!(id != ID_EXTOK && spec_in(kind, ko).flags[(id - ID_FX) as usize].is_empty()),
+                    }
+                }
+            }
+            // a rule row reads the same numbers in both languages, and its state
+            for on in [true, false] {
+                r.on = on;
+                let (en, ko) = (rule_speech(2, &r, false), rule_speech(2, &r, true));
+                assert_eq!(digits(&en), digits(&ko), "{en} / {ko}");
+                assert!(en.starts_with("2. ") && en.ends_with(on_word(on, false)) && ko.ends_with(on_word(on, true)));
+            }
+        }
+        assert_eq!(button_name(ID_RUP, None, true), "규칙 위로");
+        assert_eq!(button_name(ID_ADD, None, false), "Add");
+        assert_eq!(button_name(ID_MODE, Some(&Rule::new(Kind::Insert)), true), "넣을 곳: 맨 앞");
+        assert_eq!(button_name(ID_MODE, Some(&Rule::new(Kind::Replace)), false), "");
+        assert_eq!(check_name(ID_EXTOK, None, false, true).as_deref(), Some("확장자도 바꾸기: 끔"));
+        assert_eq!(rule_speech(1, &Rule::new(Kind::Trim), false), "1. Trim spaces · on");
+        // the drawn labels stay what they were
+        assert_eq!(button_label(ID_ADD, None, true).0, "추가 ▾");
+        assert_eq!(button_label(ID_RDOWN, None, false), ("\u{E74B}".into(), true));
+        let (en, ko) = (sum_text(12, 10, 2, None, false), sum_text(12, 10, 2, None, true));
+        assert_eq!((en.as_str(), ko.as_str()), ("12 items · 10 to rename · 2 problems", "12개 · 바꿀 것 10 · 문제 2"));
+        assert!(sum_text(1, 0, 0, Some("regex parse error:\n    (\n    ^\nerror: unclosed group"), true).ends_with("unclosed group"));
     }
 
     #[test]

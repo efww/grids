@@ -130,7 +130,7 @@ The exe is not code-signed, so Windows SmartScreen may warn the first time: choo
 | Num− | Deselect files by pattern |
 | Num* | Invert the selection |
 | Insert | Select or deselect the focused item and move to the next (hold to mark several in a row) |
-| Ctrl+Shift+R | Batch rename (in the window: Ctrl+Enter rename, Esc close; rule list: Space on/off, Ins add, Del remove, Alt+↑/↓ move) |
+| Ctrl+Shift+R | Batch rename (in the window: Ctrl+Enter rename, Esc close; rule list: Space on/off, Ins add, Del remove, Alt+↑/↓ move); screen readers read each field's and button's name, the check boxes with their state ("Include extension: off"), the rule picked ("2. Replace: "a" → "b" · on") and the counts ("12 items · 10 to rename · 2 problems", once typing stops) |
 | Shift+F7 | New text file |
 | Ctrl+F7 | Move the selected items into a new folder named after them, ready to rename (Ctrl+Z moves them back) |
 | Shift+F5 | Copy the selected items next to them with the date and time added: `Report.docx` → `Report (2026-11-27 14.30).docx` (Ctrl+Z removes the copies) |
