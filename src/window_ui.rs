@@ -1315,6 +1315,13 @@ pub(crate) unsafe fn set_language(ko: bool) {
         tip_text(h, &drive_tip(c, kind), TTM_UPDATETIPTEXTW);
     }
     bin_relabel(main);
+    // a filtered pane's empty-list words follow the new language now, not at the next browse
+    for i in 0..MAXP {
+        let spec = filter_of(i);
+        if let (false, Some(fv)) = (spec.is_empty(), view_of::<IFolderView2>(i)) {
+            set_empty_text(&fv, &spec);
+        }
+    }
     refresh_save_button();
     update_tip();
     app(|a| a.status_key.clear());

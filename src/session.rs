@@ -891,6 +891,20 @@ pub(crate) fn filter_spec(text: &str) -> String {
     parts.collect::<Vec<_>>().join(";")
 }
 
+/// Longest filter the empty-list words show before '…': a kind's spec (*.jpg;*.jpeg;…) is far longer.
+pub(crate) const EMPTY_SPEC_MAX: usize = 40;
+
+/// The words a filtered list shows when nothing is left in it (no match and no subfolder), instead of
+/// Windows' "This folder is empty.": the filter as the status line shows it, kept as typed (& and all).
+pub(crate) fn empty_text(spec: &str, ko: bool) -> String {
+    let shown = match spec.char_indices().nth(EMPTY_SPEC_MAX) {
+        Some((cut, _)) => format!("{}…", &spec[..cut]),
+        None => spec.to_string(),
+    };
+    let (en, kr) = ("Nothing here matches the name filter “{spec}” · Press Ctrl+F, then Esc to clear it", "이름 필터 “{spec}”에 맞는 항목이 없습니다 · Ctrl+F 뒤 Esc로 필터를 지우면 모두 보입니다");
+    if ko { kr } else { en }.replace("{spec}", &shown)
+}
+
 /// Most tabs one Ctrl+Enter opens: tabs have no least width, so many more at once would leave them threads.
 pub(crate) const OPEN_TABS_MAX: usize = 8;
 
@@ -1025,6 +1039,28 @@ mod tests {
     }
     fn strs(v: &[&str]) -> Vec<String> {
         v.iter().map(|x| x.to_string()).collect()
+    }
+
+    #[test]
+    fn empty_text_names_the_filter() {
+        assert_eq!(empty_text("*pdf*", false), "Nothing here matches the name filter “*pdf*” · Press Ctrl+F, then Esc to clear it");
+        assert_eq!(empty_text("*pdf*", true), "이름 필터 “*pdf*”에 맞는 항목이 없습니다 · Ctrl+F 뒤 Esc로 필터를 지우면 모두 보입니다");
+        // shown as typed: no '&' mnemonic, no {…} formatting of the user's text
+        assert!(empty_text(&filter_spec("R&D"), false).contains("“*R&D*”"));
+        assert!(empty_text("*{n}*", true).contains("“*{n}*”"));
+        // exactly 40 characters stay whole; a kind's long spec is cut at 40 characters (not bytes) with '…'
+        let forty = "가".repeat(EMPTY_SPEC_MAX);
+        assert!(empty_text(&forty, true).contains(&format!("“{forty}”")));
+        let docs = FILE_KINDS[3].2;
+        assert!(docs.chars().count() > EMPTY_SPEC_MAX);
+        let cut: String = docs.chars().take(EMPTY_SPEC_MAX).collect();
+        for ko in [false, true] {
+            let t = empty_text(docs, ko);
+            assert!(t.contains(&format!("“{cut}…”")), "{t}");
+            assert!(!t.contains(docs));
+        }
+        let long = "한".repeat(EMPTY_SPEC_MAX + 5);
+        assert!(empty_text(&long, false).contains(&format!("“{}…”", "한".repeat(EMPTY_SPEC_MAX))));
     }
 
     const COLS0: &str = "{B725F130-47EF-101A-A5F1-02608C9EEBAC}/10=300,{B725F130-47EF-101A-A5F1-02608C9EEBAC}/14=120;{B725F130-47EF-101A-A5F1-02608C9EEBAC}/10=1";

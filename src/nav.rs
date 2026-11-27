@@ -1216,11 +1216,23 @@ pub(crate) unsafe fn apply_filter(i: usize) {
     let Some(f) = pane_ctl(i, ID_FILTER) else { return };
     let spec = filter_spec(&text_of(f));
     let changed = FILTERS.lock().map(|mut fl| std::mem::replace(&mut fl[i], spec.clone()) != spec).unwrap_or(false);
+    if let (true, Some(fv)) = (changed, view_of::<IFolderView2>(i)) {
+        set_empty_text(&fv, &spec); // before the refresh, so an emptied list shows the new words
+    }
     if let (true, Some(sv)) = (changed, view_of::<IShellView>(i)) {
         _ = sv.Refresh(); // re-enumerates, asking IncludeObject again
     }
     if let (true, Some(pane)) = (changed, app(|a| a.panes[i].as_ref().map(|p| p.hwnd))) {
         _ = InvalidateRect(Some(pane), None, false); // filter badge on/off
+    }
+}
+
+// The words in the middle of an empty list: the filter's, or (no filter) Windows' own again via NULL.
+pub(crate) unsafe fn set_empty_text(fv: &IFolderView2, spec: &str) {
+    if spec.is_empty() {
+        _ = fv.SetText(FVST_EMPTYTEXT, PCWSTR::null());
+    } else {
+        _ = fv.SetText(FVST_EMPTYTEXT, &HSTRING::from(empty_text(spec, KO.load(Ordering::Relaxed))));
     }
 }
 
@@ -1752,7 +1764,14 @@ impl IExplorerBrowserEvents_Impl for Events_Impl {
         };
         Ok(())
     }
-    fn OnViewCreated(&self, _: Ref<IShellView>) -> Result<()> {
+    fn OnViewCreated(&self, sv: Ref<IShellView>) -> Result<()> {
+        // each browse makes a new list: a filtered one says the filter, not "This folder is empty", when nothing shows
+        let spec = filter_of(self.0.load(Ordering::SeqCst)); // a copy: the lock is let go before the shell is called
+        if !spec.is_empty() {
+            if let Some(fv) = sv.ok().ok().and_then(|v| v.cast::<IFolderView2>().ok()) {
+                unsafe { set_empty_text(&fv, &spec) };
+            }
+        }
         Ok(())
     }
     fn OnNavigationComplete(&self, pidl: *const ITEMIDLIST) -> Result<()> {
