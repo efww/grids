@@ -382,9 +382,10 @@ pub(crate) unsafe fn update_status() {
         let spec = filter_of(i);
         // while a background copy runs, the disk is left alone (size and free space come back after)
         let busy = COPYING.load(Ordering::Relaxed) > 0;
+        let awake = AWAKE.load(Ordering::Relaxed);
         let zoom = app(|a| a.zoom);
         let rev = SEL_REV[i].load(Ordering::Relaxed);
-        let key = format!("{i}|{path}|{n}|{sel}|{}|{spec}|{busy}|{zoom:?}|{rev}", fv.GetFocusedItem().unwrap_or(-1));
+        let key = format!("{i}|{path}|{n}|{sel}|{}|{spec}|{busy}|{awake}|{zoom:?}|{rev}", fv.GetFocusedItem().unwrap_or(-1));
         if app(|a| a.status_key != key) {
             status_base(i, &path, main, &fv, n, sel, &spec, busy, zoom);
             app(|a| a.status_key = key);
@@ -608,6 +609,16 @@ pub(crate) fn status_fit(left: i32, right: i32, gap: i32, min_head: i32, note: O
     StatusFit { note, head, mid, drive }
 }
 
+// The middle zone during a background job; "sleep held off" only while the power request is really set.
+pub(crate) fn copy_note(ko: bool, awake: bool) -> &'static str {
+    match (ko, awake) {
+        (false, false) => "Copying / moving…",
+        (false, true) => "Copying / moving… · sleep held off",
+        (true, false) => "복사·이동 중…",
+        (true, true) => "복사·이동 중… · 절전 안 함",
+    }
+}
+
 // The status text around the selection size, the window title, and a new folder size job.
 pub(crate) unsafe fn status_base(i: usize, path: &str, main: HWND, fv: &IFolderView2, n: i32, sel: i32, spec: &str, busy: bool, zoom: Option<usize>) {
     let title = window_title(&app(|a| a.panes[i].as_ref().map(|p| p.disp.clone()).unwrap_or_default()));
@@ -635,7 +646,7 @@ pub(crate) unsafe fn status_base(i: usize, path: &str, main: HWND, fv: &IFolderV
         parts.push(format!("{} {spec}", tr("Filter", "필터")));
     }
     if busy {
-        parts.push(tr("Copying / moving…", "복사·이동 중…").into());
+        parts.push(copy_note(ko, AWAKE.load(Ordering::Relaxed)).into());
     } else if vol_key(path).is_some() {
         // asked off the UI thread (a dead share would stall it); the last answer for this drive stays meanwhile
         disk = known_disk(path);

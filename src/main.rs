@@ -1189,6 +1189,38 @@ mod tests {
     }
 
     #[test]
+    fn no_idle_sleep_while_copying() {
+        // the same rule as a refused restart: a copy of ours, or the shell's progress window
+        assert!(!block_shutdown(0, false));
+        assert!(block_shutdown(2, false));
+        assert!(block_shutdown(0, true));
+        // the progress window is only looked for while the shell holds a reference beyond ours
+        assert!(!shell_op_maybe(1, 1));
+        assert!(shell_op_maybe(2, 1));
+        assert!(!shell_op_maybe(5, i32::MAX)); // hold_shell_refs failed: never
+        // the status line says so only when the request is really set, in both languages
+        assert_eq!(copy_note(false, false), "Copying / moving…");
+        assert_eq!(copy_note(true, false), "복사·이동 중…");
+        assert!(copy_note(false, true).starts_with(copy_note(false, false)) && copy_note(false, true).ends_with("sleep held off"));
+        assert!(copy_note(true, true).starts_with(copy_note(true, false)) && copy_note(true, true).ends_with("절전 안 함"));
+        // Set / Clear only on a change, in pairs; the guard counts a run while it lives
+        unsafe {
+            stay_awake(true);
+            assert!(AWAKE.load(Ordering::Relaxed), "PowerSetRequest failed");
+            stay_awake(true);
+            stay_awake(false);
+            assert!(!AWAKE.load(Ordering::Relaxed));
+            stay_awake(false);
+        }
+        let before = COPY_RUNS.load(Ordering::Relaxed);
+        {
+            let _run = CopyRun::new();
+            assert_eq!(COPY_RUNS.load(Ordering::Relaxed), before + 1);
+        }
+        assert_eq!(COPY_RUNS.load(Ordering::Relaxed), before);
+    }
+
+    #[test]
     fn paste() {
         let v = |s: &[&str]| s.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         assert_eq!(paste_mode(&v(&[r"C:\a.txt"]), r"C:\"), Some(true));

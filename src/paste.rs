@@ -2,10 +2,11 @@ use crate::*;
 use windows::Win32::Graphics::Imaging::*;
 use windows::Win32::System::DataExchange::IsClipboardFormatAvailable;
 use windows::Win32::System::Memory::GlobalSize;
+use windows::Win32::System::Power::{PowerClearRequest, PowerCreateRequest, PowerRequestSystemRequired, PowerSetRequest};
 use windows::Win32::System::Shutdown::{ShutdownBlockReasonCreate, ShutdownBlockReasonDestroy};
 use windows::Win32::System::SystemInformation::GetLocalTime;
-use windows::Win32::System::Threading::GetCurrentProcessId;
-use std::sync::atomic::AtomicI32;
+use windows::Win32::System::Threading::{GetCurrentProcessId, POWER_REQUEST_CONTEXT_SIMPLE_STRING, REASON_CONTEXT, REASON_CONTEXT_0};
+use std::sync::atomic::{AtomicI32, AtomicIsize};
 
 // ---------- background paste ----------
 
@@ -43,6 +44,7 @@ pub(crate) unsafe fn hold_shell_refs() -> Option<IUnknown> {
     SHCreateThreadRef(SHELL_REFS.as_ptr(), &mut unk).ok()?;
     let unk = unk?;
     SHSetInstanceExplorer(&unk);
+    SHELL_BASE.store(SHELL_REFS.load(Ordering::Acquire), Ordering::Relaxed);
     Some(unk)
 }
 
@@ -128,6 +130,82 @@ pub(crate) unsafe fn shutdown_tick(h: HWND) {
     if BLOCKING.load(Ordering::Relaxed) && !block_shutdown(COPYING.load(Ordering::Relaxed), own_windows().1) {
         release_shutdown(h);
     }
+}
+
+// ---------- no idle sleep while files move (TeraCopy's "Prevent sleep mode", FreeFileSync) ----------
+
+// A start_copy's run_copy going on a worker thread. Counted apart from Busy: renames, date sorting and the
+// like are short or sit waiting on a question, and the failure message box comes after this is let go.
+pub(crate) static COPY_RUNS: AtomicUsize = AtomicUsize::new(0);
+// SHELL_REFS just after hold_shell_refs: only above it can a shell copy (drag, cut + paste) be running.
+// MAX = never held, so the shell's progress window isn't looked for.
+static SHELL_BASE: AtomicI32 = AtomicI32::new(i32::MAX);
+// The power request, made on first use and kept until the process ends (0 = not yet, -1 = could not be made).
+// A HANDLE isn't Sync: kept as its value.
+static POWER_REQ: AtomicIsize = AtomicIsize::new(0);
+// The request is set now. PowerSetRequest counts, so Set and Clear go strictly in pairs, from the UI thread only.
+pub(crate) static AWAKE: AtomicBool = AtomicBool::new(false);
+
+pub(crate) struct CopyRun;
+
+impl CopyRun {
+    pub(crate) fn new() -> CopyRun {
+        COPY_RUNS.fetch_add(1, Ordering::Relaxed);
+        CopyRun
+    }
+}
+
+impl Drop for CopyRun {
+    fn drop(&mut self) {
+        COPY_RUNS.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+// The shell may be copying for us (a reference above the one we hold): only then is EnumWindows worth a tick.
+pub(crate) fn shell_op_maybe(refs: i32, base: i32) -> bool {
+    refs > base
+}
+
+unsafe fn power_request() -> Option<HANDLE> {
+    let mut h = POWER_REQ.load(Ordering::Relaxed);
+    if h == 0 {
+        // shown to an administrator by powercfg /requests; the string is copied, so it need only last the call
+        let why = HSTRING::from(tr("Grids: copying or moving files", "Grids: 파일 복사·이동 중"));
+        let ctx = REASON_CONTEXT {
+            Version: 0, // POWER_REQUEST_CONTEXT_VERSION
+            Flags: POWER_REQUEST_CONTEXT_SIMPLE_STRING,
+            Reason: REASON_CONTEXT_0 { SimpleReasonString: PWSTR(why.as_ptr() as *mut u16) },
+        };
+        h = PowerCreateRequest(&ctx).map_or(-1, |r| r.0 as isize);
+        POWER_REQ.store(h, Ordering::Relaxed);
+    }
+    (h != -1).then_some(HANDLE(h as *mut _))
+}
+
+// Keeps the system out of idle sleep (the screen may still turn off). Only calls Windows when the state changes;
+// a failed Set leaves AWAKE off (the status line then doesn't claim it), a failed Clear is tried again next tick.
+pub(crate) unsafe fn stay_awake(on: bool) {
+    if on == AWAKE.load(Ordering::Relaxed) {
+        return;
+    }
+    let Some(req) = power_request() else { return };
+    if on {
+        if PowerSetRequest(req, PowerRequestSystemRequired).is_ok() {
+            AWAKE.store(true, Ordering::Relaxed);
+        }
+    } else if PowerClearRequest(req, PowerRequestSystemRequired).is_ok() {
+        AWAKE.store(false, Ordering::Relaxed);
+    }
+}
+
+// TIMER_STATUS (also the slow tick while minimized): a copy of ours, or the shell's progress window, holds sleep
+// off. After WM_DESTROY the timer is gone and the last state stays until the process ends, which drops it.
+pub(crate) unsafe fn awake_tick() {
+    let runs = COPY_RUNS.load(Ordering::Relaxed);
+    let shell = runs == 0
+        && shell_op_maybe(SHELL_REFS.load(Ordering::Acquire), SHELL_BASE.load(Ordering::Relaxed))
+        && own_windows().1;
+    stay_awake(block_shutdown(runs, shell));
 }
 
 thread_local! {
@@ -537,7 +615,11 @@ pub(crate) unsafe fn start_copy(srcs: Vec<String>, dst: String, rename: bool, mv
     let job = std::thread::Builder::new().spawn(move || {
         let _busy = busy;
         let com = CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok();
-        match run_copy(&srcs, &dst, rename, mv) {
+        let res = {
+            let _run = CopyRun::new(); // no idle sleep meanwhile; let go before a failure waits on its message box
+            run_copy(&srcs, &dst, rename, mv)
+        };
+        match res {
             Ok(aborted) => {
                 let done = CopyDone { mv, n: srcs.len(), to: short_name(&dst), aborted, took: start.elapsed() };
                 COPY_DONE.lock().unwrap_or_else(|e| e.into_inner()).push(done);

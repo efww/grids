@@ -321,6 +321,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 if p.ms != now {
                     set_tick(h, p.ms);
                 }
+                awake_tick(); // before the status line, which says when sleep is held off
                 if p.status {
                     ev_watch(); // Everything started or quit: its button comes or goes
                     update_status();
