@@ -14,7 +14,7 @@ unsafe fn pane_said(before: usize, repeat: bool) {
 // A tab key on pane i (change: true when it started a browse). Read out only when the tab number or count changed
 // (not one tab, the last tab's beep, a failed browse, no such tab, an end): a browse is read when its folder has
 // opened (on_nav: the new view takes the focus, which would cut the words off), anything else at once.
-unsafe fn tab_said(i: usize, repeat: bool, change: impl FnOnce() -> bool) {
+pub(crate) unsafe fn tab_said(i: usize, repeat: bool, change: impl FnOnce() -> bool) {
     let state = || {
         app(|a| {
             let n = a.s.tab_list(i).len();
@@ -47,6 +47,10 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
     }
     // the Everything search box takes its list keys; the rest is typing
     if let Some(used) = ev_key(m) {
+        return used;
+    }
+    // Ctrl+P's popup: its list keys, Enter, Esc and Ctrl+P; the rest is typing (no Ctrl+W, Alt+← … behind it)
+    if let Some(used) = sw_key(m) {
         return used;
     }
     // folder usage: every key is its own while it has the focus (no Ctrl+W, Alt+← … on the pane behind)
@@ -187,6 +191,11 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
             if !repeat {
                 key_used(TIP_LOAD);
                 toggle_load();
+            }
+        }
+        KeyRoute::Switch => {
+            if !repeat {
+                open_switcher();
             }
         }
         KeyRoute::Favs => {
@@ -363,6 +372,7 @@ pub(crate) enum KeyRoute {
     Hidden,
     Save,
     Load,
+    Switch,
     Favs,
     FavToggle,
     Keys,
@@ -451,6 +461,8 @@ pub(crate) fn key_route(vk: VIRTUAL_KEY, ctrl: bool, shift: bool, alt: bool, c: 
         VK_S if ctrl => Save,
         // Ctrl+O: the saved sessions, picked from the keys (held, it opens once)
         VK_O if ctrl && !shift && !alt => Load,
+        // Ctrl+P: go to an open pane or tab by part of its folder's name, from the boxes too (held, it opens once)
+        VK_P if ctrl && !shift && !alt => Switch,
         VK_B if ctrl && !shift && !alt => Favs,
         // Ctrl+Shift+B: the active pane's ☆+ from the keys (a browser's "bookmark this page"); held, it toggles once
         VK_B if ctrl && shift && !alt => FavToggle,

@@ -85,6 +85,7 @@ mod tour;
 mod tray;
 mod usage;
 mod listing;
+mod switcher;
 
 use ui_defs::*;
 // explicit, so it wins over the same name glob-imported from windows (a glob clash would turn match patterns into bindings)
@@ -125,6 +126,7 @@ use tour::*;
 use tray::*;
 use usage::*;
 use listing::*;
+use switcher::*;
 
 /// Let a drive with no disk (empty card reader slot, DVD drive, pulled USB stick) just fail the file call,
 /// instead of Windows' "No Disk" system box freezing the calling thread until it is answered.
@@ -331,6 +333,14 @@ fn main() -> Result<()> {
             hInstance: hinst,
             hCursor: arrow,
             lpszClassName: w!("GridsUsage"),
+            ..Default::default()
+        });
+        RegisterClassW(&WNDCLASSW {
+            style: CS_DROPSHADOW,
+            lpfnWndProc: Some(sw_proc),
+            hInstance: hinst,
+            hCursor: arrow,
+            lpszClassName: w!("GridsSwitch"),
             ..Default::default()
         });
         KO.store(s.ko, Ordering::Relaxed);
@@ -2587,7 +2597,7 @@ mod tests {
 
     // Every source file, compiled in: the test exe runs on the Windows runner without the source tree.
     // A new module must be listed here too (ui_text_pairs_match checks this against main.rs's `mod` lines).
-    const SOURCES: [(&str, &str); 41] = [
+    const SOURCES: [(&str, &str); 42] = [
         ("main.rs", include_str!("main.rs")),
         ("autostart.rs", include_str!("autostart.rs")),
         ("dialog_jump.rs", include_str!("dialog_jump.rs")),
@@ -2619,6 +2629,7 @@ mod tests {
         ("sessions_ui.rs", include_str!("sessions_ui.rs")),
         ("shellx.rs", include_str!("shellx.rs")),
         ("star.rs", include_str!("star.rs")),
+        ("switcher.rs", include_str!("switcher.rs")),
         ("state.rs", include_str!("state.rs")),
         ("status.rs", include_str!("status.rs")),
         ("tabs.rs", include_str!("tabs.rs")),
@@ -4761,6 +4772,9 @@ mod tests { tr("in", "안") }
         // Ctrl+E: the list's own (editor); the tree keeps Ctrl+Shift+E, the boxes keep their Ctrl+E
         assert_eq!((l("Ctrl+E"), l("Ctrl+Shift+E")), (Edit, Tree));
         assert_eq!((route("addr", "Ctrl+E"), route("filter", "Ctrl+E"), route("addr", "Ctrl+Shift+E")), (BoxKey, BoxKey, Tree));
+        // Ctrl+P: from the list and both boxes; Ctrl+Shift+P stays the view's / the box's
+        assert_eq!((l("Ctrl+P"), route("addr", "Ctrl+P"), route("filter", "Ctrl+P")), (Switch, Switch, Switch));
+        assert_eq!((l("Ctrl+Shift+P"), route("addr", "Ctrl+Shift+P")), (Shell, BoxKey));
     }
 
     // Ctrl+E never runs a file: its edit verb, else text by its first bytes (by its type when online-only, never read).

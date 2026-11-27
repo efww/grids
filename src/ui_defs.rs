@@ -361,6 +361,7 @@ pub(crate) const FILE_KINDS: [(&str, &str, &str); 6] = [
 
 pub(crate) const KEYS_EN: &str = "Ctrl+Tab / Ctrl+Shift+Tab\tNext / previous pane\n\
 Ctrl+1 … Ctrl+9\tGo to pane 1–9 (the number at the left of each pane header; hidden in very narrow panes)\n\
+Ctrl+P\tGo to an open folder: type part of its name or path, ↑/↓ choose, Enter goes to that pane (10–16 too) or another pane's tab, Esc closes\n\
 Alt+Shift+← / → / ↑ / ↓\tPane to the left / right / above / below\n\
 Ctrl+Alt+Shift+← / → / ↑ / ↓\tSwap the active pane with the one to the left / right / above / below (folder, history and selection stay; also in the ⇄ menu)\n\
 Ctrl+Alt+← / → / ↑ / ↓\tMove the active pane's splitter that way (hold to keep going; the panes follow on release)\n\
@@ -427,6 +428,7 @@ If Grids is already running, they open in that window.";
 
 pub(crate) const KEYS_KO: &str = "Ctrl+Tab / Ctrl+Shift+Tab\t다음 / 이전 패널\n\
 Ctrl+1 … Ctrl+9\t1~9번 패널로 이동 (패널 머리줄 왼쪽의 번호, 아주 좁은 패널에서는 생략)\n\
+Ctrl+P\t열어 둔 폴더로 가기: 이름이나 경로 일부를 입력, ↑/↓ 고르기, Enter는 그 패널(10~16번도)이나 다른 패널의 탭으로 이동, Esc는 닫기\n\
 Alt+Shift+← / → / ↑ / ↓\t왼쪽·오른쪽·위·아래 패널로 이동\n\
 Ctrl+Alt+Shift+← / → / ↑ / ↓\t지금 패널을 왼쪽·오른쪽·위·아래 패널과 자리 바꾸기 (폴더·방문 기록·선택 유지, ⇄ 메뉴에도 있음)\n\
 Ctrl+Alt+← / → / ↑ / ↓\t지금 패널의 경계선을 그쪽으로 옮기기 (누르고 있으면 계속, 손을 떼면 패널이 맞춰짐)\n\
