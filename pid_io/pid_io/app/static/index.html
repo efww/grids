@@ -1651,6 +1651,30 @@ async function renderSupport(m) {
 }
 
 /* ---------------------------------------------------------------- 10 3D handoff */
+function orderBox(o, d) {
+  const last = o.orders.slice().reverse();
+  return `<div class="panel" style="border-top:3px solid var(--green)"><h2>주문 → 다음 3D 파일</h2>
+    <p class="xnote">말로 주문하면 프로그램이 알아듣고(규칙 먼저, 모르면 Copilot) 바로 반영해 다음 보강 모델을 만듭니다. 주문은 사람 결정으로 기록되고 되돌릴 수 있습니다.
+      예: <span class="mono">계장 차선 반대쪽으로</span> · <span class="mono">JB-18-DA-01 11-P-101A/B 밖으로</span> · <span class="mono">랙 가장자리 여유 0.5</span> · <span class="mono">다시 만들어줘</span></p>
+    <div style="display:flex;gap:6px"><input id="odtext" placeholder="주문 입력" style="flex:1;font-size:13px"><button class="btn" id="odrun">주문 실행</button></div>
+    ${o.pending?`<div style="margin-top:8px;font-size:12.5px;background:#f6f7f6;padding:8px">수동 AI 모드: 아래 프롬프트를 채팅 AI에 붙여 넣고 답(JSON)을 받아 주세요.
+      <textarea readonly style="width:100%;height:70px;font-size:11px" class="mono">${esc(o.pending.prompt)}</textarea>
+      <textarea id="odans" placeholder="AI 답(JSON)" style="width:100%;height:50px;font-size:11px"></textarea><button class="btn sm" id="odansgo">답 읽고 실행</button></div>`:""}
+    ${last.length?`<table class="mini" style="margin-top:10px">${last.slice(0,8).map(r=>`<tr style="${r.undone?"opacity:.45":""}"><td style="font-size:11px;white-space:nowrap" class="mono">${esc(r.at.slice(5))}</td>
+      <td style="font-size:12px"><b>${esc(r.text)}</b><br><span style="color:var(--sub)">${esc(r.by)} 해석${r.explain?": "+esc(r.explain):""}</span><br>${r.done.map(esc).join("<br>")}${r.bad&&r.bad.length?`<br><span style="color:var(--red)">${r.bad.map(esc).join("; ")}</span>`:""}</td>
+      <td style="font-size:11.5px">${esc(r.words||"물량 변화 없음")}${r.hold!=null?`<br>3D 점검 HOLD ${r.hold}`:""}</td>
+      <td style="white-space:nowrap">${r.set?`<a class="btn sm" target="_blank" href="/api/${P("twin_set/"+encodeURIComponent(r.set))}">열기</a>`:""} ${r.undone?"되돌림":`<button class="btn sm line" data-odundo="${esc(r.id)}">되돌리기</button>`}</td></tr>`).join("")}</table>`:""}
+    <details style="margin-top:10px" ${o.lessons.length?"open":""}><summary style="cursor:pointer;font-size:13px"><b>배운 점 → 공통 프로토콜</b> (v${esc(o.common.version)} · 규칙 ${o.common.rules.length}개${o.lessons.length?` · 승인 대기 ${o.lessons.length}`:""})</summary>
+      <p class="xnote">주문에서 나온 교훈입니다. <b>공통</b> = 어떤 개념설계에든 쓰는 규칙(태그 번호·프로젝트 이름 금지), <b>프로젝트</b> = 이 프로젝트만. 공통 규칙은 승인해야 프로토콜에 들어가고 버전이 올라갑니다. 같은 교훈이 3번 이상 또는 2개 프로젝트에서 나오면 '승격 추천'.</p>
+      ${o.lessons.map(l=>`<div style="font-size:12.5px;margin:6px 0;padding:6px;background:#f6f7f6"><input data-ltext="${esc(l.id)}" value="${esc(l.text)}" style="width:100%;font-size:12.5px">
+        <div style="margin-top:4px;display:flex;gap:6px;align-items:center;flex-wrap:wrap"><select data-lscope="${esc(l.id)}"><option value="common" ${l.scope==="common"?"selected":""}>공통</option><option value="project" ${l.scope==="project"?"selected":""}>프로젝트</option></select>
+        <span style="color:var(--sub)">근거 ${l.evidence}회 · ${esc(l.projects.join(", "))} · ${esc(l.by)}</span>${l.suggest_promote?`<span class="chip g">승격 추천</span>`:""}
+        <button class="btn sm" data-lok="${esc(l.id)}">승인</button><button class="btn sm line" data-lno="${esc(l.id)}">버리기</button></div></div>`).join("")||`<div class="empty" style="padding:8px">승인 대기 없음</div>`}
+      <details style="margin-top:6px"><summary style="cursor:pointer;font-size:12.5px">공통 프로토콜 보기</summary><ol style="font-size:12px;line-height:1.6">${o.common.rules.map(r=>`<li><b>${esc(r.id)}</b> ${esc(r.text)}${r.src==="lesson"?` <span class="chip">배운 것</span>`:""}</li>`).join("")}</ol>
+        <div style="font-size:11.5px;color:var(--sub)">${o.common.changelog.map(c=>`v${esc(c.version)} ${esc(c.at)} ${esc(c.what)}`).join("<br>")}</div></details>
+    </details>
+  </div>`;
+}
 function gateBox(g) {
   return `<div style="border:2px solid #e0002a;padding:10px 12px;margin:8px 0;background:#fff8f9">
     <div style="display:flex;justify-content:space-between"><b>3D 반영 제안 · ${esc(g.at)}</b><span class="chip">아직 반영 안 됨</span></div>
@@ -1691,6 +1715,7 @@ async function renderTwin(m) {
   const d = await api(P("twin"));
   const rv = await api(P("review3d")).catch(()=>({}));
   const gt = await api(P("gate")).catch(()=>({}));
+  const od = await api(P("orders")).catch(()=>null);
   if (t !== S.tok) return;
   m.className = "ext-page";
   const f = d.fit, b = d.base;
@@ -1704,6 +1729,7 @@ async function renderTwin(m) {
     <div style="display:flex;gap:8px"><button class="btn" id="twmk" ${d.model?"":"disabled"}>보강 모델 + 인계 7종 만들기</button></div></div>
   <div style="display:flex;gap:20px;align-items:flex-start">
   <div style="flex:1;min-width:0">
+    ${d.model&&od?orderBox(od, d):""}
     <div class="panel"><h2>1. 배관 3D 모델 (Seed)</h2>
       <div class="kv"><span>${d.model?`<b class="mono">${esc(d.model)}</b>`:"아직 없음"}</span><label class="btn sm line">${d.model?"다른 파일":"파일 선택 (.html)"}<input type="file" accept=".html,.htm" id="twup" style="display:none"></label></div>
       ${b?`<div style="font-size:12.5px;color:var(--sub);margin-top:6px">${esc(b.title)} · Three.js ${esc(b.three)} · 장비 ${b.equipment} · 랙 ${b.racks.map(r=>`${esc(r.id)}(${r.dir}, 케이블 단 EL ${r.cable_el} m)`).join(", ")}${b.dx_e?` · 로드 시 동쪽 이동 ${b.dx_e} m 반영`:""} · SHA-256 ${esc(b.sha256.slice(0,12))}…</div>`:""}
@@ -1749,6 +1775,16 @@ async function renderTwin(m) {
     const ok = [...m.querySelectorAll("[data-gset]")].filter(x=>x.checked).map(x=>x.dataset.gset);
     const ch = {}; m.querySelectorAll("[data-gaff]").forEach(x => { if (x.checked) ch[x.dataset.gaff] = x.value; });
     try { const r = await post(P("gate"), {apply: gt.pending.id, settings_ok: ok, choices: ch}); S.summary=null; toast(`승인 반영: ${r.applied.length}개 설정 · 기록 ${r.log}줄`); renderTwin(m); } catch(e) { toast(e.message, true); } };
+  const odgo = async body => { const bt = $("#odrun"); if (bt) { bt.disabled = true; bt.textContent = "실행 중…"; }
+    try { const r = await post(P("orders"), body); if (r.manual) toast("수동 AI 모드: 프롬프트를 복사해 답을 받아 주세요"); else toast(`주문 반영: ${r.done.join(", ")}${r.set?" · "+r.set:""}`); renderTwin(m); }
+    catch(e) { toast(e.message, true); if (bt) { bt.disabled = false; bt.textContent = "주문 실행"; } } };
+  if ($("#odrun")) { $("#odrun").onclick = () => odgo({text: $("#odtext").value}); $("#odtext").onkeydown = e => { if (e.key === "Enter") odgo({text: $("#odtext").value}); }; }
+  if ($("#odansgo")) $("#odansgo").onclick = () => odgo({answer: $("#odans").value});
+  m.querySelectorAll("[data-odundo]").forEach(b => b.onclick = async () => { if (!confirm("이 주문 전 상태로 되돌릴까요?")) return; b.disabled = true;
+    try { await post(P("orders"), {undo: b.dataset.odundo}); toast("되돌렸습니다"); renderTwin(m); } catch(e) { toast(e.message, true); } });
+  m.querySelectorAll("[data-lok],[data-lno]").forEach(b => b.onclick = async () => { const id = b.dataset.lok || b.dataset.lno;
+    try { const r = await post(P("orders"), {lesson: id, accept: !!b.dataset.lok, text: m.querySelector(`[data-ltext="${id}"]`).value, scope: m.querySelector(`[data-lscope="${id}"]`).value});
+      toast(b.dataset.lok ? `승인 · 공통 프로토콜 v${r.common_version}` : "버렸습니다"); renderTwin(m); } catch(e) { toast(e.message, true); } });
   if ($("#gtno")) $("#gtno").onclick = async () => { await post(P("gate"), {cancel: true}); toast("제안을 취소했습니다 (아무것도 바뀌지 않음)"); renderTwin(m); };
   $("#twother").onchange = async () => { const fl = $("#twother").files[0]; if (!fl) return;
     try { await api(P("upload?kind=other3d"), {method:"POST", headers:{"X-Filename":encodeURIComponent(fl.name)}, body:fl}); toast("다른 공종 파일을 올렸습니다. '만들기'를 누르면 충돌을 피합니다"); renderTwin(m); } catch(e) { toast(e.message, true); } };

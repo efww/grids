@@ -35,7 +35,7 @@ from ..pipeline import ORIGINS, PROTO, apply_overrides, compute, impact, load_ex
 
 STATIC = Path(__file__).resolve().parent / "static"
 HOME = Path(os.environ.get("PID_IO_HOME", Path.cwd() / "projects")).resolve()
-VERSION = "v13.1"                                      # pid_io version shown in handoff files
+VERSION = "v13.2"                                      # pid_io version shown in handoff files
 
 KINDS = {"pdf": ".pdf", "template": ".xlsx", "ref": ".xlsx", "concept": ".xlsx", "plot": ".pdf", "plotref": ".pdf",
          "model3d": ".html", "other3d": ".json"}
@@ -1281,6 +1281,13 @@ def export_twin(name: str):
     except Exception:                                      # noqa: BLE001
         pass
     (od / "clash_moves.json").write_text(json.dumps({"other": inst["other"], "moves": moves}, ensure_ascii=False, indent=1), encoding="utf-8")
+    try:
+        from .. import orders as OR
+        OR.load_common(HOME)
+        for fn in ("common_protocol.json", "공통프로토콜.md"):
+            shutil.copy2(OR.proto_dir(HOME) / fn, od / ("COMMON_PROTOCOL.json" if fn.endswith(".json") else "COMMON_PROTOCOL.md"))
+    except Exception:                                      # noqa: BLE001
+        pass
     _finish(name, "twin", od)
     return {"files": [od.name], "dir": od.name, "counts": inst["counts"], "moves": len(moves), "review": sm,
             "left": len(left), "fit": {k: tf[k] for k in ("median_m", "max_m", "anchors", "rack_anchors")}}
@@ -1385,6 +1392,149 @@ def gate_apply(name: str, pid: str, settings_ok: list | None = None, choices: di
 def gate_cancel(name: str):
     (pdir(name) / "proposal_pending.json").unlink(missing_ok=True)
     return {"ok": True}
+
+
+# ------------------------------------------------------------------ v13.2 주문 → 다음 파일 + 공통 프로토콜 학습
+def _order_ids(name: str):
+    s, res, lay = cable_result(name)
+    tr = cable.TR.build(res, lay, s, _plot_dec(name))
+    eq = set()
+    try:
+        mr = model_racks(name)
+        eq |= {e[4] for e in (mr or {}).get("eq") or []}
+    except Exception:                                      # noqa: BLE001
+        mr = None
+    if lay is not None:
+        eq |= set((lay.plot.get("equipment") or {}).keys())
+    return {"jbs": [j["no"] for j in res["jbs"]], "equipment": sorted(eq), "segs": [str(sg["id"]) for sg in tr["segments"]]}, res, lay, mr
+
+
+def _near_slot(res, lay, mr, near: str):
+    geo = res.get("geo") or {}
+    slots = geo.get("slots") or []
+    if any(x[0] == near for x in slots):
+        return near
+    box = next((e for e in ((mr or {}).get("eq") or []) if e[4] == near), None)
+    if box:
+        cx, cy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
+    else:
+        pts = ((lay.plot.get("equipment") or {}).get(near) if lay is not None else None) or []
+        if not pts:
+            raise ValueError(f"{near} 위치를 찾지 못했습니다")
+        cx, cy = sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts)
+        box = None
+    free = [x for x in slots if not (box and box[0] <= x[1] <= box[2] and box[1] <= x[2] <= box[3])]
+    if not free:
+        raise ValueError("빈 JB 자리가 없습니다")
+    return min(free, key=lambda x: (x[1] - cx) ** 2 + (x[2] - cy) ** 2)[0]
+
+
+def _metrics_now(name: str):
+    from .. import basis
+    c = computed(name)
+    s, res, lay = cable_result(name)
+    dd = _plot_dec(name)
+    tr = cable.TR.build(res, lay, s, dd)
+    sp = cable.SP.build(tr, s["values"], lay.m_per_pt if lay else None, dd, _obstacles(lay))
+    return basis.metrics(c[4], res, tr, sp, c[3])
+
+
+def order_run(name: str, text: str, answer: str | None = None):
+    """order -> actions (rules, else Copilot) -> apply -> next 3D set + precheck -> lesson candidate."""
+    from .. import orders as OR, gate, basis
+    text = (text or "").strip()
+    if not text:
+        raise ValueError("주문을 적어 주세요")
+    d = pdir(name)
+    sv = cable.load(d)
+    items = cable.ITEMS
+    ids, res, lay, mr = _order_ids(name)
+    common = OR.load_common(HOME)
+    by, explain, lesson, unclear = "규칙", "", None, ""
+    acts = None if answer else OR.parse_rule(text, items, sv["values"], ids)
+    if acts is None:
+        st = ai.load_settings(HOME)
+        prompt = OR.ai_prompt(text, items, sv["values"], ids, common)
+        if answer is None:
+            if st["provider"] == "none":
+                raise ValueError("규칙으로 알아듣지 못했습니다. AI 설정(Copilot)을 켜거나 설정 이름·선택지 글자를 그대로 써 주세요")
+            if st["provider"] == "manual":
+                ait.save(d / "order_pending.json", {"text": text, "prompt": prompt})
+                return {"manual": True, "prompt": prompt}
+            answer = ai.ask(st, prompt)
+        data = ait.extract_json(answer, want=("actions",))
+        acts, explain = data.get("actions") or [], str(data.get("explain", ""))[:300]
+        lesson, unclear = data.get("lesson") or None, str(data.get("unclear", ""))[:200]
+        by = "AI (" + st["provider"] + ")" if st["provider"] != "manual" else "AI (수동)"
+        (d / "order_pending.json").unlink(missing_ok=True)
+    acts, bad = OR.validate(acts, items, ids)
+    if not acts:
+        raise ValueError("실행할 동작이 없습니다" + (": " + "; ".join(bad) if bad else "") + (f" (못 알아들은 부분: {unclear})" if unclear else ""))
+    oid = time.strftime("%Y%m%d_%H%M%S")
+    (d / "orders").mkdir(exist_ok=True)
+    undo = {"cable": json.loads((d / "cable.json").read_text(encoding="utf-8")) if (d / "cable.json").exists() else None,
+            "plot_decisions": _plot_dec(name)}
+    ait.save(d / "orders" / f"{oid}_undo.json", undo)
+    m0 = _metrics_now(name)
+    done = []
+    for a in acts:
+        if a["type"] == "set":
+            cable.set_value(sv, a["key"], a["value"])
+            cable.save(d, sv)
+        elif a["type"] == "jb_move":
+            slot = _near_slot(res, lay, mr, a["near"])
+            plot_update(name, {"jb_move": {"jbs": [a["jb"]], "slot": slot}})
+            a["slot"] = slot
+        elif a["type"] == "jb_reset":
+            plot_update(name, {"jb_reset": a["jb"]})
+        elif a["type"] == "tray_size":
+            plot_update(name, {"tray_size": {k: a[k] for k in ("seg", "cls", "w", "n")}})
+        elif a["type"] == "sup_over":
+            plot_update(name, {"sup_over": {k: a[k] for k in ("seg", "type", "span") if k in a}})
+        done.append(OR.describe(a, items) + (f" ({a['slot']})" if a.get("slot") else ""))
+    m1 = _metrics_now(name)
+    tw = None
+    if meta(name).get("files", {}).get("model3d"):
+        tw = export_twin(name)
+    gate.log(d, [{"source": f"사람 주문 ({by} 해석)", "what": x, "before": text, "after": "반영", "approved": "주문 = 사람 결정"} for x in done])
+    if lesson is None and any(a["type"] == "set" for a in acts):
+        lesson = {"text": "이 프로젝트: " + ", ".join(OR.describe(a, items) for a in acts if a["type"] == "set"), "scope": "project"}
+    les = OR.add_lesson(HOME, name, (lesson or {}).get("text", ""), (lesson or {}).get("scope", "project"), oid, by) if lesson else None
+    rec = {"id": oid, "at": time.strftime("%Y-%m-%d %H:%M"), "text": text, "by": by, "explain": explain, "done": done, "bad": bad,
+           "unclear": unclear, "words": basis.words(m0, m1), "set": tw["dir"] if tw else None,
+           "hold": (tw or {}).get("review", {}).get("hold"), "lesson": les["id"] if les else None, "undone": False}
+    allo = ait.load(d / "orders.json", [])
+    allo.append(rec)
+    ait.save(d / "orders.json", allo)
+    return rec
+
+
+def order_undo(name: str, oid: str):
+    from .. import gate
+    d = pdir(name)
+    u = ait.load(d / "orders" / f"{oid}_undo.json", None)
+    if not u:
+        raise ValueError("되돌릴 기록이 없습니다")
+    if u["cable"] is not None:
+        (d / "cable.json").write_text(json.dumps(u["cable"], ensure_ascii=False, indent=1), encoding="utf-8")
+    (d / "plot_decisions.json").write_text(json.dumps(u["plot_decisions"], ensure_ascii=False, indent=1), encoding="utf-8")
+    allo = ait.load(d / "orders.json", [])
+    for r in allo:
+        if r["id"] == oid:
+            r["undone"] = True
+    ait.save(d / "orders.json", allo)
+    gate.log(d, [{"source": "사람", "what": f"주문 되돌리기 {oid}", "before": "", "after": "주문 전 상태", "approved": "사람"}])
+    tw = export_twin(name) if meta(name).get("files", {}).get("model3d") else None
+    return {"ok": True, "set": tw["dir"] if tw else None}
+
+
+def orders_view(name: str):
+    from .. import orders as OR
+    c = OR.load_common(HOME)
+    return {"orders": ait.load(pdir(name) / "orders.json", [])[-20:], "pending": ait.load(pdir(name) / "order_pending.json", None),
+            "lessons": [x for x in OR.lessons(HOME) if x["status"] == "pending"][-30:],
+            "common": {"version": c["version"], "rules": c["rules"], "changelog": c.get("changelog", [])[-5:]},
+            "actions": OR.ACTIONS}
 
 
 def review3d_view(name: str):
@@ -1928,6 +2078,22 @@ class H(BaseHTTPRequestHandler):
                 if not f.exists():
                     return self._send(404, {"error": "no file"})
                 return self._send(200, f.read_bytes(), "image/png")
+            if act == "orders":
+                from .. import orders as OR
+                if method == "GET":
+                    return self._send(200, orders_view(name))
+                b = self._json()
+                with CALC:
+                    if b.get("undo"):
+                        return self._send(200, order_undo(name, b["undo"]))
+                    if b.get("lesson"):
+                        return self._send(200, OR.decide_lesson(HOME, b["lesson"], bool(b.get("accept")), b.get("text"), b.get("scope")))
+                    if b.get("answer") is not None:
+                        pend = ait.load(pdir(name) / "order_pending.json", None)
+                        if not pend:
+                            raise ValueError("대기 중인 주문이 없습니다")
+                        return self._send(200, order_run(name, pend["text"], b["answer"]))
+                    return self._send(200, order_run(name, b.get("text", "")))
             if act == "review3d":
                 if method == "POST":
                     return self._send(200, review3d_answer(name, self._json().get("text", "")))

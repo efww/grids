@@ -342,7 +342,7 @@ def main(name):
     try:
         out = S.export(name, {})
         import openpyxl
-        f = S.pdir(name) / "output" / out["files"][0]
+        f = S.find_out(name, out["files"][0])
         ws = openpyxl.load_workbook(f, read_only=True)["Instrument_Index"]
         hdr = [x for x in next(ws.iter_rows(min_row=2, max_row=2, values_only=True))]
         if tuple(hdr[33:38]) != ("Junction Box", "Multi Cable Number", "Multi Cable Spec.", "Field Cable No", "Field Cable Spec."):
