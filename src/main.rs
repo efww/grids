@@ -2806,6 +2806,65 @@ mod tests { tr("in", "안") }
         assert!(bad.is_empty(), "{} English / Korean pairs disagree:\n{}", bad.len(), bad.join("\n"));
     }
 
+    // The status-line shortcut tips (TIP_*): each tip's key is in the shortcut list (Ctrl+/), so a changed or
+    // dropped shortcut can't leave a tip naming the old key; each is shown by a mouse action (mouse_tip) and
+    // retired by its key (key_used) somewhere in the app code; and the READMEs' tip paragraph names the mouse
+    // action in both languages. Calls are matched as written, `mouse_tip(TIP_X)`: an expression in the
+    // parentheses (`if … { TIP_A } else { TIP_B }`) is not seen, so keep one call per tip.
+    #[test]
+    fn key_tips_consistent() {
+        // (tip, its name in the code, the README.md words, the README.ko.md words) for each mouse action
+        let tips = [
+            (TIP_BACK, "TIP_BACK", "←", "←"),
+            (TIP_FWD, "TIP_FWD", "→", "→"),
+            (TIP_UP, "TIP_UP", "↑", "↑"),
+            (TIP_FAVS, "TIP_FAVS", "★", "★"),
+            (TIP_EV, "TIP_EV", "the Everything magnifier", "Everything 돋보기"),
+            (TIP_ZOOM, "TIP_ZOOM", "double-clicking a pane header", "패널 머리줄 더블클릭"),
+            (TIP_NEW_TAB, "TIP_NEW_TAB", "a tab's +", "탭의 +"),
+            (TIP_CLOSE_TAB, "TIP_CLOSE_TAB", "the current tab's ×", "지금 탭의 ×"),
+            (TIP_LOAD, "TIP_LOAD", "Load", "불러오기"),
+        ];
+        let mut ids: Vec<usize> = tips.iter().map(|t| t.0).collect();
+        ids.sort();
+        assert_eq!(ids, (0..TIP_N).collect::<Vec<_>>(), "the table must name each TIP_* (0..TIP_N) once");
+
+        let listed: std::collections::BTreeSet<String> = app_key_rows(KEYS_EN).iter().flatten().flat_map(|k| key_words(&k[k.find(':').unwrap() + 1..])).collect();
+        // app code only: a file's tests (and this one) are cut off as in ui_pairs, and // comments are skipped
+        let code: Vec<(&str, &str)> = SOURCES
+            .iter()
+            .map(|&(file, src)| {
+                let cut = src.match_indices("\n#[cfg(test)]").map(|(i, _)| i).find(|&i| src[i + 13..].trim_start().starts_with("mod "));
+                (file, &src[..cut.unwrap_or(src.len())])
+            })
+            .collect();
+        let called = |call: &str| code.iter().any(|(_, src)| src.lines().any(|l| l.split("//").next().unwrap().contains(call)));
+        let tip_line = |md: &'static str, start: &str, eg: &str| {
+            let l = md.lines().find(|l| l.starts_with(start)).unwrap_or_else(|| panic!("no line starting {start:?}"));
+            l.split(eg).next().unwrap() // the actions, not the example tip after them
+        };
+        let (md, md_ko) = (tip_line(include_str!("../README.md"), "Shortcut tips:", "(e.g."), tip_line(include_str!("../README.ko.md"), "단축키 팁:", "(예:"));
+
+        let mut bad = Vec::new();
+        for (tip, name, en, ko) in tips {
+            let key = TIP_KEYS[tip];
+            if !key_words(key).first().is_some_and(|k| k == key && listed.contains(k)) {
+                bad.push(format!("{name}: its key {key:?} is not in the shortcut list (Ctrl+/)"));
+            }
+            for call in [format!("mouse_tip({name})"), format!("key_used({name})")] {
+                if !called(&call) {
+                    bad.push(format!("{name}: no `{call};` in the app code (written as is, one call per tip)"));
+                }
+            }
+            for (doc, file, words) in [(md, "README.md 'Shortcut tips:'", en), (md_ko, "README.ko.md '단축키 팁:'", ko)] {
+                if !doc.contains(words) {
+                    bad.push(format!("{name}: {file} doesn't name its mouse action {words:?}"));
+                }
+            }
+        }
+        assert!(bad.is_empty(), "shortcut tips out of step:\n{}", bad.join("\n"));
+    }
+
     // Every reason a beep now comes with: both languages, one status line, the name in both, and seen by the
     // pair check above (one ("en", "ko") line each in select_pattern.rs).
     #[test]
