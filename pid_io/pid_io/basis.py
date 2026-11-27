@@ -708,6 +708,8 @@ def write(path: Path, project: str, rows, concept, s, res, tr, sp, idx_map, sens
            ["누락", "보완함 (v12.1)", "인덱스 파일에 트레이·트렌치·Perforated·서포트·길이·근거가 없었음 → 39~46열 추가 "
                                    "(Field/Multi Cable Length, Perforated Tray·브래킷, Ladder Tray·UG Trench 경로, 사다리/UG m, 케이블 산출 근거)"]]
     _sheet(wb, "10_검토의견", ["항목", "판정", "내용"], rv, [8, 22, 140], wrap=(3,))
+    from . import protocol
+    protocol.write_sheet(wb, protocol.build(concept, s["values"]), _sheet)
     # relations per tag / per segment
     tc = []
     for t, mm in sorted(idx_map.items()):

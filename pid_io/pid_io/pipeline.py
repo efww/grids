@@ -91,6 +91,17 @@ def apply_overrides(syms, rules: dict, overrides: dict | None):
             s.score = max(s.score, 0.95)
             s.notes = []
         out.append(s)
+    # v13: balloons the AI found that the reader missed (accepted by a person) become symbols
+    for a in overrides.get("added") or []:
+        from .extract import Symbol
+        same = next((x for x in syms if x.page == a["page"]), None)
+        func, number = a["tag"].split("-", 1) if "-" in a["tag"] else (a["tag"], "")
+        cls = a["class"] if a["class"] in ROLE_OF else "FIELD"
+        out.append(Symbol(page=a["page"], dwg=same.dwg if same else "", title=same.title if same else "", func=func,
+                          number=number, cls=cls, system=SYS_OF[cls], role=ROLE_OF[cls], score=0.9, cx=a["cx"], cy=a["cy"],
+                          radius=12.0, feats={}, unit=same.unit if same else "",
+                          override={"io": a.get("io"), "system": a.get("system"), "reason": "AI 누락 후보 (승인): " + a.get("reason", "")},
+                          notes=[]))
     extra = [{"match": f"^{re.escape(r['func'])}$", "desc": r["desc"], "io": r["io"],
               "system": {"F&G": "FGS"}.get(r["system"], r["system"]), "signal": "", "ai": True}
              for r in overrides.get("rules", [])]

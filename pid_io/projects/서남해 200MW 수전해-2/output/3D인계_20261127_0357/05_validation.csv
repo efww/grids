@@ -1,0 +1,28 @@
+﻿case_id,항목,기대값/허용차 (사전 잠금),실행값,판정,확인자,비고
+T-NORMAL,케이블이 필요한 IO 행 → 인덱스 JB·케이블 열,OK (불변 조건),OK,PASS,pid_io audit,"케이블 대상 811행 중 인덱스 열이 빈 행 0. 케이블 없는 행 604 = IO 없음 441, 스페어 IO (JB 스페어 페어로 반영) 163"
+T-NORMAL,IO 1점 = 케이블 하나에 정확히 한 번,OK (불변 조건),OK,PASS,pid_io audit,"케이블에 없는 IO 0, 두 케이블에 들어간 태그 0 (같은 태그 번호를 쓰는 트레인 복제·XXXX 태그는 제외)"
+T-NORMAL,분기 케이블 → Perforated 트레이 (길이 같음),OK (불변 조건),OK,PASS,pid_io audit,"Perforated 없는 분기 0, 길이 다른 것 0"
+T-NORMAL,Perforated → 브래킷 (태그별),OK (불변 조건),OK,PASS,pid_io audit,"브래킷 합 2,988개 = Σ ceil(PT 길이 ÷ 1.5 m)"
+T-NORMAL,간선 케이블 → 트레이·트렌치 경로,OK (불변 조건),OK,PASS,pid_io audit,경로 없는 간선 0 (PLOT 위치 못 찾음 = 가정 길이)
+T-NORMAL,JB 하나에 멀티 하나,OK (불변 조건),OK,PASS,pid_io audit,멀티가 0 또는 2 이상인 JB 0
+T-NORMAL,트레이·트렌치 구간 → 서포트,OK (불변 조건),OK,PASS,pid_io audit,서포트가 없는 구간 0
+T-NORMAL,사다리 트레이·트렌치에 분기(싱글) 케이블 없음,OK (불변 조건),OK,PASS,pid_io audit,"구간에 실린 케이블 종류: 멀티 428, 패키지 1952, 통신 168, MCC 35 (분기는 Perforated에만)"
+T-NORMAL,Perforated에는 분기 케이블만,OK (불변 조건),OK,PASS,pid_io audit,PT 하나 = 분기 케이블 하나 (JB → 계기)
+T-NORMAL,사다리 트레이에 케이블 1~2가닥뿐인 트레이,OK (불변 조건),주의,HOLD,pid_io audit,"케이블 1~2가닥 때문에 사다리 트레이(300)를 따로 까는 곳: 통신 14, 신호 26. 통신(-C)이면 신호 트레이 칸막이(divider), 신호면 Perforated·컨듀잇이 맞을 수 있음 (결정 필요)"
+T-NORMAL,"통신 케이블 ↔ 통신 트레이(-C), 신호 케이블 ↔ 신호·IS 트레이",OK (불변 조건),OK,PASS,pid_io audit,"통신이 신호 트레이에 0, 신호가 통신 트레이에 0"
+T-NORMAL,IS 케이블 ↔ IS 트레이(-I) (별도일 때),OK (불변 조건),OK,PASS,pid_io audit,어긋난 것 0
+T-NORMAL,서포트 형식 ↔ 구간 종류 (랙 위 / AG / UG),OK (불변 조건),OK,PASS,pid_io audit,형식과 구간 종류가 안 맞는 서포트 0
+T-NORMAL,익스펜션 조인트는 사다리 트레이에만,OK (불변 조건),OK,PASS,pid_io audit,
+T-NORMAL,케이블 길이 ≥ 탄 트레이·트렌치 길이,OK (불변 조건),OK,PASS,pid_io audit,트레이 m가 케이블 길이보다 긴 케이블 0
+T-NORMAL,인덱스 Multi Cable Number = 케이블 스케줄,OK (불변 조건),OK,PASS,pid_io audit,
+T-NORMAL,인덱스 Junction Box = JB_List 태그,OK (불변 조건),OK,PASS,pid_io audit,
+T-NORMAL,케이블 사양별 m 합 = 스케줄 합,OK (불변 조건),OK,PASS,pid_io audit,"55,575 m"
+T-NORMAL,사다리 트레이 폭별 m 합 = 구간 길이 × 단 수 합,OK (불변 조건),OK,PASS,pid_io audit,
+T-NORMAL,서포트 형식별 개수 합 = 서포트 목록,OK (불변 조건),OK,PASS,pid_io audit,
+T-NORMAL,좌표 맞춤 잔차 (장비 기준 중앙값 / 최대),≤ 5 m / ≤ 15 m (개념 모델),3.36 / 9.63 m,PASS,pid_io twin.fit,X = 0.15583·x_pt + -87.36 · Z = 0.15583·y_pt + -131.13 · Y = EL (cable tier on racks = model RK.cable)
+T-NORMAL,다른 공종과 충돌 (계장이 비킴),남은 충돌 0,다른 공종 파일 없음,NOT_APPLICABLE,pid_io twin.avoid,
+T-NORMAL,3D 사전 점검 (장비 관통·랙 밖·떠 있는 트레이·겹침·JB 위치·남은 충돌),HOLD 0,HOLD 0 · 전체 1 (V09 1),PASS,pid_io review3d,3D_REVIEW_PRECHECK.csv · 회사 AI 리뷰: 3D_REVIEW_PROMPT.md
+T-CHANGED-JB60,jb_sizes = 60,기대값 미잠금 (기록),"사다리 m 800 → 804 (+0.5%) · 사다리 발주 m 883 → 887 (+0.5%) · 트레이 면적 m² 335.4 → 378.6 (+12.9%) · 트렌치 면적 m² 446.4 → 472.8 (+5.9%) · 강재 kg 10,883 → 10,990 (+1.0%) · 강재 발주 kg 11,973 → 12,090 (+1.0%) · 클램프 384 → 388 (+1.0%) · 앵커 8,568 → 8,576 (+0.1%) · JB 크기 40P×28 60P×2 → 60P×30 · 케이블 사양: [40P x 1.25SQ IS-OS 16 | 40P x 1.25SQ OS 12 | 60P x 1.25SQ IS-OS 1 | 60P x 1.25SQ OS 1] → [60P x 1.25SQ IS-OS 17 | 60P x 1.25SQ OS 13] · JB 사양: [SUS316 Ex e IIC T4 IP66 단자 120 28 | SUS316 Ex e IIC T4 IP66 단자 180 2] → [SUS316 Ex e IIC T4 IP66 단자 180 30]",RECORDED,pid_io,05 기대값은 담당자가 사전 잠금
+T-CHANGED-AG,trunk_off = AG 서포트,기대값 미잠금 (기록),"케이블 m 55,575 → 54,690 (-1.6%) · 멀티 m 47,860 → 47,045 (-1.7%) · 통신 m 3,380 → 3,310 (-2.1%) · 사다리 m 800 → 2,374 (+196.8%) · 사다리 발주 m 883 → 2,613 (+195.9%) · 트레이 면적 m² 335.4 → 1,045.8 (+211.8%) · UG m 990 → 0 (-100.0%) · UG 발주 m 1,040 → 0 (-100.0%) · 트렌치 줄 52 → 0 (-100.0%) · 트렌치 면적 m² 446.4 → 0.0 (-100.0%) · 서포트(포스트) 146 → 573 (+292.5%) · 강재 kg 10,883 → 29,550 (+171.5%) · 강재 발주 kg 11,973 → 32,509 (+171.5%) · 클램프 384 → 1,370 (+256.8%) · 앵커 8,568 → 9,504 (+10.9%) · 조인트 3 → 15 (+400.0%)",RECORDED,pid_io,05 기대값은 담당자가 사전 잠금
+T-CHANGED-SPARE30,jb_spare = 0.3,기대값 미잠금 (기록),"케이블 수 415 → 417 (+0.5%) · 케이블 m 55,575 → 55,945 (+0.7%) · 멀티 m 47,860 → 48,230 (+0.8%) · 케이블 사양: [6P x 1.25SQ OS 118] → [24P x 1.25SQ OS 1 | 6P x 1.25SQ OS 119]",RECORDED,pid_io,05 기대값은 담당자가 사전 잠금
+T-MISSING-PLOT,plot_use = 가정 길이만,기대값 미잠금 (기록),"케이블 수 415 → 406 (-2.2%) · 케이블 m 55,575 → 42,245 (-24.0%) · 분기 m 4,335 → 8,750 (+101.8%) · 멀티 m 47,860 → 30,855 (-35.5%) · 통신 m 3,380 → 2,640 (-21.9%) · JB 30 → 21 (-30.0%) · 사다리 m 800 → 0 (-100.0%) · 사다리 발주 m 883 → 0 (-100.0%) · 트레이 면적 m² 335.4 → 0.0 (-100.0%) · UG m 990 → 0 (-100.0%) · UG 발주 m 1,040 → 0 (-100.0%) · 트렌치 줄 52 → 0 (-100.0%) · 트렌치 면적 m² 446.4 → 0.0 (-100.0%) · Perforated m 4,335 → 8,750 (+101.8%) · 서포트(포스트) 146 → 0 (-100.0%) · 강재 kg 10,883 → 13,300 (+22.2%) · 강재 발주 kg 11,973 → 14,631 (+22.2%) · 클램프 384 → 0 (-100.0%) · 앵커 8,568 → 12,000 (+40.1%) · 조인트 3 → 0 (-100.0%) · JB 크기 40P×28 60P×2 → 40P×17 60P×4 · 케이블 사양: [40P x 1.25SQ IS-OS 16 | 40P x 1.25SQ OS 12 | 60P x 1.25SQ IS-OS 1 | 60P x 1.25SQ OS 1] → [40P x 1.25SQ IS-OS 9 | 40P x 1.25SQ OS 8 | 60P x 1.25SQ IS-OS 2 | 60P x 1.25SQ OS 2] · JB 사양: [SUS316 Ex e IIC T4 IP66 단자 120 28 | SUS316 Ex e IIC T4 IP66 단자 180 2] → [SUS316 Ex e IIC T4 IP66 단자 120 17 | SUS316 Ex e IIC T4 IP66 단자 180 4]",RECORDED,pid_io,05 기대값은 담당자가 사전 잠금

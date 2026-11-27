@@ -81,7 +81,7 @@ for (const r of D.racks) {
 for (const t of D.trays) {
   const a = V(t.start), b = V(t.end);
   if (t.kind === "ug_trench") { box(a, b, (t.width_mm || 300) / 1000, 0.35, 0x8a6d00, groups.ug, `${t.no} · 트렌치 ${t.width_mm} · ${t.length_m} m · 케이블 ${t.cables.length}`); continue; }
-  const n = t.tiers || 1, w = t.width_mm / 1000, off = (t.side_offset_mm || 0) / 1000;
+  const n = t.tiers || 1, w = t.width_mm / 1000, off = (t.side_offset_mm || 0) / 1000 + w / 2;   // near edge from the segment's first tray + half width
   const dir = new THREE.Vector3().subVectors(b, a).normalize(), side = new THREE.Vector3(-dir.z, 0, dir.x).multiplyScalar(off);
   for (let i = 0; i < n; i++) {
     const up = new THREE.Vector3(0, i * 0.3 + 0.075, 0);

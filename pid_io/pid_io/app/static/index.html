@@ -175,6 +175,7 @@ details summary::marker{color:var(--green)}
     <div class="st ext" data-s="jb"><i>7</i>JB<span class="chip" style="margin-left:auto;font-size:10.5px;padding:0 6px">확장</span></div>
     <div class="st ext" data-s="tray"><i>8</i>트레이<span class="chip" style="margin-left:auto;font-size:10.5px;padding:0 6px">확장</span></div>
     <div class="st ext" data-s="support"><i>9</i>서포트<span class="chip" style="margin-left:auto;font-size:10.5px;padding:0 6px">확장</span></div>
+    <div class="st ext" data-s="twin"><i>10</i>3D 인계<span class="chip" style="margin-left:auto;font-size:10.5px;padding:0 6px">확장</span></div>
     <div class="st" data-s="ai" style="margin-top:14px;border-top:1px solid var(--line-l)"><i>AI</i>AI 연결 설정</div>
     <div class="foot">도면 인식은 한 번,<br>체크리스트를 바꾸면 IO가<br>즉시 다시 계산됩니다.<br><br><span class="mono">IO 1점 = 인덱스 1행</span><br><br><span id="fontst"></span></div>
   </nav>
@@ -200,7 +201,7 @@ const post = (path, data) => api(path, {method:"POST", headers:{"Content-Type":"
 const P = p => `p/${encodeURIComponent(S.project)}/${p}`;
 function toast(msg, err) { const t=$("#toast"); t.textContent=msg; t.className="toast"+(err?" err":""); t.style.display="block"; clearTimeout(t._h); t._h=setTimeout(()=>t.style.display="none", err?6000:2500); }
 
-function go(screen) { S.tok++; S.screen = screen; if (["cable","jb","tray","support"].includes(screen)) CK.data = null; $("#main").className = ""; render(); }
+function go(screen) { S.tok++; S.screen = screen; if (["cable","jb","tray","support","twin"].includes(screen)) CK.data = null; $("#main").className = ""; render(); }
 document.querySelectorAll("#nav .st").forEach(el => el.onclick = () => go(el.dataset.s));
 
 function navState() {
@@ -208,7 +209,7 @@ function navState() {
   document.querySelectorAll("#nav .st").forEach(el => {
     const s = el.dataset.s;
     el.classList.toggle("on", s === S.screen);
-    el.classList.toggle("dis", (!S.project && !["projects","ai"].includes(s)) || (!ex && ["concept","review","output","cable","jb","tray","support"].includes(s)));
+    el.classList.toggle("dis", (!S.project && !["projects","ai"].includes(s)) || (!ex && ["concept","review","output","cable","jb","tray","support","twin"].includes(s)));
     el.classList.toggle("done", (s==="projects" && S.project) || (s==="extract" && ex));
   });
   $("#pname").textContent = S.project || "선택 안 됨";
@@ -232,6 +233,7 @@ async function render() {
     if (S.screen === "jb") return await renderJB(m);
     if (S.screen === "tray") return await renderTray(m);
     if (S.screen === "support") return await renderSupport(m);
+    if (S.screen === "twin") return await renderTwin(m);
   } catch (e) { toast(e.message, true); }
 }
 
@@ -284,7 +286,7 @@ function fileCard(kind, title, desc, required) {
           : `<div class="n">${desc}<br><span style="font-size:12px;color:var(--mute)">버튼을 누르거나 파일을 여기로 끌어 놓으세요</span></div>`}
       ${u.busy ? `<div class="prog"><i style="width:${u.pct||0}%"></i></div>` : ""}
       ${u.err ? `<div class="er">✕ ${esc(u.err)}</div>` : ""}
-      <label class="btn sm ${f?"line":""}">${f?"다른 파일로 바꾸기":"파일 선택"}<input type="file" data-k="${kind}" accept="${kind==="pdf"?".pdf":".xlsx"}"></label>
+      <label class="btn sm ${f?"line":""}">${f?"다른 파일로 바꾸기":"파일 선택"}<input type="file" data-k="${kind}" accept="${({pdf:".pdf",plot:".pdf",plotref:".pdf",model3d:".html,.htm"})[kind]||".xlsx"}"></label>
     </div>
   </div>`;
 }
@@ -344,6 +346,11 @@ async function renderExtract(m) {
     ${fileCard("pdf","P&ID PDF","레전드 포함 벡터 PDF",true)}
     ${fileCard("template","인덱스 양식",`표준 Instrument Index 양식 (.xlsx). 열 순서·머리글이 표준과 같아야 합니다. <a href="/api/template_std" download>표준 양식 받기</a>`,true)}
     ${fileCard("ref","레퍼런스 인덱스","채점용 (INDEX 시트). 없어도 결과 동일",false)}
+  </div>
+  <div class="grid g3" style="margin-top:16px">
+    ${fileCard("plot","PLOT PLAN","벡터 PDF (선택). 올리면 STEP 6~9에서 도면 좌표로 JB·경로·트레이·서포트를 잡습니다. 추출과 상관없이 언제 올려도 됩니다",false)}
+    ${fileCard("plotref","축척 참고 PLOT (선택)","축척 표기가 없는 확대본이면, 축척(1:N)이 적힌 이전 PLOT PLAN을 올리면 같은 장비 크기로 축척을 맞춥니다",false)}
+    <div class="panel" style="margin:0;font-size:12.5px;color:var(--sub);line-height:1.6"><b style="color:var(--ink)">PLOT PLAN</b><br>여기서 올려도 되고 STEP 6 'PLOT PLAN 초안' 탭에서 올려도 같습니다. 새 PLOT을 올리면 이전 PLOT에서 고친 위치(JB 이동·경로·트레이 크기)는 지워지고 새로 계산합니다.</div>
   </div>
   <div class="panel" style="margin-top:16px">
     <div style="display:flex;justify-content:space-between;margin-bottom:8px"><b>${running?esc(j.msg):(j.state==="error"?"오류":(st.extracted?"추출 완료":"대기"))}</b>
@@ -696,6 +703,28 @@ function renderDetail() {
 }
 /* ---------------------------------------------------------------- AI */
 const CLS_KO = {FIELD:"현장 계기", DCS_SHARED:"DCS 표시/제어", PANEL_CR:"제어실 패널", PANEL_BEHIND:"패널 뒤", PLC:"PLC", ESD_INTERLOCK:"ESD 인터록", DCS_INTERLOCK:"DCS 인터록", HW_INTERLOCK:"하드와이어 인터록", NOT_A_TAG:"계기 아님"};
+function aiSugLine(x) {
+  const kindKo = {symbols:"심볼", missing:"놓친 심볼", legend:"레전드", legend_rule:"레전드 기능코드", funcs:"기능코드", ioconf:"IO 판정"}[x.kind] || x.kind;
+  const io = v => Array.isArray(v) ? (v.join("/")||"IO 없음") : (v==="-"||!v ? "IO 없음" : v);
+  const sys = x.system && x.system !== "-" ? " · " + x.system : "";
+  let head, body;
+  if (x.kind === "symbols" || x.kind === "missing") { head = x.text || x.tag; body = `${CLS_KO[x.class]||x.class} ${x.tag||""} · ${io(x.io)}${sys}${x.kind==="missing"?` · ${x.page}쪽`:""}`; }
+  else if (x.kind === "legend") { head = x.shape; body = `${CLS_KO[x.class]||x.class}${sys}${x.note?" · "+x.note:""}`; }
+  else { head = x.func; body = `${x.desc||""} · ${io(x.io)}${sys}`; }
+  const ag = x.agree === undefined ? "" : (x.agree ? ` <span class="chip g" style="font-size:10.5px">두 번 물어 같음</span>` : ` <span class="chip" style="font-size:10.5px;color:var(--red)">두 답 다름</span>`);
+  return `<span class="chip" style="font-size:10.5px">${kindKo}</span> <b class="mono">${esc(head||"")}</b> → ${esc(body)}${ag}`;
+}
+function kpiBox(k) {
+  const cell = (l, v, sub) => `<div style="flex:1;min-width:96px;background:#f6f7f6;padding:6px 8px"><div style="font-size:11px;color:var(--sub)">${l}</div><div style="font-size:17px;font-weight:600">${v}</div>${sub?`<div style="font-size:10.5px;color:var(--sub)">${sub}</div>`:""}</div>`;
+  const r = k.ref && !k.ref.error ? k.ref : null;
+  return `<details style="margin-top:10px" open><summary style="cursor:pointer;font-size:12.5px"><b>심볼 인식률 (KPI)</b></summary>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
+      ${cell("계기 심볼", k.symbols)}${cell("규칙 확정", k.confirmed_pct+"%", `${k.confirmed}개`)}${cell("후보·저신뢰", `${k.candidates} / ${k.low}`)}
+      ${cell("AI 승인/거절/대기", `${k.ai_accepted} / ${k.ai_rejected} / ${k.ai_pending}`)}${cell("추가·레전드", `${k.added} / ${k.legend}`)}
+      ${r?cell("기존 인덱스 대비 찾음", r.recall_pct+"%", `${r.found}/${r.ref_tags}`):""}</div>
+    ${r&&r.missing_examples.length?`<div style="font-size:11.5px;color:var(--sub);margin-top:4px">기존 인덱스에만 있는 태그 예: <span class="mono">${esc(r.missing_examples.join(", "))}</span> → '놓친 심볼 찾기'로 확인</div>`:""}
+  </details>`;
+}
 const PROVIDER_NAME = {none:"사용 안 함", manual:"수동 (채팅 AI에 복사·붙여넣기)", copilot_cli:"GitHub Copilot CLI"};
 let aiPoll = null;
 async function renderAIPanel() {
@@ -717,7 +746,10 @@ async function renderAIPanel() {
       <button class="btn sm" data-ai="symbols" ${!c.symbols||running||a.provider==="none"?"disabled":""}>심볼 재판정 (${c.symbols})</button>
       <button class="btn sm line" data-ai="ioconf" ${!c.ioconf||running||a.provider==="none"?"disabled":""}>IO 판정 불일치 판단 (${c.ioconf||0})</button>
       <button class="btn sm line" data-ai="funcs" ${!c.funcs||running||a.provider==="none"?"disabled":""}>모르는 기능코드 IO 추정 (${c.funcs})</button>
+      <button class="btn sm line" data-ai="legend" ${!(c.legend_pages||[]).length||running||a.provider==="none"?"disabled":""}>레전드 읽기 (${(c.legend_pages||[]).length}쪽)</button>
+      <button class="btn sm line" data-ai="missing" ${running||a.provider==="none"?"disabled":""}>놓친 심볼 찾기 (3쪽씩 · 확인 ${c.missing_done||0}쪽)</button>
     </div>
+    ${a.kpi?kpiBox(a.kpi):""}
     ${running?`<p style="margin-top:10px;color:var(--green-d)">${esc(a.job.msg)}…</p>`:""}
     ${a.job && a.job.state==="error"?`<p style="margin-top:10px;color:var(--red)">${esc(a.job.msg)}</p>`:""}
     ${a.pending?manualBox(a.pending):""}
@@ -727,7 +759,7 @@ async function renderAIPanel() {
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><b style="font-size:13px">AI 제안 ${pend.length}건</b>
         <button class="btn sm line" id="aiall">신뢰도 0.8 이상 모두 승인</button></div>
       ${pend.map(x=>`<div class="ritem" style="padding:8px 4px" data-sg="${x.sid}">
-        <div class="a"><span><b class="mono">${esc(x.kind==="symbols"?(x.text||x.tag):x.func)}</b> → ${esc(x.kind==="symbols"?`${CLS_KO[x.class]||x.class} ${x.tag} · ${x.io==="-"?"IO 없음":x.io} · ${x.system}`:`${x.desc} · ${x.io.join("/")||"IO 없음"}${x.system&&x.system!=="-"?" · "+x.system:""}`)}</span>
+        <div class="a"><span>${aiSugLine(x)}</span>
           <span class="mono" style="color:var(--sub)">${Math.round((x.confidence||0)*100)}%</span></div>
         <div class="b">${esc(x.reason)}</div>
         <div style="margin-top:6px;display:flex;gap:6px"><button class="btn sm" data-ok="${x.sid}">승인</button><button class="btn sm line" data-no="${x.sid}">거절</button></div>
@@ -748,7 +780,7 @@ async function renderAIPanel() {
   });
   box.querySelectorAll("[data-sg]").forEach(el => el.onclick = () => {
     const x = a.suggestions.find(y=>y.sid===el.dataset.sg);
-    if (x && x.id) showBig(`/api/${P("card?k="+encodeURIComponent(x.id))}`);
+    if (x && x.id && (x.kind==="symbols"||x.kind==="ioconf")) showBig(`/api/${P("card?k="+encodeURIComponent(x.id))}`);
   });
   const all = $("#aiall"); if (all) all.onclick = async () => { await post(P("ai/decide"), {min_conf:0.8}); S.summary=null; S.review=null; if (S.screen === "review") renderReview($("#main")); };
   const cp = $("#aicopy"); if (cp) cp.onclick = async () => { const t=$("#aiprompt"); t.select(); try { await navigator.clipboard.writeText(t.value); } catch(e) { document.execCommand("copy"); } toast("질문을 복사했습니다. Copilot 채팅에 붙여넣으세요"); };
@@ -858,14 +890,42 @@ async function renderOutput(m) {
       <div class="kv" style="margin-top:18px"><span><b>산출근거 엑셀</b> - 누락·관계 점검, IO·케이블·JB·트레이·서포트 산출식(숫자 대입), 자재, 체크리스트·설정을 하나씩 바꿨을 때 무엇이 얼마나 바뀌는지, 검토 의견, Tag_Chain·Tray_Chain</span><span></span></div>
       <div style="margin-top:8px;display:flex;gap:8px"><button class="btn line" id="mkb">산출근거 만들기 (약 1~2분)</button><button class="btn sm line" id="mkbq" title="체크리스트 영향 계산 없이 빠르게">빠르게 (영향 계산 없이)</button></div>
     </div>
-    <div class="panel"><h2>만든 파일</h2>
-      ${outs.length?`<table><tr><th>파일</th><th>시각</th><th>크기</th><th></th></tr>${outs.map(f=>`<tr><td class="mono">${esc(f.name)}</td><td>${esc(f.time)}</td><td>${(f.size/1024/1024).toFixed(1)}MB</td>
-        <td><a class="btn sm line" href="/api/${P("file/"+encodeURIComponent(f.name))}">받기</a></td></tr>`).join("")}</table>`:`<div class="empty">아직 만든 파일이 없습니다.</div>`}
+    <div class="panel"><h2>리비전 대조</h2>
+      <p class="xnote">케이블·산출근거·3D 인계를 만들 때마다 결과가 저장됩니다. PLOT·3D 모델·체크리스트를 바꾼 뒤 두 시점을 고르면 무엇이 왜 바뀌었는지(장비 이동 → JB → 케이블 → 트레이) 엑셀로 냅니다.</p>
+      <div id="revbox" class="empty" style="padding:14px">불러오는 중…</div>
+      <div style="display:flex;gap:6px;margin-top:8px"><button class="btn sm line" id="revsave">지금 결과 저장</button><button class="btn sm" id="revcmp">고른 두 시점 대조</button></div>
+    </div>
+    <div class="panel"><h2>만든 파일 <span class="chip">${esc(outs.rev)}</span></h2>
+      <p class="xnote" style="margin-top:-4px"><b>LATEST</b> = 지금 기준 (종류마다 하나, 덮어씀) · <b>ISSUED</b> = 발행본 (고정) · <b>HISTORY</b> = 만들 때마다의 원본 (안 지움). 모든 엑셀 끝에 '_지문' 시트.</p>
+      <div style="font-size:12.5px;margin:8px 0 4px"><b>LATEST</b></div>
+      ${outs.latest.length?`<table class="mini">${outs.latest.map(f=>`<tr><td class="mono" style="font-size:12px">${esc(f.name.replace("LATEST/",""))}</td><td style="font-size:12px">${esc(f.at)}</td><td>${(f.size/1024/1024).toFixed(1)}MB</td>
+        <td><a class="btn sm line" href="/api/${P("file/"+encodeURIComponent(f.name))}">받기</a></td></tr>`).join("")}</table>`:`<div class="empty">아직 없음 - 엑셀·산출근거·3D 인계를 만들면 생깁니다</div>`}
+      <div style="display:flex;gap:6px;align-items:center;margin-top:8px"><input id="isnote" placeholder="발행 메모 (예: 1차 견적용)" style="flex:1;font-size:12.5px"><button class="btn sm" id="issue" ${outs.latest.length?"":"disabled"}>LATEST 발행 (R${outs.issued.length})</button></div>
+      ${outs.issued.length?`<div style="font-size:12.5px;margin:10px 0 4px"><b>ISSUED</b></div><table class="mini">${outs.issued.slice().reverse().map(r=>`<tr><td><b>${esc(r.rev)}</b></td><td style="font-size:12px">${esc(r.at)}</td><td style="font-size:12px">${esc(r.note||"")}</td>
+        <td><a class="btn sm line" href="/api/${P("file/"+encodeURIComponent("ISSUED/"+r.dir))}">받기 (zip)</a></td></tr>`).join("")}</table>`:""}
+      <label class="drop" id="idrop" style="display:block;margin-top:10px;padding:10px;border:1px dashed var(--line);font-size:12.5px;cursor:pointer;text-align:center">이 파일이 최신인지 확인: 엑셀을 여기에 끌어다 놓거나 클릭<input type="file" id="idfile" style="display:none"></label>
+      <div id="idres" style="font-size:12.5px;margin-top:4px"></div>
+      <details style="margin-top:10px"><summary style="cursor:pointer;font-size:12.5px">HISTORY ${outs.history_n}개 · v13.2 이전 파일 ${outs.old_n}개</summary>
+        <table class="mini">${outs.history.concat(outs.old).map(f=>`<tr><td class="mono" style="font-size:11.5px">${esc(f.name)}</td><td style="font-size:11.5px">${esc(f.time)}</td>
+        <td><a class="btn sm line" href="/api/${P("file/"+encodeURIComponent(f.name))}">받기</a></td></tr>`).join("")}</table></details>
     </div>
   </div>
   <div class="panel" style="margin-top:16px"><h2>시스템별 IO</h2>
     <table><tr><th>System</th><th>AI</th><th>AO</th><th>DI</th><th>DO</th><th>TC/RTD</th><th>합계</th><th>카드</th></tr>
     ${Object.entries(s.per_system).map(([k,v])=>`<tr><td><b>${esc(k)}</b></td><td>${v.AI}</td><td>${v.AO}</td><td>${v.DI}</td><td>${v.DO}</td><td>${v["TC/RTD"]||0}</td><td><b>${v.AI+v.AO+v.DI+v.DO+(v["TC/RTD"]||0)}</b></td><td>${s.cards[k]}</td></tr>`).join("")}</table></div>`;
+  const revLoad = async () => { try { const r = await api(P("revisions")); const L = r.list;
+      $("#revbox").className = ""; $("#revbox").innerHTML = L.length ? `<table class="mini"><tr><th></th><th>시각</th><th>계기</th><th>PLOT / 3D</th><th style="text-align:right">케이블 m</th><th style="text-align:right">JB</th></tr>${L.slice(0,15).map((x,i)=>`<tr><td><input type="checkbox" data-rev="${esc(x.id)}" ${i<2?"checked":""}></td><td class="mono" style="font-size:12px">${esc(x.made)}</td><td style="font-size:12px">${esc(x.label)}</td><td style="font-size:11.5px">${esc(x.plot||"-")}${x.model?" · 3D":""}</td><td style="text-align:right">${fmt(x.cable_m)}</td><td style="text-align:right">${x.jbs??""}</td></tr>`).join("")}</table>` : "아직 저장된 결과가 없습니다. '지금 결과 저장'을 누르세요."; } catch(e) { $("#revbox").textContent = e.message; } };
+  revLoad();
+  $("#issue").onclick = async () => { if (!confirm("지금 LATEST를 발행본으로 고정할까요? (나중에 바꿀 수 없음, 다음 엑셀부터 바뀐 칸이 표시됨)")) return;
+    try { const r = await post(P("issue"), {note: $("#isnote").value}); toast(`${r.rev} 발행 (${r.dir})`); renderOutput(m); } catch(e) { toast(e.message, true); } };
+  const idf = async fl => { if (!fl) return; $("#idres").textContent = "확인 중…";
+    try { const r = await api(P("identify"), {method:"POST", headers:{"X-Filename":encodeURIComponent(fl.name)}, body:fl});
+      $("#idres").innerHTML = `<b style="color:${r.result==="LATEST"?"#15ad60":r.result==="UNKNOWN"?"#e0002a":"#c77700"}">${esc(r.result)}</b> ${esc(r.text)}`; } catch(e) { $("#idres").textContent = e.message; } };
+  $("#idfile").onchange = () => idf($("#idfile").files[0]);
+  const dz = $("#idrop"); dz.ondragover = e => { e.preventDefault(); }; dz.ondrop = e => { e.preventDefault(); idf(e.dataTransfer.files[0]); };
+  $("#revsave").onclick = async () => { try { await post(P("revisions"), {label: "직접 저장"}); toast("지금 결과를 저장했습니다"); revLoad(); } catch(e) { toast(e.message, true); } };
+  $("#revcmp").onclick = async () => { const ids = [...m.querySelectorAll("[data-rev]:checked")].map(x=>x.dataset.rev); if (ids.length !== 2) return toast("두 시점을 고르세요", true);
+    try { const r = await post(P("revisions"), {compare: ids}); toast(`${r.files[0]} · 변경 ${r.changes}건 · ${r.words||"변화 없음"}`); if (S.screen === "output") renderOutput(m); } catch(e) { toast(e.message, true); } };
   const basisBtn = (id, quick, lab) => $(id).onclick = async () => { const b = $(id); b.disabled = true; b.textContent = "만드는 중… (체크리스트 하나씩 계산)";
     try { const r = await post(P("basis_export"), {quick}); toast(`${r.files.join(", ")} 생성 · 점검 NG ${r.ng} · 주의 ${r.warn}`, r.ng > 0); if (S.screen === "output") renderOutput(m); }
     catch(e) { toast(e.message, true); } if ($(id)) { $(id).disabled = false; $(id).textContent = lab; } };
@@ -1588,6 +1648,155 @@ async function renderSupport(m) {
   btn("#spmk", "cable_export", "케이블 · JB · 트레이 · 서포트 엑셀");
   btn("#sp3d", "export_3d", "3D 데이터 (JSON)");
   $("#spview").onclick = () => window.open("/viewer3d?p=" + encodeURIComponent(S.project), "_blank");
+}
+
+/* ---------------------------------------------------------------- 10 3D handoff */
+function orderBox(o, d) {
+  const last = o.orders.slice().reverse();
+  return `<div class="panel" style="border-top:3px solid var(--green)"><h2>주문 → 다음 3D 파일</h2>
+    <p class="xnote">말로 주문하면 프로그램이 알아듣고(규칙 먼저, 모르면 Copilot) 바로 반영해 다음 보강 모델을 만듭니다. 주문은 사람 결정으로 기록되고 되돌릴 수 있습니다.
+      예: <span class="mono">계장 차선 반대쪽으로</span> · <span class="mono">JB-18-DA-01 11-P-101A/B 밖으로</span> · <span class="mono">랙 가장자리 여유 0.5</span> · <span class="mono">다시 만들어줘</span></p>
+    <div style="display:flex;gap:6px"><input id="odtext" placeholder="주문 입력" style="flex:1;font-size:13px"><button class="btn" id="odrun">주문 실행</button></div>
+    ${o.pending?`<div style="margin-top:8px;font-size:12.5px;background:#f6f7f6;padding:8px">수동 AI 모드: 아래 프롬프트를 채팅 AI에 붙여 넣고 답(JSON)을 받아 주세요.
+      <textarea readonly style="width:100%;height:70px;font-size:11px" class="mono">${esc(o.pending.prompt)}</textarea>
+      <textarea id="odans" placeholder="AI 답(JSON)" style="width:100%;height:50px;font-size:11px"></textarea><button class="btn sm" id="odansgo">답 읽고 실행</button></div>`:""}
+    ${last.length?`<table class="mini" style="margin-top:10px">${last.slice(0,8).map(r=>`<tr style="${r.undone?"opacity:.45":""}"><td style="font-size:11px;white-space:nowrap" class="mono">${esc(r.at.slice(5))}</td>
+      <td style="font-size:12px"><b>${esc(r.text)}</b><br><span style="color:var(--sub)">${esc(r.by)} 해석${r.explain?": "+esc(r.explain):""}</span><br>${r.done.map(esc).join("<br>")}${r.bad&&r.bad.length?`<br><span style="color:var(--red)">${r.bad.map(esc).join("; ")}</span>`:""}</td>
+      <td style="font-size:11.5px">${esc(r.words||"물량 변화 없음")}${r.hold!=null?`<br>3D 점검 HOLD ${r.hold}`:""}</td>
+      <td style="white-space:nowrap">${r.set?`<a class="btn sm" target="_blank" href="/api/${P("twin_set/"+encodeURIComponent(r.set))}">열기</a>`:""} ${r.undone?"되돌림":`<button class="btn sm line" data-odundo="${esc(r.id)}">되돌리기</button>`}</td></tr>`).join("")}</table>`:""}
+    <details style="margin-top:10px" ${o.lessons.length?"open":""}><summary style="cursor:pointer;font-size:13px"><b>배운 점 → 공통 프로토콜</b> (v${esc(o.common.version)} · 규칙 ${o.common.rules.length}개${o.lessons.length?` · 승인 대기 ${o.lessons.length}`:""})</summary>
+      <p class="xnote">주문에서 나온 교훈입니다. <b>공통</b> = 어떤 개념설계에든 쓰는 규칙(태그 번호·프로젝트 이름 금지), <b>프로젝트</b> = 이 프로젝트만. 공통 규칙은 승인해야 프로토콜에 들어가고 버전이 올라갑니다. 같은 교훈이 3번 이상 또는 2개 프로젝트에서 나오면 '승격 추천'.</p>
+      ${o.lessons.map(l=>`<div style="font-size:12.5px;margin:6px 0;padding:6px;background:#f6f7f6"><input data-ltext="${esc(l.id)}" value="${esc(l.text)}" style="width:100%;font-size:12.5px">
+        <div style="margin-top:4px;display:flex;gap:6px;align-items:center;flex-wrap:wrap"><select data-lscope="${esc(l.id)}"><option value="common" ${l.scope==="common"?"selected":""}>공통</option><option value="project" ${l.scope==="project"?"selected":""}>프로젝트</option></select>
+        <span style="color:var(--sub)">근거 ${l.evidence}회 · ${esc(l.projects.join(", "))} · ${esc(l.by)}</span>${l.suggest_promote?`<span class="chip g">승격 추천</span>`:""}
+        <button class="btn sm" data-lok="${esc(l.id)}">승인</button><button class="btn sm line" data-lno="${esc(l.id)}">버리기</button></div></div>`).join("")||`<div class="empty" style="padding:8px">승인 대기 없음</div>`}
+      <details style="margin-top:6px"><summary style="cursor:pointer;font-size:12.5px">공통 프로토콜 보기</summary><ol style="font-size:12px;line-height:1.6">${o.common.rules.map(r=>`<li><b>${esc(r.id)}</b> ${esc(r.text)}${r.src==="lesson"?` <span class="chip">배운 것</span>`:""}</li>`).join("")}</ol>
+        <div style="font-size:11.5px;color:var(--sub)">${o.common.changelog.map(c=>`v${esc(c.version)} ${esc(c.at)} ${esc(c.what)}`).join("<br>")}</div></details>
+    </details>
+  </div>`;
+}
+function gateBox(g) {
+  return `<div style="border:2px solid #e0002a;padding:10px 12px;margin:8px 0;background:#fff8f9">
+    <div style="display:flex;justify-content:space-between"><b>3D 반영 제안 · ${esc(g.at)}</b><span class="chip">아직 반영 안 됨</span></div>
+    <p class="xnote" style="margin:4px 0">우선순위: ${g.priority.map(esc).join(" &gt; ")} - 사람이 정한 것(그린 랙·고친 경로·옮긴 JB·트레이 크기·서포트)은 3D가 바꾸지 않습니다${g.kept.length?` (지금 ${g.kept.length}개 보호 중)`:""}.</p>
+    <div style="font-size:12.5px;margin-top:6px"><b>바꿀 설정</b> (체크한 것만 반영)</div>
+    ${g.settings.map(x=>`<label style="display:block;font-size:12.5px;margin:3px 0"><input type="checkbox" data-gset="${esc(x.key)}" checked> ${esc(x.name)}: ${esc(x.from)} → <b>${esc(x.to)}</b> <span style="color:var(--sub)">${esc(x.why)}</span></label>`).join("")}
+    <div style="font-size:12.5px;margin-top:8px"><b>물량 변화</b> (모두 체크했을 때)</div>
+    <div style="font-size:12px;line-height:1.6">${esc(g.words||"변화 없음")}</div>
+    ${g.jb.length?`<details style="margin-top:6px"><summary style="cursor:pointer;font-size:12.5px">JB 변화 ${g.jb.length}개</summary><table class="mini">${g.jb.map(j=>`<tr><td class="mono">${esc(j.jb)}</td><td style="font-size:12px">${esc(j.change)}</td></tr>`).join("")}</table></details>`:""}
+    ${g.affected.length?`<div style="font-size:12.5px;margin-top:8px"><b>사람 결정과 부딪히는 것 ${g.affected.length}개</b> (기본: 내 결정 유지)</div>${g.affected.map(a=>{const k=a.kind+":"+a.key;return `<div style="font-size:12px;margin:3px 0">${esc(a.problem)}
+      <label style="margin-left:8px"><input type="radio" name="ga_${esc(k)}" data-gaff="${esc(k)}" value="keep" checked> 내 결정 유지</label>
+      <label style="margin-left:6px"><input type="radio" name="ga_${esc(k)}" data-gaff="${esc(k)}" value="follow"> 3D 따르기</label></div>`}).join("")}`:`<p class="xnote" style="margin-top:6px">사람 결정과 부딪히는 것 없음</p>`}
+    ${g.png?`<div style="margin-top:8px"><b style="font-size:12.5px">PLOT 마크업 미리보기</b> <span class="def">회색 = 지금, 빨강 = 제안 (승인 전에는 마크업이 안 바뀜)</span><br><img src="/api/${P("gate_png/"+encodeURIComponent(g.png))}" style="max-width:100%;border:1px solid var(--line-l);margin-top:4px;cursor:zoom-in" onclick="window.open(this.src)"></div>`:""}
+    <div style="display:flex;gap:8px;margin-top:10px"><button class="btn sm" id="gtok">승인 (체크한 것 반영)</button><button class="btn sm line" id="gtno">취소</button></div>
+  </div>`;
+}
+function review3dBox(rv) {
+  const L = rv.last, sm = L.summary, A = rv.answer && rv.answer.dir === L.dir ? rv.answer : null;
+  const vd = {}; if (A) A.checked.forEach(c => vd[c.issue_id] = c);
+  const VK = {CONFIRMED:["맞음","#e0002a"], FALSE_ALARM:["오탐","#15ad60"], NEEDS_PERSON:["사람 판단","#c77700"]};
+  const href = id => `/api/${P("twin_set/"+encodeURIComponent(L.dir))}#find=${encodeURIComponent(id)}`;
+  const rows = L.issues.filter(x=>x.rule!=="V09");
+  return `<div class="kv"><span>세트 <span class="mono">${esc(L.dir)}</span></span><b style="color:${sm.hold?"#e0002a":"#15ad60"}">HOLD ${sm.hold} · 전체 ${sm.total}</b></div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin:6px 0">${Object.entries(sm.by_rule).map(([k,v])=>`<span class="chip ${v.n?"":"g"}" style="font-size:11.5px">${k} ${esc(v.title)} ${v.n}</span>`).join("")}</div>
+    <div style="max-height:300px;overflow:auto"><table class="mini"><tr><th>ID</th><th>내용</th><th>제안</th><th>AI</th></tr>
+      ${rows.slice(0,150).map(x=>{const c=vd[x.issue_id];return `<tr><td class="mono" style="white-space:nowrap"><a target="_blank" href="${href(x.objects[0])}">${esc(x.issue_id)}</a></td><td style="font-size:12px">${esc(x.detail)}</td><td style="font-size:12px;color:var(--sub)">${esc(x.suggest)}</td>
+        <td style="font-size:12px">${c?`<b style="color:${VK[c.verdict][1]}">${VK[c.verdict][0]}</b> ${esc(c.reason)}`:""}</td></tr>`}).join("")}</table></div>
+    ${A&&A.added.length?`<div style="margin-top:8px"><b style="font-size:13px">AI 새 지적 ${A.added.length}건</b><table class="mini">${A.added.map(a=>`<tr><td class="mono" style="font-size:12px">${a.objects.map(o=>`<a target="_blank" href="${href(o)}">${esc(o)}</a>`).join(" ")}</td><td>${esc(a.title)} <span class="chip">${esc(a.severity)}</span>${a.unknown_ids&&a.unknown_ids.length?` <span style="color:var(--red);font-size:11px">없는 ID</span>`:""}</td><td style="font-size:12px">${esc(a.reason)}</td></tr>`).join("")}</table></div>`:""}
+    ${A&&A.errors.length?`<p style="color:var(--red);font-size:12px">${A.errors.slice(0,8).map(esc).join("<br>")}</p>`:""}
+    ${A&&A.overall?`<p class="xnote">AI 총평: ${esc(A.overall)}</p>`:""}
+    <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap"><a class="btn sm line" target="_blank" href="/api/${P("twin_file/"+encodeURIComponent(L.dir)+"/3D_REVIEW_PROMPT.md")}">프롬프트 보기</a>
+      <a class="btn sm line" target="_blank" href="/api/${P("twin_file/"+encodeURIComponent(L.dir)+"/3D_REVIEW_PRECHECK.csv")}">사전 점검 CSV</a></div>
+    <textarea id="rvtext" placeholder="회사 AI의 답(JSON)을 여기에 붙여 넣기" style="width:100%;height:80px;margin-top:8px;font-family:monospace;font-size:12px"></textarea>
+    <button class="btn sm" id="rvsend" style="margin-top:4px">AI 리뷰 답 읽기</button>`;
+}
+async function renderTwin(m) {
+  const t = S.tok;
+  const d = await api(P("twin"));
+  const rv = await api(P("review3d")).catch(()=>({}));
+  const gt = await api(P("gate")).catch(()=>({}));
+  const od = await api(P("orders")).catch(()=>null);
+  if (t !== S.tok) return;
+  m.className = "ext-page";
+  const f = d.fit, b = d.base;
+  const files = [["00_manifest.json","버전·출처·승인 범위·Gate·미결"],["01_scope.csv","확정 물량 범위 (담당·분류·규격·단위·수량·Rule)"],
+    ["02_input_model_contract.json","입력·모델 구조 (엔티티 ID, 최소/파생/승인 값, 좌표·인터페이스)"],["03_engineering_rules.json","승인 Rule Set (계산식·판정·예외·단위)"],
+    ["04_test_inputs.json","독립 실행 입력 (NORMAL / CHANGED / MISSING / HOLDOUT, 기대값 없음)"],["05_validation.csv","기대값 vs 실행값 (허용차·판정·확인자)"],
+    ["06_model_handoff.json","원본 대비 보강 모델 목록·변경·해시·검증 근거"]];
+  m.innerHTML = `
+  <div class="head"><div><div class="eyebrow">STEP 10</div><h1>3D 인계</h1>
+    <p class="lead">배관팀 3D 모델(Three.js HTML) 위에 계장 레이어(트레이·케이블·JB·계기·서포트)를 얹은 <b>보강 모델</b>과 회사 AI 플랫폼 <b>표준 인계 7종</b>을 만듭니다. 원본 모델은 바꾸지 않습니다.</p></div>
+    <div style="display:flex;gap:8px"><button class="btn" id="twmk" ${d.model?"":"disabled"}>보강 모델 + 인계 7종 만들기</button></div></div>
+  <div style="display:flex;gap:20px;align-items:flex-start">
+  <div style="flex:1;min-width:0">
+    ${d.model&&od?orderBox(od, d):""}
+    <div class="panel"><h2>1. 배관 3D 모델 (Seed)</h2>
+      <div class="kv"><span>${d.model?`<b class="mono">${esc(d.model)}</b>`:"아직 없음"}</span><label class="btn sm line">${d.model?"다른 파일":"파일 선택 (.html)"}<input type="file" accept=".html,.htm" id="twup" style="display:none"></label></div>
+      ${b?`<div style="font-size:12.5px;color:var(--sub);margin-top:6px">${esc(b.title)} · Three.js ${esc(b.three)} · 장비 ${b.equipment} · 랙 ${b.racks.map(r=>`${esc(r.id)}(${r.dir}, 케이블 단 EL ${r.cable_el} m)`).join(", ")}${b.dx_e?` · 로드 시 동쪽 이동 ${b.dx_e} m 반영`:""} · SHA-256 ${esc(b.sha256.slice(0,12))}…</div>`:""}
+      ${d.error?`<p style="color:var(--red)">${esc(d.error)}</p>`:""}</div>
+    ${f?`<div class="panel"><h2>2. 좌표 맞춤 (자동)</h2>
+      <p class="xnote">같은 장비 태그 ${f.anchors}개와 랙 중심선 ${f.rack_anchors}개로 PLOT 좌표(pt)를 모델 좌표(m)로 맞췄습니다. 두 PLOT 리비전이 달라 수 m 차이는 정상입니다. 랙 위 트레이는 모델 랙 중심선·케이블 단 EL에 붙입니다.</p>
+      <div class="kv"><span>식</span><b class="mono" style="font-size:12px">${esc(f.formula)}</b></div>
+      <div class="kv"><span>장비 잔차 중앙값 / 최대</span><b style="color:${f.median_m<=5&&f.max_m<=15?"#15ad60":"#e0002a"}">${f.median_m} m / ${f.max_m} m</b></div>
+      <table class="mini" style="margin-top:8px"><tr><th>장비</th><th>ΔX</th><th>ΔZ</th><th>거리 m</th></tr>${f.equipment.slice(0,8).map(r=>`<tr><td class="mono">${esc(r.tag)}</td><td>${r.dx}</td><td>${r.dz}</td><td><b>${r.d}</b></td></tr>`).join("")}</table>
+      <table class="mini" style="margin-top:8px"><tr><th>우리 랙</th><th>모델 랙</th><th>중심선 차이 m</th></tr>${f.racks.map(r=>`<tr><td class="mono">${esc(r.ours)}</td><td>${esc(r.model)}</td><td>${r.across_m}</td></tr>`).join("")}</table></div>`:""}
+    <div class="panel"><h2>3. 랙 · 차선 · 충돌 (계장 선점, 충돌 시 계장이 비킴)</h2>
+      <div class="kv"><span>랙 출처 / 랙 트레이 EL (STEP 6 설정, 물량에 반영)</span><b>${esc(d.rack_src)} · ${esc(d.rack_el_src)}</b></div>
+      ${d.model ? `<div style="margin:6px 0 10px"><button class="btn sm" id="twuse">3D 반영 제안 보기 (랙 · 케이블 단 EL · 장비 상자)</button> <span class="def">바로 바꾸지 않습니다. 물량·JB·PLOT 마크업 변화를 먼저 보여 주고, 승인한 것만 반영합니다</span></div>` : ""}
+      ${gt.pending?gateBox(gt.pending):""}
+      ${gt.log&&gt.log.length?`<details style="margin:6px 0"><summary style="cursor:pointer;font-size:12.5px">결정 기록 (최근 ${gt.log.length})</summary><table class="mini">${gt.log.slice().reverse().map(e=>`<tr><td class="mono" style="font-size:11px;white-space:nowrap">${esc(e.at)}</td><td style="font-size:12px">${esc(e.source)}</td><td style="font-size:12px">${esc(e.what)}</td><td style="font-size:12px">${esc(String(e.before))} → <b>${esc(String(e.after))}</b></td><td style="font-size:12px">${esc(e.approved)}</td></tr>`).join("")}</table></details>`:""}
+      ${ckItems(d.schema[0], d.values, d)}
+      <div class="kv" style="margin-top:10px"><span>다른 공종 3D 파일 (JSON, 모델 좌표) ${d.other?`<b class="mono">${esc(d.other)}</b>`:"없음"}</span>
+        <span style="display:flex;gap:6px"><label class="btn sm line">${d.other?"다른 파일":"올리기 (.json)"}<input type="file" accept=".json" id="twother" style="display:none"></label></span></div>
+      <p class="xnote">형식 예: <span class="mono">protocols\other3d_example.json</span> (tray = 중심선 a→b + 폭·높이, box = 모서리 min/max). 전기 파일이 오면 다음 '만들기'에서 계장 트레이가 자동으로 비킵니다.</p>
+      ${d.moves && d.moves.moves && d.moves.moves.length ? `<table class="mini"><tr><th>트레이</th><th>피한 것</th><th>조치</th></tr>${d.moves.moves.slice(0,40).map(x=>`<tr><td class="mono">${esc(x.tray)}</td><td class="mono" style="font-size:12px">${esc(x.with.join(", "))}</td><td style="color:${x.action.startsWith("충돌")?"#e0002a":"inherit"}">${esc(x.action)}</td></tr>`).join("")}</table>` : (d.moves && d.moves.other ? `<p class="xnote">최근 세트: ${esc(d.moves.other.discipline)} ${d.moves.other.objects}개와 충돌 없음</p>` : "")}
+    </div>
+    <div class="panel"><h2>4. AI 3D 리뷰 (사전 점검 → 회사 AI → 사람 판단)</h2>
+      <p class="xnote">'만들기' 때 pid_io가 먼저 기하 규칙(V01~V09)으로 점검하고, 회사 AI에게 줄 <span class="mono">3D_REVIEW_PROMPT.md</span> · <span class="mono">3D_REVIEW_ANSWER_SCHEMA.json</span> · <span class="mono">3D_REVIEW_PRECHECK.csv</span>를 세트 폴더에 같이 넣습니다. AI는 항목마다 맞음/오탐/사람 판단으로 답하고, 새 지적은 객체 ID가 있어야 받습니다.</p>
+      ${rv.last?review3dBox(rv):`<div class="empty">아직 없음 - 위 '만들기'를 누르면 생깁니다</div>`}
+    </div>
+    <div class="panel"><h2>5. 만든 인계 세트</h2>
+      ${d.sets.length?d.sets.map(st=>`<div class="kv"><span class="mono">${esc(st)}</span><span style="display:flex;gap:6px"><a class="btn sm" target="_blank" data-twopen="${esc(st)}">보강 모델 열기</a></span></div>`).join(""):`<div class="empty">아직 없음</div>`}
+      <p class="xnote">세트 폴더: <span class="mono">projects\\${esc(S.project)}\\output\\3D인계_날짜\\</span> - 보강 모델 HTML, 표준 7종, STRUCTURED_MODEL_DATA_FULL.json. 보강 모델은 원본처럼 인터넷(cdn.jsdelivr.net)에서 Three.js를 불러옵니다.</p></div>
+  </div>
+  <div class="side"><div class="panel" style="font-size:12.5px;line-height:1.6"><b>표준 인계 7종 (회사 가이드 T1-CI)</b>
+    ${files.map(([n,x])=>`<div style="margin-top:6px"><span class="mono" style="font-size:12px">${n}</span><br><span style="color:var(--sub)">${x}</span></div>`).join("")}
+    <div style="margin-top:10px"><b>+ 보강 모델 실파일</b> (SUPPLEMENTED_MODEL)<br><span style="color:var(--sub)">원본 HTML + 계장 레이어. 레이어 패널 '계장 (pid_io)', 객체 클릭 = 속성, '계장 찾기' 칸</span></div>
+    <div style="margin-top:6px"><b>+ 구조화 모델 데이터</b> (STRUCTURED_MODEL_DATA, FULL)</div>
+    <p class="xnote" style="margin-top:8px">필드 이름은 가이드 사진 기준 초안입니다. 가이드 원문(HTML)이 저장소에 오면 맞춥니다.</p></div></div>
+  </div>`;
+  const twset = async body => { try { await post(P("cable"), body); renderTwin(m); } catch(e) { toast(e.message, true); } };
+  m.querySelectorAll("[data-ck]").forEach(el => el.onchange = () => twset({set:{[el.dataset.ck]: el.value}}));
+  m.querySelectorAll("[data-cktog]").forEach(el => el.onclick = () => { const it = d.schema[0].items.find(x=>x.id===el.dataset.cktog);
+    twset({set:{[it.id]: el.classList.contains("on") ? it.options.find(o=>o!==it.on) : it.on}}); });
+  if ($("#twuse")) $("#twuse").onclick = async () => { const bt = $("#twuse"); bt.disabled = true; bt.textContent = "계산 중…";
+    try { await post(P("gate"), {}); renderTwin(m); } catch(e) { toast(e.message, true); bt.disabled = false; bt.textContent = "3D 반영 제안 보기"; } };
+  if ($("#gtok")) $("#gtok").onclick = async () => {
+    const ok = [...m.querySelectorAll("[data-gset]")].filter(x=>x.checked).map(x=>x.dataset.gset);
+    const ch = {}; m.querySelectorAll("[data-gaff]").forEach(x => { if (x.checked) ch[x.dataset.gaff] = x.value; });
+    try { const r = await post(P("gate"), {apply: gt.pending.id, settings_ok: ok, choices: ch}); S.summary=null; toast(`승인 반영: ${r.applied.length}개 설정 · 기록 ${r.log}줄`); renderTwin(m); } catch(e) { toast(e.message, true); } };
+  const odgo = async body => { const bt = $("#odrun"); if (bt) { bt.disabled = true; bt.textContent = "실행 중…"; }
+    try { const r = await post(P("orders"), body); if (r.manual) toast("수동 AI 모드: 프롬프트를 복사해 답을 받아 주세요"); else toast(`주문 반영: ${r.done.join(", ")}${r.set?" · "+r.set:""}`); renderTwin(m); }
+    catch(e) { toast(e.message, true); if (bt) { bt.disabled = false; bt.textContent = "주문 실행"; } } };
+  if ($("#odrun")) { $("#odrun").onclick = () => odgo({text: $("#odtext").value}); $("#odtext").onkeydown = e => { if (e.key === "Enter") odgo({text: $("#odtext").value}); }; }
+  if ($("#odansgo")) $("#odansgo").onclick = () => odgo({answer: $("#odans").value});
+  m.querySelectorAll("[data-odundo]").forEach(b => b.onclick = async () => { if (!confirm("이 주문 전 상태로 되돌릴까요?")) return; b.disabled = true;
+    try { await post(P("orders"), {undo: b.dataset.odundo}); toast("되돌렸습니다"); renderTwin(m); } catch(e) { toast(e.message, true); } });
+  m.querySelectorAll("[data-lok],[data-lno]").forEach(b => b.onclick = async () => { const id = b.dataset.lok || b.dataset.lno;
+    try { const r = await post(P("orders"), {lesson: id, accept: !!b.dataset.lok, text: m.querySelector(`[data-ltext="${id}"]`).value, scope: m.querySelector(`[data-lscope="${id}"]`).value});
+      toast(b.dataset.lok ? `승인 · 공통 프로토콜 v${r.common_version}` : "버렸습니다"); renderTwin(m); } catch(e) { toast(e.message, true); } });
+  if ($("#gtno")) $("#gtno").onclick = async () => { await post(P("gate"), {cancel: true}); toast("제안을 취소했습니다 (아무것도 바뀌지 않음)"); renderTwin(m); };
+  $("#twother").onchange = async () => { const fl = $("#twother").files[0]; if (!fl) return;
+    try { await api(P("upload?kind=other3d"), {method:"POST", headers:{"X-Filename":encodeURIComponent(fl.name)}, body:fl}); toast("다른 공종 파일을 올렸습니다. '만들기'를 누르면 충돌을 피합니다"); renderTwin(m); } catch(e) { toast(e.message, true); } };
+  $("#twup").onchange = async () => { const fl = $("#twup").files[0]; if (!fl) return;
+    try { await api(P("upload?kind=model3d"), {method:"POST", headers:{"X-Filename":encodeURIComponent(fl.name)}, body:fl}); toast("3D 모델을 올렸습니다"); renderTwin(m); } catch(e) { toast(e.message, true); } };
+  m.querySelectorAll("[data-twopen]").forEach(a => { const st = a.dataset.twopen;
+    a.href = `/api/${P("twin_set/"+encodeURIComponent(st))}`; });
+  if ($("#rvsend")) $("#rvsend").onclick = async () => { try { const r = await post(P("review3d"), {text: $("#rvtext").value});
+      toast(`AI 리뷰 읽음 · 확인 ${r.checked.length} · 새 지적 ${r.added.length}${r.errors.length?` · 오류 ${r.errors.length}`:""}`); renderTwin(m); } catch(e) { toast(e.message, true); } };
+  if ($("#twmk")) $("#twmk").onclick = async () => { const bt = $("#twmk"); bt.disabled = true; bt.textContent = "만드는 중…";
+    try { const r = await post(P("twin"), {}); toast(`${r.dir} 생성 · 계기 ${r.counts.instruments} · 트레이 ${r.counts.trays} · 서포트 ${r.counts.supports} · 잔차 ${r.fit.median_m} m${r.moves?` · 회피 ${r.moves - r.left} · 충돌 남음 ${r.left}`:""}`); renderTwin(m); }
+    catch(e) { toast(e.message, true); if ($("#twmk")) { $("#twmk").disabled = false; $("#twmk").textContent = "보강 모델 + 인계 7종 만들기"; } } };
 }
 
 api("font").then(f => { const k = Object.keys(f.found||{}); $("#fontst").innerHTML = k.length

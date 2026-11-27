@@ -1,0 +1,50 @@
+{
+ "profile": "T1-CI",
+ "rev": "R20261127",
+ "seed": {
+  "file": "02-AI-Assisted.Conceptual.3D.Model_Final.html",
+  "sha256": "35d0e456ad1bbb7fe95a8046adcd96e7c56fc52aba4f7aeafa1f9d498fd79f9a",
+  "bytes": 970644,
+  "three": "0.164.1",
+  "title": "3D Digital Twin · 200MW PEM 수전해 플랜트 (Perf)",
+  "source_id": "piping 3D (3d-rev0)"
+ },
+ "applied_scope": "계장 개략 물량·배치 (계기·JB·케이블·트레이·트렌치·서포트)",
+ "SUPPLEMENTED_MODEL": {
+  "file": "02-AI-Assisted.Conceptual.3D.Model_Final_계장보강.html",
+  "sha256": "6643e5a82861ac2fadacb10681c9c2bcd01c48e89532be669af5785a8aa26de1",
+  "bytes": 1801401,
+  "how": "base HTML unchanged + one block appended to its module script (layers 계장 · ...)",
+  "layers": [
+   "inst_tray",
+   "inst_cable",
+   "inst_jb",
+   "inst_instr",
+   "inst_support"
+  ]
+ },
+ "STRUCTURED_MODEL_DATA": {
+  "file": "STRUCTURED_MODEL_DATA_FULL.json",
+  "sha256": "86ad59e6afff47a8dc0f1ac76988a5025c615baa6ccefdb9c7eb0d9eda1c1d88",
+  "kind": "FULL"
+ },
+ "changes": {
+  "instruments": 616,
+  "jbs": 29,
+  "cables": 414,
+  "trays": 172,
+  "supports": 1010,
+  "joints": 3
+ },
+ "transform": {
+  "s": 0.15674938333902996,
+  "tx": -88.52449234020355,
+  "tz": -132.31920116903183,
+  "anchors": 13,
+  "rack_anchors": 6,
+  "median_m": 3.05,
+  "max_m": 9.83,
+  "formula": "X = 0.15675·x_pt + -88.52 · Z = 0.15675·y_pt + -132.32 · Y = EL (cable tier on racks = model RK.cable)"
+ },
+ "verification": "pid_io audit NG 0 · HOLD 1"
+}

@@ -306,29 +306,28 @@ def check_support(where, t, v, layout, res, s, dec=None):
     return sp
 
 
+LAYOUT_KEYS = ("rack_src", "slot_3d_eq")      # settings that change the layout itself
+
+
 def build(rows, s, name, layout):
     return cable.build(rows, s, S._area_map(name), layout)
 
 
-def layout_with(name, rows, dec_over=None, plot=True):
+def layout_with(name, rows, dec_over=None, plot=True, values=None):
+    """same layout as the app (3D model racks / equipment boxes per settings, v13.2)."""
     if not plot:
         return None
-    pl = S.plot_read(name)
-    if not pl:
+    if not S.plot_read(name):
         return None
     dec = copy.deepcopy(S._plot_dec(name))
     dec.update(dec_over or {})
-    try:
-        pt = S.page_texts_cached(name)
-    except Exception:
-        pt = {}
-    return plotmod.Layout(pl, pt, [r.unit for r in rows if r.unit], dec)
+    return S.plot_layout(name, rows, values, dec)
 
 
 def main(name):
     c = S.computed(name)
     rows = c[4]
-    s0 = cable.load(S.pdir(name))
+    s0 = S.cable_result(name)[0]                     # same settings as the app (3D cable tier EL, v13.2)
     print(f"프로젝트 {name}: 인덱스 행 {len(rows)}")
     lay = layout_with(name, rows)
 
@@ -342,7 +341,7 @@ def main(name):
     try:
         out = S.export(name, {})
         import openpyxl
-        f = S.pdir(name) / "output" / out["files"][0]
+        f = S.find_out(name, out["files"][0])
         ws = openpyxl.load_workbook(f, read_only=True)["Instrument_Index"]
         hdr = [x for x in next(ws.iter_rows(min_row=2, max_row=2, values_only=True))]
         if tuple(hdr[33:38]) != ("Junction Box", "Multi Cable Number", "Multi Cable Spec.", "Field Cable No", "Field Cable Spec."):
@@ -472,8 +471,9 @@ def main(name):
                     s3["values"]["multi_sizing"] = "사용+스페어 최소 규격"
                 where = f"{'PLOT' if plot_on else '가정'} {it['name']}={val}"
                 try:
-                    r = build(rows, s3, name, L)
-                    check_res(where, rows, s3, r, L)
+                    L3 = layout_with(name, rows, values=s3["values"]) if plot_on and it["id"] in LAYOUT_KEYS else L
+                    r = build(rows, s3, name, L3)
+                    check_res(where, rows, s3, r, L3)
                     runs += 1
                 except Exception as e:
                     fail(where, f"예외 {type(e).__name__}: {e}")

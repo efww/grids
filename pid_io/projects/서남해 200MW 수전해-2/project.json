@@ -6,7 +6,8 @@
   "template": "Instrument_Index_Template.xlsx",
   "ref": "(서남해 수전해) Instrument Index_Rev.A_26.03.20_Metering IO 삭제.xlsx",
   "plot": "Plot_plan_261109_r2.pdf",
-  "plotref": "Plot_Plan_Rev.2_260202.pdf"
+  "plotref": "Plot_Plan_Rev.2_260202.pdf",
+  "model3d": "02-AI-Assisted.Conceptual.3D.Model_Final.html"
  },
  "scenarios": [],
  "file_info": {
@@ -21,6 +22,10 @@
   "ref": {
    "size": 241152,
    "time": "11-26 13:17"
+  },
+  "model3d": {
+   "size": 970644,
+   "time": "11-27 02:18"
   }
  },
  "pdf_info": {

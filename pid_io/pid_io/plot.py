@@ -305,6 +305,10 @@ class Layout:
         off = set(dec.get("racks_off") or [])
         self.racks_auto = [r + [i in off] for i, r in enumerate(plot.get("racks") or [])]
         self.racks_user = [p for p in (dec.get("racks_add") or []) if len(p) >= 2]
+        self.racks_model = [list(r[:4]) for r in (dec.get("racks_model") or [])]   # from the 3D model (STEP 10), pt
+        self.racks_model_ids = [str(r[4]) if len(r) > 4 else "" for r in (dec.get("racks_model") or [])]
+        self.rack_src = dec.get("rack_src", "PLOT 인식")
+        self.eq_model = [list(r[:4]) for r in (dec.get("eq_model") or [])]          # 3D model equipment boxes, pt
         self._router = {}
         self.jb_moves = dict(dec.get("jb_moves") or {})      # STEP 7: {JB no: slot id}
         self.route_edit = {k: orthogonal(v) for k, v in (dec.get("routes_edit") or {}).items() if len(v) >= 2}
@@ -358,7 +362,16 @@ class Layout:
         return None, "위치 미정"
 
     def rack_rects(self, width_m=6.0):
-        out = [r[:4] for r in self.racks_auto if not r[-1]]
+        if self.rack_src == "3D 모델 랙" and self.racks_model:
+            out = [list(r) for r in self.racks_model]
+        else:
+            out = [r[:4] for r in self.racks_auto if not r[-1]]
+            if self.rack_src == "둘 다":                   # 3D fact > PLOT auto: a PLOT rack only where the model has none
+                def cover(r):
+                    area = max(1e-6, (r[2] - r[0]) * (r[3] - r[1]))
+                    return max((max(0, min(r[2], q[2]) - max(r[0], q[0])) * max(0, min(r[3], q[3]) - max(r[1], q[1])) / area
+                                for q in self.racks_model), default=0)
+                out = [r for r in out if cover(r) < 0.3] + [list(r) for r in self.racks_model]
         hw = width_m / 2 / self.m_per_pt
         for poly in self.racks_user:
             for (x0, y0), (x1, y1) in zip(poly, poly[1:]):
@@ -376,7 +389,7 @@ class Layout:
         key = (round(pref, 2), round(width_m, 2), use_racks)
         if key not in self._router:
             k = (str(self.plot.get("_key")), json_key(self.racks_auto), json_key(self.racks_user), self.room,
-                 self.m_per_pt, key)
+                 self.m_per_pt, key, self.rack_src, json_key(self.racks_model))
             if k not in _ROUTERS:
                 if len(_ROUTERS) > 8:
                     _ROUTERS.clear()
