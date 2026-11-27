@@ -1,9 +1,0 @@
-# Reference data (drawings, indexes, plot plans, outputs) IS kept in the repo - user decision 2026-11-26.
-__pycache__/
-*.pyc
-
-# company fonts are not redistributed
-fonts/*.ttf
-fonts/*.otf
-fonts/*.woff
-fonts/*.woff2
