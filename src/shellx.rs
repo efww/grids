@@ -1261,6 +1261,7 @@ pub(crate) unsafe fn shell_menu(menu: HMENU, src: usize, picked: &std::result::R
     _ = AppendMenuW(menu, flags, ID_USAGE, &HSTRING::from(tr2(M_USAGE)));
     list_menu(menu, src); // the selection, or with none the whole view
     clip_menu(menu, picked); // before the WinMerge lookup too
+    explorer_menu(menu, src);
     let exe = winmerge_exe()?;
     match picked {
         Ok(two) if two.len() == 2 => {
@@ -1281,8 +1282,74 @@ pub(crate) unsafe fn shell_menu(menu: HMENU, src: usize, picked: &std::result::R
     Some(exe)
 }
 
+// ---------- open in Explorer ----------
+
+pub(crate) const ID_EXPLORER: usize = 1154; // ⇄ menu (1150–1153 are the view menu's, 1138 stays unused)
+const EXPLORER_MAX: u32 = 1000; // selected items handed over; Explorer slows down on more
+
+// "Open in Explorer": grey only when the pane has no view yet; it says "(with the selection)" when that goes along.
+unsafe fn explorer_menu(menu: HMENU, src: usize) {
+    let fv = view_of::<IFolderView2>(src);
+    let sel = fv.as_ref().and_then(|fv| fv.ItemCount(SVGIO_SELECTION).ok()).unwrap_or(0) > 0;
+    let label = if sel && !default_open_on() { M_EXPLORER_SEL } else { M_EXPLORER };
+    let flags = if fv.is_some() { MF_STRING } else { MF_STRING | MF_GRAYED };
+    _ = AppendMenuW(menu, flags, ID_EXPLORER, &HSTRING::from(tr2(label)));
+}
+
+// The folder the pane shows now, by its ID list (This PC, the Recycle Bin, a library, a network place too), in an
+// Explorer window with the pane's selection (up to EXPLORER_MAX, in view order) selected there. Only the folder,
+// by its "Open in new window" verb ("explore" failing that), when nothing is selected, when the items aren't the
+// folder's own (a library, search results), or when folders are set to open in Grids: Explorer's folder default
+// would bring them back here. Not from inside app(): the shell may take a moment.
+pub(crate) unsafe fn reveal_in_explorer(src: usize) {
+    let name = app(|a| a.panes[src].as_ref().map_or_else(|| a.s.paths[src].clone(), |p| p.disp.clone()));
+    let fv = view_of::<IFolderView2>(src);
+    let dir = fv.as_ref().and_then(|fv| fv.GetFolder::<IShellItem>().ok()).and_then(|f| SHGetIDListFromObject(&f).ok());
+    let (Some(fv), Some(dir)) = (fv, dir) else {
+        fail(Fail::ExplorerCant, &name);
+        return;
+    };
+    let mut kids: Vec<*mut ITEMIDLIST> = Vec::new();
+    if !default_open_on() {
+        let sel = fv.Items::<IShellItemArray>(_SVGIO(SVGIO_SELECTION.0 | SVGIO_FLAG_VIEWORDER.0)).or_else(|_| fv.GetSelection(false));
+        if let Ok(arr) = sel {
+            for k in 0..arr.GetCount().unwrap_or(0).min(EXPLORER_MAX) {
+                if let Some(p) = arr.GetItemAt(k).ok().and_then(|it| SHGetIDListFromObject(&it).ok()) {
+                    kids.push(p);
+                }
+            }
+        }
+    }
+    // never with no items: SHOpenFolderAndSelectItems would open the parent with this folder selected
+    let own = !kids.is_empty() && kids.iter().all(|&p| ILIsParent(dir, p, true).as_bool());
+    let shown = own && {
+        let last: Vec<*const ITEMIDLIST> = kids.iter().map(|&p| ILFindLastID(p) as *const ITEMIDLIST).collect();
+        SHOpenFolderAndSelectItems(dir, Some(&last), 0).is_ok()
+    };
+    let shown = shown
+        || ["opennewwindow", "explore"].iter().any(|v| {
+            let verb = HSTRING::from(*v);
+            let mut sei = SHELLEXECUTEINFOW {
+                cbSize: size_of::<SHELLEXECUTEINFOW>() as u32,
+                fMask: SEE_MASK_IDLIST | SEE_MASK_FLAG_NO_UI,
+                lpVerb: PCWSTR(verb.as_ptr()),
+                lpIDList: dir as _,
+                nShow: SW_SHOWNORMAL.0,
+                ..Default::default()
+            };
+            ShellExecuteExW(&mut sei).is_ok()
+        });
+    for p in kids {
+        CoTaskMemFree(Some(p as _));
+    }
+    CoTaskMemFree(Some(dir as _));
+    if !shown {
+        fail(Fail::ExplorerCant, &name);
+    }
+}
+
 pub(crate) fn is_shell_pick(p: usize) -> bool {
-    p == ID_INUSE || p == ID_WM_PAIR || p == ID_HASH || p == ID_GROUP || p == ID_STAMP || p == ID_EMPTY || p == ID_USAGE || p == ID_LIST || p == ID_CLIPADD || is_org_pick(p) || (ID_WM_PANE..ID_WM_PANE + MAXP).contains(&p)
+    p == ID_INUSE || p == ID_WM_PAIR || p == ID_HASH || p == ID_GROUP || p == ID_STAMP || p == ID_EMPTY || p == ID_USAGE || p == ID_LIST || p == ID_CLIPADD || p == ID_EXPLORER || is_org_pick(p) || (ID_WM_PANE..ID_WM_PANE + MAXP).contains(&p)
 }
 
 pub(crate) unsafe fn shell_pick(h: HWND, src: usize, p: usize, picked: std::result::Result<Vec<String>, Pick>, exe: Option<String>, others: &[(usize, HSTRING, String)]) {
@@ -1298,6 +1365,7 @@ pub(crate) unsafe fn shell_pick(h: HWND, src: usize, p: usize, picked: std::resu
         (ID_USAGE, _, _) => open_usage(src),
         (ID_LIST, _, _) => copy_list(src), // the view's selection (or all its items), read again now
         (ID_CLIPADD, picked, _) => add_to_clip(picked), // the selection the menu counted
+        (ID_EXPLORER, _, _) => reveal_in_explorer(src), // the pane's folder and selection, read again now
         (ID_WM_PAIR, Ok(two), Some(exe)) if two.len() == 2 => run_winmerge(&exe, &two[0], &two[1]),
         (p, _, Some(exe)) if p >= ID_WM_PANE => {
             // only the folder the menu showed for that pane
