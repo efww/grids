@@ -76,6 +76,47 @@ pub(crate) fn usage_head(ko: bool, rows: &[URow], done: bool) -> String {
     t
 }
 
+/// A row as a screen reader says it, with the same words and rules as drawn: "Downloads, folder, 12.3 GB, 42%, 2/18".
+/// Size and share once known; "calculating" / "partial" as the row's note; the "n more" row by its count.
+pub(crate) fn usage_row_speech(r: &URow, total: u64, k: usize, n: usize, ko: bool) -> String {
+    let mut t = match (r.more, ko) {
+        (0, _) => r.name.clone(),
+        (m, true) => format!("그 밖의 항목 {}개", group_digits(m as u64)),
+        (m, false) => format!("{} more items", group_digits(m as u64)),
+    };
+    if r.more == 0 && r.folder { t += if ko { ", 폴더" } else { ", folder" } }
+    if r.done || r.bytes > 0 { t += &format!(", {}, {}", human(r.bytes), usage_pct(r.bytes, total)) }
+    if !r.done { t += if ko { ", 계산 중" } else { ", calculating" } } else if r.partial { t += if ko { ", 일부만" } else { ", partial" } }
+    t + &format!(", {}/{n}", k + 1)
+}
+
+/// The folder's own name as read ("C:\" stays "C:", a share's root its share).
+pub(crate) fn usage_dir_name(dir: &str) -> &str {
+    let t = dir.trim_end_matches('\\');
+    t.rsplit('\\').next().filter(|s| !s.is_empty()).unwrap_or(dir)
+}
+
+/// The window's name for a reader: the picked row, after the folder and how far the count is when `whole`.
+pub(crate) fn usage_list_speech(dir: &str, head: &str, pick: Option<&str>, whole: bool, ko: bool) -> String {
+    let what = if ko { "용량 분석" } else { "Folder usage" };
+    match pick {
+        Some(p) if !whole => p.to_string(),
+        Some(p) => format!("{what}, {dir} · {head} · {p}"),
+        None => format!("{what}, {dir} · {head}"),
+    }
+}
+
+/// What the head says out loud: the total line, or what the empty list shows instead (as drawn).
+pub(crate) fn usage_say_head(head: &str, empty: bool, done: bool, failed: bool, ko: bool) -> String {
+    let lang = |e: &str, k: &str| if ko { k.to_string() } else { e.to_string() };
+    match (failed, empty, done) {
+        (true, ..) => lang("Can't read this folder", "이 폴더를 읽을 수 없음"),
+        (_, true, true) => lang("Empty folder", "빈 폴더"),
+        (_, true, false) => lang("Reading…", "읽는 중…"),
+        _ => head.to_string(),
+    }
+}
+
 /// A folder's own items: files with their size, folders to be summed, links and junctions as 0 bytes (not
 /// followed, as dir_bytes). None: the folder can't be read, or `stop`.
 pub(crate) fn usage_entries(dir: &Path, stop: &dyn Fn() -> bool) -> Option<Vec<URow>> {
@@ -195,9 +236,11 @@ fn usage_worker() {
 // ---------- the window ----------
 
 // prev: focus before it opened (Esc goes back there); want: the row to select once the rows come (the folder ←
-// came up from); list: sorted, as shown; rows: rows on screen
+// came up from); list: sorted, as shown; rows: rows on screen; said: the name a screen reader was last given
+// (a new folder starts without one, so it is named again); whole: the name keeps the folder and its total first
+// (set once they were read out, until a key or a click picks a row; a new folder starts without it)
 #[derive(Default)]
-struct UsageUi { h: HWND, prev: HWND, pane: usize, gen: usize, dir: String, want: Option<String>, list: Vec<URow>, head: String, max: u64, total: u64, done: bool, failed: bool, sel: Option<usize>, top: usize, rows: usize, w: i32, wheel: i32 }
+struct UsageUi { h: HWND, prev: HWND, pane: usize, gen: usize, dir: String, want: Option<String>, list: Vec<URow>, head: String, max: u64, total: u64, done: bool, failed: bool, sel: Option<usize>, top: usize, rows: usize, w: i32, wheel: i32, said: Option<String>, whole: bool }
 
 thread_local! {
     static UI: RefCell<UsageUi> = RefCell::new(UsageUi::default());
@@ -252,13 +295,21 @@ pub(crate) unsafe fn open_usage(i: usize) {
     let gh = geo(dpi, rows, w).h;
     let (cx, cy) = ((rc.left + rc.right - w) / 2, (rc.top + rc.bottom - gh) / 2);
     let at = fit(RECT { left: cx, top: cy, right: cx + w, bottom: cy + gh }, work);
-    let style = WS_POPUP | WS_VISIBLE;
+    // hidden until a screen reader has its role, name and keys, so the first thing it reads is the list
+    let style = WS_POPUP;
     let Ok(h) = CreateWindowExW(WS_EX_TOOLWINDOW, w!("GridsUsage"), w!(""), style, at.left, at.top, w, gh, Some(main), None, None, None) else { return };
     let square = DWMWCP_DONOTROUND;
     _ = DwmSetWindowAttribute(h, DWMWA_WINDOW_CORNER_PREFERENCE, &square as *const _ as _, 4);
     ui(|u| *u = UsageUi { h, prev, pane: i, rows, w, ..Default::default() });
-    _ = SetFocus(Some(h));
+    a11y_role(h, ROLE_SYSTEM_LIST);
+    let keys_help = tr(
+        "↑/↓, PgUp/PgDn, Home/End to pick, → into a folder, ← up, Enter: select it in the pane, Ctrl+Enter: open the folder, Esc: close",
+        "↑/↓·PgUp/PgDn·Home/End로 고르기, → 폴더 안으로, ← 위로, Enter: 패널에서 선택, Ctrl+Enter: 폴더 열기, Esc: 닫기",
+    );
+    a11y_desc(h, Some(keys_help));
     usage_go(path, None);
+    _ = ShowWindow(h, SW_SHOW);
+    _ = SetFocus(Some(h)); // usage_key takes only the keys sent to it
 }
 
 // Shows `dir` (sizes known from this window come back at once), selecting `want` when it is there.
@@ -266,7 +317,28 @@ unsafe fn usage_go(dir: String, want: Option<String>) {
     let (h, main) = (ui(|u| u.h), app(|a| a.main));
     let gen = usage_start(Some(&dir), main);
     ui(|u| *u = UsageUi { gen, dir, want, h: u.h, prev: u.prev, pane: u.pane, rows: u.rows, w: u.w, ..Default::default() });
+    usage_tell(false, true); // quietly "Folder usage, <folder> · Reading…": the last folder's name doesn't linger
     _ = InvalidateRect(Some(h), None, false);
+}
+
+// Names the window after its picked row (with the folder and its total first when `whole`); said out loud only
+// when `say`. Unchanged and quiet: nothing to do. Outside ui() and app(): the reader may call straight back in.
+unsafe fn usage_tell(say: bool, whole: bool) {
+    let ko = KO.load(Ordering::Relaxed);
+    let (h, speech, new) = ui(|u| {
+        let n = u.list.len();
+        let pick = u.sel.and_then(|k| u.list.get(k).map(|r| usage_row_speech(r, u.total, k, n, ko)));
+        let head = usage_say_head(&u.head, u.list.is_empty(), u.done, u.failed, ko);
+        let speech = usage_list_speech(usage_dir_name(&u.dir), &head, pick.as_deref(), whole, ko);
+        let new = u.said.as_ref() != Some(&speech);
+        if new {
+            u.said = Some(speech.clone());
+        }
+        (u.h, speech, new)
+    });
+    if !h.0.is_null() && (say || new) {
+        a11y_say(h, &speech, say);
+    }
 }
 
 // WM_USAGE on the main window: the worker's rows, sorted again; the selection stays on its item.
@@ -281,7 +353,13 @@ pub(crate) unsafe fn usage_msg() {
     let head = if failed { tr("Can't read this folder", "이 폴더를 읽을 수 없음").to_string() } else { usage_head(KO.load(Ordering::Relaxed), &raw, done) };
     let total = raw.iter().map(|r| r.bytes).sum();
     let list = usage_list(raw, USAGE_MAX);
-    ui(|u| {
+    // read out only when the rows first come or the count ends (together: once; an empty folder only ends), never
+    // every USAGE_EVERY while counting: then the name just keeps up quietly
+    let (say, whole) = ui(|u| {
+        let say = (u.list.is_empty() && !list.is_empty()) || (!u.done && done);
+        // what was read out stays whole while the counts come in: a reader that takes the name late still gets
+        // the folder and its total, not just the row
+        u.whole |= say;
         // the item selected before (the "n more" row as "")
         let keep = u.want.take().or_else(|| u.sel.and_then(|k| u.list.get(k)).map(|r| if r.more > 0 { String::new() } else { r.name.clone() }));
         let sel = match keep {
@@ -297,7 +375,9 @@ pub(crate) unsafe fn usage_msg() {
         if u.sel != was {
             u.top = u.sel.map_or(0, |k| ev_scroll(u.top, k, u.rows));
         }
+        (say, u.whole)
     });
+    usage_tell(say, whole);
     _ = InvalidateRect(Some(h), None, false);
 }
 
@@ -317,12 +397,21 @@ pub(crate) unsafe fn usage_click_away(at: HWND) {
     if ui(|u| !u.h.0.is_null() && at != u.h) { usage_close(false) }
 }
 
+// The row the keys moved to is read out (not again when held at an end of the list).
 unsafe fn usage_move(d: i32) {
-    let h = ui(|u| {
+    let (h, moved) = ui(|u| {
+        let was = u.sel;
         u.sel = ev_step(u.sel, u.list.len(), d);
         u.top = u.sel.map_or(u.top, |k| ev_scroll(u.top, k, u.rows));
-        u.h
+        let moved = u.sel != was;
+        if moved {
+            u.whole = false;
+        }
+        (u.h, moved)
     });
+    if moved {
+        usage_tell(true, false);
+    }
     _ = InvalidateRect(Some(h), None, false);
 }
 
@@ -450,7 +539,8 @@ pub(crate) extern "system" fn usage_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPAR
                 let (x, y) = xy(lp);
                 let (dpi, (n, w, top, len)) = (app(|a| a.dpi), ui(|u| (u.rows, u.w, u.top, u.list.len())));
                 if let Some(j) = geo(dpi, n, w).rows.iter().position(|r| inside(*r, x, y)).filter(|j| top + j < len) {
-                    ui(|u| u.sel = Some(top + j));
+                    ui(|u| (u.sel, u.whole) = (Some(top + j), false));
+                    usage_tell(false, false); // the mouse's pick keeps the name right, unsaid
                     _ = InvalidateRect(Some(h), None, false);
                     if msg == WM_LBUTTONDBLCLK {
                         usage_into();
@@ -474,6 +564,7 @@ pub(crate) extern "system" fn usage_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPAR
             }
             WM_DESTROY => {
                 ui(|u| *u = UsageUi::default());
+                a11y_clear(h); // outside ui(): a reused HWND value doesn't inherit the name
                 usage_start(None, HWND::default()); // stops the worker and forgets the sizes
             }
             _ => return DefWindowProcW(h, msg, wp, lp),
@@ -512,6 +603,35 @@ mod tests {
         assert_eq!(usage_head(true, &half, false), "2.0 KB · 하위 폴더 0/1 계산됨");
         (half[1].done, half[1].partial) = (true, true);
         assert_eq!(usage_head(false, &half, true), "2.0 KB · all counted · partial");
+    }
+
+    // What a screen reader is given: the row as drawn, and the window's name with the folder and its total.
+    #[test]
+    fn usage_speech() {
+        let dir = |name: &str, bytes, done, partial| URow { name: name.into(), folder: true, bytes, done, partial, more: 0 };
+        let gb = 1u64 << 30;
+        assert_eq!(usage_row_speech(&dir("Downloads", 2 * gb, true, false), 8 * gb, 1, 18, false), "Downloads, folder, 2.0 GB, 25%, 2/18");
+        assert_eq!(usage_row_speech(&dir("Downloads", 2 * gb, true, false), 8 * gb, 1, 18, true), "Downloads, 폴더, 2.0 GB, 25%, 2/18");
+        // still being summed: what's counted so far once there is some, then "calculating"; nothing yet: no size
+        assert_eq!(usage_row_speech(&dir("a", 2048, false, false), 4096, 0, 3, false), "a, folder, 2.0 KB, 50%, calculating, 1/3");
+        assert_eq!(usage_row_speech(&dir("a", 0, false, false), 4096, 0, 3, true), "a, 폴더, 계산 중, 1/3");
+        assert_eq!(usage_row_speech(&dir("a", 2048, true, true), 4096, 0, 3, true), "a, 폴더, 2.0 KB, 50%, 일부만, 1/3");
+        assert_eq!(usage_row_speech(&row("f.txt", 0), 4096, 2, 3, false), "f.txt, 0 B, 0%, 3/3"); // a file: no kind
+        let more = URow { bytes: 2048, done: true, more: 1234, ..Default::default() };
+        assert_eq!(usage_row_speech(&more, 4096, 2, 3, false), "1,234 more items, 2.0 KB, 50%, 3/3");
+        assert_eq!(usage_row_speech(&more, 4096, 2, 3, true), "그 밖의 항목 1,234개, 2.0 KB, 50%, 3/3");
+        // the folder's name, never empty at a root
+        assert_eq!([usage_dir_name(r"C:\Windows"), usage_dir_name("C:\\"), usage_dir_name(r"\\nas\share"), usage_dir_name(r"C:\a\")], ["Windows", "C:", "share", "a"]);
+        // on opening, the first rows and the end: folder, total and pick; keys: the pick alone
+        let head = "8.0 GB · 3 of 18 folders counted";
+        assert_eq!(usage_list_speech("Windows", head, Some("x, 1/18"), true, false), "Folder usage, Windows · 8.0 GB · 3 of 18 folders counted · x, 1/18");
+        assert_eq!(usage_list_speech("Windows", head, Some("x, 1/18"), false, false), "x, 1/18");
+        assert_eq!(usage_list_speech("C:", "읽는 중…", None, false, true), "용량 분석, C: · 읽는 중…");
+        // an empty list says what the window shows instead of "0 B"
+        assert_eq!(usage_say_head("0 B · all counted", true, true, false, false), "Empty folder");
+        assert_eq!(usage_say_head("", true, false, false, true), "읽는 중…");
+        assert_eq!(usage_say_head("이 폴더를 읽을 수 없음", true, true, true, true), "이 폴더를 읽을 수 없음");
+        assert_eq!(usage_say_head(head, false, false, false, false), head);
     }
 
     #[test]
