@@ -126,6 +126,7 @@ pub(crate) struct App {
     pub(crate) lost: usize,                     // missing folders the shown note counts (gone_note)
     pub(crate) tips_now: u16,                   // shortcut tips (bit = TIP_* action) already shown since Grids started (runtime only)
     pub(crate) said: Option<Instant>,           // the note (by its end time) last handed to screen readers
+    pub(crate) ini_nag: IniNag,                 // "settings won't be kept" warnings waiting / shown (runtime only)
     pub(crate) status_hwnd: HWND,               // the status line control (screen readers); null = the main window paints it
     pub(crate) note_hwnd: HWND,                 // the note's live region (zero size, nothing drawn); null = no announcements
     pub(crate) say_nav: Option<usize>,          // pane read out once its folder opens (a tab key that browses; runtime only)
@@ -249,6 +250,7 @@ thread_local! {
         tips_now: 0,
         lost: 0,
         said: None,
+        ini_nag: IniNag::default(),
         status_hwnd: HWND::default(),
         note_hwnd: HWND::default(),
         say_nav: None,

@@ -887,18 +887,21 @@ pub(crate) fn load_ini(dir: &Path) -> std::io::Result<Option<String>> {
 }
 
 // Write next to `path` and swap it in, so a cut-off write never leaves half an ini; on failure the old file stays.
-pub(crate) fn write_ini(path: &Path, text: &str) -> std::io::Result<()> {
+// On failure it tells whether grids.ini.tmp itself could not be made (true: the folder takes no new file)
+// or a later step failed (false: writing it, or swapping it in while something holds grids.ini).
+pub(crate) fn write_ini(path: &Path, text: &str) -> std::result::Result<(), (bool, std::io::Error)> {
     use std::io::Write;
     let mut tmp = path.as_os_str().to_owned();
     tmp.push(".tmp");
     let tmp = PathBuf::from(tmp);
-    let r = std::fs::File::create(&tmp)
-        .and_then(|mut f| f.write_all(text.as_bytes()).and_then(|_| f.sync_all()))
-        .and_then(|_| std::fs::rename(&tmp, path));
+    let mut f = std::fs::File::create(&tmp).map_err(|e| (true, e))?;
+    let r = f.write_all(text.as_bytes()).and_then(|_| f.sync_all());
+    drop(f);
+    let r = r.and_then(|_| std::fs::rename(&tmp, path));
     if r.is_err() {
         _ = std::fs::remove_file(&tmp);
     }
-    r
+    r.map_err(|e| (false, e))
 }
 
 pub(crate) fn sessions_dir() -> PathBuf {

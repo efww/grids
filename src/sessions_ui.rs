@@ -75,7 +75,7 @@ struct IniQ {
     seq: u64,                    // number of the newest text handed in (or written by write_now)
     next: Option<(u64, String)>, // waiting for the worker; a newer text replaces it unwritten
     written: u64,                // newest number written or given up on: older ones are skipped
-    done: Option<(u64, bool)>,   // the worker's last finished write (number, worked), for autosave
+    done: Option<(u64, IniOut)>, // the worker's last finished write (number, how it went), for autosave
     on_disk: Option<String>,     // text of the last write that worked
     started: bool,               // the worker thread runs
     closed: bool,                // Grids closes / Windows ends: nothing more is handed in
@@ -99,7 +99,7 @@ impl IniWriter {
     }
 
     // The worker's last finished write, once.
-    pub(crate) fn take_done(&self) -> Option<(u64, bool)> {
+    pub(crate) fn take_done(&self) -> Option<(u64, IniOut)> {
         lock(&self.q).done.take()
     }
 
@@ -118,10 +118,10 @@ impl IniWriter {
         if lock(&self.q).written >= n {
             return; // the last save wrote a newer text meanwhile
         }
-        let ok = write_ini(&self.path, &text).is_ok();
+        let out = ini_out(&write_ini(&self.path, &text));
         let mut q = lock(&self.q);
-        (q.written, q.done) = (n, Some((n, ok)));
-        if ok {
+        (q.written, q.done) = (n, Some((n, out)));
+        if out == IniOut::Saved {
             q.on_disk = Some(text);
         }
     }
@@ -143,25 +143,25 @@ impl IniWriter {
     // write it waited for just put this very text there: a stuck share is not waited for twice (otherwise it
     // always writes, as before: grids.ini may have been removed or changed outside meanwhile).
     // `close`: no more pushes once it is written; after a failure autosave still tries again in 5 seconds.
-    pub(crate) fn write_now(&self, text: &str, close: bool) -> std::io::Result<()> {
+    pub(crate) fn write_now(&self, text: &str, close: bool) -> IniOut {
         let before = lock(&self.q).written;
         let _io = lock(&self.io);
         let mut q = lock(&self.q);
-        let just = q.written > before && q.done == Some((q.written, true)) && q.on_disk.as_deref() == Some(text);
+        let just = q.written > before && q.done == Some((q.written, IniOut::Saved)) && q.on_disk.as_deref() == Some(text);
         q.seq += 1;
         (q.next, q.written, q.done) = (None, q.seq, None);
         if just {
             q.closed |= close;
-            return Ok(());
+            return IniOut::Saved;
         }
         drop(q);
-        let r = write_ini(&self.path, text);
-        if r.is_ok() {
+        let out = ini_out(&write_ini(&self.path, text));
+        if out == IniOut::Saved {
             let mut q = lock(&self.q);
             q.on_disk = Some(text.to_owned());
             q.closed |= close;
         }
-        r
+        out
     }
 }
 
@@ -170,14 +170,157 @@ fn ini_writer() -> &'static IniWriter {
     W.get_or_init(|| IniWriter::new(ini_path()))
 }
 
+// How a grids.ini write went. Copy + PartialEq: write_now compares the worker's last result.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum IniOut {
+    Saved,
+    Denied, // grids.ini.tmp could not even be made: no permission, or write-protected media
+    Failed, // anything else (a scanner holding grids.ini while it is swapped in, disk full, a share gone)
+}
+
+// Only a refused grids.ini.tmp is a permission problem: a virus scanner or indexer holding grids.ini also makes the
+// swap fail with "access denied", and that passes. Write-protected media (Windows error 19) counts as no permission.
+pub(crate) fn ini_out(r: &std::result::Result<(), (bool, std::io::Error)>) -> IniOut {
+    match r {
+        Ok(()) => IniOut::Saved,
+        Err((true, e)) if e.kind() == std::io::ErrorKind::PermissionDenied || matches!(e.raw_os_error(), Some(5 | 19)) => IniOut::Denied,
+        Err(_) => IniOut::Failed,
+    }
+}
+
+// Status line warnings that settings won't be kept (as portable editors warn when their settings folder is
+// read-only); each kind at most once a run, shown by ini_nag_tick when nothing else is on the line.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum IniWarn {
+    Denied, // no permission to write next to grids.exe
+    Failed, // writes keep failing for another reason
+    Temp,   // grids.exe runs from the temp folder (opened inside a ZIP)
+}
+
+impl IniWarn {
+    fn bit(self) -> u8 {
+        1 << self as u8
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct IniNag {
+    wait: u8,  // kinds waiting to be shown
+    shown: u8, // kinds shown this run: never again
+    fails: u8, // failed writes in a row
+}
+
+impl IniNag {
+    pub(crate) fn queue(&mut self, w: IniWarn) {
+        if self.shown & w.bit() == 0 {
+            self.wait |= w.bit();
+        }
+    }
+
+    // An autosave write's result. One other failure may be a scanner passing by: only a second in a row warns.
+    // A write that worked drops a failure warning not shown yet (the temp folder one stays: it is still true).
+    pub(crate) fn wrote(&mut self, out: IniOut) {
+        if out == IniOut::Saved {
+            self.fails = 0;
+            self.wait &= IniWarn::Temp.bit();
+            return;
+        }
+        self.fails = self.fails.saturating_add(1);
+        match out {
+            IniOut::Denied => self.queue(IniWarn::Denied),
+            _ if self.fails >= 2 => self.queue(IniWarn::Failed),
+            _ => {}
+        }
+    }
+
+    // The next warning to show, now marked shown.
+    pub(crate) fn next(&mut self) -> Option<IniWarn> {
+        let w = [IniWarn::Denied, IniWarn::Failed, IniWarn::Temp].into_iter().find(|w| self.wait & w.bit() != 0)?;
+        self.wait &= !w.bit();
+        self.shown |= w.bit();
+        Some(w)
+    }
+}
+
+// The warning's words: what to do first, then why; `dir` (grids.exe's folder) cut to 80 characters like fail_text.
+pub(crate) fn ini_warning(w: IniWarn, dir: &str, ko: bool) -> String {
+    let dir = if dir.chars().count() > 80 { dir.chars().take(79).chain(['…']).collect() } else { dir.to_string() };
+    let (en, k) = ini_warning_pair(w);
+    if ko { k } else { en }.replace("{dir}", &dir)
+}
+
+fn ini_warning_pair(w: IniWarn) -> (&'static str, &'static str) {
+    match w {
+        IniWarn::Denied => (
+            "Settings won't be kept: move grids.exe to a folder you can write to (no permission to write in {dir})",
+            "설정이 남지 않음: grids.exe를 쓰기 권한이 있는 내 폴더로 옮기세요({dir}에 쓸 권한 없음)",
+        ),
+        IniWarn::Failed => ("Couldn't save settings in {dir} · still trying", "{dir}에 설정을 저장하지 못함 · 계속 다시 시도 중"),
+        IniWarn::Temp => (
+            "Extract Grids to a folder first: it runs from a temporary folder (opened inside a ZIP?) and settings go when that is cleaned up",
+            "먼저 폴더에 압축을 푸세요: 임시 폴더에서 실행 중(ZIP 안에서 열었나요?)이라 정리되면 설정이 사라짐",
+        ),
+    }
+}
+
+// `dir` is `root` or inside it: no case, no trailing '\' or '/', whole names only (C:\Temp2 is not under C:\Temp).
+pub(crate) fn path_under(dir: &str, root: &str) -> bool {
+    let norm = |p: &str| p.trim_end_matches(['\\', '/']).replace('/', "\\").to_lowercase();
+    let (d, r) = (norm(dir), norm(root));
+    !r.is_empty() && (d == r || d.strip_prefix(&r).is_some_and(|rest| rest.starts_with('\\')))
+}
+
+// grids.exe runs from under the temp folder (a ZIP opened in Explorer or 7-Zip unpacks it there). Both sides
+// in full long names first (TEMP may be C:\Users\RUNNER~1\…); not known for sure: no warning.
+pub(crate) fn exe_in_temp() -> bool {
+    let long = |p: &Path| std::fs::canonicalize(p).ok().map(|c| {
+        let c = c.to_string_lossy().into_owned();
+        c.strip_prefix(r"\\?\UNC\").map(|u| format!(r"\\{u}")).or_else(|| c.strip_prefix(r"\\?\").map(str::to_string)).unwrap_or(c)
+    });
+    let ini = ini_path();
+    let (Some(exe), Some(temp)) = (ini.parent().and_then(|d| long(d)), long(&std::env::temp_dir())) else { return false };
+    path_under(&exe, &temp)
+}
+
+// Every status tick: a warning waiting shows for 20 seconds (read out like any note) once the getting started tour
+// is closed, no other note is up or waiting and Grids is in front (not just unminimized behind another app, where
+// nobody would see it before it goes, and it is not shown again this run). Outside app(): update_status follows.
+pub(crate) unsafe fn ini_nag_tick() {
+    if app(|a| a.ini_nag.wait == 0)
+        || !app_in_front()
+        || !tour_hwnd().0.is_null()
+        || SAVED.lock().unwrap_or_else(|e| e.into_inner()).is_some()
+    {
+        return;
+    }
+    let ini = ini_path();
+    let dir = ini.parent().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default();
+    let ko = KO.load(Ordering::Relaxed);
+    let now = Instant::now();
+    app(|a| {
+        if a.note.as_ref().is_some_and(|(_, t)| now < *t) {
+            return;
+        }
+        if let Some(w) = a.ini_nag.next() {
+            a.note = Some((ini_warning(w, &dir, ko), now + Duration::from_secs(20)));
+            a.lost = 0;
+        }
+    });
+}
+
 // What a write did: kept, or on failure the old grids.ini stays and autosave tries again in 5 seconds.
-unsafe fn ini_result(ini: Option<String>, ok: bool) {
+// `warn`: autosave's own results also feed the status line warning (not the last save: the window is going).
+unsafe fn ini_result(ini: Option<String>, out: IniOut, warn: bool) {
+    let ok = out == IniOut::Saved;
     app(|a| {
         if let Some(ini) = ini {
             a.queued_ini = ini;
         }
         note_write(&mut a.queued_ini, &mut a.saved_ini, ok);
         a.save_after = (!ok).then(|| Instant::now() + Duration::from_secs(5));
+        if warn {
+            a.ini_nag.wrote(out);
+        }
     });
 }
 
@@ -197,17 +340,17 @@ pub(crate) unsafe fn save_session() {
         save_view(i);
     }
     let ini = ini_now();
-    let ok = ini_writer().write_now(&ini, true).is_ok();
-    ini_result(Some(ini), ok);
+    let out = ini_writer().write_now(&ini, true);
+    ini_result(Some(ini), out, false);
 }
 
 // Runs right after check_dirty (which saved the views): writes grids.ini whenever its text changes, so a restart,
 // sign-out or crash loses nothing. Not mid-drag or mid-resize.
 pub(crate) unsafe fn autosave() {
     let w = ini_writer();
-    if let Some((n, ok)) = w.take_done() {
+    if let Some((n, out)) = w.take_done() {
         if app(|a| a.ini_seq == n) {
-            ini_result(None, ok); // an older text's result: the newer one reports itself
+            ini_result(None, out, true); // an older text's result: the newer one reports itself
         }
     }
     let now = Instant::now();
@@ -221,8 +364,8 @@ pub(crate) unsafe fn autosave() {
                 app(|a| (a.queued_ini, a.ini_seq) = (ini, n));
             }
         } else {
-            let ok = w.write_now(&ini, false).is_ok(); // no thread: as before, here
-            ini_result(Some(ini), ok);
+            let out = w.write_now(&ini, false); // no thread: as before, here
+            ini_result(Some(ini), out, true);
         }
     }
     refresh_jump_list(false); // favourites, recent folders or the language changed: the jump list follows
@@ -778,7 +921,7 @@ mod tests {
         assert_eq!((n, text.as_str()), (ns[2], "a=3\n"));
         assert!(lock(&w.q).next.is_none()); // the two older ones are gone, never written
         w.write_job(n, text);
-        assert_eq!(w.take_done(), Some((n, true)));
+        assert_eq!(w.take_done(), Some((n, IniOut::Saved)));
         assert_eq!(w.take_done(), None);
         assert_eq!(std::fs::read_to_string(dir.join("grids.ini")).unwrap(), "a=3\n");
         assert!(w.push("a=4\n".into()).unwrap() > n);
@@ -793,7 +936,7 @@ mod tests {
         let n = w.push("old=1\n".into()).unwrap();
         let job = w.wait_job(); // the worker took it but has not written yet
         w.push("mid=1\n".into()).unwrap(); // still waiting when Grids closes
-        w.write_now("last=1\n", true).unwrap();
+        assert_eq!(w.write_now("last=1\n", true), IniOut::Saved);
         let (gone, seq) = {
             let q = lock(&w.q);
             (q.next.is_none(), q.seq)
@@ -805,7 +948,7 @@ mod tests {
         assert_eq!(w.push("after=1\n".into()), None); // closed: nothing more handed in
         // the same text again with no worker write waited for: written anyway (grids.ini was removed outside)
         std::fs::remove_file(&ini).unwrap();
-        w.write_now("last=1\n", true).unwrap();
+        assert_eq!(w.write_now("last=1\n", true), IniOut::Saved);
         assert_eq!(std::fs::read_to_string(&ini).unwrap(), "last=1\n");
         _ = std::fs::remove_dir_all(&dir);
     }
@@ -819,8 +962,8 @@ mod tests {
         let n = w.push("a=1\n".into()).unwrap();
         let (m, text) = w.wait_job();
         w.write_job(m, text);
-        assert_eq!(w.take_done(), Some((n, false)));
-        assert!(w.write_now("a=1\n", true).is_err());
+        assert_eq!(w.take_done(), Some((n, IniOut::Failed))); // grids.ini.tmp was made: not a permission problem
+        assert_eq!(w.write_now("a=1\n", true), IniOut::Failed);
         assert!(w.push("a=1\n".into()).is_some()); // a failed last save does not close: autosave tries again
         let (mut queued, mut saved) = ("a=1\n".to_string(), "a=0\n".to_string());
         note_write(&mut queued, &mut saved, false);
@@ -841,11 +984,94 @@ mod tests {
         for k in 0..100 {
             w.push(format!("k={k}\n")).unwrap();
         }
-        w.write_now("k=final\n", true).unwrap();
+        assert_eq!(w.write_now("k=final\n", true), IniOut::Saved);
         std::thread::sleep(Duration::from_millis(50)); // a late worker write would land here
         assert_eq!(std::fs::read_to_string(&ini).unwrap(), "k=final\n");
         assert!(!dir.join("grids.ini.tmp").exists());
         _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn only_a_refused_tmp_file_is_no_permission() {
+        use std::io::{Error, ErrorKind};
+        let r = |at: bool, e: Error| ini_out(&Err((at, e)));
+        assert_eq!(ini_out(&Ok(())), IniOut::Saved);
+        assert_eq!(r(true, Error::from(ErrorKind::PermissionDenied)), IniOut::Denied);
+        assert_eq!(r(true, Error::from_raw_os_error(19)), IniOut::Denied); // write-protected media
+        // grids.ini held by a scanner while it is swapped in: also "access denied", but not the folder's fault
+        assert_eq!(r(false, Error::from(ErrorKind::PermissionDenied)), IniOut::Failed);
+        assert_eq!(r(true, Error::from(ErrorKind::NotFound)), IniOut::Failed);
+        assert_eq!(r(false, Error::other("disk full")), IniOut::Failed);
+    }
+
+    #[test]
+    fn each_warning_once_a_run() {
+        let mut n = IniNag::default();
+        n.wrote(IniOut::Saved);
+        assert_eq!(n.next(), None);
+        n.wrote(IniOut::Failed); // one may be a scanner passing by
+        assert_eq!(n.next(), None);
+        n.wrote(IniOut::Saved); // and it was: the count starts over
+        n.wrote(IniOut::Failed);
+        assert_eq!(n.next(), None);
+        n.wrote(IniOut::Failed);
+        assert_eq!(n.next(), Some(IniWarn::Failed));
+        for _ in 0..10 {
+            n.wrote(IniOut::Failed); // every 5 seconds again: never shown twice
+        }
+        assert_eq!(n.next(), None);
+        n.wrote(IniOut::Denied);
+        n.wrote(IniOut::Denied);
+        assert_eq!(n.next(), Some(IniWarn::Denied));
+        assert_eq!(n.next(), None);
+        // a failure warning still waiting (tour open) goes once a write works; the temp folder one stays
+        let mut n = IniNag::default();
+        n.queue(IniWarn::Temp);
+        n.wrote(IniOut::Denied);
+        n.wrote(IniOut::Saved);
+        assert_eq!(n.next(), Some(IniWarn::Temp));
+        assert_eq!(n.next(), None);
+        n.queue(IniWarn::Temp);
+        assert_eq!(n.next(), None);
+        // both waiting: no permission first
+        let mut n = IniNag::default();
+        n.queue(IniWarn::Temp);
+        n.wrote(IniOut::Denied);
+        assert_eq!((n.next(), n.next(), n.next()), (Some(IniWarn::Denied), Some(IniWarn::Temp), None));
+    }
+
+    #[test]
+    fn temp_folder_is_whole_names_any_case() {
+        let t = r"C:\Users\Kim\AppData\Local\Temp";
+        assert!(path_under(r"C:\Users\Kim\AppData\Local\Temp\Temp1_grids.zip", t));
+        assert!(path_under(r"c:\users\kim\appdata\local\temp\7zO1234\", &format!("{t}\\")));
+        assert!(path_under(t, t));
+        assert!(path_under(r"C:/Users/Kim/AppData/Local/Temp/x", t));
+        assert!(!path_under(r"C:\Users\Kim\AppData\Local\Temp2\grids", t));
+        assert!(!path_under(r"C:\Users\Kim\Documents\Grids", t));
+        assert!(!path_under(r"C:\Program Files\Grids", t));
+        assert!(!path_under(r"C:\Grids", ""));
+    }
+
+    #[test]
+    fn warning_words_pair_up() {
+        let dir = r"C:\Program Files\Grids";
+        for w in [IniWarn::Denied, IniWarn::Failed, IniWarn::Temp] {
+            let (en, ko) = ini_warning_pair(w);
+            assert_eq!(en.contains("{dir}"), ko.contains("{dir}"), "{w:?}");
+            for ko in [false, true] {
+                let s = ini_warning(w, dir, ko);
+                assert!(!s.contains('{') && s.contains(dir) == (w != IniWarn::Temp), "{s}");
+            }
+        }
+        assert_eq!(
+            ini_warning(IniWarn::Denied, dir, false),
+            r"Settings won't be kept: move grids.exe to a folder you can write to (no permission to write in C:\Program Files\Grids)"
+        );
+        assert_eq!(ini_warning(IniWarn::Denied, dir, true), r"설정이 남지 않음: grids.exe를 쓰기 권한이 있는 내 폴더로 옮기세요(C:\Program Files\Grids에 쓸 권한 없음)");
+        let long = format!(r"D:\{}", "가".repeat(100));
+        let s = ini_warning(IniWarn::Failed, &long, true);
+        assert!(s.contains('…') && !s.contains(&long));
     }
 
     #[test]

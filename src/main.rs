@@ -491,6 +491,9 @@ fn main() -> Result<()> {
             app(|a| a.note = Some((text, Instant::now() + Duration::from_secs(5))));
             _ = MessageBeep(MB_ICONWARNING);
         }
+        if exe_in_temp() {
+            app(|a| a.ini_nag.queue(IniWarn::Temp)); // shown by the status tick once the tour and notes are gone
+        }
         SetTimer(Some(main), TIMER_STATUS, TICK_FAST, None); // a minimized start slows it on its first tick
         watch_folders(main); // folders renamed / removed elsewhere (shell_change)
         watch_bin(main); // the Recycle Bin button's icon follows the bin (bin_change)
