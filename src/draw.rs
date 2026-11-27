@@ -204,6 +204,20 @@ unsafe fn draw_button_face(d: &DRAWITEMSTRUCT) {
         }
         return text(dc, rc, glyph(ID_CLOUD), icon_font, if marked { pal().text } else { fg }, DT_CENTER);
     }
+    if (ID_DEVICE..ID_DEVICE + MAX_DEVICE as i32).contains(&id) {
+        // the device's own icon (a phone glyph when it has none), centred; underlined while the active pane is in it
+        let (ix, marked, accent) = app(|a| (a.devices.iter().find(|v| v.h == d.hwndItem).map_or(-1, |v| v.reg.ix), a.cloud_mark == d.hwndItem, a.s.accent_now()));
+        if marked {
+            fill(dc, RECT { left: rc.left + s(7), top: rc.bottom - s(2), right: rc.right - s(7), bottom: rc.bottom }, accent);
+        }
+        if let Some(il) = (ix >= 0).then(|| small_ilist()).flatten() {
+            let (x, y) = (rc.left + (rc.right - rc.left - s(16)) / 2, rc.top + (rc.bottom - rc.top - s(16)) / 2);
+            if shell_icon(dc, &il, ix, RECT { left: x, top: y, right: x + s(16), bottom: y + s(16) }) {
+                return;
+            }
+        }
+        return text(dc, rc, glyph(ID_DEVICE), icon_font, if marked { pal().text } else { fg }, DT_CENTER);
+    }
     if id == ID_BIN {
         // the desktop's bin, empty or full, centred; a glyph bin when the shell gave no icon
         let ix = bin_icon();

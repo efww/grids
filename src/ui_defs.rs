@@ -25,6 +25,10 @@ pub(crate) const ID_DRIVE: i32 = 1500; // + 0..25: drive buttons A: … Z:
 pub(crate) const ID_BIN: i32 = 1530; // the Recycle Bin button after the drive buttons
 pub(crate) const ID_CLOUD: i32 = 1540; // + 0..MAX_CLOUD: cloud folder buttons (OneDrive, Dropbox …) after the drives
 pub(crate) const MAX_CLOUD: usize = 8;
+pub(crate) const ID_DEVICE: i32 = 1550; // + 0..MAX_DEVICE: plugged-in phones / cameras (no drive letter), after the drives
+pub(crate) const MAX_DEVICE: usize = 4;
+pub(crate) const TIMER_DEVICES: usize = 1550; // on main: a device came or went, looked for once the notices settle
+pub(crate) const TIMER_DEVICES_AGAIN: usize = 1551; // on main: and once more a little later (Android's File transfer)
 pub(crate) const TIMER_BIN: usize = 1530; // on main: the Recycle Bin is counted again after a short pause
 pub(crate) const RECYCLE_BIN: &str = "::{645FF040-5081-101B-9F08-00AA002F954E}";
 // menu ids
@@ -355,6 +359,7 @@ pub(crate) fn glyph(id: i32) -> &'static str {
         ID_TB_EV => ICON_SEARCH,
         ID_BIN => "\u{E74D}", // a bin, only when the shell's own icon isn't there
         ID_CLOUD => "\u{E753}", // a cloud, only when neither its own nor the folder icon is there
+        ID_DEVICE => "\u{E8EA}", // a phone, only when the device's own icon isn't there
         ID_TB_THEME if DARK_ON.load(Ordering::Relaxed) => "\u{E706}", // sun: back to light
         ID_TB_THEME => "\u{E708}",                                     // moon: go dark
         _ => "\u{E890}",
@@ -437,6 +442,7 @@ Layout button: click for an even grid, press and drag for rows per column (arrow
 Save (Ctrl+S): overwrite the current session file; green dot = unsaved layout changes (not folder moves)\n\
 Load (Ctrl+O): pick a saved session by its layout preview; point at a card for its ✕ to delete it, or right-click it to rename, delete or put a shortcut to it on the desktop\n\
 Drive buttons (C, D …): open that drive in the active pane; its drive is underlined; right-click: the drive menu as in Explorer (Eject, Properties …); drop files on one to copy / move them there as in Explorer (same drive moves; Ctrl copies, Shift moves), or on the Recycle Bin button to delete them (Shift: for good)\n\
+Phone / camera buttons: a phone or camera plugged in by USB (no drive letter) gets an icon button after the drive letters; click: open it in the active pane; right-click: the device menu (Import pictures and videos, Properties …)\n\
 Double-click a splitter: split evenly\n\
 Update button (blue, top right): a newer Grids is out; click to restart into it (settings, folders and sessions stay)\n\
 Pane header: right-click for a colour label (saved with the session); double-click to maximize / restore the pane; drop a folder on it to open it there (a file: its folder)\n\
@@ -510,6 +516,7 @@ F2\t패널에서 이름 바꾸는 중: 누를 때마다 확장명 뺀 이름 →
 저장 (Ctrl+S): 지금 세션 파일에 바로 덮어쓰기, 초록 점 = 저장 안 된 배치 변경(폴더 이동은 제외)\n\
 불러오기 (Ctrl+O): 저장한 세션을 배치 미리보기로 보고 한 번 클릭, 카드에 마우스를 올리면 ✕로 삭제, 오른쪽 클릭으로 이름 바꾸기·삭제·바탕 화면 바로 가기 만들기\n\
 드라이브 버튼 (C, D …): 지금 패널에서 그 드라이브 열기, 지금 패널의 드라이브에 밑줄, 오른쪽 클릭: 탐색기와 같은 드라이브 메뉴(꺼내기·속성 …), 파일을 끌어다 놓으면 탐색기처럼 그 드라이브로 복사·이동(같은 드라이브는 이동, Ctrl 복사·Shift 이동), 휴지통 버튼에 놓으면 휴지통으로(Shift: 영구 삭제)\n\
+휴대폰·카메라 버튼: USB로 꽂은 휴대폰·카메라(드라이브 문자 없음)는 드라이브 버튼 뒤에 아이콘 버튼으로 생김, 클릭: 지금 패널에서 열기, 오른쪽 클릭: 기기 메뉴(사진 및 동영상 가져오기·속성 …)\n\
 스플리터 더블클릭: 균등 분할\n\
 업데이트 버튼 (파란색, 오른쪽 위): 새 Grids가 나옴, 누르면 재시작해 업데이트 (설정·폴더·세션 유지)\n\
 패널 머리줄: 오른쪽 클릭 = 패널 색 라벨 (세션에 저장), 더블클릭 = 크게 보기 / 복원, 폴더를 끌어다 놓으면 그 패널에서 열기 (파일은 그 파일이 든 폴더)\n\

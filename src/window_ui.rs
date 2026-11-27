@@ -201,6 +201,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 }
                 refresh_drives(); // one that came or went mid-resize
                 refresh_clouds();
+                devices_found(); // a phone found mid-resize
                 relayout();
                 redraw_all();
                 tour_place();
@@ -233,7 +234,24 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             // and TRUE grants a removal query.
             WM_DEVICECHANGE => {
                 _ = PostMessageW(Some(h), WM_DRIVES, WPARAM(0), LPARAM(0));
+                // a phone or camera has no drive letter: looked for once the notices stop for 700 ms, and again
+                // 2.5 s on (an Android phone shows up only once File transfer is picked on it)
+                if matches!(wp.0 as u32, DBT_DEVNODES_CHANGED | DBT_DEVICEARRIVAL | DBT_DEVICEREMOVECOMPLETE) {
+                    SetTimer(Some(h), TIMER_DEVICES, 700, None);
+                    SetTimer(Some(h), TIMER_DEVICES_AGAIN, 2500, None);
+                }
                 return LRESULT(1);
+            }
+            WM_TIMER if wp.0 == TIMER_DEVICES || wp.0 == TIMER_DEVICES_AGAIN => {
+                _ = KillTimer(Some(h), wp.0);
+                find_devices();
+            }
+            // mid-drag or mid-resize, end_drag / WM_EXITSIZEMOVE pick it up instead
+            WM_DEVICES => {
+                if !app(|a| a.drag.is_some() || a.sizing) && devices_found() {
+                    relayout();
+                    redraw_all();
+                }
             }
             // network drives and subst send no device message: look again whenever Grids comes to the front
             WM_ACTIVATEAPP => {
@@ -453,6 +471,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 id if (ID_DRIVE as usize..ID_DRIVE as usize + 26).contains(&id) => open_drive(b'A' + (id - ID_DRIVE as usize) as u8),
                 id if id == ID_BIN as usize => open_bin(),
                 id if (ID_CLOUD as usize..ID_CLOUD as usize + MAX_CLOUD).contains(&id) => open_cloud(id - ID_CLOUD as usize),
+                id if (ID_DEVICE as usize..ID_DEVICE as usize + MAX_DEVICE).contains(&id) => open_device(id - ID_DEVICE as usize),
                 ID_TREE => toggle_tree(),
                 ID_TREE_QUICK => toggle_tree_quick(),
                 ID_HIDDEN => toggle_hidden(),
@@ -542,13 +561,15 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                     accent_chips(sub, dark);
                 }
             }
-            // right-click (or Shift+F10 / the menu key) on a drive or cloud folder button: its shell menu; on the
-            // Recycle Bin button: the bin's
+            // right-click (or Shift+F10 / the menu key) on a drive, device or cloud folder button: its shell menu;
+            // on the Recycle Bin button: the bin's
             WM_CONTEXTMENU => {
                 let bin = GetDlgItem(Some(h), ID_BIN).ok().filter(|b| b.0 as usize == wp.0);
                 let drive = app(|a| a.drives.iter().find(|d| d.2 .0 as usize == wp.0).map(|d| (d.0, d.2)));
                 let cloud = app(|a| a.clouds.iter().position(|c| c.h.0 as usize == wp.0).map(|k| (k, a.clouds[k].h)));
-                let Some(b) = bin.or(drive.map(|d| d.1)).or(cloud.map(|c| c.1)) else {
+                // name and path copied now: the button may go (WM_DEVICES) while its menu is up
+                let device = app(|a| a.devices.iter().find(|d| d.h.0 as usize == wp.0).map(|d| (device_label(&d.reg.name), d.reg.parse.clone(), d.h)));
+                let Some(b) = bin.or(drive.map(|d| d.1)).or(cloud.map(|c| c.1)).or(device.as_ref().map(|d| d.2)) else {
                     return DefWindowProcW(h, msg, wp, lp);
                 };
                 // where now: the button may be gone (WM_DRIVES) by the time the menu closes
@@ -560,10 +581,11 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                     }
                     (x, y) => POINT { x, y },
                 };
-                match (drive, cloud) {
-                    (Some((c, _)), _) => drive_menu(c, at),
-                    (None, Some((k, _))) => cloud_menu(k, at),
-                    (None, None) => bin_menu(at),
+                match (drive, cloud, device) {
+                    (Some((c, _)), _, _) => drive_menu(c, at),
+                    (None, Some((k, _)), _) => cloud_menu(k, at),
+                    (None, None, Some((name, parse, _))) => device_menu(name, parse, at),
+                    (None, None, None) => bin_menu(at),
                 }
             }
             WM_COPYDATA => {
@@ -626,6 +648,8 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             WM_DESTROY => {
                 _ = KillTimer(Some(h), TIMER_STATUS);
                 _ = KillTimer(Some(h), TIMER_PANE_LOAD);
+                _ = KillTimer(Some(h), TIMER_DEVICES);
+                _ = KillTimer(Some(h), TIMER_DEVICES_AGAIN);
                 drop_status();
                 unwatch_folders();
                 dialog_jump::shutdown();
@@ -1744,7 +1768,7 @@ pub(crate) unsafe fn refresh_drives() -> bool {
     true
 }
 
-// A drive or cloud button going: its tooltip, screen reader props, drop target and the focus go first.
+// A drive, device or cloud button going: its tooltip, screen reader props, drop target and the focus go first.
 unsafe fn unmake_place_button(h: HWND, hover: HWND) {
     if hover == h {
         set_hover(HWND::default());
@@ -1931,17 +1955,207 @@ pub(crate) unsafe fn cloud_menu(k: usize, at: POINT) {
     }
 }
 
-// The underline follows the active pane's drive, or its cloud folder instead when it is in one: on the 300ms status
-// tick, and at once on a pane switch.
+// ---------- phone / camera buttons (top toolbar) ----------
+// A phone (MTP) or camera (PTP) plugged in by USB has no drive letter, so it had no button: Windows 11's This PC and
+// the Files app list it with the drives, Directory Opus' and XYplorer's drive bars show it as one. Here a square icon
+// button between the drive letters and the cloud folders. Looked for by a worker thread (This PC also holds network
+// drives that may not answer), one at a time: at startup, and when Windows says a device came or went
+// (WM_DEVICECHANGE), not when Grids comes to the front.
+
+pub(crate) const WM_DEVICES: u32 = WM_APP + 68; // from the worker: wParam = gen; the list stays in DEV_JOB.got
+
+/// A device itself right under This PC: THIS_PC, '\', then a device path (\\?\usb#vid_…#{…}) with nothing below it.
+/// Drives (E:\), folders inside a device (…\SID-{…}) and other shell places (::{…}) are not.
+pub(crate) fn device_path(parse: &str) -> bool {
+    let Some((pc, rest)) = parse.split_at_checked(THIS_PC.len() + 1) else { return false };
+    pc.ends_with('\\') && pc[..THIS_PC.len()].eq_ignore_ascii_case(THIS_PC) && rest.strip_prefix(r"\\?\").is_some_and(|id| !id.is_empty() && !id.contains('\\'))
+}
+
+// The buttons to show from what This PC holds: devices only, one per path (any case), by name, at most MAX_DEVICE.
+pub(crate) fn device_list(raw: Vec<DeviceReg>) -> Vec<DeviceReg> {
+    let mut v: Vec<DeviceReg> = raw
+        .into_iter()
+        .filter(|d| device_path(&d.parse))
+        .map(|mut d| {
+            d.name = d.name.trim().to_string();
+            d
+        })
+        .collect();
+    v.sort_by_cached_key(|d| (d.name.to_lowercase(), d.parse.to_lowercase()));
+    let mut seen: Vec<String> = Vec::new();
+    v.retain(|d| {
+        let k = d.parse.to_lowercase();
+        let new = !seen.contains(&k);
+        seen.push(k);
+        new
+    });
+    v.truncate(MAX_DEVICE);
+    v
+}
+
+// Its name, or a plain one when the device gave none (in the language of the moment, so not stored).
+pub(crate) fn device_label(name: &str) -> String {
+    if name.trim().is_empty() {
+        tr("Portable device", "휴대용 기기").to_string()
+    } else {
+        name.to_string()
+    }
+}
+
+pub(crate) fn device_tip(name: &str) -> String {
+    format!("{} — {}", device_label(name), tr("open in the active pane · Right-click: device menu", "지금 패널에서 열기 · 오른쪽 클릭: 기기 메뉴"))
+}
+
+struct DevJob {
+    gen: usize,                           // bumped by every request; a list from an older one is dropped
+    busy: bool,                           // the worker runs
+    again: bool,                          // asked meanwhile: it looks once more before it stops
+    got: Option<(usize, Vec<DeviceReg>)>, // (gen, devices found), until the window takes it
+}
+
+static DEV_JOB: Mutex<DevJob> = Mutex::new(DevJob { gen: 0, busy: false, again: false, got: None });
+
+fn dev_job() -> std::sync::MutexGuard<'static, DevJob> {
+    DEV_JOB.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+// Asks the worker to look again; started if it isn't running, else it looks once more when done.
+pub(crate) unsafe fn find_devices() {
+    let main = app(|a| a.main).0 as usize;
+    {
+        let mut j = dev_job();
+        j.gen = j.gen.wrapping_add(1);
+        if j.busy {
+            j.again = true;
+            return;
+        }
+        j.busy = true;
+    }
+    if std::thread::Builder::new().spawn(move || device_worker(main)).is_err() {
+        dev_job().busy = false;
+    }
+}
+
+// Known limit: a device that never answers holds this worker, so the buttons stop changing; the window never waits.
+fn device_worker(main: usize) {
+    unsafe {
+        let com = CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok();
+        loop {
+            let gen = dev_job().gen;
+            let found = if com { device_list(device_scan()) } else { Vec::new() };
+            dev_job().got = Some((gen, found));
+            _ = PostMessageW(Some(HWND(main as _)), WM_DEVICES, WPARAM(gen), LPARAM(0));
+            let mut j = dev_job();
+            if !std::mem::take(&mut j.again) {
+                j.busy = false;
+                break;
+            }
+        }
+        if com {
+            CoUninitialize();
+        }
+    }
+}
+
+// This PC's items that are devices. Only the parsing name of each first: a drive's display name or icon may wait
+// on a sleeping disk or a lost share, so those are asked of the devices alone.
+unsafe fn device_scan() -> Vec<DeviceReg> {
+    let pc: IShellItem = match SHGetKnownFolderItem(&FOLDERID_ComputerFolder, KF_FLAG_DEFAULT, None) {
+        Ok(pc) => pc,
+        Err(_) => return Vec::new(),
+    };
+    let Ok(items) = pc.BindToHandler::<_, IEnumShellItems>(None, &BHID_EnumItems) else { return Vec::new() };
+    let mut out = Vec::new();
+    for _ in 0..256 {
+        let (mut one, mut n) = ([None], 0u32);
+        if items.Next(&mut one, Some(&mut n)).is_err() || n == 0 {
+            break;
+        }
+        let Some(it) = one[0].take() else { break };
+        let Ok(p) = it.GetDisplayName(SIGDN_DESKTOPABSOLUTEPARSING) else { continue };
+        let parse = pwstr(p);
+        if !device_path(&parse) {
+            continue;
+        }
+        let name = it.GetDisplayName(SIGDN_NORMALDISPLAY).map(|p| pwstr(p)).unwrap_or_default();
+        out.push(DeviceReg { parse, name, ix: device_icon(&it) });
+    }
+    out
+}
+
+// Its icon as a system image list index, -1 when the shell gives none (a phone glyph is drawn instead).
+unsafe fn device_icon(it: &IShellItem) -> i32 {
+    let Ok(pidl) = SHGetIDListFromObject(it) else { return -1 };
+    let mut sfi = SHFILEINFOW::default();
+    let flags = SHGFI_PIDL | SHGFI_SYSICONINDEX | SHGFI_SMALLICON; // an index only: no HICON to free
+    let ok = SHGetFileInfoW(PCWSTR(pidl as _), FILE_FLAGS_AND_ATTRIBUTES(0), Some(&mut sfi), size_of::<SHFILEINFOW>() as u32, flags) != 0;
+    CoTaskMemFree(Some(pidl as _));
+    if ok {
+        sfi.iIcon.max(-1)
+    } else {
+        -1
+    }
+}
+
+// WM_DEVICES (and after a drag or resize, which hold it back): the worker's list, if it answers the latest request,
+// remakes the buttons when it differs; true if it did (the caller lays them out).
+pub(crate) unsafe fn devices_found() -> bool {
+    let list = {
+        let mut j = dev_job();
+        let gen = j.gen;
+        match j.got.take() {
+            Some((g, list)) if g == gen => list,
+            _ => return false,
+        }
+    };
+    let Some((main, hover, gone)) = app(|a| {
+        let same = a.devices.len() == list.len() && a.devices.iter().zip(&list).all(|(d, r)| d.reg == *r);
+        (!same).then(|| (a.main, a.hover, std::mem::take(&mut a.devices)))
+    }) else {
+        return false;
+    };
+    for d in gone {
+        unmake_place_button(d.h, hover);
+    }
+    let mut made = Vec::new();
+    for (k, reg) in list.into_iter().enumerate() {
+        let name = HSTRING::from(device_label(&reg.name)); // also the accessible name
+        let h = child(main, w!("BUTTON"), PCWSTR(name.as_ptr()), BS_OWNERDRAW as u32, WINDOW_EX_STYLE(0), ID_DEVICE + k as i32, HFONT::default());
+        add_tip(h, &device_tip(&reg.name));
+        made.push(Device { reg, h });
+    }
+    app(|a| a.devices = made);
+    mark_drive();
+    true
+}
+
+// Left click: the device in the active pane (one unplugged since says it can't be opened).
+pub(crate) unsafe fn open_device(k: usize) {
+    if let Some((name, parse)) = app(|a| a.devices.get(k).map(|d| (device_label(&d.reg.name), d.reg.parse.clone()))) {
+        open_cloud_at(&name, &parse);
+    }
+}
+
+// Right-click, Shift+F10 or the menu key: the device's shell menu (Import pictures and videos, Properties …).
+// Name and path are copies: the button may go while the menu is up.
+pub(crate) unsafe fn device_menu(name: String, parse: String, at: POINT) {
+    shell_menu(&parse, at, &["delete", "cut", "format"], || open_cloud_at(&name, &parse));
+}
+
+// The underline follows the active pane's drive, or its cloud folder or device instead when it is in one: on the
+// 300ms status tick, and at once on a pane switch.
 pub(crate) unsafe fn mark_drive() {
     let Some(hs) = app(|a| {
         let p = &a.s.paths[a.s.active];
-        let cm = cloud_mark(p, a.clouds.iter().map(|c| c.reg.path.as_str())).map_or(HWND::default(), |k| a.clouds[k].h);
+        let cm = cloud_mark(p, a.clouds.iter().map(|c| c.reg.path.as_str()))
+            .map(|k| a.clouds[k].h)
+            .or_else(|| cloud_mark(p, a.devices.iter().map(|d| d.reg.parse.as_str())).map(|k| a.devices[k].h))
+            .unwrap_or_default();
         let m = if cm.0.is_null() { drive_of(p) } else { None };
         (a.drive_mark != m || a.cloud_mark != cm).then(|| {
             a.drive_mark = m;
             a.cloud_mark = cm;
-            a.drives.iter().map(|d| d.2).chain(a.clouds.iter().map(|c| c.h)).collect::<Vec<_>>()
+            place_buttons(a)
         })
     }) else {
         return;
@@ -1949,6 +2163,11 @@ pub(crate) unsafe fn mark_drive() {
     for h in hs {
         _ = InvalidateRect(Some(h), None, false);
     }
+}
+
+// The drive, device and cloud folder buttons: the ones an underline may move between.
+pub(crate) fn place_buttons(a: &App) -> Vec<HWND> {
+    a.drives.iter().map(|d| d.2).chain(a.devices.iter().map(|d| d.h)).chain(a.clouds.iter().map(|c| c.h)).collect()
 }
 
 // Switches the UI language now: menu, toolbar tooltips, and the panes (rebuilt with their tooltips).
@@ -1981,6 +2200,11 @@ pub(crate) unsafe fn set_language(ko: bool) {
     }
     for (tip, h) in app(|a| a.clouds.iter().map(|c| (cloud_tip(&c.reg.name, &c.reg.path), c.h)).collect::<Vec<_>>()) {
         tip_text(h, &tip, TTM_UPDATETIPTEXTW);
+    }
+    // a device without a name of its own is called that in the new language, on screen readers too
+    for (name, h) in app(|a| a.devices.iter().map(|d| (d.reg.name.clone(), d.h)).collect::<Vec<_>>()) {
+        _ = SetWindowTextW(h, &HSTRING::from(device_label(&name)));
+        tip_text(h, &device_tip(&name), TTM_UPDATETIPTEXTW);
     }
     bin_relabel(main);
     // a filtered pane's empty-list words follow the new language now, not at the next browse

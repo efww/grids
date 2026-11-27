@@ -45,6 +45,21 @@ pub(crate) struct Cloud {
     pub(crate) h: HWND,
 }
 
+// A phone or camera under This PC (window_ui.rs device_scan): its parsing path, its name ("" = none given), its
+// icon (system image list, -1 = none). Found by a worker; the button only shows it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct DeviceReg {
+    pub(crate) parse: String,
+    pub(crate) name: String,
+    pub(crate) ix: i32,
+}
+
+// A device button on the top toolbar: what it was made for, the button.
+pub(crate) struct Device {
+    pub(crate) reg: DeviceReg,
+    pub(crate) h: HWND,
+}
+
 pub(crate) struct App {
     pub(crate) s: Session,
     pub(crate) main: HWND,
@@ -153,7 +168,8 @@ pub(crate) struct App {
     pub(crate) drive_mask: u32,              // GetLogicalDrives() they were made for
     pub(crate) drive_mark: Option<u8>,       // the active pane's drive (underlined)
     pub(crate) clouds: Vec<Cloud>,           // cloud folder buttons after the drives, by name (refresh_clouds)
-    pub(crate) cloud_mark: HWND,             // the cloud button of the active pane's folder (underlined, not its drive)
+    pub(crate) cloud_mark: HWND,             // the cloud (or device) button of the active pane's folder (underlined, not its drive)
+    pub(crate) devices: Vec<Device>,         // phone / camera buttons between the drives and the clouds, by name (devices_found)
     pub(crate) hot_on: bool,                 // Win+Alt+E actually registered (s.hotkey is only the wish)
     pub(crate) tray_on: bool,                // the notification area icon is really there (s.tray is only the wish)
     pub(crate) focus_keep: HWND,             // focus when Grids last went to the back; coming back puts it there again
@@ -281,6 +297,7 @@ thread_local! {
         drive_mark: None,
         clouds: Vec::new(),
         cloud_mark: HWND::default(),
+        devices: Vec::new(),
         hot_on: false,
         tray_on: false,
         focus_keep: HWND::default(),

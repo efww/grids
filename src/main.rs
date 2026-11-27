@@ -443,6 +443,7 @@ fn main() -> Result<()> {
         apply_font();
         refresh_drives(); // laid out by the relayout below
         refresh_clouds(); // after them, before the bin
+        find_devices(); // phones / cameras: a worker looks, the buttons come with its answer
         cache_folder_icon(); // tabs of folders not opened yet this run
         cache_pc_icon(); // This PC in the Ctrl+G and recent folder menus
         if app(|a| a.s.updates) {
@@ -650,6 +651,7 @@ mod tests {
         main.extend((0..26).map(|d| ID_DRIVE as usize + d));
         main.push(ID_BIN as usize);
         main.extend((0..MAX_CLOUD).map(|k| ID_CLOUD as usize + k));
+        main.extend((0..MAX_DEVICE).map(|k| ID_DEVICE as usize + k));
         main.extend(VIEW_TOP.iter().chain(&VIEW_END).map(|v| v.0));
         main.push(ID_LANG);
         main.extend((0..LIGHT.accents.len()).map(|k| ID_ACCENT + k));
@@ -658,13 +660,13 @@ mod tests {
         // the view menu's copies of toolbar buttons send those buttons' commands, already counted once above
         assert!(VIEW_BUTTONS.iter().all(|v| main.iter().filter(|&&id| id == v.0).count() == 1));
         // (c) timers, per window: SetTimer with a number already running replaces that timer
-        distinct("main timers", &[TIMER_STATUS, TIMER_REVEAL, TIMER_FOCUS, dialog_jump::TIMER_DLG_RETRY, dialog_jump::TIMER_DLG_RESTORE, TIMER_SHELL, TIMER_EV_SELECT, TIMER_BIN, TIMER_TREE_SYNC, TIMER_PANE_LOAD, TIMER_CTRL_HINT]);
+        distinct("main timers", &[TIMER_STATUS, TIMER_REVEAL, TIMER_FOCUS, dialog_jump::TIMER_DLG_RETRY, dialog_jump::TIMER_DLG_RESTORE, TIMER_SHELL, TIMER_EV_SELECT, TIMER_BIN, TIMER_TREE_SYNC, TIMER_PANE_LOAD, TIMER_CTRL_HINT, TIMER_DEVICES, TIMER_DEVICES_AGAIN]);
         distinct("pane timers", &[TIMER_FILTER, TIMER_SETTLE, TIMER_SPIN, TIMER_LOAD]);
         // (d) WM_APP messages main_proc handles (not other windows' own: WM_TOUR_END, WM_RENAMED, the switcher's)
         let msgs = [
             WM_NARROW_AGAIN, WM_DROP_OPEN, WM_PEEK_DONE, WM_PANE_ICON, WM_DRIVES, WM_KIDS, WM_THEME_SYNC, WM_PEEK_LOST, WM_PEEK_HOSTED,
             WM_HASH, WM_SHELL_CHANGE, WM_GROUPED, WM_TOUR, WM_TRAY, WM_COPY_DONE, WM_USAGE, WM_FONT_SYNC, WM_BIN_COUNT, WM_BIN_CHANGE,
-            WM_STAMPED, WM_SIZE_DONE, WM_DISK_DONE, WM_EDITED, WM_OPEN_ARGS, WM_UPDATE, WM_STAR, WM_DUPES,
+            WM_STAMPED, WM_SIZE_DONE, WM_DISK_DONE, WM_EDITED, WM_OPEN_ARGS, WM_UPDATE, WM_STAR, WM_DUPES, WM_DEVICES,
         ];
         distinct("main WM_APP messages", &msgs.map(|m| m as usize));
     }
@@ -1009,6 +1011,52 @@ mod tests {
         assert_eq!(at(r"C:\Users\a"), None);
         assert_eq!(at(THIS_PC), None);
         assert_eq!(cloud_mark(r"C:\x", [""]), None);
+    }
+
+    // Phone / camera buttons: only a device right under This PC (not a drive, a folder inside one or another shell
+    // place), one per path (any case), by name, at most 4; a device without a name gets a plain one when shown.
+    #[test]
+    fn device_buttons() {
+        let phone = r"::{20D04FE0-3AEA-1069-A2D8-08002B30309D}\\\?\usb#vid_04e8&pid_6860#r58m#{6ac27878-a6fa-4155-ba85-f98f491d4f33}";
+        assert!(device_path(phone));
+        assert!(device_path(&phone.to_lowercase())); // This PC in any case
+        assert!(!device_path(&format!(r"{phone}\SID-{{10001,,123}}"))); // a folder inside the phone
+        assert!(!device_path(r"E:\"));
+        assert!(!device_path(r"::{20D04FE0-3AEA-1069-A2D8-08002B30309D}\::{F02C1A0D-BE21-4350-88B0-7367FC96EF3C}"));
+        assert!(!device_path(r"::{20D04FE0-3AEA-1069-A2D8-08002B30309D}\C:\"));
+        assert!(!device_path(r"::{20D04FE0-3AEA-1069-A2D8-08002B30309D}\\\?\"));
+        assert!(!device_path(r"::{20D04FE0-3AEA-1069-A2D8-08002B30309D}"));
+        assert!(!device_path(r"::{20D04FE0-3AEA-1069-A2D8-08002B30309D}\\\server\share"));
+        assert!(!device_path(r"::{645FF040-5081-101B-9F08-00AA002F954E}\\\?\usb#x"));
+        assert!(!device_path(""));
+        let reg = |name: &str, parse: &str| DeviceReg { parse: parse.into(), name: name.into(), ix: -1 };
+        let cam = r"::{20D04FE0-3AEA-1069-A2D8-08002B30309D}\\\?\usb#vid_04a9&pid_32d4#1#{6ac27878-a6fa-4155-ba85-f98f491d4f33}";
+        let got = device_list(vec![
+            reg("Galaxy S24 ", phone),
+            reg("EOS R6", cam),
+            reg("USB Drive (E:)", r"E:\"),
+            reg("DCIM", &format!(r"{phone}\SID-{{10001,,123}}\DCIM")),
+            reg("Network", r"::{20D04FE0-3AEA-1069-A2D8-08002B30309D}\::{F02C1A0D-BE21-4350-88B0-7367FC96EF3C}"),
+            reg("phone again", &phone.to_uppercase()), // the same device in another case: the first by name stays
+            reg("", r"::{20D04FE0-3AEA-1069-A2D8-08002B30309D}\\\?\usb#vid_05ac&pid_12a8#a#{6ac27878}"),
+        ]);
+        let names: Vec<&str> = got.iter().map(|d| d.name.as_str()).collect();
+        assert_eq!(names, ["", "EOS R6", "Galaxy S24"]); // trimmed, by name; the nameless first
+        assert_eq!(got[2].parse, phone);
+        assert_eq!(device_label(&got[0].name), "Portable device");
+        assert_eq!(device_label(&got[1].name), "EOS R6");
+        assert!(device_tip("EOS R6").starts_with("EOS R6 — open in the active pane"));
+        let many: Vec<DeviceReg> = (0..9).rev().map(|k| reg(&format!("d{k}"), &format!(r"{THIS_PC}\\\?\usb#{k}"))).collect();
+        let got = device_list(many);
+        assert_eq!(got.len(), MAX_DEVICE);
+        assert_eq!((got[0].name.as_str(), got[3].name.as_str()), ("d0", "d3"));
+        assert!(device_list(Vec::new()).is_empty());
+        // the underline: a pane inside the phone marks its button, another device's or This PC doesn't
+        let roots = [phone, cam];
+        assert_eq!(cloud_mark(&format!(r"{phone}\SID-{{10001,,123}}\DCIM"), roots), Some(0));
+        assert_eq!(cloud_mark(cam, roots), Some(1));
+        assert_eq!(cloud_mark(THIS_PC, roots), None);
+        assert_eq!(cloud_mark(&format!("{phone}x"), roots), None);
     }
 
     // Every drive check on one path, side by side, all built on drive_letter: what may follow "X:" is each one's
