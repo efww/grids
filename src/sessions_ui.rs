@@ -319,9 +319,9 @@ pub(crate) unsafe fn load_session_file(path: &Path) {
 
 // Paths from the command line or a second instance: a session file loads, folders fill panes from the active one on.
 pub(crate) unsafe fn open_args(mut args: Vec<String>) {
-    let folders = take_folder_flag(&mut args); // a jump-list folder link
+    let folders = take_folder_flag(&mut args); // a jump-list folder link or Explorer's "Open in Grids"
     if let Some(f) = session_arg(&args).filter(|_| !folders) {
-        app(|x| x.late.clear()); // another session's folders now
+        app(|x| (x.late.clear(), x.menu_burst = None)); // another session's folders now
         return load_session_file(Path::new(f));
     }
     if app(|x| x.zoom.take()).is_some() {
@@ -329,12 +329,61 @@ pub(crate) unsafe fn open_args(mut args: Vec<String>) {
         redraw_all();
     }
     let (a, n) = app(|x| (x.s.active, x.s.panes()));
-    // panes given a folder here no longer wait for a sign-in retry
-    app(|x| x.late.retain(|(i, _)| (0..args.len().min(n)).all(|k| (a + k) % n != *i)));
-    for (k, p) in args.iter().take(n).enumerate() {
-        go_near((a + k) % n, p);
+    if !folders {
+        app(|x| x.menu_burst = None);
+        // panes given a folder here no longer wait for a sign-in retry
+        app(|x| x.late.retain(|(i, _)| (0..args.len().min(n)).all(|k| (a + k) % n != *i)));
+        for (k, p) in args.iter().take(n).enumerate() {
+            go_near((a + k) % n, p);
+        }
+        return focus_view(a);
     }
-    focus_view(a);
+    // Explorer starts Grids once per selected folder: a start right after the last one goes on in the next pane
+    let prev = app(|x| x.menu_burst);
+    let (start, take, next) = burst_plan(prev, Instant::now(), a, n, args.len());
+    let placed: Vec<usize> = (0..take).map(|k| (start + k) % n).collect();
+    // claimed before go_near: another start handed over while it pumps messages must see these panes as taken
+    app(|x| (x.late.retain(|(i, _)| !placed.contains(i)), x.menu_burst = Some(next)));
+    for (&i, p) in placed.iter().zip(&args) {
+        go_near(i, p);
+    }
+    // after the folders are in: a slow one must not split the burst (only the time; the counts may have moved on)
+    app(|x| {
+        if let Some(b) = x.menu_burst.as_mut() {
+            b.at = Instant::now();
+        }
+    });
+    focus_view(next.first);
+    if next.missed > 0 {
+        if next.missed == args.len() - take {
+            _ = MessageBeep(MB_ICONWARNING); // the burst's first miss only: one start per folder, one beep
+        }
+        let m = next.missed;
+        set_note(if KO.load(Ordering::Relaxed) { format!("패널이 모자라 폴더 {m}개를 열지 못함") } else { format!("Not enough panes: {m} folder(s) not opened") });
+    }
+}
+
+/// Folders handed over one start at a time by a multi-folder "Open in Grids" (runtime only).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Burst {
+    pub(crate) at: Instant,     // when the last of them was placed
+    pub(crate) first: usize,    // the pane the burst began in (it keeps the focus)
+    pub(crate) placed: usize,   // panes filled so far, from `first` on
+    pub(crate) missed: usize,   // folders left out: every pane already had one of the burst
+}
+
+pub(crate) const BURST_GAP: Duration = Duration::from_millis(1500);
+
+// Where `count` folder-mode folders go: (first pane, how many, the burst after them; its `at` is `now`).
+// Within BURST_GAP of the last, the burst goes on after its panes; otherwise a new one starts at the active pane.
+// A burst never wraps onto its own panes: the rest count as missed. One that no longer fits the layout starts over.
+pub(crate) fn burst_plan(prev: Option<Burst>, now: Instant, active: usize, n: usize, count: usize) -> (usize, usize, Burst) {
+    let n = n.max(1);
+    let go_on = prev.filter(|p| now.saturating_duration_since(p.at) <= BURST_GAP && p.first < n && p.placed <= n);
+    let b = go_on.unwrap_or(Burst { at: now, first: active.min(n - 1), placed: 0, missed: 0 });
+    let take = count.min(n - b.placed);
+    let start = (b.first + b.placed) % n;
+    (start, take, Burst { at: now, placed: b.placed + take, missed: b.missed + count - take, ..b })
 }
 
 // Explorer folders not shown yet, paired with the panes that don't hold one of them, from the active pane on.
@@ -588,6 +637,61 @@ pub(crate) fn tick_plan(iconic: bool, active: bool, tick_no: u32, slow: bool) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn menu_bursts_fill_panes_in_turn() {
+        let t0 = Instant::now();
+        let ms = |m| t0 + Duration::from_millis(m);
+        // three folders 0.4 s apart from pane 2 of 4: 2, 3, then 0
+        let (s, k, b) = burst_plan(None, t0, 2, 4, 1);
+        assert_eq!((s, k, b.first, b.placed, b.missed), (2, 1, 2, 1, 0));
+        let (s, k, b) = burst_plan(Some(b), ms(400), 1, 4, 1);
+        assert_eq!((s, k, b.placed), (3, 1, 2));
+        let (s, k, b) = burst_plan(Some(b), ms(800), 3, 4, 1);
+        assert_eq!((s, k, b.first, b.placed), (0, 1, 2, 3));
+        // more than 1.5 s after the last: a new burst at the active pane
+        let (s, k, b2) = burst_plan(Some(b), ms(800 + 1501), 1, 4, 1);
+        assert_eq!((s, k, b2.first, b2.placed, b2.missed), (1, 1, 1, 1, 0));
+        let (s, _, b3) = burst_plan(Some(b), ms(800 + 1500), 0, 4, 1);
+        assert_eq!((s, b3.first, b3.placed), (1, 2, 4)); // still the burst: pane 2 + 3 placed, wrapped
+    }
+
+    #[test]
+    fn menu_burst_never_covers_its_own_panes() {
+        let t0 = Instant::now();
+        let mut b = None;
+        let mut got = Vec::new();
+        for i in 0..6 {
+            let (s, k, nb) = burst_plan(b, t0 + Duration::from_millis(100 * i), 0, 4, 1);
+            got.push((s, k));
+            b = Some(nb);
+        }
+        assert_eq!(got, [(0, 1), (1, 1), (2, 1), (3, 1), (0, 0), (0, 0)]);
+        assert_eq!((b.unwrap().placed, b.unwrap().missed), (4, 2));
+        // several at once (a jump list link with more folders) count the same way
+        let (s, k, b) = burst_plan(None, t0, 1, 3, 5);
+        assert_eq!((s, k, b.placed, b.missed), (1, 3, 3, 2));
+    }
+
+    #[test]
+    fn menu_burst_from_the_first_start_and_edges() {
+        let t0 = Instant::now();
+        // the first start put its folder in pane 1 (index 0); the next goes to pane 2
+        let first = Burst { at: t0, first: 0, placed: 1, missed: 0 };
+        let (s, k, _) = burst_plan(Some(first), t0 + Duration::from_millis(300), 0, 4, 1);
+        assert_eq!((s, k), (1, 1));
+        // one pane: the first opens, the rest are missed
+        let (s, k, b) = burst_plan(None, t0, 0, 1, 1);
+        assert_eq!((s, k), (0, 1));
+        let (s, k, b) = burst_plan(Some(b), t0, 0, 1, 1);
+        assert_eq!((s, k, b.missed), (0, 0, 1));
+        // the layout shrank under the burst: start over at the active pane
+        let wide = Burst { at: t0, first: 5, placed: 2, missed: 0 };
+        let (s, k, b) = burst_plan(Some(wide), t0, 1, 4, 1);
+        assert_eq!((s, k, b.first, b.placed), (1, 1, 1, 1));
+        let full = Burst { at: t0, first: 0, placed: 6, missed: 0 };
+        assert_eq!(burst_plan(Some(full), t0, 2, 4, 1).0, 2);
+    }
 
     fn ini_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("grids-iniw-{name}-{}", std::process::id()));

@@ -120,6 +120,7 @@ pub(crate) struct App {
     pub(crate) quiet: Quiet,                 // started minimized at sign-in, not yet shown (runtime only)
     pub(crate) quiet_max: bool,              // that start was saved maximized: shown maximized
     pub(crate) late: Vec<(usize, String)>,   // panes whose folder could not open at that start, retried when shown
+    pub(crate) menu_burst: Option<Burst>,    // folders from one multi-folder "Open in Grids", one start each (runtime only)
 }
 
 // The Num+ / Num− box: popup, its edit, the pane it acts on, that pane's folder when it opened, deselect mode.
@@ -230,6 +231,7 @@ thread_local! {
         quiet: Quiet::No,
         quiet_max: false,
         late: Vec::new(),
+        menu_burst: None,
     });
 }
 

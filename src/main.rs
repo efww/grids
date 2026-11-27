@@ -214,6 +214,8 @@ fn main() -> Result<()> {
         let bare = args.is_empty(); // no folder or session given
         // a session file becomes the save target; one that can't be read is named on the status line once the window is up
         let named = session_arg(&args).map(PathBuf::from);
+        // folders from "Open in Grids" fill panes 1.. (apply_args); more selected folders, each its own start, go on after them
+        let burst = Some(args.len().saturating_sub(1).min(MAXP)).filter(|&k| k > 0 && args[0] == FOLDER_FLAG);
         let opened = startup_args(&mut s, args, |f| std::fs::read_to_string(f).ok());
         let unread = named.filter(|_| !opened);
 
@@ -479,6 +481,9 @@ fn main() -> Result<()> {
             tray_start(main); // a minimized sign-in start leaves the taskbar once the icon is there
         }
         refresh_jump_list(true); // taskbar / Start jump list: sessions, favourites, recent folders
+        if let Some(placed) = burst {
+            app(|a| a.menu_burst = Some(Burst { at: Instant::now(), first: 0, placed, missed: 0 }));
+        }
         start.release(); // panes are up: the next start finds this window and hands it its folders
         register_restart(); // a Windows update reboot opens it again, quietly (--startup)
 
