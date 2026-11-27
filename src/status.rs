@@ -1,4 +1,5 @@
 use crate::*;
+use std::os::windows::fs::MetadataExt;
 
 // ---------- status bar ----------
 
@@ -71,7 +72,8 @@ pub(crate) unsafe fn selected_size(fv: &IFolderView2) -> Sel {
 // While it runs with nothing summed and no folder met yet (files on a local disk: done in moments) nothing shows,
 // so the line doesn't blink "calculating"; a folder or bytes so far show as before.
 // last: the size this one folder had when it was last fully counted; while it is counted again that shows, as is.
-pub(crate) fn size_text(ko: bool, job: Option<(u64, bool, bool, bool)>, collect_partial: bool, last: Option<u64>) -> String {
+// cloud: the bytes of it only in the cloud (online-only), told once counted to the end.
+pub(crate) fn size_text(ko: bool, job: Option<(u64, bool, bool, bool)>, collect_partial: bool, last: Option<u64>, cloud: u64) -> String {
     let (bytes, done, partial, dirs) = job.unwrap_or((0, true, false, false));
     let partial = partial || collect_partial;
     if !done {
@@ -84,11 +86,17 @@ pub(crate) fn size_text(ko: bool, job: Option<(u64, bool, bool, bool)>, collect_
             b => format!(" ({}…)", human(b)),
         };
     }
+    // "all" only when every byte was counted: a partial count can't say that
+    let online = match cloud {
+        0 => String::new(),
+        c if c == bytes && !partial => (if ko { " · 모두 온라인 전용" } else { " · all online-only" }).into(),
+        c => format!(" · {} {}", human(c), if ko { "온라인 전용" } else { "online-only" }),
+    };
     match (bytes, partial) {
         (0, false) if !dirs => String::new(),
         (0, true) if !dirs => (if ko { " (크기 모름)" } else { " (size unknown)" }).into(),
-        (b, true) => format!(" ({}, {})", human(b), if ko { "일부만" } else { "partial" }),
-        (b, false) => format!(" ({})", human(b)),
+        (b, true) => format!(" ({}{online}, {})", human(b), if ko { "일부만" } else { "partial" }),
+        (b, false) => format!(" ({}{online})", human(b)),
     }
 }
 
@@ -246,6 +254,7 @@ pub(crate) struct SizeJob {
     pub(crate) done: bool,
     pub(crate) partial: bool,
     pub(crate) dirs: bool, // a folder was met in the target
+    pub(crate) cloud: u64, // bytes of it only in the cloud (online-only), known once done
 }
 
 impl SizeJob {
@@ -264,11 +273,11 @@ impl SizeJob {
         true
     }
 
-    pub(crate) fn publish(&mut self, gen: usize, bytes: u64, done: bool, partial: bool) -> bool {
+    pub(crate) fn publish(&mut self, gen: usize, bytes: u64, done: bool, partial: bool, cloud: u64) -> bool {
         if self.gen != gen {
             return false;
         }
-        (self.bytes, self.done, self.partial) = (bytes, done, partial);
+        (self.bytes, self.done, self.partial, self.cloud) = (bytes, done, partial, cloud);
         true
     }
 }
@@ -332,7 +341,7 @@ pub(crate) fn memo_result(memo: &mut SizeMemo, target: &[String], bytes: u64, pa
     }
 }
 
-pub(crate) static DIR_SIZE: Mutex<SizeJob> = Mutex::new(SizeJob { gen: 0, target: Vec::new(), bytes: 0, done: false, partial: false, dirs: false });
+pub(crate) static DIR_SIZE: Mutex<SizeJob> = Mutex::new(SizeJob { gen: 0, target: Vec::new(), bytes: 0, done: false, partial: false, dirs: false, cloud: 0 });
 pub(crate) static DIR_WAKE: Condvar = Condvar::new();
 pub(crate) static DIR_GEN: AtomicUsize = AtomicUsize::new(0); // copy of DIR_SIZE.gen, read without the lock
 // The main window, for the workers' "done" messages (0 = not known yet).
@@ -386,15 +395,15 @@ pub(crate) fn size_worker(me: usize) {
         let stop = || !SIZE_RELAY.alive(me) || DIR_GEN.load(Ordering::Relaxed) != gen;
         // a copy only pauses the sum; the status line cancels it when it sees the copy
         let paused = || COPYING.load(Ordering::Relaxed) > 0;
-        let tell = |b, done, p, d| {
+        let tell = |b, done, p, d, c| {
             let mut j = size_job();
-            let ok = j.publish(gen, b, done, p);
+            let ok = j.publish(gen, b, done, p, c);
             if ok {
                 j.dirs |= d;
             }
             ok
         };
-        let mut progress = |b, p, d| _ = tell(b, false, p, d);
+        let mut progress = |b, p, d| _ = tell(b, false, p, d, 0);
         // only the end is posted; progress waits for the status tick
         // cancelled (None): what was noted stays; a finished count is right even if the selection moved on
         let sum = sel_bytes(&target, &stop, &paused, &mut progress);
@@ -402,9 +411,9 @@ pub(crate) fn size_worker(me: usize) {
             wake_owner(&DIR_SIZE, &DIR_WAKE);
             return;
         }
-        if let Some((b, p, d)) = sum {
+        if let Some((b, p, d, c)) = sum {
             memo_result(&mut size_memo(), &target, b, p, d);
-            if tell(b, true, p, d) {
+            if tell(b, true, p, d, c) {
                 tell_main(WM_SIZE_DONE);
             }
         }
@@ -414,42 +423,51 @@ pub(crate) fn size_worker(me: usize) {
 // What a selected path is, following links as before.
 #[derive(Debug, PartialEq)]
 pub(crate) enum SelKind {
-    File(u64),
+    File(u64, bool), // its size; only in the cloud (online-only)
     Dir,
     Unknown, // a drive or share root (its size is the free-space part), gone or unreadable
+}
+
+// cloud_only as a file's own handle reports its attributes (std::fs::metadata): RECALL_ON_OPEN's value is
+// FILE_ATTRIBUTE_EA there, so only OFFLINE and RECALL_ON_DATA_ACCESS count. Only attributes: nothing is downloaded.
+pub(crate) fn held_cloud_only(attr: u32) -> bool {
+    cloud_only(attr & !0x4_0000)
 }
 
 pub(crate) fn sel_kind(p: &str) -> SelKind {
     match std::fs::metadata(p) {
         Ok(m) if m.is_dir() && Path::new(p).parent().is_some() => SelKind::Dir,
-        Ok(m) if m.is_file() => SelKind::File(m.len()),
+        Ok(m) if m.is_file() => SelKind::File(m.len(), held_cloud_only(m.file_attributes())),
         _ => SelKind::Unknown,
     }
 }
 
-// The selection's (bytes, partial, folder met): files by their size, folders walked (dir_bytes), anything else
-// partial. None = `stop` turned true; checked before each path, also while `paused`. progress(bytes, partial,
+// The selection's (bytes, partial, folder met, online-only bytes): files by their size, folders walked
+// (dir_bytes_cloud), anything else partial. None = `stop` turned true; checked before each path, also while `paused`. progress(bytes, partial,
 // folder met) every 2000 paths or 200ms, as each folder starts and while it walks.
-pub(crate) fn sel_bytes(target: &[String], stop: &dyn Fn() -> bool, paused: &dyn Fn() -> bool, progress: &mut dyn FnMut(u64, bool, bool)) -> Option<(u64, bool, bool)> {
+pub(crate) fn sel_bytes(target: &[String], stop: &dyn Fn() -> bool, paused: &dyn Fn() -> bool, progress: &mut dyn FnMut(u64, bool, bool)) -> Option<(u64, bool, bool, u64)> {
     let go = || {
         while paused() && !stop() {
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
         !stop()
     };
-    let (mut total, mut partial, mut dirs, mut last) = (0, false, false, Instant::now());
+    let (mut total, mut partial, mut dirs, mut cloud, mut last) = (0, false, false, 0, Instant::now());
     for (k, p) in target.iter().enumerate() {
         if !go() {
             return None;
         }
         match sel_kind(p) {
-            SelKind::File(n) => total += n,
+            SelKind::File(n, c) => {
+                total += n;
+                cloud += if c { n } else { 0 };
+            }
             SelKind::Dir => {
                 dirs = true;
                 progress(total, partial, true);
                 let (base, was) = (total, partial);
-                let (b, q) = dir_bytes(Path::new(p), stop, paused, &mut |b, q| progress(base + b, was || q, true))?;
-                (total, partial) = (total + b, partial || q);
+                let (b, q, c) = dir_bytes_cloud(Path::new(p), stop, paused, &mut |b, q| progress(base + b, was || q, true))?;
+                (total, partial, cloud) = (total + b, partial || q, cloud + c);
             }
             SelKind::Unknown => partial = true,
         }
@@ -458,7 +476,7 @@ pub(crate) fn sel_bytes(target: &[String], stop: &dyn Fn() -> bool, paused: &dyn
             last = Instant::now();
         }
     }
-    Some((total, partial, dirs))
+    Some((total, partial, dirs, cloud))
 }
 
 // Free space is asked by one worker too: a dead share can hang the call (DISK_RELAY then starts a fresh one
@@ -579,6 +597,12 @@ pub(crate) unsafe fn disk_done() {
 // None = `stop` turned true. Checked before each directory read and each entry, also while `paused`;
 // a single read_dir/metadata call that hangs (a dead share) still has to return first.
 pub(crate) fn dir_bytes(root: &Path, stop: &dyn Fn() -> bool, paused: &dyn Fn() -> bool, progress: &mut dyn FnMut(u64, bool)) -> Option<(u64, bool)> {
+    dir_bytes_cloud(root, stop, paused, progress).map(|(b, q, _)| (b, q))
+}
+
+// dir_bytes, and how many of those bytes are only in the cloud (online-only), from the attributes the folder
+// listing already gives: no file is opened, so nothing is downloaded.
+pub(crate) fn dir_bytes_cloud(root: &Path, stop: &dyn Fn() -> bool, paused: &dyn Fn() -> bool, progress: &mut dyn FnMut(u64, bool)) -> Option<(u64, bool, u64)> {
     let go = || {
         while paused() && !stop() {
             std::thread::sleep(std::time::Duration::from_millis(100));
@@ -587,10 +611,13 @@ pub(crate) fn dir_bytes(root: &Path, stop: &dyn Fn() -> bool, paused: &dyn Fn() 
     };
     match std::fs::symlink_metadata(root) {
         Ok(m) if m.is_dir() => {}
-        Ok(m) => return Some((if m.is_file() { m.len() } else { 0 }, false)),
-        Err(_) => return Some((0, true)),
+        Ok(m) => {
+            let b = if m.is_file() { m.len() } else { 0 };
+            return Some((b, false, if held_cloud_only(m.file_attributes()) { b } else { 0 }));
+        }
+        Err(_) => return Some((0, true, 0)),
     }
-    let (mut sum, mut partial, mut n, mut last) = (0, false, 0usize, Instant::now());
+    let (mut sum, mut partial, mut cloud, mut n, mut last) = (0, false, 0, 0usize, Instant::now());
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
         if !go() {
@@ -611,7 +638,10 @@ pub(crate) fn dir_bytes(root: &Path, stop: &dyn Fn() -> bool, paused: &dyn Fn() 
             match e.file_type() {
                 Ok(t) if t.is_dir() => stack.push(e.path()),
                 Ok(t) if t.is_file() => match e.metadata() {
-                    Ok(m) => sum += m.len(),
+                    Ok(m) => {
+                        sum += m.len();
+                        cloud += if cloud_only(m.file_attributes()) { m.len() } else { 0 };
+                    }
                     Err(_) => partial = true,
                 },
                 Ok(_) => {} // a link or junction
@@ -624,7 +654,7 @@ pub(crate) fn dir_bytes(root: &Path, stop: &dyn Fn() -> bool, paused: &dyn Fn() 
             }
         }
     }
-    Some((sum, partial))
+    Some((sum, partial, cloud))
 }
 
 // F5 in a file list: the shell reloads it, and the selection is summed again (no last sizes meanwhile).
@@ -661,20 +691,20 @@ pub(crate) unsafe fn update_status() {
             app(|a| a.status_key = if settled { key } else { String::new() });
         }
     }
-    let (job, one) = {
+    let (job, one, cloud) = {
         let j = size_job();
         let one = match j.target.as_slice() {
             [p] if !j.done => Some(p.clone()),
             _ => None,
         };
-        ((!j.target.is_empty()).then_some((j.bytes, j.done, j.partial, j.dirs)), one)
+        ((!j.target.is_empty()).then_some((j.bytes, j.done, j.partial, j.dirs)), one, j.cloud)
     };
     // one item still being counted: its last full count, looked up after the job's lock is let go
     let last = one.and_then(|p| size_memo().get(&p)).map(|(b, _)| b);
     let ko = KO.load(Ordering::Relaxed);
     let (changed, fresh, ctl) = app(|a| {
         let (head, size, mid, drive) = &a.status_base;
-        let size = size.map(|p| size_text(ko, job, p, last)).unwrap_or_default();
+        let size = size.map(|p| size_text(ko, job, p, last, cloud)).unwrap_or_default();
         // a short confirmation (path copied, missing folder) leads for a few seconds in its own chip
         if let Some(saved) = SAVED.lock().unwrap_or_else(|e| e.into_inner()).take() {
             a.note = Some((saved, Instant::now() + Duration::from_secs(5)));

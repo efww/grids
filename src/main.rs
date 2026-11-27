@@ -2174,7 +2174,7 @@ mod tests {
         let mut job = SizeJob::default();
         let target = vec![flat.to_string_lossy().into_owned()];
         assert!(job.want(&target, false));
-        assert!(job.publish(job.gen, 600, true, false));
+        assert!(job.publish(job.gen, 600, true, false, 0));
         std::fs::write(flat.join("new.bin"), [0u8; 50]).unwrap();
         assert!(!job.want(&target, false));
         job.want(&[], true); // what resum_sizes does
@@ -2209,17 +2209,17 @@ mod tests {
         assert!(j.want(&a, false));
         let g = j.gen;
         assert!(!j.want(&a, false)); // same target: keeps running
-        assert!(j.publish(g, 10, true, false) && j.done);
-        assert!(!j.want(&a, false) && j.done && j.bytes == 10); // and keeps its result
+        assert!(j.publish(g, 10, true, false, 4) && j.done && j.cloud == 4);
+        assert!(!j.want(&a, false) && j.done && j.bytes == 10 && j.cloud == 4); // and keeps its result
         assert!(!j.want(&a, true)); // a copy starts: cancelled
-        assert!(!j.publish(g, 99, true, false) && j.bytes == 10); // the old walk's result is dropped
-        assert!(j.want(&a, false) && j.bytes == 0 && !j.done); // the copy ended: summed again
+        assert!(!j.publish(g, 99, true, false, 99) && j.bytes == 10 && j.cloud == 4); // the old walk's result is dropped
+        assert!(j.want(&a, false) && j.bytes == 0 && j.cloud == 0 && !j.done); // the copy ended: summed again
         assert!(!j.want(&[], false) && j.target.is_empty()); // no folders: cancelled
         assert!(j.want(&a, false));
         let g = j.gen;
         assert!(j.want(&b, false) && j.gen != g);
-        assert!(!j.publish(g, 5, false, false));
-        assert!(j.publish(j.gen, 5, false, true) && j.partial);
+        assert!(!j.publish(g, 5, false, false, 0));
+        assert!(j.publish(j.gen, 5, false, true, 0) && j.partial);
     }
 
     #[test]
@@ -2320,42 +2320,58 @@ mod tests {
     fn folder_size_text() {
         let kb = human(1024);
         // running: a folder met shows "calculating", bytes so far show with "…"
-        assert_eq!(size_text(false, Some((0, false, false, true)), false, None), " (calculating…)");
-        assert_eq!(size_text(true, Some((0, false, false, true)), false, None), " (계산 중…)");
-        assert_eq!(size_text(false, Some((2048, false, false, true)), false, None), format!(" ({}…)", human(2048)));
-        assert_eq!(size_text(false, Some((2048, false, false, false)), false, None), format!(" ({}…)", human(2048)));
+        assert_eq!(size_text(false, Some((0, false, false, true)), false, None, 0), " (calculating…)");
+        assert_eq!(size_text(true, Some((0, false, false, true)), false, None, 0), " (계산 중…)");
+        assert_eq!(size_text(false, Some((2048, false, false, true)), false, None, 0), format!(" ({}…)", human(2048)));
+        assert_eq!(size_text(false, Some((2048, false, false, false)), false, None, 0), format!(" ({}…)", human(2048)));
         // files only, nothing summed yet: nothing shows (no blink on a local disk)
-        assert_eq!(size_text(false, Some((0, false, false, false)), false, None), "");
-        assert_eq!(size_text(false, Some((0, false, false, false)), true, None), "");
+        assert_eq!(size_text(false, Some((0, false, false, false)), false, None, 0), "");
+        assert_eq!(size_text(false, Some((0, false, false, false)), true, None, 0), "");
         // done
-        assert_eq!(size_text(false, Some((1024, true, false, true)), false, None), format!(" ({kb})"));
-        assert_eq!(size_text(false, Some((1024, true, true, true)), false, None), format!(" ({kb}, partial)"));
-        assert_eq!(size_text(false, Some((0, true, false, true)), false, None), format!(" ({})", human(0)));
+        assert_eq!(size_text(false, Some((1024, true, false, true)), false, None, 0), format!(" ({kb})"));
+        assert_eq!(size_text(false, Some((1024, true, true, true)), false, None, 0), format!(" ({kb}, partial)"));
+        assert_eq!(size_text(false, Some((0, true, false, true)), false, None, 0), format!(" ({})", human(0)));
         // something missed while collecting the selection isn't shown as a full total
-        assert_eq!(size_text(false, Some((1024, true, false, true)), true, None), format!(" ({kb}, partial)"));
-        assert_eq!(size_text(true, Some((1024, true, false, true)), true, None), format!(" ({kb}, 일부만)"));
-        assert_eq!(size_text(false, Some((1024, true, false, false)), false, None), format!(" ({kb})"));
-        assert_eq!(size_text(false, Some((1024, true, false, false)), true, None), format!(" ({kb}, partial)"));
-        assert_eq!(size_text(false, Some((0, true, false, false)), false, None), "");
-        assert_eq!(size_text(false, Some((0, true, true, false)), false, None), " (size unknown)");
+        assert_eq!(size_text(false, Some((1024, true, false, true)), true, None, 0), format!(" ({kb}, partial)"));
+        assert_eq!(size_text(true, Some((1024, true, false, true)), true, None, 0), format!(" ({kb}, 일부만)"));
+        assert_eq!(size_text(false, Some((1024, true, false, false)), false, None, 0), format!(" ({kb})"));
+        assert_eq!(size_text(false, Some((1024, true, false, false)), true, None, 0), format!(" ({kb}, partial)"));
+        assert_eq!(size_text(false, Some((0, true, false, false)), false, None, 0), "");
+        assert_eq!(size_text(false, Some((0, true, true, false)), false, None, 0), " (size unknown)");
         // no file system path at all (This PC, the bin, inside a zip): no job, done at once
-        assert_eq!(size_text(false, None, true, None), " (size unknown)");
-        assert_eq!(size_text(true, None, true, None), " (크기 모름)");
-        assert_eq!(size_text(false, None, false, None), "");
+        assert_eq!(size_text(false, None, true, None, 0), " (size unknown)");
+        assert_eq!(size_text(true, None, true, None, 0), " (크기 모름)");
+        assert_eq!(size_text(false, None, false, None, 0), "");
+    }
+
+    #[test]
+    fn folder_size_text_cloud() {
+        let (gb, mb) = (human(3 << 30), human(900 << 20));
+        // counted to the end: the online-only part follows the total
+        assert_eq!(size_text(false, Some((3 << 30, true, false, true)), false, None, 900 << 20), format!(" ({gb} · {mb} online-only)"));
+        assert_eq!(size_text(true, Some((3 << 30, true, false, false)), false, None, 900 << 20), format!(" ({gb} · {mb} 온라인 전용)"));
+        assert_eq!(size_text(false, Some((3 << 30, true, false, true)), false, None, 3 << 30), format!(" ({gb} · all online-only)"));
+        assert_eq!(size_text(true, Some((3 << 30, true, false, true)), false, None, 3 << 30), format!(" ({gb} · 모두 온라인 전용)"));
+        // partial: never "all", the amount and "partial" both show
+        assert_eq!(size_text(false, Some((3 << 30, true, true, true)), false, None, 3 << 30), format!(" ({gb} · {gb} online-only, partial)"));
+        assert_eq!(size_text(true, Some((3 << 30, true, false, true)), true, None, 900 << 20), format!(" ({gb} · {mb} 온라인 전용, 일부만)"));
+        // while counting, and while recounting a folder known before: as before, no cloud part
+        assert_eq!(size_text(false, Some((2048, false, false, true)), false, None, 1024), format!(" ({}…)", human(2048)));
+        assert_eq!(size_text(true, Some((0, false, false, true)), false, Some(5 << 30), 1024), format!(" (지난번 {} · 다시 세는 중…)", human(5 << 30)));
     }
 
     #[test]
     fn folder_size_text_last() {
         let gb = human(5 << 30);
         // counted again: the last full count shows as is, from the first look (no folder met yet, nothing summed)
-        assert_eq!(size_text(false, Some((0, false, false, false)), false, Some(5 << 30)), format!(" (last {gb} · recounting…)"));
-        assert_eq!(size_text(true, Some((0, false, false, true)), false, Some(5 << 30)), format!(" (지난번 {gb} · 다시 세는 중…)"));
+        assert_eq!(size_text(false, Some((0, false, false, false)), false, Some(5 << 30), 0), format!(" (last {gb} · recounting…)"));
+        assert_eq!(size_text(true, Some((0, false, false, true)), false, Some(5 << 30), 0), format!(" (지난번 {gb} · 다시 세는 중…)"));
         // bytes so far don't replace it, even past it (the folder grew): it stays the last count
-        assert_eq!(size_text(false, Some((6 << 30, false, false, true)), false, Some(5 << 30)), format!(" (last {gb} · recounting…)"));
+        assert_eq!(size_text(false, Some((6 << 30, false, false, true)), false, Some(5 << 30), 0), format!(" (last {gb} · recounting…)"));
         // done: the new count only
-        assert_eq!(size_text(false, Some((1024, true, false, true)), false, Some(5 << 30)), format!(" ({})", human(1024)));
-        assert_eq!(size_text(true, Some((1024, true, true, true)), false, Some(5 << 30)), format!(" ({}, 일부만)", human(1024)));
-        assert_eq!(size_text(false, None, false, Some(5 << 30)), "");
+        assert_eq!(size_text(false, Some((1024, true, false, true)), false, Some(5 << 30), 0), format!(" ({})", human(1024)));
+        assert_eq!(size_text(true, Some((1024, true, true, true)), false, Some(5 << 30), 0), format!(" ({}, 일부만)", human(1024)));
+        assert_eq!(size_text(false, None, false, Some(5 << 30), 0), "");
     }
 
     #[test]
@@ -2765,21 +2781,21 @@ mod tests {
         assert_eq!((s.paths.len(), s.partial, calls.get()), (10_000, true, 10_000));
 
         // the worker sorts them: a file by its size, a folder walked, a root or a gone path partial
-        assert_eq!(sel_kind(&f), SelKind::File(7));
+        assert_eq!(sel_kind(&f), SelKind::File(7, false));
         assert_eq!(sel_kind(&d), SelKind::Dir);
         assert_eq!(sel_kind(r"C:\"), SelKind::Unknown); // a drive root isn't walked
         assert_eq!(sel_kind(&gone), SelKind::Unknown);
         let never = || false;
         let mut quiet = |_, _, _| {};
         let sum = |t: &[String], quiet: &mut dyn FnMut(u64, bool, bool)| sel_bytes(t, &never, &never, quiet);
-        assert_eq!(sum(&[f.clone()], &mut quiet), Some((7, false, false)));
-        assert_eq!(sum(&both, &mut quiet), Some((8, false, true)));
-        assert_eq!(sum(&[f.clone(), gone.clone()], &mut quiet), Some((7, true, false)));
-        assert_eq!(sum(&[r"C:\".into()], &mut quiet), Some((0, true, false)));
+        assert_eq!(sum(&[f.clone()], &mut quiet), Some((7, false, false, 0)));
+        assert_eq!(sum(&both, &mut quiet), Some((8, false, true, 0)));
+        assert_eq!(sum(&[f.clone(), gone.clone()], &mut quiet), Some((7, true, false, 0)));
+        assert_eq!(sum(&[r"C:\".into()], &mut quiet), Some((0, true, false, 0)));
         // many files: progress comes with the running total, and a new selection stops the old sum
         let files = vec![f.clone(); 2100];
         let mut last = 0;
-        assert_eq!(sum(&files, &mut |b, _, _| last = b), Some((14_700, false, false)));
+        assert_eq!(sum(&files, &mut |b, _, _| last = b), Some((14_700, false, false, 0)));
         assert!(last >= 14_000);
         let n = std::cell::Cell::new(0);
         let later = || {
@@ -2794,7 +2810,7 @@ mod tests {
             seen.set(seen.get() + 1);
             (10..13).contains(&seen.get())
         };
-        assert_eq!(sel_bytes(&files[..50], &never, &copying, &mut quiet), Some((350, false, false)));
+        assert_eq!(sel_bytes(&files[..50], &never, &copying, &mut quiet), Some((350, false, false, 0)));
         let held = std::cell::Cell::new(0);
         let copy_on = || {
             held.set(held.get() + 1);
@@ -5111,6 +5127,36 @@ mod tests { tr("in", "안") }
             assert!(text(&content(&req(true))), "Enter: read it");
             SetFileAttributesW(&HSTRING::from(path.as_str()), FILE_ATTRIBUTE_NORMAL).unwrap();
         }
+        _ = std::fs::remove_dir_all(&d);
+    }
+
+    // The status line's size tells the online-only bytes apart, from the attributes alone.
+    #[test]
+    fn size_cloud_bytes() {
+        use windows::Win32::Storage::FileSystem::{SetFileAttributesW, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_OFFLINE};
+        // a file's own handle: 0x4_0000 is FILE_ATTRIBUTE_EA there, not RECALL_ON_OPEN
+        assert!(held_cloud_only(0x20 | 0x40_0000) && held_cloud_only(0x1000));
+        assert!(!held_cloud_only(0x20 | 0x4_0000) && !held_cloud_only(0x10 | 0x40_0000));
+        let d = std::env::temp_dir().join(format!("grids-size-cloud-{}", std::process::id()));
+        _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("sub")).unwrap();
+        let (cold, warm) = (d.join("sub").join("cold.bin"), d.join("warm.bin"));
+        std::fs::write(&cold, [0u8; 300]).unwrap();
+        std::fs::write(&warm, [0u8; 20]).unwrap();
+        let s = |p: &Path| p.to_string_lossy().into_owned();
+        let set = |p: &Path, a| unsafe { SetFileAttributesW(&HSTRING::from(s(p).as_str()), a) }.unwrap();
+        let never = || false;
+        let mut quiet = |_, _| {};
+        let mut quiet3 = |_, _, _| {};
+        assert_eq!(dir_bytes_cloud(&d, &never, &never, &mut quiet), Some((320, false, 0)));
+        set(&cold, FILE_ATTRIBUTE_OFFLINE);
+        assert_eq!(dir_bytes_cloud(&d, &never, &never, &mut quiet), Some((320, false, 300)));
+        assert_eq!(dir_bytes(&d, &never, &never, &mut quiet), Some((320, false))); // the usage window's sum, as before
+        assert_eq!(dir_bytes_cloud(&cold, &never, &never, &mut quiet), Some((300, false, 300)));
+        assert_eq!(sel_kind(&s(&cold)), SelKind::File(300, true));
+        assert_eq!(sel_bytes(&[s(&cold), s(&warm)], &never, &never, &mut quiet3), Some((320, false, false, 300)));
+        assert_eq!(sel_bytes(&[s(&d)], &never, &never, &mut quiet3), Some((320, false, true, 300)));
+        set(&cold, FILE_ATTRIBUTE_NORMAL);
         _ = std::fs::remove_dir_all(&d);
     }
 
