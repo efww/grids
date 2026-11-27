@@ -1057,20 +1057,24 @@ mod tests {
         use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_ARCHIVE, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM};
         let (d, h, sy) = (FILE_ATTRIBUTE_DIRECTORY.0, FILE_ATTRIBUTE_HIDDEN.0, FILE_ATTRIBUTE_SYSTEM.0);
         let all = || [("10", d), ("2", d), ("file.txt", FILE_ATTRIBUTE_ARCHIVE.0), ("Secret", d | h), ("Config.Msi", d | h | sy), ("a", d | sy)];
-        let names = |show| kid_names(all().into_iter().map(|(n, a)| (n.to_string(), a)), show);
+        let names = |show| kid_names(all().into_iter().map(|(n, a)| (n.to_string(), a)), show, KIDS_MAX);
         assert_eq!(names(false), (vec!["2".to_string(), "10".into(), "a".into()], false));
         assert_eq!(names(true), (vec!["2".to_string(), "10".into(), "a".into(), "Secret".into()], false));
-        let (v, cut) = kid_names((0..501).map(|k| (format!("f{k}"), d)), false);
+        // the '›' menu keeps KIDS_MAX; Alt+PgDn / Alt+PgUp asks for all
+        let (v, cut) = kid_names((0..501).map(|k| (format!("f{k}"), d)), false, KIDS_MAX);
         assert_eq!((v.len(), cut, v[0].as_str(), v[499].as_str()), (500, true, "f0", "f499"));
-        assert_eq!(kid_names((0..500).map(|k| (format!("f{k}"), d)), false).1, false);
+        assert_eq!(kid_names((0..500).map(|k| (format!("f{k}"), d)), false, KIDS_MAX).1, false);
+        let (v, cut) = kid_names((0..1200).map(|k| (format!("f{k}"), d)), false, usize::MAX);
+        assert_eq!((v.len(), cut, v[733].as_str(), v[1199].as_str()), (1200, false, "f733", "f1199"));
     }
 
     #[test]
     fn kids_late_results_dropped() {
-        let mut j = KidsJob { id: 0, hwnd: 0, dir: String::new(), hidden: false, result: None };
-        let a = j.ask(1, r"C:\Users", false);
+        let mut j = KidsJob { id: 0, hwnd: 0, dir: String::new(), hidden: false, cap: KIDS_MAX, result: None };
+        let a = j.ask(1, r"C:\Users", false, KIDS_MAX);
         assert!(j.publish(a, Ok((vec!["A".into()], false))));
-        let b = j.ask(1, r"C:\", false);
+        let b = j.ask(1, r"C:\", false, usize::MAX);
+        assert_eq!(j.cap, usize::MAX);
         assert!(!j.publish(a, Ok((vec!["A".into()], false))));
         assert!(j.take(a).is_none() && j.take(b).is_none());
         assert!(j.publish(b, Err(())));
@@ -1105,6 +1109,11 @@ mod tests {
         assert_eq!(pick_sibling(&names, "b", 1, true), Sibling::Unknown);
         assert_eq!(pick_sibling(&names, "c", -1, true), Sibling::Unknown);
         assert_eq!(pick_sibling(&names, "b", -1, true), Sibling::Go(2));
+        // more folders than the '›' menu shows: Alt+PgDn / Alt+PgUp lists them all, so every one steps
+        let many = (0..1200).map(|k| format!("f{k}")).collect::<Vec<_>>();
+        assert_eq!(pick_sibling(&many, "f733", 1, false), Sibling::Go(734));
+        assert_eq!(pick_sibling(&many, "f733", -1, false), Sibling::Go(732));
+        assert_eq!(pick_sibling(&many, "f1199", 1, false), Sibling::Last);
         assert_eq!(sibling_of(r"C:\Users\Public"), Some((r"C:\Users".into(), "Public".into())));
         assert_eq!(sibling_of(r"C:\Users"), Some((r"C:\".into(), "Users".into())));
         assert_eq!(sibling_of(r"C:\"), None);

@@ -545,7 +545,7 @@ pub(crate) unsafe fn crumb_click(h: HWND, i: usize, x: i32, y: i32) {
             kids_cancel();
             focus_view(i);
             let Some((h, path, dpi)) = app(|a| Some((a.panes[i].as_ref()?.hwnd, a.s.paths[i].clone(), a.dpi))) else { return };
-            let id = want_kids(h, &dir, hidden());
+            let id = want_kids(h, &dir, hidden(), KIDS_MAX);
             app(|a| a.kids = Some(KidsAsk { id, hwnd: h, i, path, gen: gen(), dir, next, step: 0 }));
             _ = InvalidateRect(Some(h), Some(&addr_rect(h, dpi)), false);
             return;
@@ -590,12 +590,13 @@ pub(crate) struct KidsJob {
     pub(crate) hwnd: isize,
     pub(crate) dir: String,
     pub(crate) hidden: bool,
+    pub(crate) cap: usize, // most names kept: KIDS_MAX for the '›' menu, all for Alt+PgDn / Alt+PgUp
     pub(crate) result: Option<(usize, KidsList)>,
 }
 
 impl KidsJob {
-    pub(crate) fn ask(&mut self, hwnd: isize, dir: &str, hidden: bool) -> usize {
-        (self.id, self.hwnd, self.dir, self.hidden, self.result) = (self.id + 1, hwnd, dir.to_string(), hidden, None);
+    pub(crate) fn ask(&mut self, hwnd: isize, dir: &str, hidden: bool, cap: usize) -> usize {
+        (self.id, self.hwnd, self.dir, self.hidden, self.cap, self.result) = (self.id + 1, hwnd, dir.to_string(), hidden, cap, None);
         self.id
     }
 
@@ -617,7 +618,7 @@ impl KidsJob {
     }
 }
 
-pub(crate) static KIDS: Mutex<KidsJob> = Mutex::new(KidsJob { id: 0, hwnd: 0, dir: String::new(), hidden: false, result: None });
+pub(crate) static KIDS: Mutex<KidsJob> = Mutex::new(KidsJob { id: 0, hwnd: 0, dir: String::new(), hidden: false, cap: KIDS_MAX, result: None });
 pub(crate) static KIDS_WAKE: Condvar = Condvar::new();
 pub(crate) const KIDS_MAX: usize = 500;
 
@@ -625,8 +626,8 @@ pub(crate) fn kids_job() -> std::sync::MutexGuard<'static, KidsJob> {
     KIDS.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-pub(crate) fn want_kids(h: HWND, dir: &str, hidden: bool) -> usize {
-    let id = kids_job().ask(h.0 as isize, dir, hidden);
+pub(crate) fn want_kids(h: HWND, dir: &str, hidden: bool, cap: usize) -> usize {
+    let id = kids_job().ask(h.0 as isize, dir, hidden, cap);
     static WORKER: Once = Once::new();
     WORKER.call_once(|| _ = std::thread::Builder::new().spawn(kids_worker));
     KIDS_WAKE.notify_one();
@@ -638,18 +639,18 @@ pub(crate) fn kids_worker() {
     use std::os::windows::fs::MetadataExt;
     let mut seen = 0;
     loop {
-        let (id, hwnd, dir, hidden) = {
+        let (id, hwnd, dir, hidden, cap) = {
             let mut j = kids_job();
             while j.id == seen || j.dir.is_empty() {
                 j = KIDS_WAKE.wait(j).unwrap_or_else(|e| e.into_inner());
             }
-            (j.id, j.hwnd, j.dir.clone(), j.hidden)
+            (j.id, j.hwnd, j.dir.clone(), j.hidden, j.cap)
         };
         seen = id;
         let all = std::fs::read_dir(&dir).map_err(|_| ());
         let r = all.map(|rd| {
             let named = rd.flatten().filter_map(|e| Some((e.file_name().to_string_lossy().into_owned(), e.metadata().ok()?.file_attributes())));
-            kid_names(named, hidden)
+            kid_names(named, hidden, cap)
         });
         if kids_job().publish(id, r) {
             unsafe { _ = PostMessageW(Some(HWND(hwnd as _)), WM_KIDS, WPARAM(id), LPARAM(0)) };
@@ -658,15 +659,15 @@ pub(crate) fn kids_worker() {
 }
 
 // Subfolders out of (name, attributes): hidden ones only when shown, hidden+system never (as Explorer),
-// in Explorer's order ('2' before '10'), at most KIDS_MAX. (names, cut short)
-pub(crate) fn kid_names(all: impl Iterator<Item = (String, u32)>, show_hidden: bool) -> (Vec<String>, bool) {
+// in Explorer's order ('2' before '10'), at most `cap`. (names, cut short)
+pub(crate) fn kid_names(all: impl Iterator<Item = (String, u32)>, show_hidden: bool, cap: usize) -> (Vec<String>, bool) {
     use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM};
     let (dir, hid, hs) = (FILE_ATTRIBUTE_DIRECTORY.0, FILE_ATTRIBUTE_HIDDEN.0, FILE_ATTRIBUTE_HIDDEN.0 | FILE_ATTRIBUTE_SYSTEM.0);
     let mut v: Vec<HSTRING> =
         all.filter(|&(_, a)| a & dir != 0 && a & hs != hs && (show_hidden || a & hid == 0)).map(|(n, _)| HSTRING::from(n)).collect();
     v.sort_by(|a, b| unsafe { StrCmpLogicalW(a, b) }.cmp(&0));
-    let cut = v.len() > KIDS_MAX;
-    (v.iter().take(KIDS_MAX).map(|n| n.to_string_lossy()).collect(), cut)
+    let cut = v.len() > cap;
+    (v.iter().take(cap).map(|n| n.to_string_lossy()).collect(), cut)
 }
 
 // Where the '›' of `dir` is in a fresh layout; None once it folded away.
@@ -759,7 +760,8 @@ pub(crate) fn sibling_of(path: &str) -> Option<(String, String)> {
 }
 
 // Alt+PgDn / Alt+PgUp (as a photo viewer's next folder): the parent is listed by the '›' worker, the step
-// is taken when its WM_KIDS comes in (kids_show), if the pane is still where it was.
+// is taken when its WM_KIDS comes in (kids_show), if the pane is still where it was. The whole list is
+// asked for (not the menu's KIDS_MAX), so the step works from any folder of a parent with thousands.
 pub(crate) unsafe fn sibling_step(i: usize, step: i32) {
     let Some((h, path)) = app(|a| Some((a.panes[i].as_ref()?.hwnd, a.s.paths[i].clone()))) else { return };
     let Some((dir, name)) = sibling_of(&path) else {
@@ -767,7 +769,7 @@ pub(crate) unsafe fn sibling_step(i: usize, step: i32) {
         return;
     };
     kids_cancel();
-    let id = want_kids(h, &dir, hidden());
+    let id = want_kids(h, &dir, hidden(), usize::MAX);
     app(|a| a.kids = Some(KidsAsk { id, hwnd: h, i, path, gen: gen(), dir, next: Some(name), step }));
 }
 
@@ -776,7 +778,7 @@ pub(crate) enum Sibling {
     Go(usize),
     First,
     Last,
-    Unknown, // past a list cut short at KIDS_MAX
+    Unknown, // past a list cut short (the '›' menu's KIDS_MAX; Alt+PgDn / Alt+PgUp lists all)
 }
 
 // The folder `step` away from `cur` in a parent's sorted list. A hidden `cur` (not listed) is placed by
