@@ -1090,12 +1090,54 @@ def cable_update(name: str, b: dict):
     return cable_view(name)
 
 
+# ------------------------------------------------------------------ v13.2 output folders (LATEST / ISSUED / HISTORY)
+def _hist(name: str, kind: str, ext: str, stamp: str | None = None) -> Path:
+    from .. import outputs
+    return outputs.history_path(pdir(name), kind, safe_name(name), ext, stamp)
+
+
+def _finish(name: str, kind: str, path: Path):
+    """stamp the fingerprint, copy to LATEST (fixed name), mark index changes since the last issued rev."""
+    from .. import outputs
+    fp = outputs.fingerprint(pdir(name), meta(name), cable.load(pdir(name))["values"], _plot_dec(name), VERSION)
+    if path.suffix.lower() == ".xlsx":
+        try:
+            outputs.stamp_xlsx(path, fp, kind)
+        except Exception:                                  # noqa: BLE001 - a labelled (protected) file stays as is
+            pass
+    dst = outputs.publish(pdir(name), path, kind, safe_name(name), fp)
+    if kind == "index":
+        iss = outputs.issued_list(pdir(name))
+        if iss:
+            last = iss[-1]
+            f = pdir(name) / "output" / "ISSUED" / last["dir"] / ((last["files"].get("index") or {}).get("file") or "")
+            if f.is_file():
+                try:
+                    outputs.mark_index_changes(dst, f, last["rev"])
+                except Exception:                          # noqa: BLE001
+                    pass
+    return dst
+
+
+def find_out(name: str, rel: str) -> Path:
+    """an output file / folder by name: output/, output/HISTORY/, output/LATEST/ (ISSUED/<rev dir>/<file> too)."""
+    o = pdir(name) / "output"
+    rel = str(rel).replace("\\", "/").lstrip("/")
+    if ".." in rel.split("/"):
+        raise ValueError("bad path")
+    for base in (o, o / "HISTORY", o / "LATEST", o / "ISSUED"):
+        if (base / rel).exists():
+            return base / rel
+    return o / rel
+
+
 def cable_export(name: str):
     s, res, lay = cable_result(name)
-    out = pdir(name) / "output" / f"Cable_Schedule_{safe_name(name)}_{time.strftime('%Y%m%d_%H%M')}.xlsx"
+    out = _hist(name, "cable", ".xlsx")
     tr = cable.TR.build(res, lay, s, _plot_dec(name))
     sup = cable.SP.build(tr, s["values"], lay.m_per_pt if lay else None, _plot_dec(name), _obstacles(lay))
     cable.write_xlsx(res, s, out, name, tr, sup)
+    _finish(name, "cable", out)
     try:
         take_snapshot(name, "케이블 엑셀")
     except Exception:                                      # noqa: BLE001 - a snapshot never blocks an export
@@ -1123,8 +1165,9 @@ def export_basis(name: str, sensitivity: bool = True):
         con2 = concept(name)
         sc = basis.concept_sensitivity(ps, proto, con2, notes, (ov or {}).get("decisions"), s, am, lay, dd, ob)
         sk = basis.cable_sensitivity(rows, s, am, lay, dd, ob, con)
-    out = pdir(name) / "output" / f"산출근거_{safe_name(name)}_{time.strftime('%Y%m%d_%H%M')}.xlsx"
+    out = _hist(name, "basis", ".xlsx")
     r = basis.write(out, name, rows, con, s, res, tr, sp, imap, sc, sk)
+    _finish(name, "basis", out)
     try:
         take_snapshot(name, "산출근거")
     except Exception:                                      # noqa: BLE001
@@ -1141,9 +1184,10 @@ def twin_view(name: str):
            "schema": twin.SCHEMA, "values": sv["values"], "moves": None, "rack_src": sv["values"].get("rack_src"),
            "rack_el_src": sv["values"].get("rack_el_src")}
     od = pdir(name) / "output"
-    out["sets"] = sorted([p.name for p in od.glob("3D인계_*") if p.is_dir()], reverse=True)[:10] if od.exists() else []
-    if out["sets"] and (od / out["sets"][0] / "clash_moves.json").exists():
-        out["moves"] = json.loads((od / out["sets"][0] / "clash_moves.json").read_text(encoding="utf-8"))
+    out["sets"] = sorted({p.name for p in list(od.glob("3D인계_*")) + list((od / "HISTORY").glob("3D인계_*")) if p.is_dir()},
+                         reverse=True)[:10] if od.exists() else []
+    if out["sets"] and (find_out(name, out["sets"][0]) / "clash_moves.json").exists():
+        out["moves"] = json.loads((find_out(name, out["sets"][0]) / "clash_moves.json").read_text(encoding="utf-8"))
     if not files.get("model3d"):
         return out
     try:
@@ -1195,7 +1239,7 @@ def export_twin(name: str):
     inst["moves"] = moves
     inst["other"] = {"discipline": other["discipline"], "file": other["file"], "objects": len(other["boxes"])} if other else None
     stamp = time.strftime("%Y%m%d_%H%M")
-    od = pdir(name) / "output" / f"3D인계_{stamp}"
+    od = _hist(name, "twin", "", stamp)
     od.mkdir(parents=True, exist_ok=True)
     model_file = od / f"{Path(files['model3d']).stem}_계장보강.html"
     model_file.write_text(twin.build_html(base_path, inst), encoding="utf-8")
@@ -1237,6 +1281,7 @@ def export_twin(name: str):
     except Exception:                                      # noqa: BLE001
         pass
     (od / "clash_moves.json").write_text(json.dumps({"other": inst["other"], "moves": moves}, ensure_ascii=False, indent=1), encoding="utf-8")
+    _finish(name, "twin", od)
     return {"files": [od.name], "dir": od.name, "counts": inst["counts"], "moves": len(moves), "review": sm,
             "left": len(left), "fit": {k: tf[k] for k in ("median_m", "max_m", "anchors", "rack_anchors")}}
 
@@ -1356,7 +1401,7 @@ def review3d_answer(name: str, text: str):
     if not last:
         raise ValueError("먼저 STEP 10 '3D 인계 세트 만들기'를 실행해 주세요 (사전 점검이 같이 만들어집니다)")
     ans = review3d.parse_answer(text, last["issues"])
-    df = d / "output" / last["dir"] / "STRUCTURED_MODEL_DATA_FULL.json"
+    df = find_out(name, last["dir"]) / "STRUCTURED_MODEL_DATA_FULL.json"
     if df.exists():
         inst = json.loads(df.read_text(encoding="utf-8"))
         files = meta(name).get("files", {})
@@ -1370,7 +1415,7 @@ def review3d_answer(name: str, text: str):
     ans["dir"] = last["dir"]
     ans["at"] = time.strftime("%Y-%m-%d %H:%M")
     ait.save(d / "review3d_answer.json", ans)
-    (d / "output" / last["dir"] / "3D_REVIEW_ANSWER.json").write_text(json.dumps(ans, ensure_ascii=False, indent=1), encoding="utf-8")
+    (find_out(name, last["dir"]) / "3D_REVIEW_ANSWER.json").write_text(json.dumps(ans, ensure_ascii=False, indent=1), encoding="utf-8")
     return ans
 
 
@@ -1402,7 +1447,7 @@ def revisions_compare(name: str, a: str, b: str):
         old, new = new, old
     names = {k: it["name"] for k, it in cable.ITEMS.items()}
     cmp_ = revdiff.compare(old, new, names)
-    out = pdir(name) / "output" / f"리비전대조_{a}_vs_{b}.xlsx"
+    out = pdir(name) / "output" / "HISTORY" / f"리비전대조_{a}_vs_{b}.xlsx"
     revdiff.write_xlsx(out, cmp_)
     return {"files": [out.name], "words": cmp_["words"], "changes": len(cmp_["changes"]),
             "inputs": cmp_["inputs"][:30], "top": cmp_["changes"][:30]}
@@ -1423,8 +1468,9 @@ def _obstacles(lay):
 def export_3d(name: str):
     from .. import threed
     data = data_3d(name)
-    out = pdir(name) / "output" / f"3D_{safe_name(name)}_{time.strftime('%Y%m%d_%H%M')}.json"
+    out = _hist(name, "json3d", ".json")
     threed.write(data, out)
+    _finish(name, "json3d", out)
     return {"files": [out.name], "counts": data["counts"]}
 
 
@@ -1439,7 +1485,7 @@ def export(name: str, body: dict):
     if not files.get("template"):
         raise ValueError("인덱스 양식(xlsx)을 올려 주세요")
     stamp = time.strftime("%Y%m%d_%H%M")
-    out = d / "output" / f"Instrument_Index_{safe_name(name)}_{stamp}.xlsx"
+    out = _hist(name, "index", ".xlsx", stamp)
     syms_ov, _ = apply_overrides(syms, load_protocol(PROTO / "io_rules.yaml"), overrides(name))
     am = d / "area_map.yaml" if (d / "area_map.yaml").exists() else PROTO / "area_map.yaml"
     area = ((load_protocol(am) or {}).get("map") or {}) if am.exists() else {}
@@ -1456,6 +1502,7 @@ def export(name: str, body: dict):
                    m.get("scenarios"), imp, area_map=area, cable_map=cmap)
     made = [out.name]
     warn = []
+    _idx_out = out
     if files.get("ref"):
         try:
             pt = page_texts_cached(name)
@@ -1464,12 +1511,14 @@ def export(name: str, body: dict):
             warn.append("레퍼런스 비교 시트는 빠졌습니다: " + str(e))
         if pt is not None:
             compare(rows, load_reference(d / "input" / files["ref"]), out, pt)
+    _finish(name, "index", _idx_out)
     if body.get("overlay"):
         protect.require_pdf(d / "input" / files["pdf"], "검토용 P&ID PDF는 원본 도면 위에 그려야 하는데 P&ID PDF에 보안이 걸려 있는데",
                             "검토용 PDF 체크를 끄고 만들거나, P&ID를 다시 올린 직후에 만들어 주세요")
         from ..overlay import write_overlay
-        ov = d / "output" / f"P&ID_검토용_{stamp}.pdf"
+        ov = _hist(name, "pid_review", ".pdf", stamp)
         write_overlay(d / "input" / files["pdf"], syms, ov)
+        _finish(name, "pid_review", ov)
         made.append(ov.name)
     return {"files": made, "warnings": warn}
 
@@ -1884,13 +1933,13 @@ class H(BaseHTTPRequestHandler):
                     return self._send(200, review3d_answer(name, self._json().get("text", "")))
                 return self._send(200, review3d_view(name))
             if act == "twin_set" and len(parts) >= 5:            # open the supplemented model of a set
-                d_ = pdir(name) / "output" / Path(parts[4]).name
+                d_ = find_out(name, Path(parts[4]).name)
                 f = next(iter(sorted(d_.glob("*_계장보강.html"))), None)
                 if not f:
                     return self._send(404, {"error": "no model"})
                 return self._send(200, f.read_bytes(), "text/html; charset=utf-8")
             if act == "twin_file" and len(parts) >= 6:          # /api/p/<name>/twin_file/<set>/<file>
-                f = pdir(name) / "output" / Path(parts[4]).name / Path(parts[5]).name
+                f = find_out(name, Path(parts[4]).name) / Path(parts[5]).name
                 if not f.exists():
                     return self._send(404, {"error": "no file"})
                 ct = {".html": "text/html; charset=utf-8", ".json": "application/json; charset=utf-8",
@@ -1912,12 +1961,42 @@ class H(BaseHTTPRequestHandler):
                 with CALC:
                     return self._send(200, export_3d(name))
             if act == "outputs":
+                from .. import outputs as OUT
                 d = pdir(name) / "output"
-                fl = sorted(d.iterdir(), key=lambda p: -p.stat().st_mtime) if d.exists() else []
-                return self._send(200, [{"name": f.name, "size": f.stat().st_size,
-                                         "time": time.strftime("%m-%d %H:%M", time.localtime(f.stat().st_mtime))} for f in fl])
+                OUT.dirs(pdir(name))
+                info = lambda f, rel: {"name": rel, "size": f.stat().st_size if f.is_file() else sum(x.stat().st_size for x in f.rglob("*") if x.is_file()),
+                                       "time": time.strftime("%m-%d %H:%M", time.localtime(f.stat().st_mtime)), "dir": f.is_dir()}
+                lat = OUT.latest(pdir(name))
+                hist = sorted([f for f in (d / "HISTORY").iterdir() if f.name != "history.json"], key=lambda p: -p.stat().st_mtime)
+                old = sorted([f for f in d.iterdir() if f.name not in ("LATEST", "ISSUED", "HISTORY", "captures")], key=lambda p: -p.stat().st_mtime)
+                return self._send(200, {"latest": [{**info(d / "LATEST" / v["file"], "LATEST/" + v["file"]), "kind": k, "at": v["at"], "rev": v.get("rev", "")}
+                                                   for k, v in lat.items() if (d / "LATEST" / v["file"]).exists()],
+                                        "issued": OUT.issued_list(pdir(name)), "rev": OUT.current_rev(pdir(name)),
+                                        "history": [info(f, "HISTORY/" + f.name) for f in hist[:60]], "history_n": len(hist),
+                                        "old": [info(f, f.name) for f in old[:80]], "old_n": len(old)})
+            if act == "issue" and method == "POST":
+                from .. import outputs as OUT
+                return self._send(200, OUT.issue(pdir(name), self._json().get("note", "")))
+            if act == "identify" and method == "POST":
+                from .. import outputs as OUT
+                n_ = int(self.headers.get("Content-Length", 0))
+                tmp = pdir(name) / "cache" / ("identify" + Path(unquote(self.headers.get("X-Filename", "x.xlsx"))).suffix)
+                tmp.write_bytes(self.rfile.read(n_))
+                return self._send(200, OUT.identify(pdir(name), tmp))
             if act == "file":
-                f = (pdir(name) / "output" / Path(parts[4]).name)
+                rel = unquote("/".join(parts[4:]))
+                f = find_out(name, rel)
+                if f.is_dir():
+                    import io as _io
+                    import zipfile as _zf
+                    buf = _io.BytesIO()
+                    with _zf.ZipFile(buf, "w", _zf.ZIP_DEFLATED) as z:
+                        for x in f.rglob("*"):
+                            if x.is_file():
+                                z.write(x, x.relative_to(f.parent))
+                    from urllib.parse import quote
+                    return self._send(200, buf.getvalue(), "application/zip",
+                                      {"Content-Disposition": f"attachment; filename*=UTF-8''{quote(f.name)}.zip"})
                 if not f.exists():
                     return self._send(404, {"error": "no file"})
                 ctype = {".pdf": "application/pdf", ".json": "application/json", ".txt": "text/plain; charset=utf-8",

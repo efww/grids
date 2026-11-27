@@ -895,9 +895,19 @@ async function renderOutput(m) {
       <div id="revbox" class="empty" style="padding:14px">불러오는 중…</div>
       <div style="display:flex;gap:6px;margin-top:8px"><button class="btn sm line" id="revsave">지금 결과 저장</button><button class="btn sm" id="revcmp">고른 두 시점 대조</button></div>
     </div>
-    <div class="panel"><h2>만든 파일</h2>
-      ${outs.length?`<table><tr><th>파일</th><th>시각</th><th>크기</th><th></th></tr>${outs.map(f=>`<tr><td class="mono">${esc(f.name)}</td><td>${esc(f.time)}</td><td>${(f.size/1024/1024).toFixed(1)}MB</td>
-        <td><a class="btn sm line" href="/api/${P("file/"+encodeURIComponent(f.name))}">받기</a></td></tr>`).join("")}</table>`:`<div class="empty">아직 만든 파일이 없습니다.</div>`}
+    <div class="panel"><h2>만든 파일 <span class="chip">${esc(outs.rev)}</span></h2>
+      <p class="xnote" style="margin-top:-4px"><b>LATEST</b> = 지금 기준 (종류마다 하나, 덮어씀) · <b>ISSUED</b> = 발행본 (고정) · <b>HISTORY</b> = 만들 때마다의 원본 (안 지움). 모든 엑셀 끝에 '_지문' 시트.</p>
+      <div style="font-size:12.5px;margin:8px 0 4px"><b>LATEST</b></div>
+      ${outs.latest.length?`<table class="mini">${outs.latest.map(f=>`<tr><td class="mono" style="font-size:12px">${esc(f.name.replace("LATEST/",""))}</td><td style="font-size:12px">${esc(f.at)}</td><td>${(f.size/1024/1024).toFixed(1)}MB</td>
+        <td><a class="btn sm line" href="/api/${P("file/"+encodeURIComponent(f.name))}">받기</a></td></tr>`).join("")}</table>`:`<div class="empty">아직 없음 - 엑셀·산출근거·3D 인계를 만들면 생깁니다</div>`}
+      <div style="display:flex;gap:6px;align-items:center;margin-top:8px"><input id="isnote" placeholder="발행 메모 (예: 1차 견적용)" style="flex:1;font-size:12.5px"><button class="btn sm" id="issue" ${outs.latest.length?"":"disabled"}>LATEST 발행 (R${outs.issued.length})</button></div>
+      ${outs.issued.length?`<div style="font-size:12.5px;margin:10px 0 4px"><b>ISSUED</b></div><table class="mini">${outs.issued.slice().reverse().map(r=>`<tr><td><b>${esc(r.rev)}</b></td><td style="font-size:12px">${esc(r.at)}</td><td style="font-size:12px">${esc(r.note||"")}</td>
+        <td><a class="btn sm line" href="/api/${P("file/"+encodeURIComponent("ISSUED/"+r.dir))}">받기 (zip)</a></td></tr>`).join("")}</table>`:""}
+      <label class="drop" id="idrop" style="display:block;margin-top:10px;padding:10px;border:1px dashed var(--line);font-size:12.5px;cursor:pointer;text-align:center">이 파일이 최신인지 확인: 엑셀을 여기에 끌어다 놓거나 클릭<input type="file" id="idfile" style="display:none"></label>
+      <div id="idres" style="font-size:12.5px;margin-top:4px"></div>
+      <details style="margin-top:10px"><summary style="cursor:pointer;font-size:12.5px">HISTORY ${outs.history_n}개 · v13.2 이전 파일 ${outs.old_n}개</summary>
+        <table class="mini">${outs.history.concat(outs.old).map(f=>`<tr><td class="mono" style="font-size:11.5px">${esc(f.name)}</td><td style="font-size:11.5px">${esc(f.time)}</td>
+        <td><a class="btn sm line" href="/api/${P("file/"+encodeURIComponent(f.name))}">받기</a></td></tr>`).join("")}</table></details>
     </div>
   </div>
   <div class="panel" style="margin-top:16px"><h2>시스템별 IO</h2>
@@ -906,6 +916,13 @@ async function renderOutput(m) {
   const revLoad = async () => { try { const r = await api(P("revisions")); const L = r.list;
       $("#revbox").className = ""; $("#revbox").innerHTML = L.length ? `<table class="mini"><tr><th></th><th>시각</th><th>계기</th><th>PLOT / 3D</th><th style="text-align:right">케이블 m</th><th style="text-align:right">JB</th></tr>${L.slice(0,15).map((x,i)=>`<tr><td><input type="checkbox" data-rev="${esc(x.id)}" ${i<2?"checked":""}></td><td class="mono" style="font-size:12px">${esc(x.made)}</td><td style="font-size:12px">${esc(x.label)}</td><td style="font-size:11.5px">${esc(x.plot||"-")}${x.model?" · 3D":""}</td><td style="text-align:right">${fmt(x.cable_m)}</td><td style="text-align:right">${x.jbs??""}</td></tr>`).join("")}</table>` : "아직 저장된 결과가 없습니다. '지금 결과 저장'을 누르세요."; } catch(e) { $("#revbox").textContent = e.message; } };
   revLoad();
+  $("#issue").onclick = async () => { if (!confirm("지금 LATEST를 발행본으로 고정할까요? (나중에 바꿀 수 없음, 다음 엑셀부터 바뀐 칸이 표시됨)")) return;
+    try { const r = await post(P("issue"), {note: $("#isnote").value}); toast(`${r.rev} 발행 (${r.dir})`); renderOutput(m); } catch(e) { toast(e.message, true); } };
+  const idf = async fl => { if (!fl) return; $("#idres").textContent = "확인 중…";
+    try { const r = await api(P("identify"), {method:"POST", headers:{"X-Filename":encodeURIComponent(fl.name)}, body:fl});
+      $("#idres").innerHTML = `<b style="color:${r.result==="LATEST"?"#15ad60":r.result==="UNKNOWN"?"#e0002a":"#c77700"}">${esc(r.result)}</b> ${esc(r.text)}`; } catch(e) { $("#idres").textContent = e.message; } };
+  $("#idfile").onchange = () => idf($("#idfile").files[0]);
+  const dz = $("#idrop"); dz.ondragover = e => { e.preventDefault(); }; dz.ondrop = e => { e.preventDefault(); idf(e.dataTransfer.files[0]); };
   $("#revsave").onclick = async () => { try { await post(P("revisions"), {label: "직접 저장"}); toast("지금 결과를 저장했습니다"); revLoad(); } catch(e) { toast(e.message, true); } };
   $("#revcmp").onclick = async () => { const ids = [...m.querySelectorAll("[data-rev]:checked")].map(x=>x.dataset.rev); if (ids.length !== 2) return toast("두 시점을 고르세요", true);
     try { const r = await post(P("revisions"), {compare: ids}); toast(`${r.files[0]} · 변경 ${r.changes}건 · ${r.words||"변화 없음"}`); if (S.screen === "output") renderOutput(m); } catch(e) { toast(e.message, true); } };
