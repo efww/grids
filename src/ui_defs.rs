@@ -382,7 +382,7 @@ Ctrl+Shift+O\tOpen the folders of Explorer windows and tabs in panes (panes alre
 Ctrl+Shift+C\tCopy the full path of the selected items (or of the current folder)\n\
 Ctrl+E\tOpen the selected files (or the focused one) in an editor instead of running them: .bat, .ps1, .reg, .json, .log, config files … (the file type's Edit, else your text editor or Notepad; up to 10 at a time; binary files are skipped)\n\
 Ctrl+Shift+U\tFolder usage: what takes up space in this folder, biggest first with bars, filled in as the subfolders are summed (→ into a folder, ← up, Enter selects the item in the pane, Ctrl+Enter opens the folder, Esc closes; also in the ⇄ menu)\n\
-Ctrl+M\t⇄ menu from the file list: open in another pane, copy / move the selected items to one, swap places and the other ⇄ items. Then one key: a pane's number opens there, C / M then a number copies / moves, S swaps, W which program is using the files, K checksum (files only), D date folders (files only; then Y / M / D), N into a new folder, B dated backup copies, E removes empty folders, U folder usage, L copies the file list as a table, R WinMerge (when installed)\n\
+Ctrl+M\t⇄ menu from the file list: open in another pane, copy / move the selected items to one, swap places and the other ⇄ items. Then one key: a pane's number opens there, C / M then a number copies / moves, S swaps, W which program is using the files, K checksum (files only), D date folders (files only; then Y / M / D), N into a new folder, B dated backup copies, E removes empty folders, U folder usage, L copies the file list as a table, A adds the selected items to the clipboard, R WinMerge (when installed)\n\
 Ctrl+Shift+R\tBatch rename the selected items (none selected: every file in the folder): rules such as replace, numbering, date, case; live preview, Undo, presets. In the window: Ctrl+Enter renames, Esc closes; in the rule list Space switches a rule on/off, Ins adds, Del removes, Alt+↑/↓ moves it\n\
 Num+ / Ctrl+Shift+A\tSelect files by pattern (*.jpg;*.png or part of a name; Shift+Enter deselects)\n\
 Num−\tDeselect files by pattern\n\
@@ -449,7 +449,7 @@ Ctrl+Shift+O\t탐색기 창·탭의 폴더를 패널로 가져오기 (이미 그
 Ctrl+Shift+C\t선택한 항목(없으면 현재 폴더)의 전체 경로 복사\n\
 Ctrl+E\t선택한 파일(또는 포커스한 파일)을 실행하지 않고 편집기로 열기: .bat·.ps1·.reg·.json·.log·설정 파일 … (그 형식의 '편집', 없으면 쓰는 텍스트 편집기나 메모장, 한 번에 10개까지, 이진 파일은 건너뜀)\n\
 Ctrl+Shift+U\t이 폴더 용량 분석: 공간을 차지하는 항목을 큰 순서로 막대와 함께, 하위 폴더를 계산하는 대로 채움 (→ 폴더 안으로, ← 위로, Enter는 패널에서 그 항목 선택, Ctrl+Enter는 폴더 열기, Esc 닫기, ⇄ 메뉴에도 있음)\n\
-Ctrl+M\t파일 목록에서 ⇄ 메뉴 열기: 다른 패널에서 열기, 선택 항목 복사·이동, 자리 바꾸기와 그 밖의 ⇄ 항목. 이어서 키 하나로: 패널 번호는 그 패널에서 열기, C / M 다음 번호는 복사 / 이동, S는 자리 바꾸기, W는 파일을 쓰고 있는 프로그램, K는 체크섬(파일만), D는 날짜별 폴더(파일만, 이어서 Y / M / D), N은 새 폴더로 묶기, B는 날짜 붙인 사본, E는 빈 폴더 지우기, U는 용량 분석, L은 파일 목록을 표로 복사, R은 WinMerge 비교(설치된 경우)\n\
+Ctrl+M\t파일 목록에서 ⇄ 메뉴 열기: 다른 패널에서 열기, 선택 항목 복사·이동, 자리 바꾸기와 그 밖의 ⇄ 항목. 이어서 키 하나로: 패널 번호는 그 패널에서 열기, C / M 다음 번호는 복사 / 이동, S는 자리 바꾸기, W는 파일을 쓰고 있는 프로그램, K는 체크섬(파일만), D는 날짜별 폴더(파일만, 이어서 Y / M / D), N은 새 폴더로 묶기, B는 날짜 붙인 사본, E는 빈 폴더 지우기, U는 용량 분석, L은 파일 목록을 표로 복사, A는 선택 항목을 클립보드에 더하기, R은 WinMerge 비교(설치된 경우)\n\
 Ctrl+Shift+R\t선택한 항목(선택 없으면 폴더의 모든 파일) 일괄 이름 바꾸기: 바꾸기·번호·날짜·대소문자 같은 규칙, 실시간 미리보기, 되돌리기, 프리셋. 창 안에서 Ctrl+Enter 바꾸기, Esc 닫기, 규칙 목록에서 Space 켜기/끄기, Ins 추가, Del 빼기, Alt+↑/↓ 순서 바꾸기\n\
 Num+ / Ctrl+Shift+A\t패턴으로 파일 선택 (*.jpg;*.png 또는 이름 일부, Shift+Enter는 선택 해제)\n\
 Num−\t패턴으로 파일 선택 해제\n\

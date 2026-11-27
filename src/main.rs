@@ -85,6 +85,7 @@ mod tour;
 mod tray;
 mod usage;
 mod listing;
+mod clipadd;
 mod switcher;
 
 use ui_defs::*;
@@ -126,6 +127,7 @@ use tour::*;
 use tray::*;
 use usage::*;
 use listing::*;
+use clipadd::*;
 use switcher::*;
 
 /// Let a drive with no disk (empty card reader slot, DVD drive, pulled USB stick) just fail the file call,
@@ -560,7 +562,7 @@ mod tests {
             assert_eq!(open_in_pick(ID_WM_PANE + k), OpenPick::Shell);
             menu.extend([ID_OPEN_TO + k, ID_COPY_TO + k, ID_MOVE_TO + k, ID_SWAP_TO + k, ID_WM_PANE + k]);
         }
-        let shell = [ID_INUSE, ID_WM_PAIR, ID_HASH, ID_GROUP, ID_STAMP, ID_ORG, ID_ORG + 1, ID_ORG + 2, ID_EMPTY, ID_USAGE, ID_LIST];
+        let shell = [ID_INUSE, ID_WM_PAIR, ID_HASH, ID_GROUP, ID_STAMP, ID_ORG, ID_ORG + 1, ID_ORG + 2, ID_EMPTY, ID_USAGE, ID_LIST, ID_CLIPADD];
         for p in shell {
             assert_eq!(open_in_pick(p), OpenPick::Shell, "{p}");
         }
@@ -2609,9 +2611,10 @@ mod tests {
 
     // Every source file, compiled in: the test exe runs on the Windows runner without the source tree.
     // A new module must be listed here too (ui_text_pairs_match checks this against main.rs's `mod` lines).
-    const SOURCES: [(&str, &str); 42] = [
+    const SOURCES: [(&str, &str); 43] = [
         ("main.rs", include_str!("main.rs")),
         ("autostart.rs", include_str!("autostart.rs")),
+        ("clipadd.rs", include_str!("clipadd.rs")),
         ("dialog_jump.rs", include_str!("dialog_jump.rs")),
         ("docparse.rs", include_str!("docparse.rs")),
         ("draw.rs", include_str!("draw.rs")),
@@ -3040,8 +3043,8 @@ mod tests { tr("in", "안") }
 
     // Every ⇄ menu item that can show at the top level at the same time: one letter each, none a pane digit,
     // none the first letter of an unmarked item (the grey title, "Pane 10" …), in both languages.
-    fn menu_slots() -> [&'static [(&'static str, &'static str)]; 12] {
-        [&[M_SWAP], &[M_COPY], &[M_MOVE], &[M_INUSE], &[M_HASH, M_HASH_STOP], &[M_ORG], &[M_GROUP_N, M_GROUP], &[M_STAMP_N, M_STAMP], &[M_EMPTY], &[M_USAGE], &[M_LIST_N, M_LIST], &[M_WM_PAIR, M_WM_PANE]]
+    fn menu_slots() -> [&'static [(&'static str, &'static str)]; 13] {
+        [&[M_SWAP], &[M_COPY], &[M_MOVE], &[M_INUSE], &[M_HASH, M_HASH_STOP], &[M_ORG], &[M_GROUP_N, M_GROUP], &[M_STAMP_N, M_STAMP], &[M_EMPTY], &[M_USAGE], &[M_LIST_N, M_LIST], &[M_CLIPADD_N, M_CLIPADD], &[M_WM_PAIR, M_WM_PANE]]
     }
 
     #[test]

@@ -799,7 +799,7 @@ pub(crate) fn send_pick(p: usize) -> Option<SendPick> {
     }
 }
 
-fn dir_key(p: &str) -> String {
+pub(crate) fn dir_key(p: &str) -> String {
     p.trim_end_matches('\\').to_lowercase()
 }
 

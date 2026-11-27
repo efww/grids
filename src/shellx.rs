@@ -1260,6 +1260,7 @@ pub(crate) unsafe fn shell_menu(menu: HMENU, src: usize, picked: &std::result::R
     let flags = if is_fs(&here) { MF_STRING } else { MF_STRING | MF_GRAYED };
     _ = AppendMenuW(menu, flags, ID_USAGE, &HSTRING::from(tr2(M_USAGE)));
     list_menu(menu, src); // the selection, or with none the whole view
+    clip_menu(menu, picked); // before the WinMerge lookup too
     let exe = winmerge_exe()?;
     match picked {
         Ok(two) if two.len() == 2 => {
@@ -1281,7 +1282,7 @@ pub(crate) unsafe fn shell_menu(menu: HMENU, src: usize, picked: &std::result::R
 }
 
 pub(crate) fn is_shell_pick(p: usize) -> bool {
-    p == ID_INUSE || p == ID_WM_PAIR || p == ID_HASH || p == ID_GROUP || p == ID_STAMP || p == ID_EMPTY || p == ID_USAGE || p == ID_LIST || is_org_pick(p) || (ID_WM_PANE..ID_WM_PANE + MAXP).contains(&p)
+    p == ID_INUSE || p == ID_WM_PAIR || p == ID_HASH || p == ID_GROUP || p == ID_STAMP || p == ID_EMPTY || p == ID_USAGE || p == ID_LIST || p == ID_CLIPADD || is_org_pick(p) || (ID_WM_PANE..ID_WM_PANE + MAXP).contains(&p)
 }
 
 pub(crate) unsafe fn shell_pick(h: HWND, src: usize, p: usize, picked: std::result::Result<Vec<String>, Pick>, exe: Option<String>, others: &[(usize, HSTRING, String)]) {
@@ -1296,6 +1297,7 @@ pub(crate) unsafe fn shell_pick(h: HWND, src: usize, p: usize, picked: std::resu
         (ID_EMPTY, _, _) => remove_empty(src),
         (ID_USAGE, _, _) => open_usage(src),
         (ID_LIST, _, _) => copy_list(src), // the view's selection (or all its items), read again now
+        (ID_CLIPADD, picked, _) => add_to_clip(picked), // the selection the menu counted
         (ID_WM_PAIR, Ok(two), Some(exe)) if two.len() == 2 => run_winmerge(&exe, &two[0], &two[1]),
         (p, _, Some(exe)) if p >= ID_WM_PANE => {
             // only the folder the menu showed for that pane
