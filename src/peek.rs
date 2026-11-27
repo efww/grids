@@ -598,9 +598,7 @@ unsafe fn delete_peek(h: HWND, permanent: bool) {
 
 /// Why Windows won't take this as a file name, None = fine. Clashes are checked against the folder.
 pub(crate) fn name_problem(name: &str) -> Option<&'static str> {
-    let stem = name.split('.').next().unwrap_or("").trim_end().to_ascii_uppercase();
-    let device = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
-        || (stem.len() == 4 && (stem.starts_with("COM") || stem.starts_with("LPT")) && matches!(stem.as_bytes()[3], b'1'..=b'9'));
+    let device = crate::rename_rules::reserved_name(name);
     match () {
         _ if name.trim().is_empty() => Some(tr("Type a name", "이름을 입력하세요")),
         _ if name.chars().any(|c| c < ' ' || r#"\/:*?"<>|"#.contains(c)) => Some(tr(r#"A name can't contain \ / : * ? " < > |"#, r#"이름에 \ / : * ? " < > | 는 쓸 수 없습니다"#)),

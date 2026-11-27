@@ -413,8 +413,8 @@ unsafe fn clip_text() -> Option<std::result::Result<String, String>> {
 const NOT_IN_NAMES: &str = "\\/:*?\"<>|";
 
 // The file's name: the first non-blank line, characters Windows refuses turned to spaces, runs of spaces made
-// one, cut to 40 characters, no '.' or ' ' at the end. Blank or a reserved device name (CON, COM1, … also before
-// a '.') gives "Clipboard text 2026-11-26 153012". Then " (k)" from the second try on, and ".txt".
+// one, cut to 40 characters, no '.' or ' ' at the end. Blank or a reserved device name (rename_rules::reserved_name:
+// CON, COM1, COM¹, CONIN$, … also before a '.') gives "Clipboard text 2026-11-26 153012". Then " (k)" from the second try on, and ".txt".
 pub(crate) fn text_name(ko: bool, text: &str, t: &SYSTEMTIME, k: u32) -> String {
     let line = text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
     let mut stem = String::new();
@@ -431,10 +431,7 @@ pub(crate) fn text_name(ko: bool, text: &str, t: &SYSTEMTIME, k: u32) -> String 
         len += 1;
     }
     let stem = stem.trim_end_matches(['.', ' ']);
-    let device = stem.split('.').next().unwrap_or("").trim_end().to_ascii_uppercase();
-    let numbered = |p: &str| device.len() == 4 && device.starts_with(p) && matches!(device.as_bytes()[3], b'1'..=b'9');
-    let reserved = ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"].contains(&device.as_str()) || numbered("COM") || numbered("LPT");
-    let stem = if stem.is_empty() || reserved {
+    let stem = if stem.is_empty() || crate::rename_rules::reserved_name(stem) {
         let head = if ko { "클립보드 텍스트" } else { "Clipboard text" };
         format!("{head} {:04}-{:02}-{:02} {:02}{:02}{:02}", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond)
     } else {

@@ -85,7 +85,7 @@ unsafe extern "system" fn new_file_tick(_: HWND, _: u32, id: usize, _: u32) {
 
 // The new folder's name: one item gives its name without the extension; several give the start of the
 // name they all share, once trailing ' ', '-', '_', '.' and '(' are cut, if 3 characters or more are left.
-// Otherwise `fallback`.
+// Otherwise `fallback`, which also stands in for a name Windows reserves ("Con" from Config.ini + Console.log).
 pub(crate) fn group_base(names: &[&str], fallback: &str) -> String {
     let cut = |s: &str| s.trim_end_matches([' ', '-', '_', '.', '(']).to_string();
     let base = match names {
@@ -99,7 +99,7 @@ pub(crate) fn group_base(names: &[&str], fallback: &str) -> String {
             Some(cut(&first.chars().take(n).collect::<String>())).filter(|b| b.chars().count() >= 3).unwrap_or_default()
         }
     };
-    if base.trim().is_empty() { fallback.to_string() } else { base }
+    if base.trim().is_empty() || crate::rename_rules::reserved_name(&base) { fallback.to_string() } else { base }
 }
 
 // "Name", then "Name (2)", "Name (3)" … A folder: the number goes at the end, not before a '.'.
@@ -1368,6 +1368,11 @@ mod tests {
         // Korean names: compared by character, not byte
         assert_eq!(group_base(&["회의록 1월.hwp", "회의록 2월.hwp"], "새 폴더"), "회의록");
         assert_eq!(group_base(&["사진1.jpg", "사진2.jpg"], "새 폴더"), "새 폴더");
+        // a name Windows reserves: the fallback, from one item or a shared start
+        assert_eq!(group_base(&["Con.txt"], nf), nf);
+        assert_eq!(group_base(&["con.a", "con.b"], nf), nf);
+        assert_eq!(group_base(&["Config.ini", "Console.log"], nf), nf);
+        assert_eq!(group_base(&["Console.log"], nf), "Console");
         // a taken name gets a number at the end, never before a '.'
         assert_eq!(group_name("Trip", 1), "Trip");
         assert_eq!(group_name("Trip", 2), "Trip (2)");

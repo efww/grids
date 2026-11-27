@@ -220,9 +220,7 @@ pub(crate) fn file_after_rename(before: &str, now: &str, was_cur: bool, new: &st
 pub(crate) fn session_stem_ok(input: &str) -> Option<String> {
     let s = input.trim();
     let bad = s.is_empty() || s.ends_with('.') || s.chars().any(|c| c < ' ' || r#"<>:"/\|?*"#.contains(c));
-    let dev = s.split('.').next().unwrap_or("").trim_end().to_ascii_uppercase();
-    let numbered = dev.len() == 4 && (dev.starts_with("COM") || dev.starts_with("LPT")) && (b'1'..=b'9').contains(&dev.as_bytes()[3]);
-    (!bad && !numbered && !matches!(dev.as_str(), "CON" | "PRN" | "AUX" | "NUL")).then(|| s.to_string())
+    (!bad && !crate::rename_rules::reserved_name(s)).then(|| s.to_string())
 }
 
 // Renames a session file, keeping its extension (.grids, or .qdr from before the rename). Never replaces another

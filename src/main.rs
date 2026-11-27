@@ -3665,6 +3665,29 @@ mod tests { tr("in", "안") }
         }
     }
 
+    // Every place that names a file or folder turns away the same Windows device names, and lets look-alikes through.
+    #[test]
+    fn reserved_names_one_table() {
+        let t = SYSTEMTIME { wYear: 2026, wMonth: 10, wDay: 21, wHour: 15, wMinute: 30, wSecond: 2, ..Default::default() };
+        let (nf, dated) = ("New folder", "Clipboard text 2026-10-21 153002.txt");
+        let device_msg = name_problem("CON");
+        let reserved = ["CON", "con", "Aux ", "nul.txt", "COM1", "lpt9.log", "COM¹", "LPT³.txt", "CONIN$", "CONOUT$", "con .x"];
+        let allowed = ["COM0", "COM10", "LPT10", "CONSOLE", "conx", "cone.txt", "세션"];
+        for (name, bad) in reserved.iter().map(|n| (*n, true)).chain(allowed.iter().map(|n| (*n, false))) {
+            assert_eq!(rename_rules::reserved_name(name), bad, "reserved_name {name:?}");
+            assert_eq!(rename_rules::invalid(name).is_some(), bad, "invalid {name:?}");
+            assert_eq!(text_name(false, name, &t, 1) == dated, bad, "text_name {name:?}");
+            assert_eq!(session_stem_ok(name).is_none(), bad, "session_stem_ok {name:?}");
+            assert_eq!(name_problem(name).is_some(), bad, "name_problem {name:?}");
+            assert_eq!(group_base(&[name], nf) == nf, bad, "group_base {name:?}");
+            // the reason itself only where no trailing space or dot comes first
+            if bad && !name.ends_with([' ', '.']) {
+                assert_eq!(rename_rules::invalid(name), Some(rename_rules::Status::Reserved), "{name:?}");
+                assert_eq!(name_problem(name), device_msg, "{name:?}");
+            }
+        }
+    }
+
     #[test]
     fn session_link_after_delete_or_rename() {
         assert_eq!(file_after_delete("A", "A", true, true), Some(String::new())); // the next Ctrl+S asks for a name

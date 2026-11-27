@@ -246,13 +246,19 @@ pub(crate) fn invalid(name: &str) -> Option<Status> {
     if name.encode_utf16().count() > 255 {
         return Some(Status::TooLong);
     }
-    let base = name.split('.').next().unwrap_or("").trim_end().to_ascii_uppercase();
-    // COM1-9 / LPT1-9, and the superscript ¹ ² ³ forms Windows reserves as well
-    let numbered = |p: &str| base.strip_prefix(p).is_some_and(|d| matches!(d, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"));
-    if ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"].contains(&base.as_str()) || numbered("COM") || numbered("LPT") {
+    if reserved_name(name) {
         return Some(Status::Reserved);
     }
     None
+}
+
+/// A device name Windows keeps for itself (CON, PRN, AUX, NUL, CONIN$, CONOUT$, COM1-9, LPT1-9), also before a
+/// '.' or with spaces before it ("con .txt"). Every place that names a file or folder asks this one.
+pub(crate) fn reserved_name(name: &str) -> bool {
+    let base = name.split('.').next().unwrap_or("").trim_end().to_ascii_uppercase();
+    // COM1-9 / LPT1-9, and the superscript ¹ ² ³ forms Windows reserves as well (by string: they're multi-byte)
+    let numbered = |p: &str| base.strip_prefix(p).is_some_and(|d| matches!(d, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"));
+    ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"].contains(&base.as_str()) || numbered("COM") || numbered("LPT")
 }
 
 // Item in a batch: its folder (index), current name, new name.
