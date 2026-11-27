@@ -68,6 +68,38 @@ pub(crate) fn placed_rect(actual: RECT, mon: RECT, work: RECT) -> RECT {
     RECT { left: actual.left - dx, top: actual.top - dy, right: actual.right - dx, bottom: actual.bottom - dy }
 }
 
+/// A monitor as a window move needs it: rcMonitor, rcWork (screen px) and its DPI.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) struct MonArea {
+    pub(crate) mon: RECT,
+    pub(crate) work: RECT,
+    pub(crate) dpi: u32,
+}
+
+/// Window rect `r` (screen px) on the monitor with work area `from` at `from_dpi`, taken to the one with work area `to`
+/// at `to_dpi`: its size scaled by the DPI ratio (the same size on screen), its place in the room the work area leaves
+/// around it kept as a fraction (centred stays centred, against the right edge stays there), then `fit` inside `to`.
+pub(crate) fn to_monitor(r: RECT, from: RECT, to: RECT, from_dpi: u32, to_dpi: u32) -> RECT {
+    let scale = |v: i32| (v as f64 * to_dpi.max(1) as f64 / from_dpi.max(1) as f64).round() as i32;
+    let (w, h) = (scale(r.right - r.left), scale(r.bottom - r.top));
+    // room left beside the window, before and after; none (as big as the work area or more): at the start
+    let place = |at: i32, len: i32, f0: i32, f1: i32, t0: i32, t1: i32, new_len: i32| {
+        let room = (f1 - f0 - len) as f64;
+        let k = if room > 0.0 { ((at - f0) as f64 / room).clamp(0.0, 1.0) } else { 0.0 };
+        t0 + (k * (t1 - t0 - new_len).max(0) as f64).round() as i32
+    };
+    let left = place(r.left, r.right - r.left, from.left, from.right, to.left, to.right, w);
+    let top = place(r.top, r.bottom - r.top, from.top, from.bottom, to.top, to.bottom, h);
+    fit(RECT { left, top, right: left + w, bottom: top + h }, to)
+}
+
+/// `to_monitor` for a rcNormalPosition, in workspace coordinates as for `fit_saved`: `from`'s going in, `to`'s coming out.
+pub(crate) fn normal_to_monitor(saved: RECT, from: MonArea, to: MonArea) -> RECT {
+    let (dx, dy) = (from.work.left - from.mon.left, from.work.top - from.mon.top);
+    let screen = RECT { left: saved.left + dx, top: saved.top + dy, right: saved.right + dx, bottom: saved.bottom + dy };
+    placed_rect(to_monitor(screen, from.work, to.work, from.dpi, to.dpi), to.mon, to.work)
+}
+
 // ---------- window place per monitor setup (grids.ini win_at=) ----------
 
 /// Monitor setups remembered, newest first; one pushed out falls back to win=.
@@ -387,6 +419,60 @@ pub(crate) fn hit(g: &Geo, x: i32, y: i32) -> Option<Hit> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn rc(l: i32, t: i32, r: i32, b: i32) -> RECT {
+        RECT { left: l, top: t, right: r, bottom: b }
+    }
+
+    #[test]
+    fn window_taken_to_another_monitor() {
+        let (lap, big) = (rc(0, 0, 1920, 1040), rc(1920, 0, 4480, 1400)); // work areas, taskbar at the bottom
+        let win = rc(100, 50, 1300, 850);
+        // same monitor, same DPI: where it is
+        assert_eq!(to_monitor(win, lap, lap, 96, 96), win);
+        // to a bigger one at the same DPI: same size, same share of the room around it
+        let r = to_monitor(win, lap, big, 96, 96);
+        assert_eq!((r.right - r.left, r.bottom - r.top), (1200, 800));
+        assert_eq!((r.left, r.top), (1920 + (100.0 / 720.0 * 1360.0f64).round() as i32, (50.0 / 240.0 * 600.0f64).round() as i32));
+        // centred stays centred, against the right / bottom edge stays there
+        let mid = to_monitor(rc(360, 120, 1560, 920), lap, big, 96, 96);
+        assert_eq!((mid.left - big.left, big.right - mid.right), (680, 680));
+        let edge = to_monitor(rc(720, 240, 1920, 1040), lap, big, 96, 96);
+        assert_eq!((edge.right, edge.bottom), (big.right, big.bottom));
+        // and back: where it was
+        assert_eq!(to_monitor(r, big, lap, 96, 96), win);
+        // a screen left of the main one (negative corner), 150% there: 1.5 times the pixels, still inside
+        let left = rc(-2560, -200, 0, 1240);
+        let r = to_monitor(win, lap, left, 96, 144);
+        assert_eq!((r.right - r.left, r.bottom - r.top), (1800, 1200));
+        assert!(r.left >= left.left && r.right <= left.right && r.top >= left.top && r.bottom <= left.bottom);
+        // 150% to 100%: two thirds
+        let r = to_monitor(rc(-2400, 0, -600, 1200), left, lap, 144, 96);
+        assert_eq!((r.right - r.left, r.bottom - r.top), (1200, 800));
+        // bigger than the work area there (or scaled up past it): fills it, never past an edge
+        let small = rc(0, 0, 1280, 680);
+        assert_eq!(to_monitor(rc(1920, 0, 4480, 1400), big, small, 96, 96), small);
+        assert_eq!(to_monitor(win, lap, small, 96, 192), small);
+        // an unknown DPI (0) is no division by zero
+        let r = to_monitor(win, lap, big, 0, 0);
+        assert_eq!(r.right - r.left, 1200);
+    }
+
+    #[test]
+    fn restore_rect_taken_to_another_monitor() {
+        // rcNormalPosition counts from the work area's corner: a taskbar on the left of the target shifts it back
+        let a = MonArea { mon: rc(0, 0, 1920, 1080), work: rc(0, 0, 1920, 1040), dpi: 96 };
+        let b = MonArea { mon: rc(1920, 0, 3840, 1080), work: rc(1968, 0, 3840, 1080), dpi: 96 };
+        let saved = rc(100, 50, 1300, 850);
+        let r = normal_to_monitor(saved, a, b);
+        let screen = to_monitor(saved, a.work, b.work, 96, 96);
+        assert_eq!(r, rc(screen.left - 48, screen.top, screen.right - 48, screen.bottom));
+        // taskbar on top of the source: its offset added before the move
+        let top = MonArea { mon: rc(0, 0, 1920, 1080), work: rc(0, 40, 1920, 1080), dpi: 96 };
+        assert_eq!(normal_to_monitor(rc(0, 0, 1200, 800), top, a), placed_rect(to_monitor(rc(0, 40, 1200, 840), top.work, a.work, 96, 96), a.mon, a.work));
+        // the same monitor: unchanged
+        assert_eq!(normal_to_monitor(rc(2000, 50, 3200, 850), b, b), rc(2000, 50, 3200, 850));
+    }
 
     #[test]
     fn monitor_setup_places() {

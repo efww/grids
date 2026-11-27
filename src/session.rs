@@ -25,6 +25,7 @@ pub(crate) struct Session {
     pub(crate) hotkey: bool,          // Win+Alt+E brings Grids to the front, app-wide (not part of a layout)
     pub(crate) dlgjump: bool,          // Ctrl+Alt+G in other apps' file dialogs lists Grids' folders (dialog_jump.rs)
     pub(crate) bring_here: bool,       // called (Win+Alt+E, the icon, a second start) from another virtual desktop: Grids moves there, app-wide
+    pub(crate) to_mouse: bool,         // Win+Alt+E with the mouse on another monitor: Grids moves to that one (window_ui.rs), app-wide
     pub(crate) tray: bool,             // minimized, Grids leaves the taskbar for a notification area icon (tray.rs), app-wide
     pub(crate) file: String,          // named session (.grids) the layout was last loaded from / saved to
     pub(crate) favs: Vec<String>,      // favourite folders (parsing names), app-wide
@@ -69,6 +70,7 @@ impl Default for Session {
             hotkey: true,
             dlgjump: true,
             bring_here: true,
+            to_mouse: true,
             tray: false,
             file: String::new(),
             favs: Vec::new(),
@@ -248,6 +250,7 @@ impl Session {
                 "hotkey" => s.hotkey = v.trim() != "0",
                 "dialog_jump" => s.dlgjump = v.trim() != "0",
                 "follow_desktop" => s.bring_here = v.trim() != "0",
+                "follow_monitor" => s.to_mouse = v.trim() != "0",
                 "tray" => s.tray = v.trim() == "1",
                 "tabs" => s.tabs_on = v.trim() == "1",
                 "ev_here" => s.ev_here = v.trim() == "1",
@@ -327,6 +330,7 @@ impl Session {
         o += &format!("hotkey={}\n", self.hotkey as u8);
         o += &format!("dialog_jump={}\n", self.dlgjump as u8);
         o += &format!("follow_desktop={}\n", self.bring_here as u8);
+        o += &format!("follow_monitor={}\n", self.to_mouse as u8);
         o += &format!("tray={}\n", self.tray as u8);
         o += &format!("tabs={}\n", self.tabs_on as u8);
         o += &format!("ev_here={}\nev_sort={}\nupdate_check={}\n", self.ev_here as u8, self.ev_sort, self.updates as u8);
@@ -1161,6 +1165,7 @@ mod tests {
             hotkey: false,
             dlgjump: false,
             bring_here: false,
+            to_mouse: false,
             tray: true,
             file: r"C:\Grids\sessions\일.grids".into(),
             favs: strs(&[r"C:\Users\홍길동", r"\\nas\share"]),
@@ -1217,6 +1222,7 @@ mod tests {
             "hotkey=0",
             "dialog_jump=0",
             "follow_desktop=0",
+            "follow_monitor=0",
             "tray=1",
             "tabs=1",
             "ev_here=1",
@@ -1264,6 +1270,7 @@ mod tests {
             "hotkey=1",
             "dialog_jump=1",
             "follow_desktop=1",
+            "follow_monitor=1",
             "tray=0",
             "tabs=1",
             "ev_here=0",
@@ -1371,6 +1378,7 @@ mod tests {
         assert!(!s.tray); // before tray=: stays on the taskbar
         assert!(s.tree_quick); // before tree_quick=: Quick access shown atop the tree
         assert!(s.bring_here); // before follow_desktop=: called, Grids comes to the desktop in use
+        assert!(s.to_mouse); // before follow_monitor=: Win+Alt+E brings Grids to the mouse's monitor
     }
 
     #[test]
@@ -1508,6 +1516,7 @@ mod tests {
             hotkey: true,
             dlgjump: true,
             bring_here: true,
+            to_mouse: true,
             tray: false,
             file: r"F:\a.grids".into(),
             favs: strs(&[r"F:\fav"]),

@@ -476,6 +476,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                     });
                 }
                 ID_BRING_HERE => app(|a| a.s.bring_here ^= true),
+                ID_TO_MOUSE => app(|a| a.s.to_mouse ^= true),
                 ID_DLGJUMP => {
                     let on = app(|a| {
                         a.s.dlgjump ^= true;
@@ -512,6 +513,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 check(ID_TABS, TABS_ON.load(Ordering::Relaxed));
                 check(ID_HOTKEY, hot);
                 check(ID_BRING_HERE, app(|a| a.s.bring_here));
+                check(ID_TO_MOUSE, app(|a| a.s.to_mouse));
                 check(ID_AUTOSTART, autostart_on()); // the Run value and Task Manager's switch, not a setting
                 check(ID_TRAY, app(|a| a.tray_on)); // the icon really there, as Win+Alt+E above
                 check(ID_DLGJUMP, jump);
@@ -903,18 +905,36 @@ pub(crate) unsafe fn hotkey_pressed(main: HWND) {
         keep_focus(main);
         _ = ShowWindow(main, SW_MINIMIZE);
     } else {
-        bring_front(main);
+        bring_front_to(main, true);
     }
 }
 
 // Win+Alt+E and the notification area icon: restored (shown too, if it was hidden there) and in front.
 pub(crate) unsafe fn bring_front(main: HWND) {
+    bring_front_to(main, false);
+}
+
+// `bring_front`; `to_mouse` (Win+Alt+E only: clicking the icon or the taskbar puts the mouse on the taskbar's
+// monitor, not the one being looked at) also takes it to the monitor with the mouse (mouse_monitor below).
+unsafe fn bring_front_to(main: HWND, to_mouse: bool) {
     // moved first, so it isn't restored on the other desktop for a moment; hidden (notification area), it can
     // only be moved once shown, so asked again then
     come_here(main);
+    let mons = if to_mouse { mouse_monitor(main) } else { None };
     if IsIconic(main).as_bool() || !IsWindowVisible(main).as_bool() {
+        // its restore rect taken there first, so it comes back on that monitor, not on the old one for a moment
+        let max = app(|a| a.was_max);
+        let target = mons.and_then(|(from, to)| place_restore(main, from, to));
         _ = ShowWindow(main, SW_RESTORE);
         come_here(main);
+        if let Some(t) = target {
+            if max && !IsZoomed(main).as_bool() {
+                _ = ShowWindow(main, SW_MAXIMIZE); // Windows dropped WPF_RESTORETOMAXIMIZED with the new placement
+            }
+            settle_at(main, t);
+        }
+    } else if let Some((from, to)) = mons {
+        move_shown(main, from, to);
     }
     if !IsWindowEnabled(main).as_bool() {
         let p = GetLastActivePopup(main);
@@ -927,6 +947,98 @@ pub(crate) unsafe fn bring_front(main: HWND) {
             focus_view(app(|a| a.s.active));
         }
     }
+}
+
+// ---------- Win+Alt+E: to the monitor with the mouse (as Windows Terminal's quake mode, or a launcher, opens there) ----------
+// Same size on screen and about the same place (geometry.rs to_monitor), maximized if it was. Every failure leaves the
+// window where it was; so does a modal dialog (main disabled), which would stay behind. Never inside app(): it runs
+// after come_here, whose COM may pump messages, and the moves send WM_SIZE / WM_DPICHANGED.
+
+unsafe fn mon_area(m: HMONITOR) -> Option<MonArea> {
+    let mut mi = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
+    if m.is_invalid() || !GetMonitorInfoW(m, &mut mi).as_bool() {
+        return None;
+    }
+    Some(MonArea { mon: mi.rcMonitor, work: mi.rcWork, dpi: mon_dpi(m)? })
+}
+
+// (main's monitor, the mouse's) when switched on, main takes input and the mouse is on another monitor.
+unsafe fn mouse_monitor(main: HWND) -> Option<(MonArea, MonArea)> {
+    if !app(|a| a.s.to_mouse) || !IsWindowEnabled(main).as_bool() {
+        return None;
+    }
+    let mut p = POINT::default();
+    GetCursorPos(&mut p).ok()?;
+    let to = MonitorFromPoint(p, MONITOR_DEFAULTTONULL);
+    let from = MonitorFromWindow(main, MONITOR_DEFAULTTONEAREST); // minimized: the monitor it restores on
+    if to.is_invalid() || to == from {
+        return None;
+    }
+    Some((mon_area(from)?, mon_area(to)?))
+}
+
+// rcNormalPosition (workspace coordinates of `m`) in screen coordinates.
+fn normal_on_screen(r: RECT, m: MonArea) -> RECT {
+    let (dx, dy) = (m.work.left - m.mon.left, m.work.top - m.mon.top);
+    RECT { left: r.left + dx, top: r.top + dy, right: r.right + dx, bottom: r.bottom + dy }
+}
+
+// Minimized or hidden in the notification area: its restore rect moved to `to`, still minimized (SW_SHOWMINIMIZED, the
+// showCmd WPF_RESTORETOMAXIMIZED is kept with; a hidden one shows minimized until SW_RESTORE right after). Returns the
+// screen rect it should restore to.
+unsafe fn place_restore(main: HWND, from: MonArea, to: MonArea) -> Option<RECT> {
+    let mut wp = WINDOWPLACEMENT { length: size_of::<WINDOWPLACEMENT>() as u32, ..Default::default() };
+    GetWindowPlacement(main, &mut wp).ok()?;
+    wp.rcNormalPosition = normal_to_monitor(wp.rcNormalPosition, from, to);
+    wp.showCmd = SW_SHOWMINIMIZED.0 as u32;
+    SetWindowPlacement(main, &wp).ok()?;
+    app(|a| a.arranged = None); // a half or quarter snap of the old monitor
+    Some(normal_on_screen(wp.rcNormalPosition, to))
+}
+
+// Shown and not maximized: at screen rect `t` again if WM_DPICHANGED put Windows' scaled size on top of it. Up to two
+// tries: a restore that happened on the old monitor crosses the DPI boundary with the first SetWindowPos, whose
+// WM_DPICHANGED overwrites its size once more; by the second it is at the new monitor's DPI. Then noted for the
+// autosave, which opens it there next time too.
+unsafe fn settle_at(main: HWND, t: RECT) {
+    if IsIconic(main).as_bool() || IsZoomed(main).as_bool() {
+        return;
+    }
+    for _ in 0..2 {
+        let mut r = RECT::default();
+        if GetWindowRect(main, &mut r).is_err() || r == t {
+            break;
+        }
+        _ = SetWindowPos(main, None, t.left, t.top, t.right - t.left, t.bottom - t.top, SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+    note_arranged(main);
+}
+
+// Shown: moved to `to`. Maximized, it is put back normal there and maximized again (a maximized window's placement
+// alone may not take it to another monitor), so un-maximized later it is there too.
+unsafe fn move_shown(main: HWND, from: MonArea, to: MonArea) {
+    if IsZoomed(main).as_bool() {
+        let mut wp = WINDOWPLACEMENT { length: size_of::<WINDOWPLACEMENT>() as u32, ..Default::default() };
+        if GetWindowPlacement(main, &mut wp).is_err() {
+            return;
+        }
+        wp.rcNormalPosition = normal_to_monitor(wp.rcNormalPosition, from, to);
+        (wp.showCmd, wp.flags) = (SW_SHOWNORMAL.0 as u32, WINDOWPLACEMENT_FLAGS(0));
+        if SetWindowPlacement(main, &wp).is_ok() {
+            settle_at(main, normal_on_screen(wp.rcNormalPosition, to));
+            _ = ShowWindow(main, SW_MAXIMIZE);
+        }
+        return;
+    }
+    let mut r = RECT::default();
+    if GetWindowRect(main, &mut r).is_err() {
+        return;
+    }
+    let t = to_monitor(r, from.work, to.work, from.dpi, to.dpi);
+    // position only first: WM_DPICHANGED applies Windows' scaled size there, then the final rect (an already scaled
+    // size here would be scaled again by WM_DPICHANGED and drawn that big for a moment)
+    _ = SetWindowPos(main, None, t.left, t.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    settle_at(main, t);
 }
 
 // ---------- virtual desktops: called from another one, Grids comes to it ----------
@@ -1879,7 +1991,7 @@ pub(crate) unsafe fn set_language(ko: bool) {
 // The view menu's plain items, in menu order: (command, English, Korean). VIEW_TOP comes before the
 // Selection colour submenu, VIEW_END after the language item. The README test (view_menu_names_in_readmes)
 // and the WM_COMMAND collision test read these, so a new item is checked against both READMEs.
-pub(crate) const VIEW_TOP: [(usize, &str, &str); 15] = [
+pub(crate) const VIEW_TOP: [(usize, &str, &str); 16] = [
     (ID_TREE, "Folder tree\tCtrl+Shift+E", "폴더 트리\tCtrl+Shift+E"),
     (ID_TREE_QUICK, "Show Explorer Quick access in the folder tree", "폴더 트리에 탐색기 빠른 액세스 표시"),
     (ID_TABS, "Tabs in panes", "패널 탭"),
@@ -1889,6 +2001,7 @@ pub(crate) const VIEW_TOP: [(usize, &str, &str); 15] = [
     (ID_DBLUP, "Double-click empty space: parent folder", "빈 곳 더블클릭: 위 폴더로"),
     (ID_HOTKEY, "Bring Grids to front from anywhere\tWin+Alt+E", "어디서나 Grids 불러오기\tWin+Alt+E"),
     (ID_BRING_HERE, "Bring Grids to the desktop I'm using", "Grids를 지금 쓰는 데스크톱으로 불러오기"),
+    (ID_TO_MOUSE, "Win+Alt+E brings Grids to the monitor with the mouse", "Win+Alt+E로 부르면 마우스가 있는 모니터로"),
     (ID_AUTOSTART, "Start with Windows (minimized)", "Windows 시작 시 실행 (최소화)"),
     (ID_TRAY, "Minimize to the notification area", "최소화하면 알림 영역으로"),
     (ID_DLGJUMP, "Jump to Grids folders from file dialogs\tCtrl+Alt+G", "파일 대화 상자에서 Grids 폴더로 이동\tCtrl+Alt+G"),
