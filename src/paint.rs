@@ -584,7 +584,7 @@ pub(crate) type KidsList = std::result::Result<(Vec<String>, bool), ()>; // (nam
 
 // One worker, newest request only (as DIR_SIZE / PEEK): id moves on every ask or cancel, a result is kept
 // only for the current id and handed out only to it.
-// ponytail: one worker, so a dead share's read_dir holds up the next '›' (shown waiting); a thread per request if that bites
+// A worker stuck on a dead share's read_dir is left behind by KIDS_RELAY once another drive's '›' waits.
 pub(crate) struct KidsJob {
     pub(crate) id: usize,
     pub(crate) hwnd: isize,
@@ -628,30 +628,36 @@ pub(crate) fn kids_job() -> std::sync::MutexGuard<'static, KidsJob> {
 
 pub(crate) fn want_kids(h: HWND, dir: &str, hidden: bool, cap: usize) -> usize {
     let id = kids_job().ask(h.0 as isize, dir, hidden, cap);
-    static WORKER: Once = Once::new();
-    WORKER.call_once(|| _ = std::thread::Builder::new().spawn(kids_worker));
+    KIDS_RELAY.ensure(Some(vol_key(dir)), kids_worker);
     KIDS_WAKE.notify_one();
     id
 }
 
-// Lives until the process ends. The lock is never held across file system calls.
-pub(crate) fn kids_worker() {
+// Lives until the process ends, or until KIDS_RELAY leaves it behind (then it posts nothing). The lock is
+// never held across file system calls.
+pub(crate) fn kids_worker(me: usize) {
     use std::os::windows::fs::MetadataExt;
     let mut seen = 0;
     loop {
         let (id, hwnd, dir, hidden, cap) = {
             let mut j = kids_job();
-            while j.id == seen || j.dir.is_empty() {
+            while j.id == seen || j.dir.is_empty() || KIDS_RELAY.blocked(&vol_key(&j.dir)) {
                 j = KIDS_WAKE.wait(j).unwrap_or_else(|e| e.into_inner());
             }
             (j.id, j.hwnd, j.dir.clone(), j.hidden, j.cap)
         };
         seen = id;
+        let vol = vol_key(&dir);
+        KIDS_RELAY.busy(me, vol.clone());
         let all = std::fs::read_dir(&dir).map_err(|_| ());
         let r = all.map(|rd| {
             let named = rd.flatten().filter_map(|e| Some((e.file_name().to_string_lossy().into_owned(), e.metadata().ok()?.file_attributes())));
             kid_names(named, hidden, cap)
         });
+        if !KIDS_RELAY.done(me, &vol) {
+            wake_owner(&KIDS, &KIDS_WAKE);
+            return;
+        }
         if kids_job().publish(id, r) {
             unsafe { _ = PostMessageW(Some(HWND(hwnd as _)), WM_KIDS, WPARAM(id), LPARAM(0)) };
         }

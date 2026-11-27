@@ -92,6 +92,150 @@ pub(crate) fn size_text(ko: bool, job: Option<(u64, bool, bool, bool)>, collect_
     }
 }
 
+// ---------- worker relay ----------
+// The free space, selection size and '›' workers are one thread each, and a dead share can hang one call for
+// minutes. A worker in one call over STUCK_MS on another drive or share than the request waiting is left behind
+// (it ends once that call returns and posts nothing) and a fresh thread takes the requests; at most RELAY_CAP
+// are left behind per kind. A request for a volume a left-behind worker hangs on waits for it to come back (a
+// fresh thread would only hang there too). A fresh worker's first relay call is blocked() (the lock), so it
+// never runs before the relay names it the owner.
+pub(crate) const STUCK_MS: u64 = 2000;
+pub(crate) const RELAY_CAP: usize = 3;
+
+pub(crate) type Vol = Option<String>; // vol_key of what a worker is on
+
+struct RelayState {
+    busy: bool,      // the owner is in a call
+    vol: Vol,        // ... for this drive or share
+    stuck: Vec<Vol>, // where the left-behind workers hang, one entry each
+}
+
+pub(crate) struct WorkerRelay {
+    owner: AtomicUsize,                 // the worker taking requests: 1, 2, … (0 = none started)
+    beat: std::sync::atomic::AtomicU64, // the owner's last sign of life while busy, ms on relay_ms
+    s: Mutex<RelayState>,
+}
+
+pub(crate) static DISK_RELAY: WorkerRelay = WorkerRelay::new();
+pub(crate) static SIZE_RELAY: WorkerRelay = WorkerRelay::new();
+pub(crate) static KIDS_RELAY: WorkerRelay = WorkerRelay::new();
+
+fn relay_ms() -> u64 {
+    static CLOCK: OnceLock<Instant> = OnceLock::new();
+    CLOCK.get_or_init(Instant::now).elapsed().as_millis() as u64
+}
+
+// True = a fresh worker is due: the owner has shown no life for over STUCK_MS in one call (busy_since), on
+// another volume than the request waiting, and fewer than `cap` are left behind already.
+pub(crate) fn respawn(busy_since: Option<u64>, now: u64, busy_vol: Option<&str>, want_vol: Option<&str>, retired: usize, cap: usize) -> bool {
+    busy_since.is_some_and(|t| now.saturating_sub(t) > STUCK_MS) && busy_vol != want_vol && retired < cap
+}
+
+impl WorkerRelay {
+    pub(crate) const fn new() -> Self {
+        WorkerRelay { owner: AtomicUsize::new(0), beat: std::sync::atomic::AtomicU64::new(0), s: Mutex::new(RelayState { busy: false, vol: None, stuck: Vec::new() }) }
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, RelayState> {
+        self.s.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    // want = the waiting request's volume (None = nothing waits). Starts the first worker, or a fresh one in
+    // place of an owner stuck elsewhere.
+    pub(crate) fn ensure(&self, want: Option<Vol>, work: fn(usize)) {
+        self.ensure_at(relay_ms(), want, work);
+    }
+
+    fn ensure_at(&self, now: u64, want: Option<Vol>, work: fn(usize)) -> bool {
+        let Some(want) = want else { return false };
+        let mut s = self.lock();
+        let owner = self.owner.load(Ordering::Relaxed);
+        if owner != 0 {
+            let since = s.busy.then(|| self.beat.load(Ordering::Relaxed));
+            if !respawn(since, now, s.vol.as_deref(), want.as_deref(), s.stuck.len(), RELAY_CAP) || s.stuck.contains(&want) {
+                return false;
+            }
+        }
+        let me = owner + 1;
+        // the owner moves only once the thread is there: a failed spawn keeps the one there was
+        if std::thread::Builder::new().spawn(move || work(me)).is_err() {
+            return false;
+        }
+        if owner != 0 {
+            let vol = s.vol.take();
+            s.stuck.push(vol);
+            s.busy = false;
+        }
+        self.owner.store(me, Ordering::Relaxed);
+        true
+    }
+
+    // The owner starts a call that may hang.
+    pub(crate) fn busy(&self, me: usize, vol: Vol) {
+        self.busy_at(me, vol, relay_ms());
+    }
+
+    fn busy_at(&self, me: usize, vol: Vol, now: u64) {
+        let mut s = self.lock();
+        if self.owner.load(Ordering::Relaxed) == me {
+            (s.busy, s.vol) = (true, vol);
+            self.beat.store(now, Ordering::Relaxed);
+        }
+    }
+
+    // A sign of life between calls (no lock: called per entry); false = left behind.
+    pub(crate) fn alive(&self, me: usize) -> bool {
+        let mine = self.owner.load(Ordering::Relaxed) == me;
+        if mine {
+            self.beat.store(relay_ms(), Ordering::Relaxed);
+        }
+        mine
+    }
+
+    // The call is back. false = left behind meanwhile: post nothing, wake the owner (blocked() may change)
+    // and end.
+    pub(crate) fn done(&self, me: usize, vol: &Vol) -> bool {
+        let mut s = self.lock();
+        if self.owner.load(Ordering::Relaxed) == me {
+            s.busy = false;
+            return true;
+        }
+        if let Some(k) = s.stuck.iter().position(|v| v == vol) {
+            s.stuck.remove(k);
+        }
+        false
+    }
+
+    // A left-behind worker hangs on this volume: its requests wait.
+    pub(crate) fn blocked(&self, vol: &Vol) -> bool {
+        self.lock().stuck.contains(vol)
+    }
+}
+
+// A left-behind worker's goodbye: the job's lock is taken first, so an owner between its blocked() look and
+// its wait can't miss the wake.
+pub(crate) fn wake_owner<T>(job: &Mutex<T>, wake: &Condvar) {
+    drop(job.lock().unwrap_or_else(|e| e.into_inner()));
+    wake.notify_one();
+}
+
+// Each status tick (300ms): a request waiting behind a worker stuck on a dead share gets a fresh worker, even
+// one asked only once (a '›' click) or skipped as already pending.
+pub(crate) fn relay_tick() {
+    let disk = disk_job().want.as_deref().map(vol_key);
+    DISK_RELAY.ensure(disk, disk_worker);
+    let size = {
+        let j = size_job();
+        j.target.first().filter(|_| !j.done).map(|p| vol_key(p))
+    };
+    SIZE_RELAY.ensure(size, size_worker);
+    let kids = {
+        let j = kids_job();
+        (!j.dir.is_empty() && j.result.is_none()).then(|| vol_key(&j.dir))
+    };
+    KIDS_RELAY.ensure(kids, kids_worker);
+}
+
 // The selection's size is summed by one worker thread. gen changes on every new target or cancel;
 // the worker drops results of an older gen and stops once DIR_GEN moves on.
 #[derive(Default)]
@@ -202,12 +346,18 @@ pub(crate) fn size_job() -> std::sync::MutexGuard<'static, SizeJob> {
 
 pub(crate) fn want_size(paths: &[String], busy: bool) {
     let mut j = size_job();
-    if j.want(paths, busy) {
-        static WORKER: Once = Once::new();
-        WORKER.call_once(|| _ = std::thread::Builder::new().spawn(size_worker));
+    let fresh = j.want(paths, busy);
+    DIR_GEN.store(j.gen, Ordering::Relaxed);
+    drop(j);
+    if fresh {
+        SIZE_RELAY.ensure(Some(sel_vol(paths)), size_worker);
         DIR_WAKE.notify_one();
     }
-    DIR_GEN.store(j.gen, Ordering::Relaxed);
+}
+
+// The volume a selection is on (its first path's; a selection comes from one folder).
+fn sel_vol(target: &[String]) -> Vol {
+    target.first().and_then(|p| vol_key(p))
 }
 
 fn tell_main(msg: u32) {
@@ -217,19 +367,23 @@ fn tell_main(msg: u32) {
     }
 }
 
-// Lives until the process ends. The lock is never held across file system calls.
-pub(crate) fn size_worker() {
+// Lives until the process ends, or until SIZE_RELAY leaves it behind. The lock is never held across file
+// system calls. Stuck = no stop() look (one per path and entry, also while paused) for STUCK_MS, so a big
+// folder still being walked or a sum paused by a copy is never taken for stuck.
+pub(crate) fn size_worker(me: usize) {
     let mut seen = 0;
     loop {
         let (gen, target) = {
             let mut j = size_job();
-            while j.target.is_empty() || j.gen == seen {
+            while j.target.is_empty() || j.gen == seen || SIZE_RELAY.blocked(&sel_vol(&j.target)) {
                 j = DIR_WAKE.wait(j).unwrap_or_else(|e| e.into_inner());
             }
             (j.gen, j.target.clone())
         };
         seen = gen;
-        let stop = || DIR_GEN.load(Ordering::Relaxed) != gen;
+        let vol = sel_vol(&target);
+        SIZE_RELAY.busy(me, vol.clone());
+        let stop = || !SIZE_RELAY.alive(me) || DIR_GEN.load(Ordering::Relaxed) != gen;
         // a copy only pauses the sum; the status line cancels it when it sees the copy
         let paused = || COPYING.load(Ordering::Relaxed) > 0;
         let tell = |b, done, p, d| {
@@ -243,7 +397,12 @@ pub(crate) fn size_worker() {
         let mut progress = |b, p, d| _ = tell(b, false, p, d);
         // only the end is posted; progress waits for the status tick
         // cancelled (None): what was noted stays; a finished count is right even if the selection moved on
-        if let Some((b, p, d)) = sel_bytes(&target, &stop, &paused, &mut progress) {
+        let sum = sel_bytes(&target, &stop, &paused, &mut progress);
+        if !SIZE_RELAY.done(me, &vol) {
+            wake_owner(&DIR_SIZE, &DIR_WAKE);
+            return;
+        }
+        if let Some((b, p, d)) = sum {
             memo_result(&mut size_memo(), &target, b, p, d);
             if tell(b, true, p, d) {
                 tell_main(WM_SIZE_DONE);
@@ -302,7 +461,8 @@ pub(crate) fn sel_bytes(target: &[String], stop: &dyn Fn() -> bool, paused: &dyn
     Some((total, partial, dirs))
 }
 
-// Free space is asked by one worker too: a dead share can hang the call. Only the newest request waits;
+// Free space is asked by one worker too: a dead share can hang the call (DISK_RELAY then starts a fresh one
+// for another drive). Only the newest request waits;
 // got is the last answer, (path asked, (free, total) or None = failed).
 // asking = the path the worker is on now, at = when `got` came (a path just answered is not asked again).
 pub(crate) struct DiskJob {
@@ -359,25 +519,31 @@ fn ask_disk(path: &str) {
         }
         j.want = Some(path.to_string());
     }
-    static WORKER: Once = Once::new();
-    WORKER.call_once(|| _ = std::thread::Builder::new().spawn(disk_worker));
+    DISK_RELAY.ensure(Some(vol_key(path)), disk_worker);
     DISK_WAKE.notify_one();
 }
 
-fn disk_worker() {
+// A worker left behind (DISK_RELAY) touches neither got, asking nor at, and posts no WM_DISK_DONE.
+fn disk_worker(me: usize) {
     loop {
         let path = {
             let mut j = disk_job();
             loop {
-                if let Some(p) = j.want.take() {
+                if let Some(p) = j.want.take_if(|p| !DISK_RELAY.blocked(&vol_key(p))) {
                     j.asking = Some(p.clone());
                     break p;
                 }
                 j = DISK_WAKE.wait(j).unwrap_or_else(|e| e.into_inner());
             }
         };
+        let vol = vol_key(&path);
+        DISK_RELAY.busy(me, vol.clone());
         let (mut free, mut total) = (0, 0);
         let ok = unsafe { GetDiskFreeSpaceExW(&HSTRING::from(path.as_str()), Some(&mut free), Some(&mut total), None) }.is_ok();
+        if !DISK_RELAY.done(me, &vol) {
+            wake_owner(&DISK, &DISK_WAKE);
+            return;
+        }
         {
             let mut j = disk_job();
             j.got = Some((path, ok.then_some((free, total))));
@@ -475,6 +641,7 @@ pub(crate) fn resum_sizes() {
 // Other ticks only merge the folder size worker's progress into the stored text.
 pub(crate) unsafe fn update_status() {
     mark_drive();
+    relay_tick();
     let (i, path, main) = app(|a| (a.s.active, a.s.paths[a.s.active].clone(), a.main));
     // no list yet (a folder still opening): the counts wait, a new note still shows and is read out
     if let Some(fv) = view_of::<IFolderView2>(i) {
@@ -841,5 +1008,57 @@ mod tests {
         for p in [r"\\srv\share", r"\\?\C:\x", THIS_PC, r"1:\", r"가:\", "", "C"] {
             assert_eq!(drive(p), None, "{p}");
         }
+    }
+
+    fn nop(_: usize) {}
+
+    #[test]
+    fn respawn_only_when_stuck_elsewhere() {
+        let (z, c) = (Some(r"\\nas\share"), Some("c:"));
+        assert!(!respawn(None, 9000, z, c, 0, 3)); // idle
+        assert!(!respawn(Some(1000), 2500, z, c, 0, 3)); // under 2s
+        assert!(!respawn(Some(1000), 3000, z, c, 0, 3)); // just 2s
+        assert!(!respawn(Some(1000), 9000, z, z, 0, 3)); // same share: a fresh one would hang there too
+        assert!(!respawn(Some(1000), 9000, z, c, 3, 3)); // cap reached
+        assert!(respawn(Some(1000), 3001, z, c, 0, 3));
+        assert!(respawn(Some(1000), 9000, None, c, 2, 3));
+    }
+
+    #[test]
+    fn relay_hands_over_and_drops_the_late_worker() {
+        let r = WorkerRelay::new();
+        let (z, c) = (Some("z:".to_string()), Some("c:".to_string()));
+        assert!(!r.ensure_at(0, None, nop)); // nothing asked: no thread
+        assert!(r.ensure_at(0, Some(z.clone()), nop)); // the first worker (1)
+        assert!(!r.ensure_at(0, Some(c.clone()), nop)); // idle: it takes the request itself
+        r.busy_at(1, z.clone(), 1000);
+        assert!(!r.ensure_at(2500, Some(c.clone()), nop)); // not stuck long enough
+        assert!(!r.ensure_at(9000, Some(z.clone()), nop)); // same drive: waits
+        assert!(r.ensure_at(3500, Some(c.clone()), nop)); // worker 2 takes over
+        assert!(r.blocked(&z) && !r.blocked(&c));
+        assert!(!r.ensure_at(9000, Some(z.clone()), nop)); // z: waits for the one hanging there
+        r.busy_at(2, c.clone(), 3600);
+        assert!(!r.alive(1) && r.alive(2));
+        // worker 1 comes back: it posts nothing, z: is free again; worker 2's answer counts
+        assert!(!r.done(1, &z));
+        assert!(!r.blocked(&z));
+        assert!(r.done(2, &c));
+        assert!(!r.ensure_at(99_000, Some(z), nop)); // idle owner: no fresh thread
+    }
+
+    #[test]
+    fn relay_leaves_at_most_cap_behind() {
+        let r = WorkerRelay::new();
+        let c =|| Some(Some("c:".to_string()));
+        let share = |k: usize| Some(format!(r"\\s{k}\x"));
+        assert!(r.ensure_at(0, c(), nop));
+        for k in 1..=RELAY_CAP {
+            r.busy_at(k, share(k), 0);
+            assert!(r.ensure_at(5000, c(), nop), "{k}");
+        }
+        r.busy_at(RELAY_CAP + 1, Some("d:".into()), 0);
+        assert!(!r.ensure_at(5000, c(), nop)); // the owner just waits now
+        assert!(!r.done(1, &share(1)));
+        assert!(r.ensure_at(5000, c(), nop)); // room again
     }
 }
