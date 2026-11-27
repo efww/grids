@@ -2827,6 +2827,32 @@ mod tests {
         assert!(missing.is_empty(), "view menu items the READMEs don't name as on the menu:\n{}", missing.join("\n"));
     }
 
+    // README.md's and README.ko.md's feature lists ("- **" lines) pair up line for line: as many on each side, and
+    // each pair names the same keys, so a line added on one side only, or out of order, shows up here.
+    #[test]
+    fn readme_feature_pairs() {
+        let lines = |md: &'static str, heading: &str| -> Vec<&'static str> {
+            let sec = md.split_once(heading).unwrap_or_else(|| panic!("no {heading:?} heading")).1;
+            sec.split("\n## ").next().unwrap().lines().filter(|l| l.starts_with("- **")).collect()
+        };
+        let en = lines(include_str!("../README.md"), "\n## Features\n");
+        let ko = lines(include_str!("../README.ko.md"), "\n## 기능\n");
+        assert!(en.len() >= 40, "{} feature lines", en.len());
+        assert_eq!(en.len(), ko.len(), "README.md has {} feature lines, README.ko.md {}", en.len(), ko.len());
+        // key_words as for the UI pairs, then the prose around keys evened out: a '·' or '(' run on in Korean,
+        // 클릭 / 화살표 spelled out, and mouse words (Ctrl+click, Shift+drop) that only one side may name
+        let keys = |l: &str| -> std::collections::BTreeSet<String> {
+            key_words(&l.replace("화살표", "arrow").replace("클릭", "click"))
+                .into_iter()
+                .map(|w| w.split(['·', '(']).next().unwrap().to_string())
+                .filter(|w| !w.ends_with('+') && !["click", "drop", "wheel"].iter().any(|m| w.ends_with(m)))
+                .collect()
+        };
+        for (i, (e, k)) in en.iter().zip(&ko).enumerate() {
+            assert_eq!(keys(e), keys(k), "feature line {} differs in keys:\n{e}\n{k}", i + 1);
+        }
+    }
+
     // ---------- English / Korean UI text pairs ----------
 
     // Every source file, compiled in: the test exe runs on the Windows runner without the source tree.
