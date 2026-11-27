@@ -856,8 +856,10 @@ unsafe fn handler_stream(path: &str) -> Result<IStream> {
 }
 
 // Made where Explorer makes them (prevhost.exe, out of process), given the file as a stream when they take one.
+// Only there: a third-party handler is never loaded into Grids itself. If it can't start out of process,
+// the popup keeps its "no preview" view.
 unsafe fn host_handler(h: HWND, clsid: &GUID, path: &str, area: RECT) -> Result<IPreviewHandler> {
-    let ph: IPreviewHandler = CoCreateInstance(clsid, None, CLSCTX_LOCAL_SERVER).or_else(|_| CoCreateInstance(clsid, None, CLSCTX_INPROC_SERVER))?;
+    let ph: IPreviewHandler = CoCreateInstance(clsid, None, CLSCTX_LOCAL_SERVER)?;
     let name = HSTRING::from(path);
     if let Ok(init) = ph.cast::<IInitializeWithStream>() {
         init.Initialize(&handler_stream(path)?, STGM_READ.0)?;
