@@ -472,6 +472,16 @@ pub(crate) fn defer_args(main_enabled: bool, menu_mode: bool, busy: bool) -> boo
     !main_enabled || menu_mode || busy
 }
 
+/// defer_args' three answers now: main enabled, a menu's loop running, something held (captured, dragged, sized).
+pub(crate) unsafe fn hold_state(main: HWND) -> (bool, bool, bool) {
+    let mut gti = GUITHREADINFO { cbSize: size_of::<GUITHREADINFO>() as u32, ..Default::default() };
+    let got = GetGUIThreadInfo(GetCurrentThreadId(), &mut gti).is_ok();
+    let menu = got && (gti.flags & (GUI_INMENUMODE | GUI_POPUPMENUMODE | GUI_SYSTEMMENUMODE)).0 != 0;
+    let held = got && (!gti.hwndCapture.is_invalid() || (gti.flags & GUI_INMOVESIZE).0 != 0);
+    let busy = held || app(|a| a.drag.is_some() || a.nudge.is_some() || a.sizing);
+    (IsWindowEnabled(main).as_bool(), menu, busy)
+}
+
 /// WM_COPYDATA's text as one queue entry: its arguments in order, never merged with an earlier hand-over.
 pub(crate) fn queue_args(q: &mut Vec<Vec<String>>, text: &str) {
     q.push(text.split('\n').map(String::from).collect());
@@ -484,12 +494,7 @@ pub(crate) unsafe fn open_queued(posted: bool) {
     let mut front = app(|a| std::mem::take(&mut a.open_front));
     let wait = tr("Opens once the dialog or menu is closed", "대화 상자나 메뉴를 닫으면 엽니다");
     while app(|a| !a.open_queue.is_empty()) {
-        let mut gti = GUITHREADINFO { cbSize: size_of::<GUITHREADINFO>() as u32, ..Default::default() };
-        let got = GetGUIThreadInfo(GetCurrentThreadId(), &mut gti).is_ok();
-        let menu = got && (gti.flags & (GUI_INMENUMODE | GUI_POPUPMENUMODE | GUI_SYSTEMMENUMODE)).0 != 0;
-        let held = got && (!gti.hwndCapture.is_invalid() || (gti.flags & GUI_INMOVESIZE).0 != 0);
-        let busy = held || app(|a| a.drag.is_some() || a.nudge.is_some() || a.sizing);
-        let enabled = IsWindowEnabled(main).as_bool();
+        let (enabled, menu, busy) = hold_state(main);
         if defer_args(enabled, menu, busy) {
             if posted {
                 // the sender puts main in front after its answer, which may undo this: the next tick tries again

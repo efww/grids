@@ -46,7 +46,7 @@ pub(crate) unsafe fn create_pane(i: usize) -> Result<Pane> {
     let dt: IDropTarget = PaneDrop { slot: slot.clone(), hwnd: h, ok: Cell::new(false), helper, relay: Relay::default(), lit: Cell::new(false) }.into();
     _ = RegisterDragDrop(h, &dt);
     let pending = Some(app(|a| a.s.cols[i].clone())); // the session's, for the first folder
-    Ok(Pane { hwnd: h, eb, cookie, disp: String::new(), pending, settle: None, recover: None, follow: None, unplugged: None, icon: -1, ticket: 0, slot, spin: None, loading: None, load_framed: false, hist: None, root: false, going: None, moving: None })
+    Ok(Pane { hwnd: h, eb, cookie, disp: String::new(), pending, settle: None, recover: None, follow: None, unplugged: None, icon: -1, ticket: 0, slot, spin: None, loading: None, load_framed: false, hist: None, root: false, going: None, moving: None, wait_first: false })
 }
 
 // Screen readers otherwise just say "edit", with no word on which of up to 16 panes; redone when a pane changes slot.
@@ -137,6 +137,9 @@ pub(crate) unsafe fn destroy_pane(i: usize) {
         if p.as_ref().is_some_and(|p| p.hwnd == a.focus_req) {
             a.focus_req = HWND::default();
         }
+        if let Some(p) = p.as_ref() {
+            a.load_q.retain(|&h| h != p.hwnd); // a reused window handle must not open in its place
+        }
         if a.head_hot.is_some_and(|(w, _)| p.as_ref().is_some_and(|p| p.hwnd == w)) {
             a.head_hot = None;
         }
@@ -165,31 +168,111 @@ pub(crate) unsafe fn destroy_pane(i: usize) {
 
 // Only the panes visible in the current grid exist; hidden slots keep just their path.
 pub(crate) unsafe fn sync_panes() {
-    let (main, n) = app(|a| (a.main, a.s.panes()));
+    let (main, n, active, now_all) = app(|a| (a.main, a.s.panes(), a.s.active, a.fill_now || a.quiet != Quiet::No));
     if main.0.is_null() {
         return;
     }
+    let mut fresh = Vec::new();
     for i in 0..MAXP {
         let has = app(|a| a.panes[i].is_some());
         if i < n && !has {
             let Ok(p) = create_pane(i) else { continue };
             app(|a| a.panes[i] = Some(p));
-            let path = app(|a| a.s.paths[i].clone());
-            // minimized sign-in start: a network or USB drive may just not be there yet
-            let recent = app(|a| (a.quiet != Quiet::No).then(|| a.s.recent.clone()));
-            if path.is_empty() || !go_near(i, &path) {
-                if let Some(recent) = recent.filter(|_| !path.is_empty()) {
-                    // kept as it was, and the folder is tried again when the window is first shown
-                    app(|a| {
-                        a.s.recent = recent;
-                        a.late.push((i, path.clone()));
-                    });
-                }
-                navigate(i, THIS_PC);
-            }
+            fresh.push(i);
         } else if i >= n && has {
             destroy_pane(i);
         }
+    }
+    // Like a browser restoring its tabs: the active pane opens now, the others one at a time from the message loop,
+    // so the window paints and takes clicks and keys in between. Not for a minimized sign-in start (nothing to
+    // see, and its retry list is made here) or a theme switch.
+    let (now, later) = if now_all { (fresh, Vec::new()) } else { load_order(active, &fresh) };
+    if !later.is_empty() {
+        app(|a| {
+            for &i in &later {
+                if let Some(p) = a.panes[i].as_mut() {
+                    p.wait_first = true;
+                    a.load_q.push(p.hwnd);
+                }
+            }
+        });
+    }
+    for i in now {
+        first_nav(i);
+    }
+    if !later.is_empty() {
+        SetTimer(Some(main), TIMER_PANE_LOAD, 10, None);
+    }
+}
+
+/// New panes: which open their first folder now and which wait their turn (in slot order). One new pane opens
+/// now; of more, only the active one (the first new one if the active pane is not new).
+pub(crate) fn load_order(active: usize, fresh: &[usize]) -> (Vec<usize>, Vec<usize>) {
+    if fresh.len() < 2 {
+        return (fresh.to_vec(), Vec::new());
+    }
+    let first = if fresh.contains(&active) { active } else { fresh[0] };
+    (vec![first], fresh.iter().copied().filter(|&i| i != first).collect())
+}
+
+// A new pane's first folder: its saved one (or the nearest parent left), else This PC.
+unsafe fn first_nav(i: usize) {
+    let path = app(|a| a.s.paths[i].clone());
+    // minimized sign-in start: a network or USB drive may just not be there yet
+    let recent = app(|a| (a.quiet != Quiet::No).then(|| a.s.recent.clone()));
+    if path.is_empty() || !go_near(i, &path) {
+        if let Some(recent) = recent.filter(|_| !path.is_empty()) {
+            // kept as it was, and the folder is tried again when the window is first shown
+            app(|a| {
+                a.s.recent = recent;
+                a.late.push((i, path.clone()));
+            });
+        }
+        navigate(i, THIS_PC);
+    }
+}
+
+/// TIMER_PANE_LOAD: the next waiting pane opens its first folder, found by its window (it may have changed slot
+/// since). One per tick, so painting and input come in between; never inside a menu, a modal dialog or a drag,
+/// where it would wait the next turn. A pane that opened a folder of the user's meanwhile is skipped.
+pub(crate) unsafe fn pane_load_tick(main: HWND) {
+    _ = KillTimer(Some(main), TIMER_PANE_LOAD);
+    let (enabled, menu, busy) = hold_state(main);
+    if defer_args(enabled, menu, busy) {
+        SetTimer(Some(main), TIMER_PANE_LOAD, 100, None);
+        return;
+    }
+    let next = app(|a| {
+        // the user made a waiting pane the active one (Ctrl+number, Alt+arrow, a swap): it goes first
+        let act = a.panes.get(a.s.active).and_then(Option::as_ref).filter(|p| p.wait_first).map(|p| p.hwnd);
+        if let Some(h) = act {
+            a.load_q.retain(|&q| q != h);
+            a.load_q.insert(0, h);
+        }
+        while !a.load_q.is_empty() {
+            let h = a.load_q.remove(0);
+            let slot = a.panes.iter().position(|p| p.as_ref().is_some_and(|p| p.hwnd == h && p.wait_first));
+            if let Some(i) = slot {
+                a.panes[i].as_mut().map(|p| p.wait_first = false);
+                return Some((i, i == a.s.active, !a.load_q.is_empty()));
+            }
+        }
+        None
+    });
+    let Some((i, active, more)) = next else { return };
+    let focus = GetFocus();
+    first_nav(i);
+    if active {
+        // the pane in use had no list to take the keys until now (focus_view found none): give it them
+        if !focus.is_invalid() {
+            focus_view(i);
+        }
+    } else if GetFocus() != focus && IsWindow(Some(focus)).as_bool() {
+        // its new list must not take the keys from the pane in use (focus only: the active pane stays as it is)
+        _ = SetFocus(Some(focus));
+    }
+    if more {
+        SetTimer(Some(main), TIMER_PANE_LOAD, 10, None);
     }
 }
 
@@ -850,10 +933,15 @@ pub(crate) unsafe fn set_caption(h: HWND) {
 // Applies the current theme everywhere; panes are rebuilt so their Explorer views pick it up.
 pub(crate) unsafe fn apply_theme() {
     theme_chrome();
+    // every pane at once on a real theme switch (filling panes in turn would read as flicker); at start, when this
+    // makes the first panes, the active one first like any other start
+    let had = app(|a| a.panes.iter().any(Option::is_some));
     for i in 0..MAXP {
         destroy_pane(i);
     }
+    app(|a| a.fill_now = had);
     relayout();
+    app(|a| a.fill_now = false);
     redraw_all();
 }
 

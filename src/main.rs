@@ -621,7 +621,7 @@ mod tests {
         // the view menu's copies of toolbar buttons send those buttons' commands, already counted once above
         assert!(VIEW_BUTTONS.iter().all(|v| main.iter().filter(|&&id| id == v.0).count() == 1));
         // (c) timers, per window: SetTimer with a number already running replaces that timer
-        distinct("main timers", &[TIMER_STATUS, TIMER_REVEAL, TIMER_FOCUS, dialog_jump::TIMER_DLG_RETRY, dialog_jump::TIMER_DLG_RESTORE, TIMER_SHELL, TIMER_EV_SELECT, TIMER_BIN, TIMER_TREE_SYNC]);
+        distinct("main timers", &[TIMER_STATUS, TIMER_REVEAL, TIMER_FOCUS, dialog_jump::TIMER_DLG_RETRY, dialog_jump::TIMER_DLG_RESTORE, TIMER_SHELL, TIMER_EV_SELECT, TIMER_BIN, TIMER_TREE_SYNC, TIMER_PANE_LOAD]);
         distinct("pane timers", &[TIMER_FILTER, TIMER_SETTLE, TIMER_SPIN, TIMER_LOAD]);
         // (d) WM_APP messages main_proc handles (not other windows' own: WM_TOUR_END, WM_RENAMED, the switcher's)
         let msgs = [
@@ -1147,6 +1147,20 @@ mod tests {
         assert_eq!([0, 1, 4].map(|c| toolbar_step(5, c, VK_LEFT)), [4, 0, 3]);
         assert_eq!((toolbar_step(5, 3, VK_HOME), toolbar_step(5, 1, VK_END)), (0, 4));
         assert_eq!(toolbar_step(1, 0, VK_RIGHT), 0);
+    }
+
+    #[test]
+    fn new_panes_open_active_first() {
+        // a 16-pane start with pane 5 active: 5 now, the rest in slot order
+        let all: Vec<usize> = (0..16).collect();
+        let (now, later) = load_order(5, &all);
+        assert_eq!(now, vec![5]);
+        assert_eq!(later, all.iter().copied().filter(|&i| i != 5).collect::<Vec<_>>());
+        // the layout grown from 1 to 4 (pane 0 active, not new): the first new one now
+        assert_eq!(load_order(0, &[1, 2, 3]), (vec![1], vec![2, 3]));
+        // one new pane, or none: nothing waits
+        assert_eq!(load_order(3, &[2]), (vec![2], vec![]));
+        assert_eq!(load_order(0, &[]), (vec![], vec![]));
     }
 
     #[test]

@@ -215,6 +215,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 return LRESULT(1);
             }
             WM_TIMER if wp.0 == TIMER_TREE_SYNC => tree_sync_tick(h),
+            WM_TIMER if wp.0 == TIMER_PANE_LOAD => pane_load_tick(h),
             WM_TIMER if wp.0 == TIMER_REVEAL => {
                 _ = KillTimer(Some(h), TIMER_REVEAL);
                 reveal_tree_selection();
@@ -617,6 +618,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             WM_TIMER if wp.0 == dialog_jump::TIMER_DLG_RETRY || wp.0 == dialog_jump::TIMER_DLG_RESTORE => dialog_jump::on_timer(wp.0),
             WM_DESTROY => {
                 _ = KillTimer(Some(h), TIMER_STATUS);
+                _ = KillTimer(Some(h), TIMER_PANE_LOAD);
                 drop_status();
                 unwatch_folders();
                 dialog_jump::shutdown();

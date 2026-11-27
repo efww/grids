@@ -25,6 +25,7 @@ pub(crate) struct Pane {
     pub(crate) root: bool,
     pub(crate) going: Option<Go>,
     pub(crate) moving: Option<Go>,
+    pub(crate) wait_first: bool, // made with others at once: its first folder opens in turn (App::load_q)
 }
 
 // A cloud folder as Explorer's navigation pane registers it (window_ui.rs cloud_regs): name, pinned there, folder
@@ -162,6 +163,8 @@ pub(crate) struct App {
     pub(crate) quiet_max: bool,              // that start was saved maximized: shown maximized
     pub(crate) late: Vec<(usize, String)>,   // panes whose folder could not open at that start, retried when shown
     pub(crate) menu_burst: Option<Burst>,    // folders from one multi-folder "Open in Grids", one start each (runtime only)
+    pub(crate) load_q: Vec<HWND>,            // new panes still to open their first folder, in turn (TIMER_PANE_LOAD)
+    pub(crate) fill_now: bool,               // new panes all open their folders at once (theme switch: no turns)
 }
 
 // The Num+ / Num− box: popup, its edit, the pane it acts on, that pane's folder when it opened, deselect mode.
@@ -286,6 +289,8 @@ thread_local! {
         quiet_max: false,
         late: Vec::new(),
         menu_burst: None,
+        load_q: Vec::new(),
+        fill_now: false,
     });
 }
 

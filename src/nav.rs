@@ -1860,9 +1860,12 @@ pub(crate) unsafe fn on_nav(i: usize, pidl: *const ITEMIDLIST) {
         }
         // a followed rename is no visit: its old name no longer exists (shell_tick fixed the recent list)
         let followed = a.panes[i].as_mut().and_then(|p| rec_step(&mut p.follow, Nav::Complete, &parse)).is_some();
+        // a pane still waiting its turn (sync_panes) went somewhere first: its saved folder was never shown, so no
+        // visit, and it no longer opens that one
+        let waited = a.panes[i].as_mut().is_some_and(|p| std::mem::take(&mut p.wait_first));
         if followed {
             follow_note(a, &disp);
-        } else {
+        } else if !waited {
             visit(&mut a.s.recent, &old, &a.s.paths[i]);
         }
         if let Some(m) = a.panes[i].as_mut().and_then(|p| rec_step(&mut p.recover, Nav::Complete, &parse)) {
