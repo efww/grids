@@ -320,6 +320,9 @@ unsafe fn sw_go(k: usize) {
         tab_said(it.pane, false, || pick_tab(it.pane, it.tab));
     }
     focus_view(it.pane);
+    if before != it.pane {
+        flash_pane(it.pane); // another pane: ringed so the eye finds it (a tab of this one is where the eye is)
+    }
     if !tab && before != it.pane {
         say_pane(it.pane);
     }

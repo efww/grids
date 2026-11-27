@@ -385,6 +385,7 @@ pub(crate) unsafe fn layout_pane(h: HWND) {
 
 pub(crate) unsafe fn relayout() {
     ctrl_hint_off(); // Ctrl-held keycaps were placed for the old layout
+    flash_off(); // so was the ring round a pane just picked
     // a pending Ctrl+Alt+arrow lands with this layout (key release, zoom, a session, DPI ...): its guide bar goes
     if let Some(bars) = app(|a| a.nudge.take().map(|_| a.bars)) {
         for b in bars {
@@ -518,6 +519,126 @@ pub(crate) unsafe fn show_bars() {
 
 pub(crate) extern "system" fn bar_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     unsafe { DefWindowProcW(h, msg, wp, lp) }
+}
+
+// ---------- the ring round a pane picked from the keyboard ----------
+// Like a tiling window manager's focus flash (flashfocus in i3 / sway) or macOS's shake to find the pointer: a pane
+// reached with Ctrl+1 … 9, Alt+Shift+arrow, Ctrl+Tab, Ctrl+P or moved with Ctrl+Alt+Shift+arrow gets a ring in the
+// selection colour that fades within half a second, so the eye finds it among 16. The mouse brings no ring: it is
+// where the eye already is. A see-through popup shaped to the ring (no clicks, no focus, as the drag guide bars).
+
+thread_local! {
+    // the ring on screen: when it came, the pane it marks, that pane's window rect then, whether it fades
+    static FLASH: Cell<Option<(Instant, HWND, RECT, bool)>> = const { Cell::new(None) };
+}
+
+const FLASH_TIMER: usize = 1; // the ring window's own (and only) timer
+const FLASH_TICK_MS: u32 = 30;
+
+/// The ring's opacity `ms` after it came, None once it is gone. With animations on it holds a moment, then eases
+/// out (fast first, slow at the end) to nothing by 500 ms; with them off it stays as it is for 400 ms, then goes.
+pub(crate) fn flash_alpha(ms: u64, animate: bool) -> Option<u8> {
+    const FULL: u8 = 230;
+    const HOLD: u64 = 80;
+    const FADE: u64 = 420;
+    const STILL: u64 = 400;
+    if !animate {
+        return (ms < STILL).then_some(FULL);
+    }
+    if ms < HOLD {
+        return Some(FULL);
+    }
+    let left = 1.0 - (ms - HOLD) as f64 / FADE as f64;
+    (left > 0.0).then(|| (FULL as f64 * left * left).round() as u8)
+}
+
+/// The hole inside a w × h ring `t` thick (window coordinates), or None when the pane is too small to ring.
+pub(crate) fn ring_hole(w: i32, h: i32, t: i32) -> Option<RECT> {
+    (t > 0 && w > 2 * t && h > 2 * t).then_some(RECT { left: t, top: t, right: w - t, bottom: h - t })
+}
+
+// Called after set_active / focus_view (which may unzoom and lay out again), so the pane's rect is its final one.
+pub(crate) unsafe fn flash_pane(i: usize) {
+    let (w, main, pane, dpi) = app(|a| (a.flash, a.main, a.panes.get(i).and_then(|p| p.as_ref()).map(|p| p.hwnd), a.dpi));
+    let Some(pane) = pane else { return };
+    if w.is_invalid() || !IsWindowVisible(main).as_bool() || IsIconic(main).as_bool() || !IsWindowVisible(pane).as_bool() {
+        return;
+    }
+    let mut r = RECT::default();
+    if GetWindowRect(pane, &mut r).is_err() {
+        return;
+    }
+    let (cw, ch) = (r.right - r.left, r.bottom - r.top);
+    let Some(hole) = ring_hole(cw, ch, 4 * dpi / 96) else { return };
+    // inside the pane's own rect: never over a neighbour or past the window's edge
+    let rgn = CreateRectRgn(0, 0, cw, ch);
+    let inner = CreateRectRgn(hole.left, hole.top, hole.right, hole.bottom);
+    CombineRgn(Some(rgn), Some(rgn), Some(inner), RGN_DIFF);
+    _ = DeleteObject(inner.into());
+    SetWindowRgn(w, Some(rgn), false); // the system owns the region from here
+    let animate = load_animate();
+    // Placed and painted while still see-through (alpha 0 when hidden: flash_off, or never set at first), and only
+    // then made opaque: there is no background brush, so shown first it would be a black ring, or the old colour
+    // after a theme or selection colour change, for a frame before WM_PAINT.
+    _ = SetWindowPos(w, None, r.left, r.top, cw, ch, SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    _ = InvalidateRect(Some(w), None, false); // in the selection colour of now (a held key's next pane, a new theme)
+    _ = UpdateWindow(w);
+    _ = SetLayeredWindowAttributes(w, COLORREF(0), flash_alpha(0, animate).unwrap_or(0), LWA_ALPHA);
+    FLASH.set(Some((Instant::now(), pane, r, animate)));
+    SetTimer(Some(w), FLASH_TIMER, FLASH_TICK_MS, None); // the same number again restarts it
+}
+
+pub(crate) unsafe fn flash_off() {
+    if FLASH.take().is_none() {
+        return;
+    }
+    let w = app(|a| a.flash);
+    _ = KillTimer(Some(w), FLASH_TIMER);
+    _ = SetLayeredWindowAttributes(w, COLORREF(0), 0, LWA_ALPHA);
+    _ = ShowWindow(w, SW_HIDE);
+}
+
+// Each tick the ring fades, and goes at once when what it marks changed: the pane moved or resized (window moved
+// to another monitor, resized, a new DPI, a new layout), it or main hid (tray, minimised) or another pane is active.
+unsafe fn flash_tick(w: HWND) {
+    let Some((t0, pane, at, animate)) = FLASH.get() else {
+        _ = KillTimer(Some(w), FLASH_TIMER);
+        return;
+    };
+    let (main, active) = app(|a| (a.main, a.panes.get(a.s.active).and_then(|p| p.as_ref()).map(|p| p.hwnd)));
+    let mut r = RECT::default();
+    let same = active == Some(pane)
+        && IsWindowVisible(main).as_bool()
+        && !IsIconic(main).as_bool()
+        && IsWindowVisible(pane).as_bool()
+        && GetWindowRect(pane, &mut r).is_ok()
+        && r == at;
+    match flash_alpha(t0.elapsed().as_millis() as u64, animate).filter(|_| same) {
+        Some(alpha) => _ = SetLayeredWindowAttributes(w, COLORREF(0), alpha, LWA_ALPHA),
+        None => flash_off(),
+    }
+}
+
+pub(crate) extern "system" fn flash_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    unsafe {
+        match msg {
+            WM_TIMER if wp.0 == FLASH_TIMER => flash_tick(h),
+            WM_ERASEBKGND => return LRESULT(1),
+            WM_PAINT => {
+                // the whole window is the ring (its region): one fill in the selection colour (high contrast's included)
+                let mut ps = PAINTSTRUCT::default();
+                let dc = BeginPaint(h, &mut ps);
+                let mut rc = RECT::default();
+                _ = GetClientRect(h, &mut rc);
+                fill(dc, rc, app(|a| a.s.accent_now()));
+                _ = EndPaint(h, &ps);
+            }
+            // main minimised and back: an owned popup comes back with it; the ring is not to (flash_tick hides it)
+            WM_SHOWWINDOW if lp.0 != 0 => {}
+            _ => return DefWindowProcW(h, msg, wp, lp),
+        }
+        LRESULT(0)
+    }
 }
 
 pub(crate) unsafe fn end_drag() {
@@ -1254,7 +1375,12 @@ fn active_neighbour(dx: i32, dy: i32) -> Option<usize> {
 // Ctrl+Alt+Shift+arrow: the active pane trades places with the one on screen in that direction, and stays active.
 pub(crate) unsafe fn swap_dir(dx: i32, dy: i32) {
     if let Some(j) = active_neighbour(dx, dy) {
-        swap_panes(app(|a| a.s.active), j);
+        let before = app(|a| a.s.active);
+        swap_panes(before, j);
+        // the active pane is somewhere else on screen now: ringed there (not for a swap from the mouse's menu)
+        if app(|a| a.s.active) != before {
+            flash_pane(j);
+        }
     }
 }
 
@@ -1466,4 +1592,44 @@ pub(crate) unsafe fn extensions() -> bool {
 
 pub(crate) unsafe fn toggle_extensions() {
     toggle_shell_flag(SSF_SHOWEXTENSIONS, 2)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn flash_holds_then_fades_out_then_goes() {
+        assert_eq!(flash_alpha(0, true), Some(230));
+        assert_eq!(flash_alpha(79, true), Some(230));
+        let mut last = u8::MAX;
+        for ms in (0..500).step_by(10) {
+            let a = flash_alpha(ms, true).expect("still showing before 500 ms");
+            assert!(a <= last, "{ms} ms: {a} after {last}");
+            last = a;
+        }
+        assert!(last < 10, "nearly gone at the end: {last}");
+        // ease-out: most of it is gone by half way through the fade
+        assert!(flash_alpha(80 + 210, true).is_some_and(|a| a > 0 && a < 115));
+        assert_eq!(flash_alpha(500, true), None);
+        assert_eq!(flash_alpha(5000, true), None);
+    }
+
+    #[test]
+    fn flash_without_animations_stays_then_goes_at_once() {
+        for ms in [0, 30, 200, 399] {
+            assert_eq!(flash_alpha(ms, false), Some(230));
+        }
+        assert_eq!(flash_alpha(400, false), None);
+        assert_eq!(flash_alpha(1000, false), None);
+    }
+
+    #[test]
+    fn ring_hole_sits_inside_the_pane() {
+        assert_eq!(ring_hole(300, 200, 4), Some(RECT { left: 4, top: 4, right: 296, bottom: 196 }));
+        assert_eq!(ring_hole(300, 200, 8), Some(RECT { left: 8, top: 8, right: 292, bottom: 192 })); // 200% scaling
+        assert_eq!(ring_hole(8, 200, 4), None); // nothing left inside
+        assert_eq!(ring_hole(300, 8, 4), None);
+        assert_eq!(ring_hole(300, 200, 0), None);
+    }
 }

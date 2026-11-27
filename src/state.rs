@@ -112,6 +112,7 @@ pub(crate) struct App {
     pub(crate) hover: HWND, // owner-drawn button under the mouse
     pub(crate) tip: HWND,
     pub(crate) bars: [HWND; 2], // splitter guide bars (vertical, horizontal)
+    pub(crate) flash: HWND,     // the ring round a pane just picked from the keyboard (flash_pane)
     pub(crate) grid: HWND,      // layout picker popup while open
     pub(crate) reveal_tries: u8, // sidebar reveal passes left
     pub(crate) grid_preview: Vec<usize>,       // layout shown in the picker
@@ -238,6 +239,7 @@ thread_local! {
         hover: HWND::default(),
         tip: HWND::default(),
         bars: [HWND::default(); 2],
+        flash: HWND::default(),
         grid: HWND::default(),
         reveal_tries: 0,
         grid_preview: Vec::new(),

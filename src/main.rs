@@ -266,6 +266,12 @@ fn main() -> Result<()> {
             ..Default::default()
         });
         RegisterClassW(&WNDCLASSW {
+            lpfnWndProc: Some(flash_proc),
+            hInstance: hinst,
+            lpszClassName: w!("GridsFlash"),
+            ..Default::default()
+        });
+        RegisterClassW(&WNDCLASSW {
             style: CS_DROPSHADOW,
             lpfnWndProc: Some(fav_proc),
             hInstance: hinst,
@@ -408,7 +414,9 @@ fn main() -> Result<()> {
             *b = CreateWindowExW(bar_ex, w!("GridsBar"), w!(""), WS_POPUP, 0, 0, 0, 0, Some(main), None, None, None)?;
             _ = SetLayeredWindowAttributes(*b, COLORREF(0), 170, LWA_ALPHA);
         }
-        app(|a| a.bars = bars);
+        // the ring flash_pane puts round a pane picked from the keyboard: see-through, as the bars; none, no ring
+        let flash = CreateWindowExW(bar_ex, w!("GridsFlash"), w!(""), WS_POPUP, 0, 0, 0, 0, Some(main), None, None, None).unwrap_or_default();
+        app(|a| (a.bars, a.flash) = (bars, flash));
         for (id, label, hint) in toolbar_tips() {
             add_tip(child(main, w!("BUTTON"), PCWSTR(HSTRING::from(label).as_ptr()), BS_OWNERDRAW as u32, WINDOW_EX_STYLE(0), id, HFONT::default()), hint);
         }

@@ -4,8 +4,12 @@ use crate::*;
 
 // Screen readers hear where a pane key went ("Pane 2 of 4 · Downloads"), after the list's own item: only when the
 // active pane did change (not on a held key's repeats, nor with no pane that way). The mouse says nothing: it is seen.
+// Seen too: the pane reached gets a fading ring (flash_pane), again on each repeat that lands on another pane.
 unsafe fn pane_said(before: usize, repeat: bool) {
     let now = app(|a| a.s.active);
+    if now != before {
+        flash_pane(now);
+    }
     if !repeat && now != before {
         say_pane(now);
     }
