@@ -84,6 +84,9 @@ pub(crate) unsafe fn open_match(i: usize, desel: bool) {
     let edit = child(h, w!("EDIT"), PCWSTR(HSTRING::from(last).as_ptr()),ES_AUTOHSCROLL as u32, WINDOW_EX_STYLE(0), 1, font);
     let e = g.edit;
     _ = MoveWindow(edit, e.left, e.top, e.right - e.left, e.bottom - e.top, false);
+    // Num+ and Num− sound different to a screen reader (taken off in WM_DESTROY, however the popup goes)
+    a11y_name(edit, Some(if desel { tr("Deselect by pattern", "패턴으로 선택 해제") } else { tr("Select by pattern", "패턴으로 선택") }));
+    a11y_desc(edit, Some(tr("*.jpg;*.png or part of a name · Enter apply · Shift+Enter the other way · Esc close", "*.jpg;*.png 또는 이름 일부 · Enter 적용 · Shift+Enter 반대로 · Esc 닫기")));
     app(|a| a.matcher = Some(Matcher { h, edit, pane: i, path, desel }));
     _ = SetFocus(Some(edit));
     SendMessageW(edit, EM_SETSEL, Some(WPARAM(0)), Some(LPARAM(-1)));
@@ -708,7 +711,14 @@ pub(crate) extern "system" fn match_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPAR
             WM_CTLCOLOREDIT => return edit_colors(wp),
             WM_ACTIVATE if (wp.0 & 0xffff) as u32 == WA_INACTIVE => _ = PostMessageW(Some(h), WM_CLOSE, WPARAM(0), LPARAM(0)),
             // the hold stays: a held Enter must not open files once the list has focus again
-            WM_DESTROY => app(|a| a.matcher = None),
+            WM_DESTROY => {
+                // the box's name comes off out of app() (the reader may call back in), so a reused HWND value
+                // doesn't inherit it
+                if let Some(edit) = app(|a| a.matcher.as_ref().map(|m| m.edit)) {
+                    a11y_clear(edit);
+                }
+                app(|a| a.matcher = None);
+            }
             _ => return DefWindowProcW(h, msg, wp, lp),
         }
         LRESULT(0)

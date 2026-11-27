@@ -31,6 +31,7 @@ pub(crate) const EV_ROWS: usize = 16; // rows on screen, fewer on a short screen
 const EV_RH: i32 = 26; // row height at 96 dpi
 const TIMER_EV_QUERY: usize = 3201; // on the popup: a short pause in typing before asking
 pub(crate) const TIMER_EV_SELECT: usize = 3202; // on the main window: select the result once its folder shows
+const TIMER_EV_SAY: usize = 3203; // on the popup: the answer is read out once typing and answers settle
 
 pub(crate) static EV_ON: AtomicBool = AtomicBool::new(false); // the toolbar button is shown
 
@@ -74,6 +75,8 @@ pub(crate) struct EvState {
     last: String, // text kept for the next time it opens (runtime only)
     pick: Option<EvPick>,
     wheel: i32, // wheel delta short of a notch (touchpads send less than 120)
+    said: String,    // last words sent to a screen reader, not sent twice in a row
+    scope_new: bool, // Alt+O just turned "only under this folder" on/off: said before the next answer
 }
 
 thread_local! {
@@ -209,6 +212,58 @@ pub(crate) fn ev_step(sel: Option<usize>, n: usize, d: i32) -> Option<usize> {
     }
     let cur = sel.map_or(if d > 0 { -1 } else { n as i32 }, |k| k as i32);
     Some((cur + d).clamp(0, n as i32 - 1) as usize)
+}
+
+/// What a screen reader hears for result `k` (1-based) of the `n` rows got, out of `total` matches: name, folder or
+/// size, place in the list, then the folder it is in (long, so last).
+pub(crate) fn ev_speech(hit: &EvHit, k: usize, n: usize, total: u32, ko: bool) -> String {
+    let mut t = vec![hit.name.clone()];
+    if hit.folder {
+        t.push(if ko { "폴더" } else { "folder" }.to_string());
+    } else if let Some(b) = hit.size {
+        t.push(human(b));
+    }
+    t.push(match (ko, total as usize > n) {
+        (_, false) => format!("{k}/{n}"),
+        (false, true) => format!("{k}/{n} of {}", group_digits(total as u64)),
+        (true, true) => format!("전체 {}개 중 {k}/{n}", group_digits(total as u64)),
+    });
+    if !hit.dir.is_empty() {
+        t.push(root(&hit.dir));
+    }
+    t.join(", ")
+}
+
+/// What is read once an answer is in: no answer, no results, or how many with the selected (else first) one.
+/// None while nothing is typed.
+pub(crate) fn ev_found_speech(failed: bool, typed: bool, hits: &[EvHit], total: u32, sel: Option<usize>, ko: bool) -> Option<String> {
+    let n = hits.len();
+    if failed {
+        return Some(if ko { "Everything 응답 없음" } else { "Everything did not answer" }.to_string());
+    }
+    if !typed {
+        return None;
+    }
+    if n == 0 {
+        return Some(if ko { "결과 없음" } else { "No results" }.to_string());
+    }
+    let all = (total as usize).max(n);
+    let count = match ko {
+        true => format!("결과 {}개", group_digits(all as u64)),
+        false => format!("{} {}", group_digits(all as u64), if all == 1 { "result" } else { "results" }),
+    };
+    let k = sel.filter(|&k| k < n).unwrap_or(0);
+    Some(format!("{count} · {}", ev_speech(&hits[k], k + 1, n, total, ko)))
+}
+
+/// Alt+O's words, read before the answer that follows it.
+pub(crate) fn ev_scope_speech(here: bool, ko: bool) -> &'static str {
+    match (ko, here) {
+        (false, true) => "Only under this folder: on",
+        (false, false) => "Only under this folder: off",
+        (true, true) => "이 폴더 아래에서만: 켬",
+        (true, false) => "이 폴더 아래에서만: 끔",
+    }
 }
 
 /// First row on screen so that `sel` is visible, moving as little as possible.
@@ -421,9 +476,19 @@ pub(crate) unsafe fn open_ev() {
     let e = g.edit;
     let edit = child(h, w!("EDIT"), w!(""), ES_AUTOHSCROLL as u32, WINDOW_EX_STYLE(0), 1, font);
     _ = MoveWindow(edit, e.left, e.top, e.right - e.left, e.bottom - e.top, false);
+    // what a screen reader says on the box (taken off in WM_DESTROY, however the popup goes)
+    a11y_name(edit, Some(tr("Search with Everything", "Everything으로 검색")));
+    a11y_desc(
+        edit,
+        Some(tr(
+            "↑/↓ choose a result · Enter show it in its folder · Ctrl+Enter open the folder · Alt+O only under this folder · Esc close",
+            "↑/↓ 결과 고르기 · Enter 그 폴더에서 보기 · Ctrl+Enter 폴더 안으로 · Alt+O 이 폴더 아래에서만 · Esc 닫기",
+        )),
+    );
     ev(|e| {
         (e.h, e.edit, e.prev, e.hits, e.total, e.sel, e.top, e.hot) = (h, edit, prev, Vec::new(), 0, None, 0, None);
         e.wheel = 0;
+        (e.said, e.scope_new) = (String::new(), false);
         (e.tip, e.tip_row, e.drag) = (tip, None, None);
         (e.waiting, e.failed) = (false, false);
     });
@@ -469,6 +534,7 @@ unsafe fn ev_send() {
     let ipc = ev_window();
     let id = ev(|e| {
         e.last = raw;
+        e.said.clear(); // a new answer is read even when it says what the last one said
         e.gen = e.gen.wrapping_add(1);
         (e.hits, e.total, e.sel, e.top, e.failed) = (Vec::new(), 0, None, 0, false);
         e.waiting = text.is_some();
@@ -486,7 +552,36 @@ unsafe fn ev_send() {
             ev(|e| (e.waiting, e.failed) = (false, true));
         }
     }
+    // no answer to wait for (nothing typed, Everything gone): what there is to say is read a little later
+    if !ev(|e| e.waiting) {
+        _ = SetTimer(Some(h), TIMER_EV_SAY, 400, None);
+    }
     _ = InvalidateRect(Some(h), None, false);
+}
+
+// TIMER_EV_SAY: the answer (or why there is none) for a screen reader, Alt+O's on/off before it. Read out of ev():
+// the reader may call straight back in.
+unsafe fn ev_say_found() {
+    let ko = KO.load(Ordering::Relaxed);
+    let here = app(|a| a.s.ev_here);
+    let line = ev(|e| {
+        if e.waiting {
+            return None; // another query is out; its answer sets the timer again
+        }
+        let found = ev_found_speech(e.failed, !e.last.trim().is_empty(), &e.hits, e.total, e.sel, ko);
+        let scope = std::mem::take(&mut e.scope_new).then(|| ev_scope_speech(here, ko).to_string());
+        let line = match (scope, found) {
+            (Some(s), Some(f)) => format!("{s} · {f}"),
+            (s, f) => s.or(f)?,
+        };
+        (line != e.said).then(|| {
+            e.said = line.clone();
+            line
+        })
+    });
+    if let Some(t) = line {
+        say_only(&t);
+    }
 }
 
 fn tip_tool(h: HWND, text: PCWSTR) -> TTTOOLINFOW {
@@ -553,18 +648,30 @@ unsafe fn border_under(h: HWND) -> Option<usize> {
 
 unsafe fn ev_move(d: i32) {
     ev_tip_hide();
-    let h = ev(|e| {
+    let ko = KO.load(Ordering::Relaxed);
+    let (h, line) = ev(|e| {
+        let was = e.sel;
         e.sel = ev_step(e.sel, e.hits.len(), d);
         if let Some(k) = e.sel {
             e.top = ev_scroll(e.top, k, e.rows);
         }
-        e.h
+        // the row it moved to is read out; nothing at either end of the list, so a held key goes quiet there
+        let line = e.sel.filter(|_| e.sel != was).and_then(|k| e.hits.get(k).map(|hit| ev_speech(hit, k + 1, e.hits.len(), e.total, ko)));
+        let line = line.filter(|l| *l != e.said);
+        if let Some(l) = &line {
+            e.said = l.clone();
+        }
+        (e.h, line)
     });
     _ = InvalidateRect(Some(h), None, false);
+    if let Some(t) = line {
+        say_only(&t);
+    }
 }
 
 unsafe fn ev_toggle_scope() {
     app(|a| a.s.ev_here ^= true);
+    ev(|e| e.scope_new = true); // said with the answer it brings, not alone (one live text would cover the other)
     ev_send();
 }
 
@@ -796,10 +903,17 @@ pub(crate) extern "system" fn ev_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
             WM_PAINT => paint_ev(h),
             WM_ERASEBKGND => return LRESULT(1),
             WM_CTLCOLOREDIT => return edit_colors(wp),
-            WM_COMMAND if (wp.0 >> 16) as u32 == EN_CHANGE => _ = SetTimer(Some(h), TIMER_EV_QUERY, 90, None),
+            WM_COMMAND if (wp.0 >> 16) as u32 == EN_CHANGE => {
+                _ = KillTimer(Some(h), TIMER_EV_SAY); // still typing: nothing is read until the answers settle
+                _ = SetTimer(Some(h), TIMER_EV_QUERY, 90, None);
+            }
             WM_TIMER if wp.0 == TIMER_EV_QUERY => {
                 _ = KillTimer(Some(h), TIMER_EV_QUERY);
                 ev_send();
+            }
+            WM_TIMER if wp.0 == TIMER_EV_SAY => {
+                _ = KillTimer(Some(h), TIMER_EV_SAY);
+                ev_say_found();
             }
             // Everything's answer; only the last query's is shown. Copied out now: the buffer goes with the call.
             WM_COPYDATA => {
@@ -816,6 +930,8 @@ pub(crate) extern "system" fn ev_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                         }
                     });
                     _ = InvalidateRect(Some(h), None, false);
+                    // read out a little later, not here: Everything waits on this call, and more typing may follow
+                    _ = SetTimer(Some(h), TIMER_EV_SAY, 400, None);
                 }
                 return LRESULT(1);
             }
@@ -898,12 +1014,22 @@ pub(crate) extern "system" fn ev_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                 }
             }
             WM_ACTIVATE if (wp.0 & 0xffff) as u32 == WA_INACTIVE => _ = PostMessageW(Some(h), WM_CLOSE, WPARAM(0), LPARAM(0)),
-            WM_DESTROY => ev(|e| {
-                (e.h, e.edit, e.hot) = (HWND::default(), HWND::default(), None);
-                (e.tip, e.tip_row, e.drag) = (HWND::default(), None, None);
-                e.gen = e.gen.wrapping_add(1); // a reply still on its way finds nobody waiting
-                e.closed = Some(Instant::now());
-            }),
+            WM_DESTROY => {
+                _ = KillTimer(Some(h), TIMER_EV_SAY);
+                // the box's name and keys come off (out of ev()), however the popup goes, so a reused HWND
+                // value doesn't inherit them
+                let edit = ev(|e| e.edit);
+                if !edit.0.is_null() {
+                    a11y_clear(edit);
+                }
+                ev(|e| {
+                    (e.h, e.edit, e.hot) = (HWND::default(), HWND::default(), None);
+                    (e.tip, e.tip_row, e.drag) = (HWND::default(), None, None);
+                    e.gen = e.gen.wrapping_add(1); // a reply still on its way finds nobody waiting
+                    e.closed = Some(Instant::now());
+                    e.scope_new = false;
+                });
+            }
             _ => return DefWindowProcW(h, msg, wp, lp),
         }
         LRESULT(0)
@@ -1010,6 +1136,39 @@ mod tests {
         assert_eq!((ev_step(None, 0, 1), ev_step(None, 5, 1), ev_step(None, 5, -1)), (None, Some(0), Some(4)));
         assert_eq!((ev_step(Some(4), 5, 1), ev_step(Some(0), 5, -1), ev_step(Some(2), 50, 10)), (Some(4), Some(0), Some(12)));
         assert_eq!((ev_scroll(0, 3, 10), ev_scroll(0, 12, 10), ev_scroll(5, 2, 10)), (0, 3, 2));
+    }
+
+    // what a screen reader hears: the result (name, folder or size, place, folder it is in), and once an answer is in
+    #[test]
+    fn everything_speech() {
+        let pdf = EvHit { name: "보고서.pdf".into(), dir: r"D:\문서".into(), folder: false, size: Some(1_234_567), modified: Some(1), icon: None };
+        let dir = EvHit { name: "Work".into(), dir: "C:".into(), folder: true, size: None, ..pdf.clone() };
+        let bare = EvHit { size: None, ..pdf.clone() };
+        let drive = EvHit { name: "D:".into(), dir: String::new(), folder: true, size: None, ..pdf.clone() };
+        for (hit, k, n, total, ko, want) in [
+            (&pdf, 1, 120, 120, false, r"보고서.pdf, 1.2 MB, 1/120, D:\문서"),
+            (&pdf, 1, 120, 120, true, r"보고서.pdf, 1.2 MB, 1/120, D:\문서"),
+            (&pdf, 3, 200, 5000, false, r"보고서.pdf, 1.2 MB, 3/200 of 5,000, D:\문서"),
+            (&pdf, 3, 200, 5000, true, r"보고서.pdf, 1.2 MB, 전체 5,000개 중 3/200, D:\문서"),
+            (&dir, 2, 2, 2, false, r"Work, folder, 2/2, C:\"),
+            (&dir, 2, 2, 2, true, r"Work, 폴더, 2/2, C:\"),
+            (&bare, 1, 1, 1, false, r"보고서.pdf, 1/1, D:\문서"),
+            (&bare, 1, 1, 1, true, r"보고서.pdf, 1/1, D:\문서"),
+            (&drive, 1, 1, 0, true, "D:, 폴더, 1/1"),
+        ] {
+            assert_eq!(ev_speech(hit, k, n, total, ko), want);
+        }
+        let hits = [pdf.clone(), dir.clone()];
+        assert_eq!(ev_found_speech(false, true, &hits, 2, Some(1), true).as_deref(), Some(r"결과 2개 · Work, 폴더, 2/2, C:\"));
+        assert_eq!(ev_found_speech(false, true, &hits, 2, None, false).as_deref(), Some(r"2 results · 보고서.pdf, 1.2 MB, 1/2, D:\문서"));
+        assert_eq!(ev_found_speech(false, true, &hits[..1], 1, Some(0), false).as_deref(), Some(r"1 result · 보고서.pdf, 1.2 MB, 1/1, D:\문서"));
+        assert_eq!(ev_found_speech(false, true, &hits, 5000, Some(9), true).as_deref(), Some(r"결과 5,000개 · 보고서.pdf, 1.2 MB, 전체 5,000개 중 1/2, D:\문서"));
+        assert_eq!(ev_found_speech(false, true, &[], 0, None, true).as_deref(), Some("결과 없음"));
+        assert_eq!(ev_found_speech(false, true, &[], 0, None, false).as_deref(), Some("No results"));
+        assert_eq!(ev_found_speech(true, true, &hits, 2, Some(0), false).as_deref(), Some("Everything did not answer"));
+        assert_eq!(ev_found_speech(true, false, &[], 0, None, true).as_deref(), Some("Everything 응답 없음"));
+        assert_eq!(ev_found_speech(false, false, &[], 0, None, true), None); // nothing typed: nothing to say
+        assert_eq!((ev_scope_speech(true, false), ev_scope_speech(false, true)), ("Only under this folder: on", "이 폴더 아래에서만: 끔"));
     }
 
     #[test]
