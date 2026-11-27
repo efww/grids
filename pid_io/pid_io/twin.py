@@ -31,6 +31,25 @@ from pathlib import Path
 SKILL = "ai3d-t1-ci-r9"            # registered skill id seen in the guide (T1-CI, R9-G6)
 PROFILE = "T1-CI"
 
+from .schema import _num, _sel  # noqa: E402
+
+SCHEMA = [
+    {"id": "tw", "title": "3D 차선 · 충돌 회피",
+     "lead": "랙 케이블 단을 공종별 차선으로 나눠 계장이 먼저 자리를 잡습니다(선점). 다른 공종(전기 등) 3D 파일이 오면 겹치는 곳은 "
+             "아래 순서로 자동 회피합니다: 같은 단 안에서 옆으로 → 위로 한 단씩 → 그래도 겹치면 '충돌 남음' 표시. 모든 이동은 기록됩니다.",
+     "items": [
+         {**_sel("tw_lane", "계장 차선 (랙 케이블 단)", ["+쪽 절반 (남북 랙 = 동, 동서 랙 = 남)", "−쪽 절반 (남북 랙 = 서, 동서 랙 = 북)", "가운데"],
+                 "+쪽 절반 (남북 랙 = 동, 동서 랙 = 남)", "다른 공종(전기 전력)은 반대쪽 절반을 쓰도록 협의"), "code": "W01"},
+         {**_num("tw_margin", "랙 가장자리 여유", 0.3, "m", "", 0.1), "code": "W02"},
+         {**_num("tw_gap", "다른 공종과 이격", 0.3, "m", "계장-전력 트레이 일반값 300 mm", 0.1), "code": "W03"},
+         {**_sel("tw_yield", "충돌 시 누가 비키나", ["계장이 비킴 (항상)", "비키지 않음 (충돌만 표시)"], "계장이 비킴 (항상)",
+                 "사용자 방침: 계장은 항상 비키는 공종"), "code": "W04"},
+         {**_num("tw_step", "위로 비킬 때 한 단 높이", 0.3, "m", "", 0.1), "code": "W05"},
+         {**_num("tw_max_up", "위로 비킬 수 있는 단 수", 2, "단"), "code": "W06"},
+     ]},
+]
+ITEMS = {it["id"]: it for g in SCHEMA for it in g["items"]}
+
 
 # ------------------------------------------------------------------ base model
 def _obj(src, name):
@@ -170,16 +189,28 @@ def to_model(d3: dict, tf: dict, base: dict, v: dict) -> dict:
                 return k
         return None
 
-    def P(p, el=None, snap=False, side=0.0):
+    lane = v.get("tw_lane", "+")
+    sign = 1 if lane.startswith("+") else -1 if lane.startswith("−") else 0
+    margin = float(v.get("tw_margin", 0.3))
+
+    def lane_c(k, width_m, side):
+        """centre across the rack for a tray of width_m, `side` m further in from the lane edge."""
+        if not sign:
+            return k["off"] + side
+        edge = k["half"] - margin - width_m / 2 - side
+        return k["off"] + sign * max(0.0, edge)
+
+    def P(p, el=None, snap=False, side=0.0, width_m=0.0):
         X, Z = xz(p["pt"])
         Y = p["m"][2] if el is None else el
         if snap or abs(Y - rack_el) < 1e-6:
             k = on_rack(X, Z)
             if k:
+                c = lane_c(k, width_m or 0.3, side)
                 if k["dir"] == "NS":
-                    X = k["off"] + side
+                    X = c
                 else:
-                    Z = k["off"] + side
+                    Z = c
                 Y = k["cable_el"] + (Y - rack_el if not snap else 0)
         return [round(X, 2), round(Y, 2), round(Z, 2)]
 
@@ -197,20 +228,73 @@ def to_model(d3: dict, tf: dict, base: dict, v: dict) -> dict:
     for c in d3["cables"]:
         if not c.get("path"):
             continue
-        pts = [P(p) for p in c["path"]]
+        pts = []
+        for q in (P(p) for p in c["path"]):          # v13.1: no slanted legs - horizontal at the lower EL, then a vertical riser
+            if pts:
+                p0 = pts[-1]
+                if abs(q[1] - p0[1]) > 0.05 and (abs(q[0] - p0[0]) > 0.05 or abs(q[2] - p0[2]) > 0.05):
+                    pts.append([q[0], p0[1], q[2]] if p0[1] < q[1] else [p0[0], q[1], p0[2]])
+            pts.append(q)
         out["cables"].append({"id": c["no"], "kind": c["kind"], "od": c["od_mm"], "path": pts,
                               "props": {"Cable No": c["no"], "구분": c["kind"], "From": c["from"], "To": c["to"], "Spec": c["spec"],
                                         "OD (mm)": c["od_mm"], "길이 (m)": c["length_m"], "트레이": " → ".join(c.get("trays") or [])}})
-    for t in d3["trays"]:
+    # v13.1 lane packing: a rack tray belongs to the rack running the same way as the tray; every tray on that rack
+    # gets its own slot across the rack (trays of different segments over the same stretch no longer share a lane).
+    slots = {}                                           # rack id -> [(along0, along1, side0, side1)]
+    gap_m = 0.1
+
+    def rack_for(t):
+        (ax_, az_), (bx_, bz_) = xz(t["start"]["pt"]), xz(t["end"]["pt"])
+        d_ = "NS" if abs(bz_ - az_) >= abs(bx_ - ax_) else "EW"
+        mx, mz = (ax_ + bx_) / 2, (az_ + bz_) / 2
+        for k in racks.values():
+            if k["dir"] != d_:
+                continue
+            across, along = (mx, mz) if d_ == "NS" else (mz, mx)
+            if abs(across - k["off"]) <= k["half"] + 1.0 and (k["a0"] is None or k["a0"] - 3 <= along <= k["a1"] + 3):
+                return k, (ax_, az_), (bx_, bz_)
+        return None, (ax_, az_), (bx_, bz_)
+
+    def place(k, A, B, wm):
+        i0 = 1 if k["dir"] == "NS" else 0              # along index in (X, Z)
+        lo_, hi_ = sorted((A[i0], B[i0]))
+        side = 0.0
+        taken = sorted((s0, s1) for (a0, a1, s0, s1) in slots.setdefault(k["id"], []) if min(hi_, a1) - max(lo_, a0) > 0.5)
+        for s0, s1 in taken:
+            if side + wm + gap_m <= s0 or side >= s1 + gap_m:
+                continue
+            side = max(side, s1 + gap_m)
+        slots[k["id"]].append((lo_, hi_, side, side + wm))
+        c = lane_c(k, wm, side)
+        el = k["cable_el"]
+        if k["dir"] == "NS":
+            return [round(c, 2), el, round(A[1], 2)], [round(c, 2), el, round(B[1], 2)], side
+        return [round(A[0], 2), el, round(c, 2)], [round(B[0], 2), el, round(c, 2)], side
+
+    for t in sorted(d3["trays"], key=lambda t: -(t.get("width_mm") or 300)):
         snap = t["kind"] == "ladder_on_rack"
         side = (t.get("side_offset_mm") or 0) / 1000
-        a, b = P(t["start"], snap=snap, side=side), P(t["end"], snap=snap, side=side)
+        wm = (t.get("width_mm") or 300) / 1000
+        k = None
+        if snap:
+            k, A, B = rack_for(t)
+        if k:
+            a, b, side = place(k, A, B, wm)
+        else:
+            a, b = P(t["start"], snap=snap, side=side, width_m=wm), P(t["end"], snap=snap, side=side, width_m=wm)
+            if snap and side:                            # no model rack here: still keep side-by-side trays apart
+                i_ = 0 if abs(b[2] - a[2]) >= abs(b[0] - a[0]) else 2
+                a[i_] = round(a[i_] + side, 2)
+                b[i_] = round(b[i_] + side, 2)
         out["trays"].append({"id": t["no"], "kind": t["kind"], "a": a, "b": b, "w": (t.get("width_mm") or 300) / 1000,
                              "tiers": t.get("tiers") or 1,
                              "props": {"Tray No": t["no"], "구간": t["seg"], "트렌치 줄": t.get("run") or "", "종류": t["kind"],
                                        "구분": t.get("class", ""), "폭 (mm)": t.get("width_mm"), "단": t.get("tiers"),
                                        "Fill": f"{round((t.get('fill') or 0) * 100)}%", "길이 (m)": t["length_m"],
+                                       "랙 / 차선 (m)": f"{k['id']} / {round(side, 2)}" if k else "",
                                        "케이블 수": len(t["cables"]), "케이블": ", ".join(t["cables"][:40]) + (" …" if len(t["cables"]) > 40 else "")}})
+    order = {t["no"]: i for i, t in enumerate(d3["trays"])}
+    out["trays"].sort(key=lambda x: order.get(x["id"], 0))
     for x in d3["supports"]:
         p = P(x, el=x["top_el"])
         out["supports"].append({"id": x["no"], "type": x["type"], "p": p, "base": 0 if x["type"] in ("L", "T", "H") else None,
@@ -223,6 +307,112 @@ def to_model(d3: dict, tf: dict, base: dict, v: dict) -> dict:
         out["rooms"].append({"id": r["id"], "p": P(r), "props": {"이름": r["name"], "근거": r.get("src", "")}})
     out["counts"] = {k: len(out[k]) for k in ("instruments", "jbs", "cables", "trays", "supports", "joints")}
     return out
+
+
+# ------------------------------------------------------------------ clash avoidance (instrumentation yields)
+def load_other(path: Path) -> dict:
+    """other discipline objects in the model frame (JSON):
+    {"discipline": "전기", "objects": [{"id": "ET-001", "kind": "tray", "a": [x,y,z], "b": [x,y,z], "w": 0.6, "h": 0.15},
+                                       {"id": "EB-01", "kind": "box", "min": [x,y,z], "max": [x,y,z]}]}"""
+    d = json.loads(Path(path).read_text(encoding="utf-8"))
+    boxes = []
+    for o in d.get("objects") or []:
+        if "min" in o and "max" in o:
+            lo, hi = o["min"], o["max"]
+        elif "a" in o and "b" in o:
+            w, h = float(o.get("w", 0.3)), float(o.get("h", 0.15))
+            lo = [min(o["a"][0], o["b"][0]), min(o["a"][1], o["b"][1]), min(o["a"][2], o["b"][2])]
+            hi = [max(o["a"][0], o["b"][0]), max(o["a"][1], o["b"][1]) + h, max(o["a"][2], o["b"][2])]
+            if abs(o["a"][0] - o["b"][0]) >= abs(o["a"][2] - o["b"][2]):
+                lo[2] -= w / 2; hi[2] += w / 2
+            else:
+                lo[0] -= w / 2; hi[0] += w / 2
+        else:
+            continue
+        boxes.append({"id": str(o.get("id", "")), "kind": o.get("kind", "box"), "lo": lo, "hi": hi})
+    return {"discipline": d.get("discipline", "다른 공종"), "file": Path(path).name, "boxes": boxes}
+
+
+def _tray_box(t, gap):
+    a, b = t["a"], t["b"]
+    h = 0.1 + 0.3 * (t.get("tiers", 1) - 1)
+    lo = [min(a[0], b[0]), min(a[1], b[1]) - 0.05, min(a[2], b[2])]
+    hi = [max(a[0], b[0]), max(a[1], b[1]) + h, max(a[2], b[2])]
+    if abs(a[0] - b[0]) >= abs(a[2] - b[2]):
+        lo[2] -= t["w"] / 2; hi[2] += t["w"] / 2
+    else:
+        lo[0] -= t["w"] / 2; hi[0] += t["w"] / 2
+    return [x - gap for x in lo], [x + gap for x in hi]
+
+
+def _hit(lo, hi, B):
+    return all(lo[i] < B["hi"][i] and hi[i] > B["lo"][i] for i in range(3))
+
+
+def avoid(inst: dict, other: dict, base: dict, v: dict) -> list:
+    """move our trays off other-discipline objects: sideways inside the rack (lane), then up one step at a time.
+    Returns the move log; trays get "moved" in their props."""
+    gap = float(v.get("tw_gap", 0.3))
+    yield_ = v.get("tw_yield", "").startswith("계장이")
+    step, max_up = float(v.get("tw_step", 0.3)), int(float(v.get("tw_max_up", 2)))
+    log = []
+
+    def mine(t):                                     # our own trays of the same segment (signal / comm / IS side by side)
+        out = []
+        for u in inst["trays"]:
+            if u is t or u["props"].get("구간") != t["props"].get("구간"):
+                continue
+            lo_, hi_ = _tray_box(u, 0.0)
+            out.append({"id": u["id"], "lo": lo_, "hi": hi_})
+        return out
+    for t in inst["trays"]:
+        if t["kind"] == "ug_trench":
+            continue
+        lo, hi = _tray_box(t, gap)
+        hits = [B for B in other["boxes"] if _hit(lo, hi, B)]
+        if not hits:
+            continue
+        if not yield_:
+            log.append({"tray": t["id"], "with": [B["id"] for B in hits], "action": "충돌 (비키지 않음 설정)", "dx": 0, "dy": 0})
+            t["props"]["충돌"] = ", ".join(B["id"] for B in hits)
+            continue
+        along_x = abs(t["a"][0] - t["b"][0]) >= abs(t["a"][2] - t["b"][2])
+        ax = 2 if along_x else 0                       # across the tray run
+        rack = None
+        for k in base["racks"].values():
+            if (k["dir"] == "NS") == (not along_x):
+                c = t["a"][0] if k["dir"] == "NS" else t["a"][2]
+                if abs(c - k["off"]) <= k["half"] + 0.5:
+                    rack = k
+        lim = (rack["off"] - rack["half"] + t["w"] / 2, rack["off"] + rack["half"] - t["w"] / 2) if rack else None
+        done = None
+        for up in range(0, max_up + 1):
+            for d in [0.0] + [s_ * k_ * 0.1 for k_ in range(1, 61) for s_ in (1, -1)]:
+                if up == 0 and d == 0:
+                    continue
+                c0 = t["a"][ax] + d
+                if lim and not (lim[0] <= c0 <= lim[1]):
+                    continue
+                if not lim and abs(d) > 2.0:
+                    continue
+                a = list(t["a"]); b = list(t["b"]); a[ax] += d; b[ax] += d; a[1] += up * step; b[1] += up * step
+                lo2, hi2 = _tray_box({**t, "a": a, "b": b}, gap)
+                lo3, hi3 = _tray_box({**t, "a": a, "b": b}, 0.05)
+                if not any(_hit(lo2, hi2, B) for B in other["boxes"]) and not any(_hit(lo3, hi3, B) for B in mine(t)):
+                    done = (a, b, d, up * step)
+                    break
+            if done:
+                break
+        if done:
+            t["a"], t["b"] = done[0], done[1]
+            act = ("옆으로 " + f"{done[2]:+.1f} m" if done[2] else "") + (" · " if done[2] and done[3] else "") + \
+                  (f"위로 {done[3]:+.1f} m" if done[3] else "")
+            t["props"]["회피"] = f"{act} ({other['discipline']} {', '.join(B['id'] for B in hits)} 피함)"
+            log.append({"tray": t["id"], "with": [B["id"] for B in hits], "action": act, "dx": round(done[2], 2), "dy": round(done[3], 2)})
+        else:
+            t["props"]["충돌"] = f"남음: {', '.join(B['id'] for B in hits)} (사람 판단)"
+            log.append({"tray": t["id"], "with": [B["id"] for B in hits], "action": "충돌 남음 (사람 판단)", "dx": 0, "dy": 0})
+    return log
 
 
 # ------------------------------------------------------------------ supplemented model
@@ -325,7 +515,7 @@ def _sha(p: Path) -> str:
 
 def standard_files(outdir: Path, project: str, version: str, base: dict, base_path: Path, inst: dict, tf: dict,
                    s: dict, res, tr, sp, rows_n: int, sources: dict, validation: list, model_file: Path,
-                   data_file: Path, check_summary: str):
+                   data_file: Path, check_summary: str, proto: dict | None = None):
     v = s["values"]
     outdir.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y-%m-%d %H:%M")
@@ -410,7 +600,7 @@ def standard_files(outdir: Path, project: str, version: str, base: dict, base_pa
             "R-SP-FIT": "NEMA VE 2: support within 600 mm of each fitting end",
             "R-SP-EXP": "joint spacing = movement / (α × ΔT); anchor at the middle support, guides elsewhere",
             "R-3D-EL": "trays on a rack at model RK.cable EL; off-rack AG / UG at checklist EL"},
-        "settings": rules, "exceptions": ["현장 지시계·PSV·소프트 태그 = 케이블 없음", "벤더 PLC 내부 IO = 벤더 범위 (A03)",
+        "settings": rules, "protocol": proto, "exceptions": ["현장 지시계·PSV·소프트 태그 = 케이블 없음", "벤더 PLC 내부 IO = 벤더 범위 (A03)",
                                           "MCC↔IRP = 전기 범위", "PLOT 위치 없는 계기 = 가정 길이"]})
 
     # 04 test inputs (no expected values)
@@ -438,7 +628,7 @@ def standard_files(outdir: Path, project: str, version: str, base: dict, base_pa
                                "how": "base HTML unchanged + one block appended to its module script (layers 계장 · ...)",
                                "layers": ["inst_tray", "inst_cable", "inst_jb", "inst_instr", "inst_support"]},
         "STRUCTURED_MODEL_DATA": {"file": data_file.name, "sha256": _sha(data_file), "kind": "FULL"},
-        "changes": inst["counts"], "transform": {k: tf[k] for k in ("s", "tx", "tz", "anchors", "rack_anchors", "median_m", "max_m", "formula")},
+        "changes": inst["counts"], "clash": {"other": inst.get("other"), "moves": inst.get("moves") or []}, "transform": {k: tf[k] for k in ("s", "tx", "tz", "anchors", "rack_anchors", "median_m", "max_m", "formula")},
         "verification": check_summary})
 
     # 00 manifest last (lists everything)

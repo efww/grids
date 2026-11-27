@@ -85,6 +85,10 @@ SCHEMA = [
               "PLOT PLAN을 올리고 축척·제어실 위치가 잡히면 적용됩니다", on="사용"),
          _sel("main_route", "간선 (JB → 룸)", ["랙 (AG)", "UG 트렌치", "AG 서포트"], "랙 (AG)"),
          _num("rack_el", "랙 최상단 높이 (트레이 EL)", 6.0, "m", "케이블 트레이는 파이프랙 최상단을 탑니다. 그 단의 높이", 0.5),
+         _sel("rack_src", "랙 출처", ["PLOT 인식", "3D 모델 랙", "둘 다"], "PLOT 인식",
+              "3D 모델(STEP 10에 올린 배관 Three.js)이 있으면 그 랙 위치·길이를 PLOT 좌표로 옮겨 경로에 씁니다. PLOT 인식은 일부 랙만 잡힘"),
+         _sel("rack_el_src", "랙 트레이 EL 출처", ["체크리스트 값", "3D 모델 케이블 단"], "체크리스트 값",
+              "3D 모델 케이블 단: 모델의 랙별 케이블 단 EL(RK.cable)을 위 '랙 최상단 높이' 대신 씀 (랙이 여럿이면 가장 긴 랙 값)"),
          _sel("no_rack", "랙 없는 구간 (계기 → JB)", ["AG 서포트", "UG 트렌치"], "AG 서포트",
               "분기 케이블. 수소 등 가스 체류 우려가 있으면 보통 AG"),
          _sel("trunk_off", "랙 없는 구간 (간선: JB·패키지·IRP → 룸)", ["UG 트렌치", "AG 서포트"], "UG 트렌치",
@@ -115,8 +119,9 @@ SCHEMA = [
 from . import jb as JB  # noqa: E402  (STEP 7 settings live in the same cable.json)
 from . import tray as TR  # noqa: E402  (STEP 8 too)
 from . import support as SP  # noqa: E402  (and STEP 9)
+from . import twin as TW  # noqa: E402  (and STEP 10 lanes / clash)
 
-ITEMS = {it["id"]: it for g in SCHEMA + JB.SCHEMA + TR.SCHEMA + SP.SCHEMA for it in g["items"]}
+ITEMS = {it["id"]: it for g in SCHEMA + JB.SCHEMA + TR.SCHEMA + SP.SCHEMA + TW.SCHEMA for it in g["items"]}
 DEFAULTS = {k: v["default"] for k, v in ITEMS.items()}
 
 

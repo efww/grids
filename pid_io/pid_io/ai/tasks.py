@@ -131,7 +131,7 @@ def symbol_items(syms, rules_unknown):
     return items
 
 
-def build_symbols(pdf: Path, syms, rules_unknown, crop_dir: Path, limit=40, pd: Path | None = None):
+def build_symbols(pdf: Path, syms, rules_unknown, crop_dir: Path, limit=40, pd: Path | None = None, examples: str = ""):
     from .. import pagecache
     cached = pd is not None and pagecache.ready(pd)       # labelled P&ID: work from the saved page images
     doc = None if cached else fitz.open(pdf)
@@ -164,6 +164,7 @@ Classes:
 Images (if you can see them) are crops around each item, file names given in "image": the item is in a
 RED box, a traced signal line is ORANGE, the symbol that line reaches is in a BLUE box.
 
+{examples}
 Items (one JSON per line):
 {chr(10).join(lines)}
 
@@ -291,9 +292,175 @@ def decide(pdir: Path, sid: str, accept: bool):
         s["status"] = "accepted" if accept else "rejected"
         if accept and s["kind"] == "symbols":
             ov["symbols"][s["id"]] = {k: s[k] for k in ("class", "tag", "io", "system", "reason")}
-        if accept and s["kind"] == "funcs":
+        if accept and s["kind"] == "missing":
+            ov.setdefault("added", [])
+            ov["added"] = [a for a in ov["added"] if a["id"] != s["id"]]
+            ov["added"].append({k: s[k] for k in ("id", "page", "cx", "cy", "tag", "class", "io", "system", "reason")})
+        if accept and s["kind"] == "legend":
+            ov.setdefault("legend", []).append({k: s.get(k, "") for k in ("shape", "class", "system", "note")})
+        if accept and s["kind"] in ("funcs", "legend_rule"):
             ov["rules"] = [r for r in ov["rules"] if r["func"] != s["func"]]
             ov["rules"].append({k: s[k] for k in ("func", "desc", "io", "system", "reason")})
     save(f, allx)
     save(pdir / "overrides.json", ov)
     return allx
+
+
+# ------------------------------------------------------------------ v13: examples, legend, missed symbols, agreement
+def examples_block(syms, overrides: dict, limit=12) -> str:
+    """symbols people already approved on this project -> few-shot examples for the next question."""
+    so = (overrides or {}).get("symbols") or {}
+    by = {s.sid: s for s in syms}
+    lines = []
+    for sid, o in list(so.items())[-limit:]:
+        s = by.get(sid)
+        if not s:
+            continue
+        f = s.feats or {}
+        lines.append(json.dumps({"text": f"{s.func} {s.number}".strip(), "outline": {k: f.get(k) for k in ("circle", "square", "diamond", "midline")},
+                                 "approved": {"class": o["class"], "io": o.get("io"), "system": o.get("system")}}, ensure_ascii=False))
+    leg = (overrides or {}).get("legend") or []
+    out = ""
+    if leg:
+        out += "\nProject legend (approved, read from the legend sheets):\n" + "\n".join(
+            f"- {x.get('shape', '')}: {x.get('class', '')} / {x.get('system', '')} {x.get('note', '')}" for x in leg[:30]) + "\n"
+    if lines:
+        out += "\nExamples a person approved on this project (follow the same judgement):\n" + "\n".join(lines) + "\n"
+    return out
+
+
+def legend_pages(pd: Path, syms) -> list:
+    """pages with 'SYMBOL' / 'LEGEND' words and no instrument found = legend sheets."""
+    info = json.loads((Path(pd) / "cache" / "raster" / "info.json").read_text(encoding="utf-8")) if (Path(pd) / "cache" / "raster" / "info.json").exists() else {}
+    found = {s.page for s in syms}
+    out = []
+    for p, v in (info.get("pages") or {}).items():
+        txt = " ".join(str(w[4]) if isinstance(w, (list, tuple)) and len(w) > 4 else str(w) for w in v.get("words") or []).upper()
+        if int(p) not in found and ("SYMBOL" in txt or "LEGEND" in txt):
+            out.append(int(p))
+    return sorted(out)
+
+
+def build_legend(pd: Path, pages: list, out_dir: Path):
+    out_dir.mkdir(parents=True, exist_ok=True)
+    files = []
+    for p in pages[:6]:
+        src = Path(pd) / "cache" / "raster" / f"p{p}.png"
+        if src.exists():
+            dst = out_dir / f"legend_p{p}.png"
+            dst.write_bytes(src.read_bytes())
+            files.append(dst)
+    prompt = f"""You are an instrumentation engineer. The attached images are the LEGEND sheets of a P&ID set (ISA 5.1 style).
+Read them and build this project's symbol dictionary.
+
+1) Instrument symbol shapes -> class. Classes:
+{CLASS_HELP}
+2) Function letter codes used on this project (first + succeeding letters, e.g. PT, FIT, XV, ZSO) with their IO.
+
+Write every "desc", "note" and "shape" value in Korean (한국어), short.
+Answer with ONE JSON object only:
+{{"symbols": [{{"shape": "<shape in words>", "class": "<class>", "system": "<DCS|ESD|F&G|PKG PLC|->", "note": "<short>"}}],
+  "rules": [{{"func": "<code>", "desc": "<instrument type>", "io": ["AI"|"AO"|"DI"|"DO"], "system": "<DCS|ESD|F&G|PKG PLC|->",
+             "confidence": <0..1>, "reason": "<legend evidence>"}}]}}
+Images: {", ".join(f.name for f in files)}
+"""
+    return prompt, files, [f"legend_p{p}" for p in pages[:6]]
+
+
+def parse_legend(answer: str):
+    data = extract_json(answer, want=("symbols", "rules"))
+    sym = []
+    for it in data.get("symbols", []) or []:
+        cls = str(it.get("class", "")).upper()
+        if cls in CLASSES:
+            sym.append({"shape": str(it.get("shape", ""))[:80], "class": cls,
+                        "system": str(it.get("system", "-")).upper().replace("FGS", "F&G"), "note": str(it.get("note", ""))[:120]})
+    rules = []
+    for r in data.get("rules", []) or []:
+        f = str(r.get("func", "")).upper().strip()
+        io = [x for x in (r.get("io") or []) if x in IOS[:4]]
+        sy = str(r.get("system", "DCS")).upper().replace("FGS", "F&G")
+        if re.fullmatch(r"[A-Z]{1,6}", f) and sy in SYSTEMS:
+            rules.append({"func": f, "desc": str(r.get("desc", ""))[:60], "io": io, "system": sy,
+                          "confidence": float(r.get("confidence") or 0), "reason": str(r.get("reason", ""))[:200]})
+    return sym, rules
+
+
+def build_missing(pd: Path, syms, pages: list, out_dir: Path, grid=2):
+    """each page cut into grid x grid tiles; the AI lists instrument balloons NOT in our list for that tile."""
+    from PIL import Image
+    out_dir.mkdir(parents=True, exist_ok=True)
+    info = json.loads((Path(pd) / "cache" / "raster" / "info.json").read_text(encoding="utf-8"))
+    dpi = info.get("dpi", 150)
+    k = dpi / 72.0
+    files, tiles = [], []
+    for p in pages:
+        src = Path(pd) / "cache" / "raster" / f"p{p}.png"
+        if not src.exists():
+            continue
+        im = Image.open(src)
+        W, H = im.size
+        for gy in range(grid):
+            for gx in range(grid):
+                box = (gx * W // grid, gy * H // grid, (gx + 1) * W // grid, (gy + 1) * H // grid)
+                tid = f"p{p}_{gy}{gx}"
+                f = out_dir / f"{tid}.png"
+                im.crop(box).save(f)
+                x0, y0, x1, y1 = (b / k for b in box)
+                have = sorted({f"{s.func}-{s.number}" for s in syms if s.page == p and x0 <= s.cx < x1 and y0 <= s.cy < y1
+                               and s.role not in ("ignored", "candidate")})
+                files.append(f)
+                tiles.append({"tile": tid, "image": f.name, "page": p, "box_pt": [round(x0), round(y0), round(x1), round(y1)], "found": have})
+    lines = [json.dumps(t, ensure_ascii=False) for t in tiles]
+    prompt = f"""You are checking a P&ID for instrument balloons (ISA 5.1 circles / squares with a tag inside) that a reader MISSED.
+For each tile image the list "found" holds the tags already read there. Look at the image and list every instrument
+balloon whose tag is NOT in "found". Ignore line numbers, equipment tags, notes and off-page connectors.
+Give its position inside the tile as fractions (0..1 from the tile's top-left) and the tag text exactly as drawn.
+
+Tiles (one JSON per line):
+{chr(10).join(lines)}
+
+Write "reason" in Korean (한국어). Answer with ONE JSON object only:
+{{"items": [{{"tile": "<tile id>", "tag": "<e.g. PT-0602>", "fx": <0..1>, "fy": <0..1>, "class": "<class>",
+  "io": "<AI|AO|DI|DO|->", "system": "<DCS|ESD|F&G|PKG PLC|->", "confidence": <0..1>, "reason": "<short>"}}]}}
+Classes:
+{CLASS_HELP}
+"""
+    return prompt, files, tiles
+
+
+def parse_missing(answer: str, tiles: list):
+    data = extract_json(answer)
+    by = {t["tile"]: t for t in tiles}
+    out = []
+    for it in data.get("items", []) or []:
+        t = by.get(it.get("tile"))
+        if not t:
+            continue
+        tag = str(it.get("tag", "")).upper().strip()
+        m = re.match(r"^(?:\d{2}-)?([A-Z]{1,6})-?(\w+)$", tag)
+        cls = str(it.get("class", "FIELD")).upper()
+        io = str(it.get("io", "-")).upper()
+        sy = str(it.get("system", "-")).upper().replace("FGS", "F&G")
+        if not m or cls not in CLASSES or cls == "NOT_A_TAG" or io not in IOS or sy not in SYSTEMS:
+            continue
+        if f"{m.group(1)}-{m.group(2)}" in t["found"]:
+            continue
+        x0, y0, x1, y1 = t["box_pt"]
+        fx, fy = min(1, max(0, float(it.get("fx") or 0.5))), min(1, max(0, float(it.get("fy") or 0.5)))
+        out.append({"id": f"{t['page']}:{m.group(1)}:{m.group(2)}", "page": t["page"], "cx": round(x0 + fx * (x1 - x0), 1),
+                    "cy": round(y0 + fy * (y1 - y0), 1), "tag": f"{m.group(1)}-{m.group(2)}", "class": cls, "io": io, "system": sy,
+                    "confidence": float(it.get("confidence") or 0), "reason": str(it.get("reason", ""))[:200]})
+    return out
+
+
+def agree(a: list, b: list, key="id"):
+    """two independent answers -> items where class / io / system agree (kept), the rest flagged."""
+    bi = {x[key]: x for x in b}
+    out = []
+    for x in a:
+        y = bi.get(x[key])
+        same = y is not None and all(x.get(k) == y.get(k) for k in ("class", "io", "system"))
+        out.append({**x, "agree": bool(same), "confidence": x.get("confidence", 0) if same else min(x.get("confidence", 0), 0.4),
+                    "reason": x.get("reason", "") + ("" if same else " · AI 두 답이 다름 → 사람 판단")})
+    return out

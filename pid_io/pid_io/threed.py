@@ -147,10 +147,11 @@ def build(project, res, layout, tray, sup, s, plot=None):
         if sg["kind"] == "UG":
             out["trays"].append({**base, "no": sg["no"], "width_mm": sg.get("width"), "tiers": sg.get("tiers", 1),
                                  "fill": sg.get("fill")})
+        acc = 0                                    # trays of one segment sit side by side, 100 mm apart
         for k, t in enumerate(sg.get("trays") or []):
             out["trays"].append({**base, "no": t["no"], "class": t["cls"], "width_mm": t["width"], "tiers": t["tiers"],
-                                 "height_mm": float(v["tray_height"]), "fill": t["fill"],
-                                 "side_offset_mm": k * (t["width"] + 100)})   # trays of one segment sit side by side
+                                 "height_mm": float(v["tray_height"]), "fill": t["fill"], "side_offset_mm": acc})
+            acc += t["width"] + 100
     for x in (sup or {}).get("supports") or []:
         out["supports"].append({"no": x["no"], "type": x["type"], "name": x["name"], "typical": x["typical"],
                                 **P(x["x"], x["y"], x["el"] if x["type"] not in ("L", "T", "H") else 0),
