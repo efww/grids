@@ -1125,6 +1125,7 @@ pub(crate) unsafe fn swap_panes(i: usize, j: usize) {
             to(p);
         }
         a.status_key.clear();
+        forget_sel(a);
         a.dirty = session_dirty(&a.s, a.base.as_ref());
     });
     for k in [i, j] {
@@ -1226,6 +1227,7 @@ pub(crate) unsafe fn set_layout(h: Vec<usize>) {
         to(&mut a.peek_pane);
         a.zoom = None;
         a.status_key.clear();
+        forget_sel(a);
         let n: usize = h.iter().sum();
         let gone = a.s.active >= n;
         if gone {

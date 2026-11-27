@@ -47,6 +47,10 @@ pub(crate) struct App {
     pub(crate) save_after: Option<Instant>, // a failed write: autosave waits until then
     pub(crate) status: StatusLine,
     pub(crate) status_key: String,
+    // the selection paths last gathered and whose they are (status::selection_size), and a big selection's
+    // key first seen changed with when (it's gathered once it stays for SEL_REST)
+    pub(crate) sel_cache: Option<(SelKey, Sel)>,
+    pub(crate) sel_seen: Option<(SelKey, Instant)>,
     // items text before the selection size, Some(partial while collecting) = a selection to size (the worker sums it),
     // middle zone, drive (label, free, total)
     #[allow(clippy::type_complexity)]
@@ -166,6 +170,8 @@ thread_local! {
         save_after: None,
         status: StatusLine::default(),
         status_key: String::new(),
+        sel_cache: None,
+        sel_seen: None,
         status_base: Default::default(),
         view_menu: HMENU::default(),
         base: None,

@@ -28,6 +28,39 @@ pub(crate) fn collect_sel(n: Option<u32>, path: impl Fn(u32) -> Option<String>) 
     s
 }
 
+// What the gathered paths belong to: (pane, folder, selected count, SEL_REV, focused row).
+// The same key = the same selection, so its paths are used again instead of asked from the shell.
+pub(crate) type SelKey = (usize, String, i32, usize, i32);
+
+// Above this many selected items, a selection still changing (Shift+PgDn held) is gathered once it rests.
+pub(crate) const BIG_SEL: usize = 2000;
+pub(crate) const SEL_REST: Duration = Duration::from_millis(250);
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub(crate) enum SelStep {
+    Reuse,   // the stored paths are this selection's
+    Collect, // ask the shell now
+    Wait,    // a big selection that just changed: look again next tick
+}
+
+// cached: the stored paths have this key, sel: the selected count (big = over BIG_SEL items),
+// held: how long this key was seen unchanged (None = it wasn't seen on the last look).
+pub(crate) fn sel_step(cached: bool, sel: i32, held: Option<Duration>) -> SelStep {
+    if cached {
+        SelStep::Reuse
+    } else if sel as usize <= BIG_SEL || held.is_some_and(|d| d >= SEL_REST) {
+        SelStep::Collect
+    } else {
+        SelStep::Wait
+    }
+}
+
+// The stored selection paths are dropped (F5, panes moved: SEL_REV went with them).
+pub(crate) fn forget_sel(a: &mut App) {
+    a.sel_cache = None;
+    a.sel_seen = None;
+}
+
 pub(crate) unsafe fn selected_size(fv: &IFolderView2) -> Sel {
     let arr = fv.GetSelection(false).ok();
     let n = arr.as_ref().and_then(|a| a.GetCount().ok());
@@ -367,7 +400,10 @@ pub(crate) fn dir_bytes(root: &Path, stop: &dyn Fn() -> bool, paused: &dyn Fn() 
 // F5 in a file list: the shell reloads it, and the selection is summed again.
 pub(crate) fn resum_sizes() {
     want_size(&[], true);
-    app(|a| a.status_key.clear());
+    app(|a| {
+        a.status_key.clear();
+        forget_sel(a);
+    });
 }
 
 // Polled by a 300ms timer; the expensive parts only run when the active pane's state changed.
@@ -386,9 +422,11 @@ pub(crate) unsafe fn update_status() {
         let zoom = app(|a| a.zoom);
         let rev = SEL_REV[i].load(Ordering::Relaxed);
         let key = format!("{i}|{path}|{n}|{sel}|{}|{spec}|{busy}|{awake}|{zoom:?}|{rev}", fv.GetFocusedItem().unwrap_or(-1));
+        // a big selection still changing isn't settled: no key is kept (not the last settled one either:
+        // the selection may go back to it), so the next look runs this again
         if app(|a| a.status_key != key) {
-            status_base(i, &path, main, &fv, n, sel, &spec, busy, zoom);
-            app(|a| a.status_key = key);
+            let settled = status_base(i, &path, main, &fv, n, sel, &spec, busy, zoom);
+            app(|a| a.status_key = if settled { key } else { String::new() });
         }
     }
     let job = {
@@ -619,26 +657,63 @@ pub(crate) fn copy_note(ko: bool, awake: bool) -> &'static str {
     }
 }
 
+// The selection's size: Some(partial while collecting) = a size to show. The paths are asked from the shell
+// (up to 10k COM calls) only when the selection itself changed, not when the item count, filter or a copy did;
+// a big selection that just changed waits for a look where it stayed the same for SEL_REST.
+// false = waiting: the counts show now, the size once the selection rests.
+unsafe fn selection_size(i: usize, path: &str, fv: &IFolderView2, sel: i32, busy: bool) -> (Option<bool>, bool) {
+    if sel <= 0 || busy {
+        // a copy only pauses: the stored paths are summed again once it's done
+        want_size(&[], busy);
+        if sel <= 0 {
+            app(forget_sel);
+        }
+        return (None, true);
+    }
+    let key: SelKey = (i, path.to_string(), sel, SEL_REV[i].load(Ordering::Relaxed), fv.GetFocusedItem().unwrap_or(-1));
+    let (cache, seen) = app(|a| (a.sel_cache.take(), a.sel_seen.take()));
+    // another pane or folder: its paths go (up to 10k strings)
+    let cache = cache.filter(|(k, _)| k.0 == key.0 && k.1 == key.1);
+    let since = seen.filter(|(k, _)| *k == key).map(|(_, t)| t);
+    match sel_step(cache.as_ref().is_some_and(|(k, _)| *k == key), sel, since.map(|t| t.elapsed())) {
+        SelStep::Wait => {
+            // only the focus moved: the same items stay selected, the size shown and its sum go on
+            // (unless nothing is being summed, e.g. right after a copy: then no "(size unknown)" blink)
+            let summing = !size_job().target.is_empty();
+            let size = cache.as_ref().filter(|(k, _)| summing && (k.2, k.3) == (key.2, key.3)).map(|(_, s)| s.partial);
+            // the first sighting's time is kept, so other calls meanwhile don't push the wait back
+            app(|a| (a.sel_cache, a.sel_seen) = (cache, Some((key, since.unwrap_or_else(Instant::now)))));
+            (size, false)
+        }
+        step => {
+            let (k, s) = match (step, cache) {
+                (SelStep::Reuse, Some(c)) => c,
+                _ => (key, selected_size(fv)),
+            };
+            // reused too: after a copy the target was cleared, so the same paths are summed again
+            want_size(&s.paths, false);
+            let partial = s.partial;
+            app(|a| a.sel_cache = Some((k, s)));
+            (Some(partial), true)
+        }
+    }
+}
+
 // The status text around the selection size, the window title, and a new folder size job.
-pub(crate) unsafe fn status_base(i: usize, path: &str, main: HWND, fv: &IFolderView2, n: i32, sel: i32, spec: &str, busy: bool, zoom: Option<usize>) {
+// false = not settled (a big selection still changing): it runs again on the next look.
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn status_base(i: usize, path: &str, main: HWND, fv: &IFolderView2, n: i32, sel: i32, spec: &str, busy: bool, zoom: Option<usize>) -> bool {
     let title = window_title(&app(|a| a.panes[i].as_ref().map(|p| p.disp.clone()).unwrap_or_default()));
     if text_of(main) != title {
         _ = SetWindowTextW(main, &HSTRING::from(title));
     }
     let ko = KO.load(Ordering::Relaxed);
     let mut parts = vec![if ko { format!("항목 {n}개") } else { format!("{n} items") }];
-    let mut size = None;
-    let mut paths = Vec::new();
     if sel > 0 {
-        if !busy {
-            let s = selected_size(fv);
-            size = Some(s.partial);
-            paths = s.paths;
-        }
         parts.push(if ko { format!("{sel}개 선택") } else { format!("{sel} selected") });
     }
     STATUS_MAIN.store(main.0 as usize, Ordering::Relaxed);
-    want_size(&paths, busy);
+    let (size, settled) = selection_size(i, path, fv, sel, busy);
     let head = parts.join(ZONE_DOT);
     let mut parts = Vec::new();
     let mut disk = None;
@@ -661,4 +736,5 @@ pub(crate) unsafe fn status_base(i: usize, path: &str, main: HWND, fv: &IFolderV
         });
     }
     app(|a| a.status_base = (head, size, parts, disk));
+    settled
 }

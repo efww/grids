@@ -2031,6 +2031,23 @@ mod tests {
     }
 
     #[test]
+    fn selection_paths_step() {
+        let ms = Duration::from_millis;
+        // the same selection (only the item count, filter or a copy changed): no shell calls
+        let big = BIG_SEL as i32 + 1;
+        assert_eq!(sel_step(true, 50_000, None), SelStep::Reuse);
+        assert_eq!(sel_step(true, 5, Some(ms(0))), SelStep::Reuse);
+        // up to BIG_SEL (2000) items: gathered at once, as before
+        assert_eq!(sel_step(false, 1, None), SelStep::Collect);
+        assert_eq!(sel_step(false, 2000, None), SelStep::Collect);
+        // a bigger one (2001+) that just changed waits until the same key stayed for SEL_REST
+        assert_eq!(sel_step(false, 2001, None), SelStep::Wait);
+        assert_eq!(sel_step(false, big, Some(ms(249))), SelStep::Wait);
+        assert_eq!(sel_step(false, big, Some(SEL_REST)), SelStep::Collect);
+        assert_eq!(sel_step(false, big, Some(ms(300))), SelStep::Collect);
+    }
+
+    #[test]
     fn folder_size_job() {
         let (a, b) = (vec![r"C:\a".to_string()], vec![r"C:\b".to_string()]);
         let mut j = SizeJob::default();
