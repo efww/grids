@@ -192,6 +192,7 @@ def slots(layout, v, width_m=6.0):
         bay = 6.0 / m
         if getattr(layout, "rack_src", "") in ("3D 모델 랙", "둘 다"):
             ids = getattr(layout, "racks_model_ids", None) or []
+            moff = max(off, 0.5 / m)                    # never on the rack edge itself
             for ri, r in enumerate(getattr(layout, "racks_model", None) or []):   # 3D model racks: a column every bay, both sides
                 x0, y0, x1, y1 = r[:4]
                 rid = (ids[ri] if ri < len(ids) else "") or f"M{ri + 1}"
@@ -200,7 +201,7 @@ def slots(layout, v, width_m=6.0):
                 k = 0
                 for t in range(int(L // bay) + 1):
                     for sgn, edge in ((-1, y0 if horiz else x0), (1, y1 if horiz else x1)):
-                        p = (x0 + t * bay, edge + sgn * off) if horiz else (edge + sgn * off, y0 + t * bay)
+                        p = (x0 + t * bay, edge + sgn * moff) if horiz else (edge + sgn * moff, y0 + t * bay)
                         k += 1
                         if not blocked(*p):
                             out.append({"id": f"3D{rid}-{k}", "kind": "랙", "x": round(p[0], 1), "y": round(p[1], 1),

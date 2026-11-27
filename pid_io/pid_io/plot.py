@@ -366,8 +366,12 @@ class Layout:
             out = [list(r) for r in self.racks_model]
         else:
             out = [r[:4] for r in self.racks_auto if not r[-1]]
-            if self.rack_src == "둘 다":
-                out += [list(r) for r in self.racks_model]
+            if self.rack_src == "둘 다":                   # 3D fact > PLOT auto: a PLOT rack only where the model has none
+                def cover(r):
+                    area = max(1e-6, (r[2] - r[0]) * (r[3] - r[1]))
+                    return max((max(0, min(r[2], q[2]) - max(r[0], q[0])) * max(0, min(r[3], q[3]) - max(r[1], q[1])) / area
+                                for q in self.racks_model), default=0)
+                out = [r for r in out if cover(r) < 0.3] + [list(r) for r in self.racks_model]
         hw = width_m / 2 / self.m_per_pt
         for poly in self.racks_user:
             for (x0, y0), (x1, y1) in zip(poly, poly[1:]):
