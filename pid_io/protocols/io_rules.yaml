@@ -1,0 +1,48 @@
+# IO protocol - function code -> how the instrument is counted.
+#
+# First matching rule wins. Fields:
+#   match    : regex on the function code (e.g. PT, FV, XV)
+#   desc     : instrument type text for the index
+#   typical  : Typical ID in the concept checklist (Typical_Points sheet).
+#              '{SYS}' becomes ESD when the symbol is wired to an ESD interlock,
+#              else DCS. The typical decides every IO point, including the
+#              instrument's own one.
+#   io       : IO when no typical is used ([] = none)
+#   system   : DCS / ESD / FGS / '-' ; 'link' = ESD if wired to an ESD interlock
+#   gate     : checklist ID that must be ON for the row to be written (B07 ...)
+#   signal   : signal type text
+
+rules:
+  # ---------- no IO (local / mechanical) ----------
+  - {match: '^(PG|TG|LG|FG|PDG|DPG)$', desc: 'Local Gauge', io: [], system: '-', signal: '-', gate: B07}
+  - {match: '^(TW)$',                 desc: 'Thermowell', io: [], system: '-', signal: '-'}
+  - {match: '^(PSV|PRV|PCV|TCV|LCV|FCV|PSE|PVRV|VRV)$', desc: 'Self-actuated / Relief', io: [], system: '-', signal: '-', gate: B08}
+  - {match: '^(FE|FO|RO|SC|AE|TE|LS)$', desc: 'Primary element', io: [], system: '-', signal: '-'}
+
+  # ---------- F&G ----------
+  - {match: '^(GD|FD|SD|HD)$', desc: 'F&G Detector', io: [AI], system: FGS, signal: '4-20mA (HART)'}
+  - {match: '^(AA|AL|XA|XL)$', desc: 'Alarm / Light', io: [DO], system: link, signal: '24VDC'}
+
+  # ---------- analyzers / transmitters ----------
+  - {match: '^AT$',          desc: 'Analyzer Transmitter', typical: 'ANALYZER', system: link, signal: '4-20mA (HART)'}
+  - {match: '^[A-Z]{1,3}T$', desc: 'Transmitter', typical: 'TX-{SYS}', system: link, signal: '4-20mA (HART)'}
+
+  # ---------- valves ----------
+  - {match: '^(FV|LV|PV|TV|HV|PDV)$', desc: 'Control Valve', typical: 'CV', system: DCS, signal: '4-20mA (HART)'}
+  - {match: '^(XV|SDV|BDV|UV)$',      desc: 'On-Off Valve', typical: 'XV-{SYS}', system: link, signal: '24VDC'}
+  - {match: '^MOV$', desc: 'Motor Operated Valve', io: [DO], system: DCS, signal: '24VDC'}
+
+  # ---------- switches ----------
+  - {match: '^HS$', desc: 'Hand Switch', io: [DI], system: link, signal: '24VDC'}
+  - {match: '^[A-Z]S[HL]{1,2}$', desc: 'Switch', io: [DI], system: link, signal: '24VDC'}
+
+  # ---------- DCS soft functions (no physical IO) ----------
+  - {match: '^[A-Z]{1,2}(I|IC|R|RC|Y|AH|AL|AHH|ALL|AHL|Q|QI|C|K)$', desc: 'DCS Function', io: [], system: DCS, signal: '-'}
+
+  # ---------- fallback ----------
+  - {match: '.*', desc: 'Unclassified', io: [], system: '?', signal: '?', review: true}
+
+# Implied tags that are not drawn as balloons (gate = checklist switch).
+implied:
+  - {from: '^(TG|TE)$', tag: 'TW', desc: 'Thermowell', gate: B09}
+  - {from: '^TT$', tag: 'TW', desc: 'Thermowell', gate: B09, unless: 'TE'}

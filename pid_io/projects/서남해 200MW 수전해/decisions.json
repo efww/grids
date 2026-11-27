@@ -1,0 +1,18 @@
+{
+ "only_one": {},
+ "allowance": {},
+ "rows": {
+  "10-PSV-0404|Pressure Safety Valve": {
+   "action": "ok"
+  },
+  "11-PG-0101|Pressure Gauge": {
+   "action": "exclude"
+  },
+  "10-FE-0601|Flow Element": {
+   "action": "exclude"
+  },
+  "10-FT-0601|Flow Transmitter": {
+   "action": "exclude"
+  }
+ }
+}

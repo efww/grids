@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pid_io 3D 보기</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #eef1f4; font-family: "HDHarmonyApp", "Malgun Gothic", sans-serif; color: #1d2733; }
+  #c { position: fixed; inset: 0; }
+  #ui { position: fixed; left: 12px; top: 12px; width: 270px; background: rgba(255,255,255,.95); border: 1px solid #d5dbe1; padding: 12px 14px; font-size: 13px; max-height: calc(100vh - 50px); overflow: auto; }
+  #ui h1 { font-size: 15px; margin: 0 0 4px; }
+  #ui .sub { color: #66717d; font-size: 12px; margin-bottom: 8px; }
+  #ui label { display: flex; align-items: center; gap: 6px; margin: 3px 0; cursor: pointer; }
+  #ui i { display: inline-block; width: 12px; height: 12px; }
+  #tip { position: fixed; pointer-events: none; background: #1d2733; color: #fff; font-size: 12px; padding: 5px 8px; display: none; white-space: pre; }
+  #msg { position: fixed; left: 50%; top: 45%; transform: translate(-50%, -50%); font-size: 15px; color: #66717d; }
+  .k { color: #66717d; font-size: 11.5px; margin-top: 8px; line-height: 1.5; }
+</style>
+<script type="importmap">{"imports": {"three": "/vendor/three/three.module.min.js"}}</script>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="ui"><h1>3D 보기</h1><div class="sub" id="pn"></div><div id="layers"></div>
+  <div class="k">마우스 왼쪽 끌기 = 회전, 오른쪽 = 이동, 휠 = 확대.<br>z(높이)는 설정값 (랙 EL·AG·UG). 좌표: PLOT PLAN 왼쪽 위 = 원점, 도면 아래 = +Z.<br>계기 주황 = 위치 추정, 초록 = 장비로 찾음.</div>
+  <div class="k" id="cnt"></div></div>
+<div id="tip"></div><div id="msg">불러오는 중…</div>
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "/vendor/three/OrbitControls.js";
+
+const proj = new URLSearchParams(location.search).get("p") || "";
+document.getElementById("pn").textContent = proj;
+const r = await fetch(`/api/p/${encodeURIComponent(proj)}/data3d`);
+const D = await r.json();
+if (!r.ok) { document.getElementById("msg").textContent = D.error || "데이터를 만들 수 없습니다"; throw new Error(D.error); }
+document.getElementById("msg").remove();
+
+const canvas = document.getElementById("c");
+const ren = new THREE.WebGLRenderer({canvas, antialias: true});
+ren.setPixelRatio(Math.min(2, devicePixelRatio));
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xeef1f4);
+const cam = new THREE.PerspectiveCamera(45, 1, 0.5, 5000);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x99a0a8, 1.1));
+const sun = new THREE.DirectionalLight(0xffffff, 1.2); sun.position.set(100, 300, 150); scene.add(sun);
+
+const V = p => new THREE.Vector3(p.m[0], p.m[2], p.m[1]);        // plot x, EL, plot y (down the sheet)
+const groups = {};
+const LAYERS = [["plot", "PLOT PLAN (바닥)", "#bbb"], ["racks", "파이프랙", "#2c7fc0"], ["trays", "사다리 트레이", "#0b3d91"],
+  ["ug", "UG 트렌치", "#8a6d00"], ["cables", "간선 케이블", "#7e66cb"], ["branch", "분기 · Perforated", "#9aa5b1"],
+  ["supports", "서포트", "#15ad60"], ["joints", "익스펜션 조인트", "#c2185b"], ["jbs", "JB", "#f08a24"],
+  ["inst", "계기", "#ffba00"], ["equip", "장비 (태그 위치)", "#555"], ["rooms", "제어실 · IRP", "#e0002a"]];
+for (const [k] of LAYERS) { groups[k] = new THREE.Group(); scene.add(groups[k]); }
+const mat = c => new THREE.MeshLambertMaterial({color: c});
+const pick = [];
+function tag(o, text) { o.userData.tip = text; pick.push(o); return o; }
+function box(a, b, w, h, color, g, text) {          // a -> b (horizontal), width w across, height h
+  const len = a.distanceTo(b) || 0.3;
+  const m = new THREE.Mesh(new THREE.BoxGeometry(len, h, w), mat(color));
+  m.position.copy(a).add(b).multiplyScalar(.5);
+  m.rotation.y = -Math.atan2(b.z - a.z, b.x - a.x);
+  g.add(text ? tag(m, text) : m); return m;
+}
+function line(pts, color, g, text) {
+  const l = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({color}));
+  g.add(text ? tag(l, text) : l); return l;
+}
+
+// ground: the plot plan picture at its scale
+const [PW, PH] = D.frame.page_size_pt, k = D.frame.m_per_pt;
+const tex = new THREE.TextureLoader().load(`/api/p/${encodeURIComponent(proj)}/plot_png`);
+tex.colorSpace = THREE.SRGBColorSpace;
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(PW * k, PH * k), new THREE.MeshBasicMaterial({map: tex, transparent: true, opacity: .85}));
+ground.rotation.x = -Math.PI / 2; ground.position.set(PW * k / 2, -0.02, PH * k / 2); groups.plot.add(ground);
+
+for (const r of D.racks) {
+  const [x0, y0, x1, y1] = r.rect_m, h = r.top_el;
+  const m = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, 0.25, y1 - y0), new THREE.MeshLambertMaterial({color: 0x2c7fc0, transparent: true, opacity: .35}));
+  m.position.set((x0 + x1) / 2, h - 0.2, (y0 + y1) / 2); groups.racks.add(tag(m, `${r.id} · 최상단 EL ${h} m`));
+}
+for (const t of D.trays) {
+  const a = V(t.start), b = V(t.end);
+  if (t.kind === "ug_trench") { box(a, b, (t.width_mm || 300) / 1000, 0.35, 0x8a6d00, groups.ug, `${t.no} · 트렌치 ${t.width_mm} · ${t.length_m} m · 케이블 ${t.cables.length}`); continue; }
+  const n = t.tiers || 1, w = t.width_mm / 1000, off = (t.side_offset_mm || 0) / 1000;
+  const dir = new THREE.Vector3().subVectors(b, a).normalize(), side = new THREE.Vector3(-dir.z, 0, dir.x).multiplyScalar(off);
+  for (let i = 0; i < n; i++) {
+    const up = new THREE.Vector3(0, i * 0.3 + 0.075, 0);
+    box(a.clone().add(side).add(up), b.clone().add(side).add(up), w, 0.1, t.kind === "ladder_on_rack" ? 0x0b3d91 : 0x2c7fc0, groups.trays,
+      `${t.no} · ${t.class || ""} ${t.width_mm}${n > 1 ? " × " + n + "단" : ""} · Fill ${Math.round((t.fill || 0) * 100)}% · ${t.length_m} m`);
+  }
+}
+for (const c of D.cables) {
+  if (!c.path) continue;
+  const pts = c.path.map(V);
+  line(pts, c.kind === "분기" ? 0x9aa5b1 : c.kind === "통신" ? 0xd1335d : 0x7e66cb, c.kind === "분기" ? groups.branch : groups.cables,
+    `${c.no} · ${c.spec} · ${c.length_m} m · OD ${c.od_mm}`);
+}
+const SC = {L: 0x15ad60, T: 0x2c7fc0, H: 0x7e66cb, RT: 0xd1335d, RF: 0xf08a24, RC: 0x9db3c8, UB: 0x8a6d00, UM: 0x8a6d00, UP: 0x8a6d00};
+for (const s of D.supports) {
+  const p = V(s), top = s.top_el, base = s.m[2];
+  const post = ["L", "T", "H"].includes(s.type);
+  const h = post ? Math.max(0.2, top - base) : 0.3;
+  const m = new THREE.Mesh(new THREE.BoxGeometry(post ? 0.12 : 0.25, h, post ? 0.12 : 0.25), mat(SC[s.type] || 0x15ad60));
+  m.position.set(p.x, post ? base + h / 2 : top - 0.1, p.z);
+  groups.supports.add(tag(m, `${s.no} · ${s.name}${s.typical ? " · " + s.typical : ""} · EL ${top}`));
+}
+for (const j of D.joints || []) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.5), mat(0xc2185b));
+  m.position.copy(V(j)); groups.joints.add(tag(m, `${j.no} 익스펜션 스플라이스 · ${j.seg}`));
+}
+for (const j of D.jbs) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.8, 0.4), mat(0xf08a24));
+  m.position.copy(V(j)); groups.jbs.add(tag(m, `${j.no} · ${j.size} · ${j.kind} · ${j.used} 사용`));
+}
+for (const x of D.instruments) {
+  const m = new THREE.Mesh(new THREE.SphereGeometry(0.35, 10, 8), mat(x.estimated ? 0xffa000 : 0x15ad60));
+  m.position.copy(V(x)); groups.inst.add(tag(m, `${x.tag}${x.jb ? " → " + x.jb : ""}\n위치: ${x.src}`));
+}
+for (const e of D.equipment) {
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, 2, 10), mat(0x555555));
+  m.position.copy(V(e)).add(new THREE.Vector3(0, 1, 0)); groups.equip.add(tag(m, `${e.tag} (PLOT 태그 글자 위치)`));
+}
+for (const r of D.rooms) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(4, 3, 4), new THREE.MeshLambertMaterial({color: 0xe0002a, transparent: true, opacity: .6}));
+  m.position.copy(V(r)).add(new THREE.Vector3(0, 1.5, 0)); groups.rooms.add(tag(m, `${r.name}`));
+}
+
+// layer switches
+const lay = document.getElementById("layers");
+for (const [key, lab, col] of LAYERS) {
+  const id = "ly-" + key, n = groups[key].children.length;
+  lay.insertAdjacentHTML("beforeend", `<label><input type="checkbox" id="${id}" checked><i style="background:${col}"></i>${lab} <span style="color:#99a">${key === "plot" ? "" : n}</span></label>`);
+  document.getElementById(id).onchange = e => { groups[key].visible = e.target.checked; };
+}
+document.getElementById("cnt").textContent = `${D.format} ${D.version} · ${D.made} · 축척 ${k.toFixed(4)} m/pt`;
+
+// camera on the control room (or the middle of everything)
+const bb = new THREE.Box3().setFromObject(groups.trays.children.length ? groups.trays : groups.inst);
+const ctr = D.rooms[0] ? V(D.rooms[0]) : bb.getCenter(new THREE.Vector3());
+const size = bb.getSize(new THREE.Vector3()).length() || 200;
+const ctl = new OrbitControls(cam, canvas);
+ctl.target.copy(ctr);
+cam.position.set(ctr.x + size * .35, size * .45, ctr.z + size * .55);
+ctl.update();
+
+const tip = document.getElementById("tip"), ray = new THREE.Raycaster(), mouse = new THREE.Vector2();
+ray.params.Line.threshold = 0.5;
+canvas.addEventListener("pointermove", e => {
+  mouse.set(e.clientX / innerWidth * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  ray.setFromCamera(mouse, cam);
+  const hit = ray.intersectObjects(pick.filter(o => o.parent.visible), false)[0];
+  if (hit) { tip.style.display = "block"; tip.style.left = e.clientX + 14 + "px"; tip.style.top = e.clientY + 10 + "px"; tip.textContent = hit.object.userData.tip; }
+  else tip.style.display = "none";
+});
+function size_() { ren.setSize(innerWidth, innerHeight, false); cam.aspect = innerWidth / innerHeight; cam.updateProjectionMatrix(); }
+addEventListener("resize", size_); size_();
+ren.setAnimationLoop(() => { ctl.update(); ren.render(scene, cam); });
+</script>
+</body>
+</html>
