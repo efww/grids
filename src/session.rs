@@ -44,6 +44,7 @@ pub(crate) struct Session {
     pub(crate) updates: bool,          // look for a newer release now and then (off = no network at all), app-wide
     pub(crate) key_tips: bool,         // a mouse action with a shortcut names it on the status line (View menu), app-wide
     pub(crate) key_tips_seen: [u8; TIP_N], // per action (TIP_KEYS): times its tip showed; TIP_LEARNED = its key was used
+    pub(crate) ctrl_hints: bool,       // Ctrl held alone shows each visible button's shortcut as a keycap (View menu), app-wide
 }
 
 impl Default for Session {
@@ -89,6 +90,7 @@ impl Default for Session {
             updates: true,
             key_tips: true,
             key_tips_seen: [0; TIP_N],
+            ctrl_hints: true,
         }
     }
 }
@@ -259,6 +261,7 @@ impl Session {
                 "update_check" => s.updates = v.trim() != "0",
                 "key_tips" => s.key_tips = v.trim() != "0",
                 "key_tips_seen" => s.key_tips_seen = tips_seen_parse(v),
+                "ctrl_hints" => s.ctrl_hints = v.trim() != "0",
                 "lang" => s.ko = v.trim() == "ko",
                 "session" => s.file = v.trim().to_string(),
                 "fav" if !v.trim().is_empty() => s.favs.push(v.trim().to_string()),
@@ -341,6 +344,7 @@ impl Session {
         if self.key_tips_seen.iter().any(|&n| n != 0) {
             o += &format!("key_tips_seen={}\n", self.key_tips_seen.iter().map(|n| n.to_string()).collect::<String>());
         }
+        o += &format!("ctrl_hints={}\n", self.ctrl_hints as u8);
         o += &format!("lang={}\n", if self.ko { "ko" } else { "en" });
         if !self.file.is_empty() && one(&self.file) {
             o += &format!("session={}\n", self.file);
@@ -384,10 +388,10 @@ impl Session {
 
     /// What goes into a named session file: no window position, no pointer to itself, no favourites or recent folders.
     pub(crate) fn snapshot(&self) -> String {
-        // shortcut tips are app-wide: a session file carries the default switch and no counts
-        let (key_tips, key_tips_seen) = (true, [0; TIP_N]);
+        // shortcut tips and Ctrl hints are app-wide: a session file carries the default switches and no counts
+        let (key_tips, key_tips_seen, ctrl_hints) = (true, [0; TIP_N], true);
         // the tree width is not part of a session's layout (take_layout), so no DPI for it either
-        Session { win: None, places: Vec::new(), side_dpi: 0, file: String::new(), favs: Vec::new(), recent: Vec::new(), order: Vec::new(), rn_presets: Vec::new(), key_tips, key_tips_seen, ..self.clone() }.to_ini()
+        Session { win: None, places: Vec::new(), side_dpi: 0, file: String::new(), favs: Vec::new(), recent: Vec::new(), order: Vec::new(), rn_presets: Vec::new(), key_tips, key_tips_seen, ctrl_hints, ..self.clone() }.to_ini()
     }
 
     /// Takes grid + folders from a named session; window position and sidebar width stay as they are.
@@ -1187,6 +1191,7 @@ mod tests {
             updates: false,
             key_tips: false,
             key_tips_seen: [4, 0, 1, 2, 3, 4, 0, 1, 2],
+            ctrl_hints: false,
         }
     }
 
@@ -1234,6 +1239,7 @@ mod tests {
             "ev_cols=0.2500,0.5000,0.7500",
             "key_tips=0",
             "key_tips_seen=401234012",
+            "ctrl_hints=0",
             "lang=ko",
             r"session=C:\Grids\sessions\일.grids",
             "order=15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0",
@@ -1280,6 +1286,7 @@ mod tests {
             "ev_sort=1",
             "update_check=1",
             "key_tips=1",
+            "ctrl_hints=1",
             "lang=en",
         ];
         assert_eq!(Session::default().to_ini(), lines(&want));
@@ -1378,6 +1385,7 @@ mod tests {
         assert_eq!((s.accent_dark, s.order.len(), s.tints.iter().all(|&t| t == 0)), (DARK.accents[1].1, 0, true));
         assert!(!s.accent_sys); // before accent_sys=: the saved colour, as always
         assert_eq!((s.key_tips, s.key_tips_seen), (true, [0; TIP_N]));
+        assert!(s.ctrl_hints); // before ctrl_hints=: holding Ctrl shows the keycaps
         assert!(!s.tray); // before tray=: stays on the taskbar
         assert!(s.tree_quick); // before tree_quick=: Quick access shown atop the tree
         assert!(s.bring_here); // before follow_desktop=: called, Grids comes to the desktop in use
@@ -1478,6 +1486,8 @@ mod tests {
         assert_eq!(seen(""), [0; TIP_N]);
         assert!(!Session::parse("key_tips=0\n").key_tips);
         assert!(Session::parse("key_tips=1\n").key_tips);
+        assert!(!Session::parse("ctrl_hints=0\n").ctrl_hints);
+        assert!(Session::parse("ctrl_hints=1\n").ctrl_hints);
         let s = Session { key_tips_seen: [0, 0, 0, 0, 0, 0, 0, 2, 0], ..Session::default() };
         assert!(s.to_ini().contains("key_tips_seen=000000020\n"));
         assert_eq!(Session::parse(&s.to_ini()), s);
@@ -1538,9 +1548,10 @@ mod tests {
             updates: true,
             key_tips: true,
             key_tips_seen: [1, 1, 1, 1, 0, 0, 0, 0, 0],
+            ctrl_hints: true,
         };
         let snap = b.snapshot();
-        for key in ["win=", "win_at=", "session=", "fav=", "recent=", "order=", "rename_preset=", "key_tips_seen=", "key_tips=0", "side_dpi="] {
+        for key in ["win=", "win_at=", "session=", "fav=", "recent=", "order=", "rename_preset=", "key_tips_seen=", "key_tips=0", "ctrl_hints=0", "side_dpi="] {
             assert!(!snap.lines().any(|l| l.starts_with(key)), "{key} in a session file");
         }
         let mut got = a.clone();

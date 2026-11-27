@@ -621,7 +621,7 @@ mod tests {
         // the view menu's copies of toolbar buttons send those buttons' commands, already counted once above
         assert!(VIEW_BUTTONS.iter().all(|v| main.iter().filter(|&&id| id == v.0).count() == 1));
         // (c) timers, per window: SetTimer with a number already running replaces that timer
-        distinct("main timers", &[TIMER_STATUS, TIMER_REVEAL, TIMER_FOCUS, dialog_jump::TIMER_DLG_RETRY, dialog_jump::TIMER_DLG_RESTORE, TIMER_SHELL, TIMER_EV_SELECT, TIMER_BIN, TIMER_TREE_SYNC, TIMER_PANE_LOAD]);
+        distinct("main timers", &[TIMER_STATUS, TIMER_REVEAL, TIMER_FOCUS, dialog_jump::TIMER_DLG_RETRY, dialog_jump::TIMER_DLG_RESTORE, TIMER_SHELL, TIMER_EV_SELECT, TIMER_BIN, TIMER_TREE_SYNC, TIMER_PANE_LOAD, TIMER_CTRL_HINT]);
         distinct("pane timers", &[TIMER_FILTER, TIMER_SETTLE, TIMER_SPIN, TIMER_LOAD]);
         // (d) WM_APP messages main_proc handles (not other windows' own: WM_TOUR_END, WM_RENAMED, the switcher's)
         let msgs = [
@@ -3599,6 +3599,98 @@ mod tests { tr("in", "안") }
         assert_eq!(menu_key_step(Some(f10), false, alt, false, none), (None, false));
     }
 
+    // Ctrl pressed alone arms the keycaps; its repeats keep them; Shift, Alt (AltGr), Win or any other key drops them.
+    #[test]
+    fn ctrl_hint_keys() {
+        let (ctrl, alt, shift, c, f) = (VK_CONTROL.0, VK_MENU.0, VK_SHIFT.0, VK_C.0, VK_F.0);
+        let only = [true, false, false, false];
+        // presses in order (key, down, repeat, mods): (armed at the end, did any press start the wait)
+        let run = |keys: &[(u16, bool, bool, [bool; 4])]| {
+            let (mut armed, mut started) = (false, false);
+            for &(vk, down, repeat, mods) in keys {
+                let (a, s) = ctrl_hint_step(armed, down, vk, repeat, mods);
+                (armed, started) = (a, started || s);
+            }
+            (armed, started)
+        };
+        assert_eq!(run(&[(ctrl, true, false, only)]), (true, true));
+        assert_eq!(run(&[(ctrl, true, false, only), (ctrl, true, true, only), (ctrl, true, true, only)]), (true, true)); // held
+        assert_eq!(ctrl_hint_step(true, true, ctrl, true, only), (true, false)); // a repeat starts no new wait
+        assert_eq!(run(&[(VK_LCONTROL.0, true, false, only)]), (true, true));
+        // Ctrl+C, Ctrl+Shift+F, AltGr (Ctrl then Alt), Shift then Ctrl, Win+Ctrl, Ctrl let go: never armed after
+        assert_eq!(run(&[(ctrl, true, false, only), (c, true, false, only)]), (false, true));
+        assert_eq!(run(&[(ctrl, true, false, only), (shift, true, false, [true, true, false, false]), (f, true, false, [true, true, false, false])]).0, false);
+        assert_eq!(run(&[(ctrl, true, false, only), (alt, true, false, [true, false, true, false])]).0, false);
+        assert_eq!(run(&[(shift, true, false, [false, true, false, false]), (ctrl, true, false, [true, true, false, false])]), (false, false));
+        assert_eq!(run(&[(ctrl, true, false, [true, false, false, true])]), (false, false));
+        assert_eq!(run(&[(ctrl, true, false, only), (ctrl, false, false, [false; 4])]), (false, true));
+        // a key let go that went down before Ctrl, and Ctrl's repeat after that: still disarmed
+        assert_eq!(run(&[(ctrl, true, false, only), (c, false, false, only), (ctrl, true, true, only)]), (false, true));
+    }
+
+    // Each keycap's key comes from its control's tooltip (both languages), and is one the shortcut list (Ctrl+/) has.
+    #[test]
+    fn ctrl_hint_tip_keys() {
+        assert_eq!(tip_key("View (Alt or F10): hidden files").as_deref(), Some("Alt / F10"));
+        assert_eq!(tip_key("보기 (Alt 또는 F10): 숨김 파일").as_deref(), Some("Alt / F10"));
+        assert_eq!(tip_key("Add to favourites (filled star: remove)  (Ctrl+Shift+B)").as_deref(), Some("Ctrl+Shift+B"));
+        assert_eq!(tip_key("Favourite folders (Ctrl+B, then 1 … 9) · Ctrl+Shift+B: add").as_deref(), Some("Ctrl+B"));
+        assert_eq!(tip_key("Light / dark theme (High contrast is on — Windows colours are used)"), None);
+        assert_eq!(tip_key("Layout: click = even grid"), None);
+        let listed: std::collections::BTreeSet<String> =
+            app_key_rows(KEYS_EN).into_iter().flatten().flat_map(|c| c[c.find(':').unwrap() + 1..].split('…').map(|k| k.trim().to_string()).collect::<Vec<_>>()).collect();
+        let check = |key: &str| {
+            for k in key.split(" / ") {
+                assert!(listed.contains(k), "keycap {k:?} is not in the shortcut list (Ctrl+/)");
+            }
+        };
+        let bar: Vec<(i32, Option<String>)> = toolbar_tips().iter().map(|&(id, _, tip)| (id, tip_key(tip))).collect();
+        let want = [(ID_TB_LOAD, "Ctrl+O"), (ID_TB_VIEW, "Alt / F10"), (ID_TB_FAV, "Ctrl+B"), (ID_TB_EV, "Ctrl+Shift+F")];
+        for (id, k) in &bar {
+            assert_eq!(k.as_deref(), want.iter().find(|w| w.0 == *id).map(|w| w.1), "toolbar button {id}");
+        }
+        let pane = ["Alt+←", "Alt+→", "Alt+↑", "Ctrl+M", "Ctrl+Shift+B"];
+        for (k, (_, _, (en, ko))) in PANE_TIPS.iter().enumerate() {
+            assert_eq!((tip_key(en).as_deref(), tip_key(ko).as_deref()), (Some(pane[k]), Some(pane[k])), "{en}");
+        }
+        assert_eq!((tip_key(FILTER_TIP.0).as_deref(), tip_key(FILTER_TIP.1).as_deref()), (Some("Ctrl+F"), Some("Ctrl+F")));
+        let tree = (VIEW_TOP[0].1.split('\t').nth(1), VIEW_TOP[0].2.split('\t').nth(1));
+        assert_eq!(tree, (Some("Ctrl+Shift+E"), Some("Ctrl+Shift+E")));
+        for k in want.iter().map(|w| w.1).chain(pane).chain(["Ctrl+F", "Ctrl+Shift+E", "Ctrl+S", "Ctrl+L", "Ctrl+1", "Ctrl+9", "Ctrl+/"]) {
+            check(k);
+        }
+    }
+
+    // Keycaps sit under their controls inside the window; one that would touch another drops a row once, else goes.
+    #[test]
+    fn ctrl_hint_layout() {
+        let r = |l: i32, t: i32, rt: i32, b: i32| RECT { left: l, top: t, right: rt, bottom: b };
+        let area = r(0, 0, 400, 300);
+        // three 24 px buttons in a row with 36 px caps: the middle one drops a row, the third fits beside the first
+        let btn = |x: i32| (r(x, 10, x + 24, 34), 36);
+        let got = hint_rects(&[btn(100), btn(124), btn(148)], 16, 2, area);
+        assert_eq!(got[0], Some(r(94, 36, 130, 52)));
+        assert_eq!(got[1], Some(r(118, 54, 154, 70)));
+        assert_eq!(got[2], Some(r(142, 36, 178, 52)));
+        // a fourth on top of all of them: both rows taken, so it is left out
+        let got = hint_rects(&[btn(100), btn(124), btn(100)], 16, 2, area);
+        assert_eq!(got[2], None);
+        // kept inside the window at the edges; one under the bottom edge is left out
+        let got = hint_rects(&[(r(0, 10, 10, 20), 40), (r(395, 10, 400, 20), 40), (r(100, 290, 120, 295), 30)], 16, 2, area);
+        assert_eq!((got[0].map(|c| c.left), got[1].map(|c| c.right), got[2]), (Some(0), Some(400), None));
+        // a cap never overlaps or touches another
+        let many: Vec<(RECT, i32)> = (0..30).map(|k| (r(k * 13, 10, k * 13 + 24, 34), 30 + k % 3 * 10)).collect();
+        let placed: Vec<RECT> = hint_rects(&many, 16, 2, area).into_iter().flatten().collect();
+        for (i, a) in placed.iter().enumerate() {
+            for b in &placed[i + 1..] {
+                assert!(a.right + 2 <= b.left || b.right + 2 <= a.left || a.bottom + 2 <= b.top || b.bottom + 2 <= a.top, "{a:?} {b:?}");
+            }
+        }
+        // the see-through colour is none of the caps' own
+        assert_eq!(hint_key_colour(&[0xFFFFFF, 0, 0x202020]), 0xFF00FF);
+        assert_eq!(hint_key_colour(&[0xFF00FF, 0x00FF01, 0]), 0x010203);
+    }
+
     // The letter a menu item underlines: the char after a lone '&' ("&&" is a literal '&').
     fn mnemonic(s: &str) -> Option<char> {
         let mut it = s.chars();
@@ -5500,8 +5592,8 @@ mod tests { tr("in", "안") }
     fn listed_keys_are_handled() {
         // not key()'s to route: Alt / F10 (pre_translate opens the view menu when let go), Windows-wide hotkeys
         // (Win+Alt+E, Ctrl+Alt+G), and Explorer's own keys handed to the view (of that row F5 is ours: Refresh);
-        // the preview's rows are its own (peek_key)
-        let skip = [":Alt", ":F10", ":Win+Alt+E", ":Ctrl+Alt+G", ":F2", ":Del", ":Ctrl+C/X/V"];
+        // Ctrl held alone is pre_translate's too (the keycaps); the preview's rows are its own (peek_key)
+        let skip = [":Alt", ":F10", ":Ctrl", ":Win+Alt+E", ":Ctrl+Alt+G", ":F2", ":Del", ":Ctrl+C/X/V"];
         let caps: Vec<String> = app_key_rows(KEYS_EN).into_iter().flatten().collect();
         for s in skip {
             assert!(caps.iter().any(|c| c == s), "{s} is no longer listed: take it out of skip");

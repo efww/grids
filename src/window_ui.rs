@@ -132,6 +132,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             }
             WM_TRAY => tray_msg(h, wp, lp),
             WM_TIMER if wp.0 == TIMER_TRAY => tray_retry(h),
+            WM_TIMER if wp.0 == TIMER_CTRL_HINT => ctrl_hint_tick(h),
             m if m != 0 && m == taskbar_msg() => taskbar_created(h),
             // WA_ACTIVE (Alt+Tab, taskbar, a popup closing, a second grids.exe): focus back where it was.
             // WA_CLICKACTIVE: as before, so the click lands on what was under it (crumbs stay crumbs); TIMER_FOCUS
@@ -140,6 +141,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 MENU_ARM.set(None); // an Alt+Tab's Alt: let go here or elsewhere, it opens no menu
                 let (state, min) = ((wp.0 & 0xffff) as u32, wp.0 >> 16 & 0xffff != 0);
                 if state == WA_INACTIVE {
+                    ctrl_hint_off(); // its Ctrl let go elsewhere never comes here
                     end_nudge(); // Alt+Tab mid Ctrl+Alt+arrow: that key release never comes here
                     keep_focus(h);
                     toolbar_away();
@@ -456,6 +458,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 ID_EXT => toggle_extensions(),
                 ID_DBLUP => app(|a| a.s.dblup ^= true),
                 ID_KEY_TIPS => app(|a| a.s.key_tips ^= true),
+                ID_CTRL_HINTS => app(|a| a.s.ctrl_hints ^= true),
                 ID_TABS => toggle_tabs(),
                 ID_FOLLOW => {
                     if app(|a| {
@@ -523,6 +526,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 check(ID_DEFOPEN, default_open_on()); // the same
                 check(ID_UPDATES, app(|a| a.s.updates));
                 check(ID_KEY_TIPS, app(|a| a.s.key_tips));
+                check(ID_CTRL_HINTS, app(|a| a.s.ctrl_hints));
                 check(ID_LANG, KO.load(Ordering::Relaxed));
                 check(ID_STAR, starred());
                 // following Windows: only that item ticked (a preset of the same colour unticked too)
@@ -574,7 +578,9 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 _ = PostMessageW(Some(h), WM_OPEN_ARGS, WPARAM(0), LPARAM(0));
                 return LRESULT(1);
             }
+            WM_MOVE => ctrl_hint_off(), // moved by a program (a second start's load, a monitor change): keycaps off
             WM_DPICHANGED => {
+                ctrl_hint_off();
                 kids_cancel();
                 close_tour(false); // measured for the old DPI
                 let dpi = (wp.0 & 0xffff) as i32;
@@ -2016,9 +2022,10 @@ pub(crate) const VIEW_BUTTONS: [(usize, &str, &str); 2] = [
     (ID_TB_LAYOUT as usize, "Change layout…", "레이아웃 바꾸기…"),
     (ID_TB_THEME as usize, "Light / dark theme", "라이트/다크 테마"),
 ];
-pub(crate) const VIEW_END: [(usize, &str, &str); 7] = [
+pub(crate) const VIEW_END: [(usize, &str, &str); 8] = [
     (ID_TOUR, "Getting started tour", "처음 사용 안내"),
     (ID_KEY_TIPS, "Show shortcut tips on the status line", "상태줄에 단축키 팁 표시"),
+    (ID_CTRL_HINTS, "Hold Ctrl to show shortcut hints", "Ctrl을 길게 눌러 단축키 보기"),
     (ID_KEYS, "Keyboard shortcuts\tCtrl+/", "단축키\tCtrl+/"),
     (ID_HELP, "Help (online)\tF1", "도움말 (온라인)\tF1"),
     (ID_UPDATES, "Check for updates", "업데이트 확인"),

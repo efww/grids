@@ -605,6 +605,256 @@ pub(crate) fn menu_key_step(armed: Option<u16>, down: bool, vk: u16, repeat: boo
     }
 }
 
+// ---------- Ctrl held alone: each visible button's shortcut as a keycap ----------
+// Office's KeyTips and macOS CheatSheet: the keys of what is on screen, without hunting tooltips or the Ctrl+/ list.
+
+pub(crate) const TIMER_CTRL_HINT: usize = 1116; // on main: Ctrl held long enough, then the shown keycaps' watch
+const HINT_WAIT_MS: u32 = 800;
+const HINT_WATCH_MS: u32 = 100;
+
+thread_local! {
+    // 0 nothing, 1 Ctrl down and waiting (HINT_WAIT_MS), 2 keycaps shown
+    pub(crate) static CTRL_HINT: Cell<u8> = const { Cell::new(0) };
+    static HINT_AT: Cell<POINT> = const { Cell::new(POINT { x: 0, y: 0 }) }; // the pointer when Ctrl went down
+    static HINT_WND: Cell<HWND> = const { Cell::new(HWND(std::ptr::null_mut())) };
+}
+
+/// Ctrl pressed with neither Shift, Alt nor Win arms the keycaps (a fresh press starts the wait); its own repeats
+/// keep them armed; any other key, down or up, disarms them (AltGr's Alt, Ctrl+C ...), as menu_key_step does.
+/// Mouse buttons, the wheel and deactivation disarm them too (pre_translate, main_proc). Gives (armed, start).
+pub(crate) fn ctrl_hint_step(armed: bool, down: bool, vk: u16, repeat: bool, [_, shift, alt, win]: [bool; 4]) -> (bool, bool) {
+    let ctrl = [VK_CONTROL.0, VK_LCONTROL.0, VK_RCONTROL.0].contains(&vk);
+    match down {
+        true if ctrl && repeat => (armed, false),
+        true if ctrl => (!shift && !alt && !win, !shift && !alt && !win),
+        _ => (false, false),
+    }
+}
+
+/// The key a tooltip names in brackets: the first "( … )" that starts with a key, its keys joined " / ".
+/// "View (Alt or F10): …" gives "Alt / F10"; "(filled star: remove)  (Ctrl+Shift+B)" gives "Ctrl+Shift+B".
+pub(crate) fn tip_key(tip: &str) -> Option<String> {
+    let is_key = |w: &str| {
+        ["Ctrl+", "Alt+", "Shift+", "Win+"].iter().any(|m| w.len() > m.len() && w.starts_with(m))
+            || w == "Alt"
+            || w.strip_prefix('F').and_then(|n| n.parse::<u8>().ok()).is_some_and(|n| (1..=12).contains(&n))
+    };
+    tip.split('(').skip(1).find_map(|p| {
+        let words: Vec<&str> = p.split(')').next()?.split([' ', ',', ';']).filter(|w| !w.is_empty()).collect();
+        words.first().is_some_and(|w| is_key(w)).then(|| words.into_iter().filter(|w| is_key(w)).collect::<Vec<_>>().join(" / "))
+    })
+}
+
+/// Keycaps laid out: each (control, cap width) centred under its control and kept inside `area`, `h` tall. One that
+/// would touch a cap already placed (or a `taken` one) tries one row lower, else it is left out; so is one that
+/// doesn't fit in `area`.
+pub(crate) fn hint_rects(wants: &[(RECT, i32)], h: i32, gap: i32, area: RECT) -> Vec<Option<RECT>> {
+    let mut placed: Vec<RECT> = Vec::new();
+    let mut out = Vec::new();
+    for &(c, w) in wants {
+        let left = ((c.left + c.right - w) / 2).min(area.right - w).max(area.left);
+        let at = |row: i32| {
+            let top = c.bottom + gap + row * (h + gap);
+            RECT { left, top, right: left + w, bottom: top + h }
+        };
+        let free = |r: &RECT| !placed.iter().any(|p| r.left < p.right + gap && p.left < r.right + gap && r.top < p.bottom + gap && p.top < r.bottom + gap);
+        let fits = |r: &RECT| r.right <= area.right && r.top >= area.top && r.bottom <= area.bottom;
+        let r = [at(0), at(1)].into_iter().find(|r| fits(r) && free(r));
+        placed.extend(r);
+        out.push(r);
+    }
+    out
+}
+
+// A colour for the overlay's see-through background that none of the caps' colours is (they are drawn opaque).
+pub(crate) fn hint_key_colour(used: &[u32]) -> u32 {
+    [0xFF00FF, 0x00FF01, 0x010203].into_iter().find(|k| !used.contains(k)).unwrap_or(0xFF00FF)
+}
+
+// Ctrl went down alone in the main window: the wait starts (nothing while switched off in the View menu).
+unsafe fn ctrl_hint_arm(main: HWND) {
+    ctrl_hint_off();
+    if !app(|a| a.s.ctrl_hints) {
+        return;
+    }
+    let mut at = POINT::default();
+    _ = GetCursorPos(&mut at);
+    HINT_AT.set(at);
+    CTRL_HINT.set(1);
+    SetTimer(Some(main), TIMER_CTRL_HINT, HINT_WAIT_MS, None);
+}
+
+// The keycaps gone, the wait or watch stopped. Cheap when there is nothing (called on every click and key-up).
+pub(crate) unsafe fn ctrl_hint_off() {
+    if CTRL_HINT.replace(0) == 0 {
+        return;
+    }
+    _ = KillTimer(Some(app(|a| a.main)), TIMER_CTRL_HINT);
+    let w = HINT_WND.get();
+    if !w.is_invalid() {
+        _ = ShowWindow(w, SW_HIDE);
+    }
+}
+
+// Sticky Keys leaves Ctrl down after a tap: the keycaps would stay up, so they never come.
+unsafe fn sticky_keys() -> bool {
+    use windows::Win32::UI::Accessibility::{SKF_STICKYKEYSON, STICKYKEYS};
+    let mut sk = STICKYKEYS { cbSize: size_of::<STICKYKEYS>() as u32, ..Default::default() };
+    SystemParametersInfoW(SPI_GETSTICKYKEYS, sk.cbSize, Some(&mut sk as *mut _ as _), SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0)).is_ok() && (sk.dwFlags & SKF_STICKYKEYSON).0 != 0
+}
+
+// TIMER_CTRL_HINT: after the wait the keycaps show if Ctrl alone is still down, the pointer stayed put (no Ctrl+drag
+// or Ctrl+click on its way), Grids itself is in front (no switcher, Everything, shortcut list, preview) and no menu,
+// drag or resize runs; then the same check every HINT_WATCH_MS hides them as soon as one fails, as a Ctrl let go
+// inside a menu's loop or in another app never reaches pre_translate.
+pub(crate) unsafe fn ctrl_hint_tick(main: HWND) {
+    let down = |k: VIRTUAL_KEY| GetAsyncKeyState(k.0 as i32) < 0;
+    let alone = down(VK_CONTROL) && ![VK_SHIFT, VK_MENU, VK_LWIN, VK_RWIN, VK_LBUTTON, VK_RBUTTON, VK_MBUTTON, VK_XBUTTON1, VK_XBUTTON2].into_iter().any(down);
+    let (enabled, menu, busy) = hold_state(main);
+    let front = GetForegroundWindow() == main && IsWindowVisible(main).as_bool() && !IsIconic(main).as_bool();
+    let ok = alone && front && enabled && !menu && !busy && app(|a| a.s.ctrl_hints) && !sticky_keys();
+    let mut at = POINT::default();
+    _ = GetCursorPos(&mut at);
+    let from = HINT_AT.get();
+    match CTRL_HINT.get() {
+        1 if ok && (at.x - from.x).abs() <= 4 && (at.y - from.y).abs() <= 4 => {
+            if show_ctrl_hints(main) {
+                CTRL_HINT.set(2);
+                SetTimer(Some(main), TIMER_CTRL_HINT, HINT_WATCH_MS, None);
+            } else {
+                ctrl_hint_off();
+            }
+        }
+        2 if ok => {}
+        _ => ctrl_hint_off(),
+    }
+}
+
+// The keycaps of what shows now, in main's client coordinates: (control, key, from its left edge rather than centred).
+unsafe fn hint_targets(main: HWND, dpi: i32) -> Vec<(RECT, String, bool)> {
+    let s = |v: i32| v * dpi / 96;
+    // a visible control's rectangle in main's client area
+    let place = |h: HWND| -> Option<RECT> {
+        if h.is_invalid() || !IsWindowVisible(h).as_bool() {
+            return None;
+        }
+        let mut r = RECT::default();
+        _ = GetWindowRect(h, &mut r);
+        let (mut a, mut b) = (POINT { x: r.left, y: r.top }, POINT { x: r.right, y: r.bottom });
+        _ = ScreenToClient(main, &mut a);
+        _ = ScreenToClient(main, &mut b);
+        (b.x > a.x && b.y > a.y).then_some(RECT { left: a.x, top: a.y, right: b.x, bottom: b.y })
+    };
+    let mut out = Vec::new();
+    // the toolbar, left to right (Save's tooltip is made elsewhere, with the session's name: its key is given here)
+    let mut keyed: Vec<(i32, String)> = vec![(ID_TB_SAVE, "Ctrl+S".into())];
+    keyed.extend(toolbar_tips().into_iter().filter_map(|(id, _, tip)| Some((id, tip_key(tip)?))));
+    let mut bar: Vec<(RECT, String, bool)> = keyed.into_iter().filter_map(|(id, k)| Some((place(GetDlgItem(Some(main), id).ok()?)?, k, false))).collect();
+    bar.sort_by_key(|t| t.0.left);
+    out.extend(bar);
+    // the folder tree, at its top left: the key of its View menu item
+    if let (Some(r), Some(k)) = (place(app(|a| a.tree_hwnd)), VIEW_TOP[0].1.split('\t').nth(1)) {
+        out.push((RECT { left: r.left + s(4), right: r.left + s(4), top: r.top, bottom: r.top }, k.into(), true));
+    }
+    // each pane's header, left to right: number (Ctrl+1 … 9), back, forward, up, address, ⇄, filter, ★
+    let panes: Vec<HWND> = app(|a| a.panes.iter().take(a.s.panes()).map(|p| p.as_ref().map_or(HWND::default(), |p| p.hwnd)).collect());
+    for (i, &h) in panes.iter().enumerate() {
+        let Some(pr) = place(h) else { continue };
+        let pg = pane_geo_of(h, dpi);
+        let at = |r: RECT| RECT { left: r.left + pr.left, top: r.top + pr.top, right: r.right + pr.left, bottom: r.bottom + pr.top };
+        let tip = |k: usize| tip_key(tr(PANE_TIPS[k].2 .0, PANE_TIPS[k].2 .1));
+        let field = crumb_field(pg.addr, dpi);
+        let wants = [
+            (pg.num, (i < 9).then(|| format!("Ctrl+{}", i + 1)), false),
+            (pg.btn[0], tip(0), false),
+            (pg.btn[1], tip(1), false),
+            (pg.btn[2], tip(2), false),
+            (RECT { right: field.left, ..field }, (pg.addr.right > pg.addr.left).then(|| "Ctrl+L".into()), true),
+            (pg.btn[3], tip(3), false),
+            (RECT { right: pg.filt.left, ..pg.filt }, tip_key(tr(FILTER_TIP.0, FILTER_TIP.1)).filter(|_| pg.filt.right > pg.filt.left), true),
+            (pg.fav, tip(4), false),
+        ];
+        for (r, k, left) in wants {
+            if let Some(k) = k.filter(|_| left || r.right > r.left) {
+                out.push((at(r), k, left));
+            }
+        }
+    }
+    out
+}
+
+// The keycaps drawn on a see-through popup over main's client area that takes no clicks and no focus (as the drag
+// guide bars). False: nothing to show.
+unsafe fn show_ctrl_hints(main: HWND) -> bool {
+    let (dpi, font) = app(|a| (a.dpi, a.small_font));
+    let s = |v: i32| v * dpi / 96;
+    let mut area = RECT::default();
+    _ = GetClientRect(main, &mut area);
+    if area.right <= 0 || area.bottom <= 0 {
+        return false;
+    }
+    let mut w = HINT_WND.get();
+    if w.is_invalid() {
+        let ex = WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
+        let Ok(made) = CreateWindowExW(ex, w!("GridsBar"), w!(""), WS_POPUP, 0, 0, 0, 0, Some(main), None, None, None) else { return false };
+        w = made;
+        HINT_WND.set(made);
+    }
+    let screen = GetDC(None);
+    let dc = CreateCompatibleDC(Some(screen));
+    let bmp = CreateCompatibleBitmap(screen, area.right, area.bottom);
+    let old = SelectObject(dc, bmp.into());
+    let old_font = SelectObject(dc, font.into());
+    let width = |t: &str| {
+        let mut sz = SIZE::default();
+        _ = GetTextExtentPoint32W(dc, &t.encode_utf16().collect::<Vec<_>>(), &mut sz);
+        sz
+    };
+    let (pad, gap, h) = (s(5), s(2), width("Ctrl").cy + s(4));
+    let mut targets = hint_targets(main, dpi);
+    // "All shortcuts: Ctrl+/" centred just above the status line, placed first so it always shows
+    if let Some(st) = GetDlgItem(Some(main), ID_STATUS).ok().filter(|&h| IsWindowVisible(h).as_bool()) {
+        let mut r = RECT::default();
+        _ = GetWindowRect(st, &mut r);
+        let mut p = POINT { x: r.left, y: r.top };
+        _ = ScreenToClient(main, &mut p);
+        let y = p.y - h - 2 * gap; // hint_rects puts a cap `gap` under its control
+        targets.insert(0, (RECT { left: area.right / 2, right: area.right / 2, top: y, bottom: y }, tr("All shortcuts: Ctrl+/", "모든 단축키: Ctrl+/").into(), false));
+    }
+    // a left-aligned cap starts at its control's left edge
+    let wants: Vec<(RECT, i32)> = targets
+        .iter()
+        .map(|(r, k, left)| {
+            let w = width(k).cx + 2 * pad;
+            (if *left { RECT { right: r.left + w, ..*r } } else { *r }, w)
+        })
+        .collect();
+    SelectObject(dc, old_font);
+    let p = pal();
+    let key = hint_key_colour(&[p.pill, p.line, p.text]);
+    fill(dc, area, key);
+    let mut any = false;
+    for ((_, k, _), r) in targets.iter().zip(hint_rects(&wants, h, gap, area)) {
+        let Some(r) = r else { continue };
+        fill(dc, r, p.pill);
+        frame(dc, r, 1, p.line);
+        text(dc, r, k, font, p.text, DT_CENTER);
+        any = true;
+    }
+    let mut org = POINT::default();
+    _ = ClientToScreen(main, &mut org);
+    let size = SIZE { cx: area.right, cy: area.bottom };
+    let done = any && UpdateLayeredWindow(w, Some(screen), Some(&org), Some(&size), Some(dc), Some(&POINT::default()), cref(key), None, ULW_COLORKEY).is_ok();
+    SelectObject(dc, old);
+    _ = DeleteObject(bmp.into());
+    _ = DeleteDC(dc);
+    ReleaseDC(None, screen);
+    if done {
+        _ = ShowWindow(w, SW_SHOWNA);
+    }
+    done
+}
+
 pub(crate) unsafe fn pre_translate(m: &MSG) -> bool {
     let in_tree = || app(|a| a.tree_hwnd == m.hwnd || IsChild(a.tree_hwnd, m.hwnd).as_bool());
     // a click, Alt+drag or Alt+wheel: that Alt was not let go alone
@@ -614,6 +864,7 @@ pub(crate) unsafe fn pre_translate(m: &MSG) -> bool {
     ) {
         MENU_ARM.set(None);
         DIFF_KEY.set(None);
+        ctrl_hint_off(); // Ctrl+click, Ctrl+drag, Ctrl+wheel: no keycaps, and the input goes on as ever
     }
     if matches!(m.message, WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN | WM_XBUTTONDOWN) {
         let t = in_tree();
@@ -663,6 +914,12 @@ pub(crate) unsafe fn pre_translate(m: &MSG) -> bool {
             }
             let (armed, _) = menu_key_step(MENU_ARM.get(), true, vk, repeat, mods);
             MENU_ARM.set(armed.filter(|_| in_main));
+            // Ctrl alone: the keycaps wait for it to stay held; anything else drops them (the key goes on as ever)
+            match ctrl_hint_step(CTRL_HINT.get() != 0, true, vk, repeat, mods) {
+                (_, true) if in_main => ctrl_hint_arm(main),
+                (true, false) => {}
+                _ => ctrl_hint_off(),
+            }
             // F10 opens the view menu when let go: never the view's accelerator nor Windows' hidden menu bar
             // (Shift+F10, the context menu, isn't armed and goes on as before)
             if in_main && vk == VK_F10.0 && armed.is_some() {
@@ -706,6 +963,7 @@ pub(crate) unsafe fn pre_translate(m: &MSG) -> bool {
             used
         }
         WM_KEYUP | WM_SYSKEYUP => {
+            ctrl_hint_off(); // Ctrl let go (or any key): the keycaps go at once
             let armed = app(|a| a.held) == Some(VK_M.0);
             app(|a| a.held = a.held.filter(|&k| k != m.wParam.0 as u16));
             // Enter let go on the toolbar button it went down on: that button pressed

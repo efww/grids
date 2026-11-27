@@ -44,6 +44,7 @@ pub(crate) const ID_KEY_TIPS: usize = 1112; // view menu: shortcut tips on the s
 pub(crate) const ID_TREE_QUICK: usize = 1113; // view menu: Explorer's Quick access (pinned folders) atop the folder tree
 pub(crate) const ID_BRING_HERE: usize = 1114; // view menu: called from another virtual desktop, Grids comes to it (window_ui.rs)
 pub(crate) const ID_TO_MOUSE: usize = 1115; // view menu: Win+Alt+E brings Grids to the monitor with the mouse (window_ui.rs)
+pub(crate) const ID_CTRL_HINTS: usize = 1116; // view menu: Ctrl held alone shows each visible button's shortcut (keyboard.rs)
 pub(crate) const ID_DLGJUMP: usize = 1140;
 pub(crate) const ID_CTXMENU: usize = 1145; // view menu: "Open in Grids" in Explorer's right-click menu
 pub(crate) const ID_AUTOSTART: usize = 1146; // view menu: start with Windows, minimized
@@ -424,6 +425,7 @@ Del / Shift+Del, F2\tIn the preview: the file shown to the Recycle Bin / deleted
 Ctrl+wheel, Ctrl+= / Ctrl+- / Ctrl+0\tIn the preview: zoom a picture or PDF in / out (the wheel zooms on the cursor) / back to fit; zoomed in, drag it or its scrollbars to move around\n\
 Ctrl+V\tWith a copied picture (screenshot, browser image): save it here as a PNG file; with copied text: save it as a text file named after its first line, ready to rename\n\
 Alt / F10\tView menu (Alt pressed and let go alone): settings, change layout, light / dark theme, language, help; ↑/↓ and Enter to choose, Esc to close\n\
+Ctrl\tHeld alone for about a second: every button, field and pane number on screen shows its shortcut as a keycap, gone when Ctrl is let go (View > Hold Ctrl to show shortcut hints)\n\
 F1\tHelp (opens the README on GitHub)\n\
 Win+Alt+E\tBring Grids to front from any app (again: minimize)\n\
 Ctrl+Alt+G\tIn another app's Open / Save dialog: jump to a folder open in Grids\n\
@@ -495,6 +497,7 @@ Del / Shift+Del, F2\t미리보기에서: 보고 있는 파일을 휴지통으로
 Ctrl+휠, Ctrl+= / Ctrl+- / Ctrl+0\t미리보기에서: 사진·PDF 확대 / 축소 (휠은 커서 위치 기준) / 화면에 맞춤, 확대한 상태에서는 끌거나 스크롤바로 이동\n\
 Ctrl+V\t복사한 그림(스크린샷, 브라우저 이미지)이 있으면 이 폴더에 PNG 파일로 저장, 복사한 글은 텍스트 파일로 저장(첫 줄이 이름, 바로 이름 바꾸기)\n\
 Alt / F10\t보기 메뉴 (Alt는 혼자 눌렀다 떼기): 설정, 레이아웃 바꾸기, 라이트/다크 테마, 언어, 도움말. ↑/↓와 Enter로 고르고 Esc로 닫기\n\
+Ctrl\t혼자 1초쯤 누르고 있기: 화면의 버튼·칸·패널 번호마다 단축키가 키캡으로 뜨고, Ctrl을 떼면 사라짐 (보기 > Ctrl을 길게 눌러 단축키 보기)\n\
 F1\t도움말 (GitHub README 열기)\n\
 Win+Alt+E\t어디서나 Grids 앞으로 (다시 누르면 최소화)\n\
 Ctrl+Alt+G\t다른 앱의 열기·저장 대화 상자에서: Grids에 열린 폴더로 이동\n\

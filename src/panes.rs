@@ -10,26 +10,30 @@ pub(crate) unsafe fn child(parent: HWND, class: PCWSTR, text: PCWSTR, style: u32
     h
 }
 
+// A pane header's buttons, left to right: (id, name, tooltip), English and Korean. The Ctrl hints (keyboard.rs) take
+// their keys from these tooltips, so a keycap can't name another key than its tooltip does.
+pub(crate) const PANE_TIPS: [(i32, (&str, &str), (&str, &str)); 5] = [
+    (ID_BACK, ("Back", "뒤로"), ("Back  (Alt+←) · right-click: recent folders", "뒤로  (Alt+←) · 오른쪽 클릭: 최근 폴더")),
+    (ID_FWD, ("Forward", "앞으로"), ("Forward  (Alt+→) · right-click: recent folders", "앞으로  (Alt+→) · 오른쪽 클릭: 최근 폴더")),
+    (ID_UP, ("Parent folder", "상위 폴더"), ("Parent folder  (Alt+↑)", "상위 폴더  (Alt+↑)")),
+    (ID_OPEN_IN, ("Open in another pane", "다른 패널에서 열기"), ("Open in / copy or move to / swap with another pane  (Ctrl+M)", "다른 패널에서 열기 / 복사·이동 / 자리 바꾸기  (Ctrl+M)")),
+    (ID_FAV, ("Favourite", "즐겨찾기"), ("Add to favourites (filled star: remove)  (Ctrl+Shift+B)", "즐겨찾기에 추가 (채워진 별: 빼기)  (Ctrl+Shift+B)")),
+];
+pub(crate) const FILTER_TIP: (&str, &str) = ("Name filter (Ctrl+F) · icon or Alt+↓: file types", "이름 필터 (Ctrl+F) · 아이콘 또는 Alt+↓: 파일 종류");
+
 pub(crate) unsafe fn create_pane(i: usize) -> Result<Pane> {
     let (main, font) = app(|a| (a.main, a.font));
     let style = WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN;
     let h = CreateWindowExW(WINDOW_EX_STYLE(0), w!("GridsPane"), w!(""), style, 0, 0, 0, 0, Some(main), None, None, None)?;
     let (btn, plain) = (BS_OWNERDRAW as u32, WINDOW_EX_STYLE(0));
-    let buttons = [
-        (ID_BACK, tr("Back", "뒤로"), tr("Back  (Alt+←) · right-click: recent folders", "뒤로  (Alt+←) · 오른쪽 클릭: 최근 폴더")),
-        (ID_FWD, tr("Forward", "앞으로"), tr("Forward  (Alt+→) · right-click: recent folders", "앞으로  (Alt+→) · 오른쪽 클릭: 최근 폴더")),
-        (ID_UP, tr("Parent folder", "상위 폴더"), tr("Parent folder  (Alt+↑)", "상위 폴더  (Alt+↑)")),
-        (ID_OPEN_IN, tr("Open in another pane", "다른 패널에서 열기"), tr("Open in / copy or move to / swap with another pane  (Ctrl+M)", "다른 패널에서 열기 / 복사·이동 / 자리 바꾸기  (Ctrl+M)")),
-        (ID_FAV, tr("Favourite", "즐겨찾기"), tr("Add to favourites (filled star: remove)  (Ctrl+Shift+B)", "즐겨찾기에 추가 (채워진 별: 빼기)  (Ctrl+Shift+B)")),
-    ];
-    for (id, name, tip) in buttons {
-        add_tip(child(h, w!("BUTTON"), PCWSTR(HSTRING::from(name).as_ptr()), btn, plain, id, font), tip);
+    for (id, name, tip) in PANE_TIPS {
+        add_tip(child(h, w!("BUTTON"), PCWSTR(HSTRING::from(tr(name.0, name.1)).as_ptr()), btn, plain, id, font), tr(tip.0, tip.1));
     }
     let edit = child(h, w!("EDIT"), w!(""), ES_AUTOHSCROLL as u32, plain, ID_EDIT, font);
     // Folder suggestions as you type, like Explorer's address bar; folders only, since navigate() only browses folders
     _ = SHAutoComplete(edit, SHACF_FILESYS_DIRS | SHACF_AUTOSUGGEST_FORCE_ON | SHACF_AUTOAPPEND_FORCE_OFF);
     let filt = child(h, w!("EDIT"), w!(""), ES_AUTOHSCROLL as u32, plain, ID_FILTER, font);
-    add_tip(filt, tr("Name filter (Ctrl+F) · icon or Alt+↓: file types", "이름 필터 (Ctrl+F) · 아이콘 또는 Alt+↓: 파일 종류"));
+    add_tip(filt, tr(FILTER_TIP.0, FILTER_TIP.1));
     _ = SetWindowSubclass(filt, Some(filter_hint_proc), 4, 0);
     name_fields(h, i);
 
@@ -380,6 +384,7 @@ pub(crate) unsafe fn layout_pane(h: HWND) {
 }
 
 pub(crate) unsafe fn relayout() {
+    ctrl_hint_off(); // Ctrl-held keycaps were placed for the old layout
     // a pending Ctrl+Alt+arrow lands with this layout (key release, zoom, a session, DPI ...): its guide bar goes
     if let Some(bars) = app(|a| a.nudge.take().map(|_| a.bars)) {
         for b in bars {
