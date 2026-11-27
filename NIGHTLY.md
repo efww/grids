@@ -197,3 +197,11 @@ Claude가 제안하고 gpt-6.2-sol이 동의한 개선을 사람 확인 없이 �
 | #392 | 2026-11-27 13:08 | 요청 | Run gh by full path |  | 2 files changed, 25 insertions(+), 2 deletions(-) |
 | #393 | 2026-11-27 13:23 | 요청 | Preview handlers out of process only |  | 1 file changed, 3 insertions(+), 1 deletion(-) |
 | #395 | 2026-11-27 13:46 | 요청 | Updater never overwrites unrecorded files |  | 1 file changed, 117 insertions(+), 19 deletions(-) |
+
+## 릴리즈 R55 · 2026-11-27 15:01 KST · 업데이트 3개
+
+| # | 구현 시각(KST) | 분류 | 업데이트 | 사용자에게 달라지는 것 | 변경 |
+|---|---|---|---|---|---|
+| #396 | 2026-11-27 14:16 | 요청 | Update rhwp to 0.9.1 |  | 2 files changed, 2 insertions(+), 2 deletions(-) |
+| #378 | 2026-11-27 14:32 | 기능 | 폴더 트리 따라가기를 숨긴 동안 멈추고, 빠르게 옮겨 다닐 때는 마지막 폴더 한 번만 | 폴더 트리를 숨겨 두면 하위 폴더가 많은 폴더나 네트워크 폴더로 옮겨 다닐 때 보이지 않는 트리 때문에 창이 잠깐씩 멈추던 일이 없어지고, 트리를 다시 켜면 바로 지금 폴더를 가리킵니다. 트리를 켜 둔 채 Backspace나 Alt+PgDn을 누르고 있거나 패널을 빠르게 오가면, 거쳐 간 폴더마다 트리가 펼쳐지지 않고 마지막 폴더 하나만 따라갑니다. | 8 files changed, 92 insertions(+), 12 deletions(-) |
+| #382 | 2026-11-27 14:34 | 기능 | 주소 칸 폴더 아이콘을 끌어 지금 폴더를 다른 앱·탐색기·바탕 화면·다른 패널로 놓기 | 패널 주소 칸 맨 앞 폴더 아이콘을 잡아 끌면 지금 보는 폴더를 탐색기 창, 바탕 화면, 브라우저 업로드 칸, VS Code, 터미널, 다른 앱의 열기·저장 창, 다른 패널 머리줄에 바로 놓을 수 있습니다. 끌지 않고 누르기만 하면 지금처럼 경로 입력이 시작됩니다. | 8 files changed, 101 insertions(+), 13 deletions(-) |
