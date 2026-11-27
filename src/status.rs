@@ -70,10 +70,14 @@ pub(crate) unsafe fn selected_size(fv: &IFolderView2) -> Sel {
 // The " (…)" after "n selected". job: the worker's (bytes, done, partial, a folder met), None = no path to sum.
 // While it runs with nothing summed and no folder met yet (files on a local disk: done in moments) nothing shows,
 // so the line doesn't blink "calculating"; a folder or bytes so far show as before.
-pub(crate) fn size_text(ko: bool, job: Option<(u64, bool, bool, bool)>, collect_partial: bool) -> String {
+// last: the size this one folder had when it was last fully counted; while it is counted again that shows, as is.
+pub(crate) fn size_text(ko: bool, job: Option<(u64, bool, bool, bool)>, collect_partial: bool, last: Option<u64>) -> String {
     let (bytes, done, partial, dirs) = job.unwrap_or((0, true, false, false));
     let partial = partial || collect_partial;
     if !done {
+        if let Some(b) = last {
+            return if ko { format!(" (지난번 {} · 다시 세는 중…)", human(b)) } else { format!(" (last {} · recounting…)", human(b)) };
+        }
         return match bytes {
             0 if !dirs => String::new(),
             0 => (if ko { " (계산 중…)" } else { " (calculating…)" }).into(),
@@ -122,6 +126,65 @@ impl SizeJob {
         }
         (self.bytes, self.done, self.partial) = (bytes, done, partial);
         true
+    }
+}
+
+// Folder sizes counted to the end (the status line's one selected folder, the usage window's subfolders), so a folder
+// picked again shows its last size at once while it is counted again. Only in memory; F5 forgets them. The oldest go
+// past SIZE_MEMO_MAX; one noted again moves to the back. Keys: the path in lower case (no trailing backslash on
+// either side's paths). The lock is never held across file system calls.
+pub(crate) const SIZE_MEMO_MAX: usize = 512;
+
+pub(crate) struct SizeMemo {
+    items: Vec<(String, u64, bool)>, // key, bytes, partial; oldest first
+}
+
+pub(crate) fn memo_key(path: &str) -> String {
+    path.to_lowercase()
+}
+
+impl SizeMemo {
+    pub(crate) const fn new() -> Self {
+        SizeMemo { items: Vec::new() }
+    }
+
+    pub(crate) fn get(&self, path: &str) -> Option<(u64, bool)> {
+        let k = memo_key(path);
+        self.items.iter().find(|(p, ..)| *p == k).map(|&(_, b, q)| (b, q))
+    }
+
+    pub(crate) fn put(&mut self, path: &str, bytes: u64, partial: bool) {
+        self.forget(path);
+        if self.items.len() >= SIZE_MEMO_MAX {
+            self.items.drain(..=self.items.len() - SIZE_MEMO_MAX);
+        }
+        self.items.push((memo_key(path), bytes, partial));
+    }
+
+    pub(crate) fn forget(&mut self, path: &str) {
+        let k = memo_key(path);
+        self.items.retain(|(p, ..)| *p != k);
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.items.clear();
+    }
+}
+
+static SIZE_MEMO: Mutex<SizeMemo> = Mutex::new(SizeMemo::new());
+
+pub(crate) fn size_memo() -> std::sync::MutexGuard<'static, SizeMemo> {
+    SIZE_MEMO.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+// What the worker learnt about a one-item target counted to the end: a folder's size is noted; anything else
+// (gone, a file of that name, a drive root) drops what was noted for that path.
+pub(crate) fn memo_result(memo: &mut SizeMemo, target: &[String], bytes: u64, partial: bool, dir: bool) {
+    let [p] = target else { return };
+    if dir {
+        memo.put(p, bytes, partial);
+    } else {
+        memo.forget(p);
     }
 }
 
@@ -179,7 +242,9 @@ pub(crate) fn size_worker() {
         };
         let mut progress = |b, p, d| _ = tell(b, false, p, d);
         // only the end is posted; progress waits for the status tick
+        // cancelled (None): what was noted stays; a finished count is right even if the selection moved on
         if let Some((b, p, d)) = sel_bytes(&target, &stop, &paused, &mut progress) {
+            memo_result(&mut size_memo(), &target, b, p, d);
             if tell(b, true, p, d) {
                 tell_main(WM_SIZE_DONE);
             }
@@ -396,8 +461,9 @@ pub(crate) fn dir_bytes(root: &Path, stop: &dyn Fn() -> bool, paused: &dyn Fn() 
     Some((sum, partial))
 }
 
-// F5 in a file list: the shell reloads it, and the selection is summed again.
+// F5 in a file list: the shell reloads it, and the selection is summed again (no last sizes meanwhile).
 pub(crate) fn resum_sizes() {
+    size_memo().clear();
     want_size(&[], true);
     app(|a| {
         a.status_key.clear();
@@ -428,14 +494,20 @@ pub(crate) unsafe fn update_status() {
             app(|a| a.status_key = if settled { key } else { String::new() });
         }
     }
-    let job = {
+    let (job, one) = {
         let j = size_job();
-        (!j.target.is_empty()).then_some((j.bytes, j.done, j.partial, j.dirs))
+        let one = match j.target.as_slice() {
+            [p] if !j.done => Some(p.clone()),
+            _ => None,
+        };
+        ((!j.target.is_empty()).then_some((j.bytes, j.done, j.partial, j.dirs)), one)
     };
+    // one item still being counted: its last full count, looked up after the job's lock is let go
+    let last = one.and_then(|p| size_memo().get(&p)).map(|(b, _)| b);
     let ko = KO.load(Ordering::Relaxed);
     let (changed, fresh, ctl) = app(|a| {
         let (head, size, mid, drive) = &a.status_base;
-        let size = size.map(|p| size_text(ko, job, p)).unwrap_or_default();
+        let size = size.map(|p| size_text(ko, job, p, last)).unwrap_or_default();
         // a short confirmation (path copied, missing folder) leads for a few seconds in its own chip
         if let Some(saved) = SAVED.lock().unwrap_or_else(|e| e.into_inner()).take() {
             a.note = Some((saved, Instant::now() + Duration::from_secs(5)));

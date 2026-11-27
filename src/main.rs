@@ -2213,28 +2213,88 @@ mod tests {
     fn folder_size_text() {
         let kb = human(1024);
         // running: a folder met shows "calculating", bytes so far show with "…"
-        assert_eq!(size_text(false, Some((0, false, false, true)), false), " (calculating…)");
-        assert_eq!(size_text(true, Some((0, false, false, true)), false), " (계산 중…)");
-        assert_eq!(size_text(false, Some((2048, false, false, true)), false), format!(" ({}…)", human(2048)));
-        assert_eq!(size_text(false, Some((2048, false, false, false)), false), format!(" ({}…)", human(2048)));
+        assert_eq!(size_text(false, Some((0, false, false, true)), false, None), " (calculating…)");
+        assert_eq!(size_text(true, Some((0, false, false, true)), false, None), " (계산 중…)");
+        assert_eq!(size_text(false, Some((2048, false, false, true)), false, None), format!(" ({}…)", human(2048)));
+        assert_eq!(size_text(false, Some((2048, false, false, false)), false, None), format!(" ({}…)", human(2048)));
         // files only, nothing summed yet: nothing shows (no blink on a local disk)
-        assert_eq!(size_text(false, Some((0, false, false, false)), false), "");
-        assert_eq!(size_text(false, Some((0, false, false, false)), true), "");
+        assert_eq!(size_text(false, Some((0, false, false, false)), false, None), "");
+        assert_eq!(size_text(false, Some((0, false, false, false)), true, None), "");
         // done
-        assert_eq!(size_text(false, Some((1024, true, false, true)), false), format!(" ({kb})"));
-        assert_eq!(size_text(false, Some((1024, true, true, true)), false), format!(" ({kb}, partial)"));
-        assert_eq!(size_text(false, Some((0, true, false, true)), false), format!(" ({})", human(0)));
+        assert_eq!(size_text(false, Some((1024, true, false, true)), false, None), format!(" ({kb})"));
+        assert_eq!(size_text(false, Some((1024, true, true, true)), false, None), format!(" ({kb}, partial)"));
+        assert_eq!(size_text(false, Some((0, true, false, true)), false, None), format!(" ({})", human(0)));
         // something missed while collecting the selection isn't shown as a full total
-        assert_eq!(size_text(false, Some((1024, true, false, true)), true), format!(" ({kb}, partial)"));
-        assert_eq!(size_text(true, Some((1024, true, false, true)), true), format!(" ({kb}, 일부만)"));
-        assert_eq!(size_text(false, Some((1024, true, false, false)), false), format!(" ({kb})"));
-        assert_eq!(size_text(false, Some((1024, true, false, false)), true), format!(" ({kb}, partial)"));
-        assert_eq!(size_text(false, Some((0, true, false, false)), false), "");
-        assert_eq!(size_text(false, Some((0, true, true, false)), false), " (size unknown)");
+        assert_eq!(size_text(false, Some((1024, true, false, true)), true, None), format!(" ({kb}, partial)"));
+        assert_eq!(size_text(true, Some((1024, true, false, true)), true, None), format!(" ({kb}, 일부만)"));
+        assert_eq!(size_text(false, Some((1024, true, false, false)), false, None), format!(" ({kb})"));
+        assert_eq!(size_text(false, Some((1024, true, false, false)), true, None), format!(" ({kb}, partial)"));
+        assert_eq!(size_text(false, Some((0, true, false, false)), false, None), "");
+        assert_eq!(size_text(false, Some((0, true, true, false)), false, None), " (size unknown)");
         // no file system path at all (This PC, the bin, inside a zip): no job, done at once
-        assert_eq!(size_text(false, None, true), " (size unknown)");
-        assert_eq!(size_text(true, None, true), " (크기 모름)");
-        assert_eq!(size_text(false, None, false), "");
+        assert_eq!(size_text(false, None, true, None), " (size unknown)");
+        assert_eq!(size_text(true, None, true, None), " (크기 모름)");
+        assert_eq!(size_text(false, None, false, None), "");
+    }
+
+    #[test]
+    fn folder_size_text_last() {
+        let gb = human(5 << 30);
+        // counted again: the last full count shows as is, from the first look (no folder met yet, nothing summed)
+        assert_eq!(size_text(false, Some((0, false, false, false)), false, Some(5 << 30)), format!(" (last {gb} · recounting…)"));
+        assert_eq!(size_text(true, Some((0, false, false, true)), false, Some(5 << 30)), format!(" (지난번 {gb} · 다시 세는 중…)"));
+        // bytes so far don't replace it, even past it (the folder grew): it stays the last count
+        assert_eq!(size_text(false, Some((6 << 30, false, false, true)), false, Some(5 << 30)), format!(" (last {gb} · recounting…)"));
+        // done: the new count only
+        assert_eq!(size_text(false, Some((1024, true, false, true)), false, Some(5 << 30)), format!(" ({})", human(1024)));
+        assert_eq!(size_text(true, Some((1024, true, true, true)), false, Some(5 << 30)), format!(" ({}, 일부만)", human(1024)));
+        assert_eq!(size_text(false, None, false, Some(5 << 30)), "");
+    }
+
+    #[test]
+    fn size_memo_keeps_the_newest() {
+        let mut m = SizeMemo::new();
+        m.put(r"C:\Data\Big", 100, false);
+        // any case finds it; a new count replaces it
+        assert_eq!(m.get(r"c:\data\BIG"), Some((100, false)));
+        m.put(r"c:\data\big", 200, true);
+        assert_eq!(m.get(r"C:\Data\Big"), Some((200, true)));
+        // past the cap the oldest goes; one noted again moved to the back and stays
+        for k in 0..SIZE_MEMO_MAX {
+            m.put(&format!(r"C:\f{k}"), k as u64, false);
+            if k == 0 {
+                m.put(r"C:\Data\Big", 300, false);
+            }
+        }
+        assert_eq!(m.get(r"C:\f0"), None);
+        assert_eq!(m.get(r"C:\Data\Big"), Some((300, false)));
+        assert_eq!(m.get(r"C:\f1"), Some((1, false)));
+        assert_eq!(m.get(&format!(r"C:\f{}", SIZE_MEMO_MAX - 1)), Some((SIZE_MEMO_MAX as u64 - 1, false)));
+        // now Big is the oldest: f1 noted again and one more push it out
+        m.put(r"C:\f1", 11, false);
+        m.put(r"C:\new", 1, false);
+        assert_eq!(m.get(r"C:\Data\Big"), None);
+        assert_eq!(m.get(r"C:\f1"), Some((11, false)));
+        assert_eq!(m.get(r"C:\f2"), Some((2, false)));
+        m.clear();
+        assert_eq!(m.get(r"C:\f1"), None);
+    }
+
+    #[test]
+    fn size_memo_from_the_worker() {
+        let mut m = SizeMemo::new();
+        let one = [r"C:\Data".to_string()];
+        // one folder counted to the end is noted
+        memo_result(&mut m, &one, 42, false, true);
+        assert_eq!(m.get(r"c:\data"), Some((42, false)));
+        // more than one item: nothing noted, nothing dropped
+        memo_result(&mut m, &[r"C:\Data".to_string(), r"C:\x".to_string()], 7, false, true);
+        assert_eq!(m.get(r"C:\Data"), Some((42, false)));
+        memo_result(&mut m, &[], 0, false, false);
+        assert_eq!(m.get(r"C:\Data"), Some((42, false)));
+        // no longer a folder (gone, a file of that name, unreadable): what was noted goes
+        memo_result(&mut m, &one, 0, true, false);
+        assert_eq!(m.get(r"C:\Data"), None);
     }
 
     #[test]

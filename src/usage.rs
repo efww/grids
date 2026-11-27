@@ -223,10 +223,14 @@ fn usage_worker() {
         // a copy only pauses the walk (dir_bytes), as for the status line's folder size
         let paused = || COPYING.load(Ordering::Relaxed) > 0;
         let names: Vec<String> = rows.iter().map(|r| r.name.clone()).collect();
-        let mut update = |k: usize, b, done, p| publish(gen, false, |j| {
-            if let Some(r) = j.rows.get_mut(k) { (r.bytes, r.done, r.partial) = (b, done, p) }
-            if done { j.known.insert(key(&names[k]), (b, p)); }
-        });
+        let mut update = |k: usize, b, done, p| {
+            // shared with the status line, outside the job's lock; right even if another folder was opened meanwhile
+            if done { size_memo().put(&usage_child(&dir, &names[k]), b, p) }
+            publish(gen, false, |j| {
+                if let Some(r) = j.rows.get_mut(k) { (r.bytes, r.done, r.partial) = (b, done, p) }
+                if done { j.known.insert(key(&names[k]), (b, p)); }
+            })
+        };
         if usage_fill(Path::new(&dir), &mut rows, &stop, &paused, &mut update) {
             publish(gen, true, |j| j.done = true);
         }
