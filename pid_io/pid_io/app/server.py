@@ -859,6 +859,8 @@ def model_racks(name: str):
     tf = twin.fit(pl, ours, base)
     s, tx, tz = tf["s"], tf["tx"], tf["tz"]
     rects, els, lens = [], {}, {}
+    eqr = [[(e["box"]["x0"] - tx) / s, (e["box"]["z0"] - tz) / s, (e["box"]["x1"] - tx) / s, (e["box"]["z1"] - tz) / s, tag]
+           for tag, e in base["equipment"].items()]
     for k in base["racks"].values():
         if k["a0"] is None:
             continue
@@ -870,14 +872,15 @@ def model_racks(name: str):
         els[k["id"]] = k["cable_el"]
         lens[k["id"]] = abs(k["a1"] - k["a0"])
     main = max(lens, key=lens.get) if lens else None
-    out = {"rects": rects, "cable_el": els, "main_el": els.get(main), "main": main,
+    out = {"rects": rects, "eq": eqr, "cable_el": els, "main_el": els.get(main), "main": main,
            "fit": {k: tf[k] for k in ("median_m", "max_m", "anchors", "rack_anchors", "formula")}}
     _MODEL_RACKS.clear()
     _MODEL_RACKS[key] = out
     return out
 
 
-def plot_layout(name: str, rows):
+def plot_layout(name: str, rows, values: dict | None = None, dec: dict | None = None):
+    """values / dec: a proposed (not saved) setting set / decision set (3D 반영 제안 미리보기)."""
     from .. import plot as plotmod
     pl = plot_read(name)
     if not pl:
@@ -886,16 +889,21 @@ def plot_layout(name: str, rows):
         pt = page_texts_cached(name)
     except Exception:
         pt = {}
-    dd = dict(_plot_dec(name))
-    src = cable.load(pdir(name))["values"].get("rack_src", "PLOT 인식")
-    if src != "PLOT 인식":
+    dd = dict(_plot_dec(name) if dec is None else dec)
+    vals = values or cable.load(pdir(name))["values"]
+    src = vals.get("rack_src", "PLOT 인식")
+    use_eq = str(vals.get("slot_3d_eq", "")).startswith("사용")
+    if src != "PLOT 인식" or use_eq:
         try:
             mr = model_racks(name)
         except Exception:                                  # noqa: BLE001 - a broken model must not stop STEP 6
             mr = None
         if mr:
-            dd["racks_model"] = mr["rects"]
-            dd["rack_src"] = src
+            if src != "PLOT 인식":
+                dd["racks_model"] = mr["rects"]
+                dd["rack_src"] = src
+            if use_eq:
+                dd["eq_model"] = mr.get("eq") or []
     return plotmod.Layout(pl, pt, [r.unit for r in rows if r.unit], dd)
 
 
@@ -961,11 +969,13 @@ def plot_update(name: str, b: dict):
     (d / "plot_decisions.json").write_text(json.dumps(dd, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
-def cable_result(name: str):
+def cable_result(name: str, values: dict | None = None, dec: dict | None = None):
     c = computed(name)
     if not c:
         raise ValueError("먼저 추출을 실행해 주세요")
     s = cable.load(pdir(name))
+    if values:
+        s["values"] = {**s["values"], **values}
     if s["values"].get("rack_el_src", "").startswith("3D"):     # tray EL from the model's cable tier (not saved)
         try:
             mr = model_racks(name)
@@ -974,7 +984,7 @@ def cable_result(name: str):
         if mr and mr.get("main_el"):
             s["values"]["rack_el"] = mr["main_el"]
             s["rack_el_note"] = f"3D 모델 {mr['main']} 랙 케이블 단 EL {mr['main_el']} m"
-    lay = plot_layout(name, c[4])
+    lay = plot_layout(name, c[4], s["values"], dec)
     return s, cable.build(c[4], s, _area_map(name), lay), lay
 
 
@@ -1229,6 +1239,107 @@ def export_twin(name: str):
     (od / "clash_moves.json").write_text(json.dumps({"other": inst["other"], "moves": moves}, ensure_ascii=False, indent=1), encoding="utf-8")
     return {"files": [od.name], "dir": od.name, "counts": inst["counts"], "moves": len(moves), "review": sm,
             "left": len(left), "fit": {k: tf[k] for k in ("median_m", "max_m", "anchors", "rack_anchors")}}
+
+
+# ------------------------------------------------------------------ v13.2 결정 보호 + 3D 반영 관문
+GATE_3D = {"rack_src": "3D 모델 랙", "rack_el_src": "3D 모델 케이블 단", "slot_3d_eq": "사용 (3D 모델 있을 때)"}
+GATE_WHY = {"rack_src": "경로가 PLOT 인식 랙 대신 배관 3D 모델 랙을 탐 (사람이 그린 랙은 그대로 더해짐)",
+            "rack_el_src": "랙 위 트레이 EL = 3D 모델 케이블 단 EL",
+            "slot_3d_eq": "3D 모델 장비 상자 안 자리에는 JB를 두지 않음 (자동 배치만, 사람이 옮긴 JB는 그대로)"}
+
+
+def gate_propose(name: str, settings: dict | None = None, label: str = "3D 반영", source: str = "3D 팩트"):
+    """preview a change without saving: numbers, JB moves, PLOT picture, touched person decisions."""
+    from .. import basis, gate
+    c = computed(name)
+    if not c:
+        raise ValueError("먼저 추출을 실행해 주세요")
+    rows, con = c[4], c[3]
+    cur = cable.load(pdir(name))["values"]
+    if settings is None:
+        if not meta(name).get("files", {}).get("model3d"):
+            raise ValueError("배관 3D 모델(HTML)을 먼저 올려 주세요 (STEP 10)")
+        settings = {k: v for k, v in GATE_3D.items() if cur.get(k) != v}
+    settings = {k: v for k, v in settings.items() if cur.get(k) != v}
+    if not settings:
+        raise ValueError("바꿀 것이 없습니다 (이미 반영됨)")
+    for k, v in settings.items():
+        cable.set_value({"values": dict(cur)}, k, v)              # validates option names
+    dd = _plot_dec(name)
+    am = _area_map(name)
+    s0, res0, lay0 = cable_result(name)
+    s1, res1, lay1 = cable_result(name, settings)
+    tr0, tr1 = cable.TR.build(res0, lay0, s0, dd), cable.TR.build(res1, lay1, s1, dd)
+    sp0 = cable.SP.build(tr0, s0["values"], lay0.m_per_pt if lay0 else None, dd, _obstacles(lay0))
+    sp1 = cable.SP.build(tr1, s1["values"], lay1.m_per_pt if lay1 else None, dd, _obstacles(lay1))
+    m0, m1 = basis.metrics(rows, res0, tr0, sp0, con), basis.metrics(rows, res1, tr1, sp1, con)
+    keys = [k for k in basis.NUM_KEYS if m0.get(k) != m1.get(k)]
+    pid = time.strftime("%Y%m%d_%H%M%S")
+    png = None
+    if lay0 is not None and meta(name).get("files", {}).get("plot"):
+        try:
+            png = gate.preview_png(plot_png(name), plot_read(name)["size"], pdir(name) / "proposals" / f"{pid}.png",
+                                   (lay0, res0), (lay1, res1)).name
+        except Exception:                                  # noqa: BLE001 - picture is a help, not required
+            png = None
+    prop = {"id": pid, "label": label, "source": source, "at": time.strftime("%Y-%m-%d %H:%M"),
+            "settings": [{"key": k, "name": cable.ITEMS[k]["name"], "from": cur.get(k), "to": v, "why": GATE_WHY.get(k, "")}
+                         for k, v in settings.items()],
+            "numbers": [{"key": k, "from": m0.get(k), "to": m1.get(k)} for k in keys], "words": basis.words(m0, m1),
+            "jb": gate.jb_changes(res0, res1, lay1.m_per_pt if lay1 else None),
+            "affected": gate.affected(dd, res1, lay1, tr1), "kept": gate.person_decisions(dd),
+            "png": png, "priority": gate.PRIORITY}
+    (pdir(name) / "proposals").mkdir(exist_ok=True)
+    ait.save(pdir(name) / "proposals" / f"{pid}.json", prop)
+    ait.save(pdir(name) / "proposal_pending.json", prop)
+    return prop
+
+
+def gate_view(name: str):
+    d = pdir(name)
+    return {"pending": ait.load(d / "proposal_pending.json", None), "log": ait.load(d / "decision_log.json", [])[-30:],
+            "kept": __import__("pid_io.gate", fromlist=["x"]).person_decisions(_plot_dec(name))}
+
+
+def gate_apply(name: str, pid: str, settings_ok: list | None = None, choices: dict | None = None):
+    """approve: chosen settings are saved; touched person decisions follow the person's choice (default keep)."""
+    from .. import gate
+    d = pdir(name)
+    prop = ait.load(d / "proposal_pending.json", None)
+    if not prop or prop["id"] != pid:
+        raise ValueError("승인할 제안이 없습니다 (다시 '3D 반영 제안 보기')")
+    ok = set(settings_ok if settings_ok is not None else [x["key"] for x in prop["settings"]])
+    s = cable.load(d)
+    entries = []
+    for x in prop["settings"]:
+        if x["key"] in ok:
+            cable.set_value(s, x["key"], x["to"])
+            entries.append({"source": prop["source"], "what": f"설정 {x['name']}", "before": x["from"], "after": x["to"], "approved": "사람 승인"})
+        else:
+            entries.append({"source": prop["source"], "what": f"설정 {x['name']}", "before": x["from"], "after": x["from"], "approved": "사람 거절 (유지)"})
+    cable.save(d, s)
+    dd = _plot_dec(name)
+    for a in prop["affected"]:
+        ch = (choices or {}).get(f"{a['kind']}:{a['key']}", "keep")
+        if ch == "follow":
+            gate.drop_decision(dd, a["kind"], a["key"])
+        entries.append({"source": prop["source"], "what": f"{a['label']} {a['key']}", "before": a["problem"],
+                        "after": "3D 따름 (사람 결정 지움)" if ch == "follow" else "사람 결정 유지", "approved": "사람 선택"})
+    (d / "plot_decisions.json").write_text(json.dumps(dd, ensure_ascii=False, indent=1), encoding="utf-8")
+    gate.log(d, entries)
+    prop["result"] = {"settings_ok": sorted(ok), "choices": choices or {}}
+    ait.save(d / "proposals" / f"{pid}.json", prop)
+    (d / "proposal_pending.json").unlink(missing_ok=True)
+    try:
+        take_snapshot(name, f"승인: {prop['label']}")
+    except Exception:                                      # noqa: BLE001
+        pass
+    return {"ok": True, "applied": sorted(ok), "log": len(entries)}
+
+
+def gate_cancel(name: str):
+    (pdir(name) / "proposal_pending.json").unlink(missing_ok=True)
+    return {"ok": True}
 
 
 def review3d_view(name: str):
@@ -1753,6 +1864,21 @@ class H(BaseHTTPRequestHandler):
                     if method == "POST":
                         return self._send(200, export_twin(name))
                     return self._send(200, twin_view(name))
+            if act == "gate":                                   # 3D 반영 제안 (preview / approve / cancel)
+                if method == "GET":
+                    return self._send(200, gate_view(name))
+                b = self._json()
+                with CALC:
+                    if b.get("apply"):
+                        return self._send(200, gate_apply(name, b["apply"], b.get("settings_ok"), b.get("choices")))
+                    if b.get("cancel"):
+                        return self._send(200, gate_cancel(name))
+                    return self._send(200, gate_propose(name, b.get("settings"), b.get("label") or "3D 반영"))
+            if act == "gate_png" and len(parts) >= 5:
+                f = pdir(name) / "proposals" / Path(parts[4]).name
+                if not f.exists():
+                    return self._send(404, {"error": "no file"})
+                return self._send(200, f.read_bytes(), "image/png")
             if act == "review3d":
                 if method == "POST":
                     return self._send(200, review3d_answer(name, self._json().get("text", "")))

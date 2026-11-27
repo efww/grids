@@ -1,0 +1,98 @@
+{
+ "profile": "T1-CI",
+ "skill": "ai3d-t1-ci-r9",
+ "project": "서남해 200MW 수전해-2",
+ "made": "2026-11-27 03:57",
+ "pid_io": "v13.1",
+ "rev": {
+  "scope": "R20261127",
+  "rule": "R20261127",
+  "model": "R20261127"
+ },
+ "sources": [
+  {
+   "id": "pdf",
+   "file": "200MW PEM 수전해 플랜트 PID_Rev.A 1.pdf"
+  },
+  {
+   "id": "plot",
+   "file": "Plot_plan_261109_r2.pdf"
+  },
+  {
+   "id": "plotref",
+   "file": "Plot_Plan_Rev.2_260202.pdf"
+  },
+  {
+   "id": "template",
+   "file": "Instrument_Index_Template.xlsx"
+  },
+  {
+   "id": "ref",
+   "file": "(서남해 수전해) Instrument Index_Rev.A_26.03.20_Metering IO 삭제.xlsx"
+  },
+  {
+   "id": "BASE_MODEL",
+   "file": "02-AI-Assisted.Conceptual.3D.Model_Final.html",
+   "sha256": "35d0e456ad1bbb7fe95a8046adcd96e7c56fc52aba4f7aeafa1f9d498fd79f9a"
+  }
+ ],
+ "files": {
+  "01_scope.csv": {
+   "sha256": "213405a9ddf6fb984441a0a5cfa3ea3c2f662658354c30af9f4a0717ec949ce4"
+  },
+  "02_input_model_contract.json": {
+   "sha256": "4406245cefb8c4a0eb21fc889f0051bb552bb5ecf82d6308f8c7ff0455e5d87f"
+  },
+  "03_engineering_rules.json": {
+   "sha256": "70697619d8d9dd8b53bb87f79d3ad99344f3a202f4bb49f9cf54d387644c992f"
+  },
+  "04_test_inputs.json": {
+   "sha256": "315bfe42ccdf00bcbbbd5ae62753a50346d2de3032d2c82ae5990b412bc93f19"
+  },
+  "05_validation.csv": {
+   "sha256": "a9646943c9a6f51bd9afba56e4eb1f4db07fccdd437041f83556c3d73684c285"
+  },
+  "06_model_handoff.json": {
+   "sha256": "e438e3b70c19e2787962242a4eb85874fcf37baa5a5657992f25ed5eb894370b"
+  }
+ },
+ "model_required_scope_ids": [
+  "CI-001",
+  "CI-002",
+  "CI-003",
+  "CI-004",
+  "CI-005",
+  "CI-006",
+  "CI-007",
+  "CI-008",
+  "CI-009",
+  "CI-010",
+  "CI-011",
+  "CI-012",
+  "CI-013",
+  "CI-014",
+  "CI-015",
+  "CI-016",
+  "CI-017",
+  "CI-018",
+  "CI-019",
+  "CI-020",
+  "CI-021",
+  "CI-022",
+  "CI-023",
+  "CI-024",
+  "CI-025",
+  "CI-026",
+  "CI-027",
+  "CI-028"
+ ],
+ "gate_evidence": {
+  "G1~G6": "HOLD - 회사 Agent 실행·공종 승인 전 (pid_io 자체 점검: pid_io audit NG 0 · HOLD 1)"
+ },
+ "open": [
+  "좌표 맞춤 잔차 (06 transform) 검토",
+  "계기 위치 다수 추정",
+  "회사 가이드 원문(HTML) 받은 뒤 필드 이름 맞춤"
+ ],
+ "status": "DRAFT_NOT_READY"
+}

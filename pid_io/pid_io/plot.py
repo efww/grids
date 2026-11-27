@@ -306,7 +306,9 @@ class Layout:
         self.racks_auto = [r + [i in off] for i, r in enumerate(plot.get("racks") or [])]
         self.racks_user = [p for p in (dec.get("racks_add") or []) if len(p) >= 2]
         self.racks_model = [list(r[:4]) for r in (dec.get("racks_model") or [])]   # from the 3D model (STEP 10), pt
+        self.racks_model_ids = [str(r[4]) if len(r) > 4 else "" for r in (dec.get("racks_model") or [])]
         self.rack_src = dec.get("rack_src", "PLOT 인식")
+        self.eq_model = [list(r[:4]) for r in (dec.get("eq_model") or [])]          # 3D model equipment boxes, pt
         self._router = {}
         self.jb_moves = dict(dec.get("jb_moves") or {})      # STEP 7: {JB no: slot id}
         self.route_edit = {k: orthogonal(v) for k, v in (dec.get("routes_edit") or {}).items() if len(v) >= 2}

@@ -1634,6 +1634,22 @@ async function renderSupport(m) {
 }
 
 /* ---------------------------------------------------------------- 10 3D handoff */
+function gateBox(g) {
+  return `<div style="border:2px solid #e0002a;padding:10px 12px;margin:8px 0;background:#fff8f9">
+    <div style="display:flex;justify-content:space-between"><b>3D 반영 제안 · ${esc(g.at)}</b><span class="chip">아직 반영 안 됨</span></div>
+    <p class="xnote" style="margin:4px 0">우선순위: ${g.priority.map(esc).join(" &gt; ")} - 사람이 정한 것(그린 랙·고친 경로·옮긴 JB·트레이 크기·서포트)은 3D가 바꾸지 않습니다${g.kept.length?` (지금 ${g.kept.length}개 보호 중)`:""}.</p>
+    <div style="font-size:12.5px;margin-top:6px"><b>바꿀 설정</b> (체크한 것만 반영)</div>
+    ${g.settings.map(x=>`<label style="display:block;font-size:12.5px;margin:3px 0"><input type="checkbox" data-gset="${esc(x.key)}" checked> ${esc(x.name)}: ${esc(x.from)} → <b>${esc(x.to)}</b> <span style="color:var(--sub)">${esc(x.why)}</span></label>`).join("")}
+    <div style="font-size:12.5px;margin-top:8px"><b>물량 변화</b> (모두 체크했을 때)</div>
+    <div style="font-size:12px;line-height:1.6">${esc(g.words||"변화 없음")}</div>
+    ${g.jb.length?`<details style="margin-top:6px"><summary style="cursor:pointer;font-size:12.5px">JB 변화 ${g.jb.length}개</summary><table class="mini">${g.jb.map(j=>`<tr><td class="mono">${esc(j.jb)}</td><td style="font-size:12px">${esc(j.change)}</td></tr>`).join("")}</table></details>`:""}
+    ${g.affected.length?`<div style="font-size:12.5px;margin-top:8px"><b>사람 결정과 부딪히는 것 ${g.affected.length}개</b> (기본: 내 결정 유지)</div>${g.affected.map(a=>{const k=a.kind+":"+a.key;return `<div style="font-size:12px;margin:3px 0">${esc(a.problem)}
+      <label style="margin-left:8px"><input type="radio" name="ga_${esc(k)}" data-gaff="${esc(k)}" value="keep" checked> 내 결정 유지</label>
+      <label style="margin-left:6px"><input type="radio" name="ga_${esc(k)}" data-gaff="${esc(k)}" value="follow"> 3D 따르기</label></div>`}).join("")}`:`<p class="xnote" style="margin-top:6px">사람 결정과 부딪히는 것 없음</p>`}
+    ${g.png?`<div style="margin-top:8px"><b style="font-size:12.5px">PLOT 마크업 미리보기</b> <span class="def">회색 = 지금, 빨강 = 제안 (승인 전에는 마크업이 안 바뀜)</span><br><img src="/api/${P("gate_png/"+encodeURIComponent(g.png))}" style="max-width:100%;border:1px solid var(--line-l);margin-top:4px;cursor:zoom-in" onclick="window.open(this.src)"></div>`:""}
+    <div style="display:flex;gap:8px;margin-top:10px"><button class="btn sm" id="gtok">승인 (체크한 것 반영)</button><button class="btn sm line" id="gtno">취소</button></div>
+  </div>`;
+}
 function review3dBox(rv) {
   const L = rv.last, sm = L.summary, A = rv.answer && rv.answer.dir === L.dir ? rv.answer : null;
   const vd = {}; if (A) A.checked.forEach(c => vd[c.issue_id] = c);
@@ -1657,6 +1673,7 @@ async function renderTwin(m) {
   const t = S.tok;
   const d = await api(P("twin"));
   const rv = await api(P("review3d")).catch(()=>({}));
+  const gt = await api(P("gate")).catch(()=>({}));
   if (t !== S.tok) return;
   m.className = "ext-page";
   const f = d.fit, b = d.base;
@@ -1682,7 +1699,9 @@ async function renderTwin(m) {
       <table class="mini" style="margin-top:8px"><tr><th>우리 랙</th><th>모델 랙</th><th>중심선 차이 m</th></tr>${f.racks.map(r=>`<tr><td class="mono">${esc(r.ours)}</td><td>${esc(r.model)}</td><td>${r.across_m}</td></tr>`).join("")}</table></div>`:""}
     <div class="panel"><h2>3. 랙 · 차선 · 충돌 (계장 선점, 충돌 시 계장이 비킴)</h2>
       <div class="kv"><span>랙 출처 / 랙 트레이 EL (STEP 6 설정, 물량에 반영)</span><b>${esc(d.rack_src)} · ${esc(d.rack_el_src)}</b></div>
-      ${d.model && (d.rack_src !== "3D 모델 랙" || !String(d.rack_el_src).startsWith("3D")) ? `<div style="margin:6px 0 10px"><button class="btn sm" id="twuse">3D 모델 랙과 케이블 단 EL로 물량 계산하기</button> <span class="def">경로·케이블·트레이·서포트가 모델 랙 기준으로 다시 계산됩니다</span></div>` : ""}
+      ${d.model ? `<div style="margin:6px 0 10px"><button class="btn sm" id="twuse">3D 반영 제안 보기 (랙 · 케이블 단 EL · 장비 상자)</button> <span class="def">바로 바꾸지 않습니다. 물량·JB·PLOT 마크업 변화를 먼저 보여 주고, 승인한 것만 반영합니다</span></div>` : ""}
+      ${gt.pending?gateBox(gt.pending):""}
+      ${gt.log&&gt.log.length?`<details style="margin:6px 0"><summary style="cursor:pointer;font-size:12.5px">결정 기록 (최근 ${gt.log.length})</summary><table class="mini">${gt.log.slice().reverse().map(e=>`<tr><td class="mono" style="font-size:11px;white-space:nowrap">${esc(e.at)}</td><td style="font-size:12px">${esc(e.source)}</td><td style="font-size:12px">${esc(e.what)}</td><td style="font-size:12px">${esc(String(e.before))} → <b>${esc(String(e.after))}</b></td><td style="font-size:12px">${esc(e.approved)}</td></tr>`).join("")}</table></details>`:""}
       ${ckItems(d.schema[0], d.values, d)}
       <div class="kv" style="margin-top:10px"><span>다른 공종 3D 파일 (JSON, 모델 좌표) ${d.other?`<b class="mono">${esc(d.other)}</b>`:"없음"}</span>
         <span style="display:flex;gap:6px"><label class="btn sm line">${d.other?"다른 파일":"올리기 (.json)"}<input type="file" accept=".json" id="twother" style="display:none"></label></span></div>
@@ -1707,7 +1726,13 @@ async function renderTwin(m) {
   m.querySelectorAll("[data-ck]").forEach(el => el.onchange = () => twset({set:{[el.dataset.ck]: el.value}}));
   m.querySelectorAll("[data-cktog]").forEach(el => el.onclick = () => { const it = d.schema[0].items.find(x=>x.id===el.dataset.cktog);
     twset({set:{[it.id]: el.classList.contains("on") ? it.options.find(o=>o!==it.on) : it.on}}); });
-  if ($("#twuse")) $("#twuse").onclick = () => twset({set:{rack_src:"3D 모델 랙", rack_el_src:"3D 모델 케이블 단"}});
+  if ($("#twuse")) $("#twuse").onclick = async () => { const bt = $("#twuse"); bt.disabled = true; bt.textContent = "계산 중…";
+    try { await post(P("gate"), {}); renderTwin(m); } catch(e) { toast(e.message, true); bt.disabled = false; bt.textContent = "3D 반영 제안 보기"; } };
+  if ($("#gtok")) $("#gtok").onclick = async () => {
+    const ok = [...m.querySelectorAll("[data-gset]")].filter(x=>x.checked).map(x=>x.dataset.gset);
+    const ch = {}; m.querySelectorAll("[data-gaff]").forEach(x => { if (x.checked) ch[x.dataset.gaff] = x.value; });
+    try { const r = await post(P("gate"), {apply: gt.pending.id, settings_ok: ok, choices: ch}); S.summary=null; toast(`승인 반영: ${r.applied.length}개 설정 · 기록 ${r.log}줄`); renderTwin(m); } catch(e) { toast(e.message, true); } };
+  if ($("#gtno")) $("#gtno").onclick = async () => { await post(P("gate"), {cancel: true}); toast("제안을 취소했습니다 (아무것도 바뀌지 않음)"); renderTwin(m); };
   $("#twother").onchange = async () => { const fl = $("#twother").files[0]; if (!fl) return;
     try { await api(P("upload?kind=other3d"), {method:"POST", headers:{"X-Filename":encodeURIComponent(fl.name)}, body:fl}); toast("다른 공종 파일을 올렸습니다. '만들기'를 누르면 충돌을 피합니다"); renderTwin(m); } catch(e) { toast(e.message, true); } };
   $("#twup").onchange = async () => { const fl = $("#twup").files[0]; if (!fl) return;

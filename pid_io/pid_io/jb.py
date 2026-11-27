@@ -55,7 +55,10 @@ SCHEMA = [
                     "끄면 JB를 묶인 계기들의 중심에 둡니다", on="자리(슬롯)에 배치"), "J10"),
          _code(_sel("slot_rack", "랙 기둥 자리", ["사용", "안 씀"], "사용", "랙 기둥 바깥면에 JB를 붙입니다", on="사용"), "J11"),
          _code(_sel("slot_eq", "장비 가장자리 자리", ["사용", "안 씀"], "사용", "장비·패키지 외곽 각 변의 가운데", on="사용"), "J12"),
-         _code(_num("rack_off", "랙 기둥에서 띄우는 거리", 1.0, "m", "기둥 중심에서 랙 바깥쪽으로", 0.5), "J13"),
+         _code(_sel("slot_3d_eq", "3D 모델 장비 상자 피하기", ["안 함", "사용 (3D 모델 있을 때)"], "안 함",
+                   "배관 3D 모델(STEP 10)의 장비 상자 안 자리는 쓰지 않습니다. 물량이 바뀌므로 STEP 10 '3D 반영 제안'에서 승인하고 켭니다",
+                   on="사용 (3D 모델 있을 때)"), "J1A"),
+        _code(_num("rack_off", "랙 기둥에서 띄우는 거리", 1.0, "m", "기둥 중심에서 랙 바깥쪽으로", 0.5), "J13"),
          _code(_num("eq_off", "장비에서 띄우는 거리", 1.5, "m", "장비 외곽선에서 바깥쪽으로 (통행·정비 공간)", 0.5), "J14"),
          _code(_num("rack_reach", "랙 우선 거리", 20, "m",
                     "묶인 계기 중심에서 이 거리 안에 랙 자리가 있으면 랙에만 붙입니다. 없을 때만 장비 가장자리를 씁니다 (패키지 Skid JB는 Skid 가장자리 우선)"), "J15"),
@@ -159,12 +162,15 @@ def slots(layout, v, width_m=6.0):
     rects = layout.rack_rects(width_m)
     obst = layout.plot.get("obstacles") or []
     pad = 0.2 / m
+    eq3d = (getattr(layout, "eq_model", None) or []) if str(v.get("slot_3d_eq", "")).startswith("사용") else []
     out = []
 
     def blocked(x, y, rack_ok=False):
         if not (0 <= x <= W and 0 <= y <= H):
             return True
         if any(o[0] + pad < x < o[2] - pad and o[1] + pad < y < o[3] - pad for o in obst):
+            return True
+        if any(o[0] - pad < x < o[2] + pad and o[1] - pad < y < o[3] + pad for o in eq3d):   # 3D model equipment (J1A)
             return True
         return not rack_ok and any(r[0] < x < r[2] and r[1] < y < r[3] for r in rects)
 
@@ -183,8 +189,23 @@ def slots(layout, v, width_m=6.0):
                 if not blocked(*p, rack_ok=False):
                     out.append({"id": f"R{i + 1}-{k}", "kind": "랙", "x": round(p[0], 1), "y": round(p[1], 1),
                                 "label": f"랙 {i + 1} 기둥 {k}"})
-        hw = width_m / 2 / m + off
         bay = 6.0 / m
+        if getattr(layout, "rack_src", "") in ("3D 모델 랙", "둘 다"):
+            ids = getattr(layout, "racks_model_ids", None) or []
+            for ri, r in enumerate(getattr(layout, "racks_model", None) or []):   # 3D model racks: a column every bay, both sides
+                x0, y0, x1, y1 = r[:4]
+                rid = (ids[ri] if ri < len(ids) else "") or f"M{ri + 1}"
+                horiz = (x1 - x0) >= (y1 - y0)
+                L = (x1 - x0) if horiz else (y1 - y0)
+                k = 0
+                for t in range(int(L // bay) + 1):
+                    for sgn, edge in ((-1, y0 if horiz else x0), (1, y1 if horiz else x1)):
+                        p = (x0 + t * bay, edge + sgn * off) if horiz else (edge + sgn * off, y0 + t * bay)
+                        k += 1
+                        if not blocked(*p):
+                            out.append({"id": f"3D{rid}-{k}", "kind": "랙", "x": round(p[0], 1), "y": round(p[1], 1),
+                                        "label": f"3D 랙 {rid} 기둥 {(k + 1) // 2}"})
+        hw = width_m / 2 / m + off
         for i, poly in enumerate(layout.racks_user):
             k = 0
             for (ax0, ay0), (ax1, ay1) in zip(poly, poly[1:]):
