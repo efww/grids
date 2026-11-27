@@ -153,15 +153,18 @@ pub(crate) enum Fail {
     NoClosedTab,
     DlgBusy,
     ExplorerCant,
+    SessionCantSave,
+    SessionKept,
 }
 
 #[cfg(test)] // every kind, for the fail_texts test
-pub(crate) const FAILS: [Fail; 30] = {
+pub(crate) const FAILS: [Fail; 32] = {
     use Fail::*;
     [
         AddrNotFound, AddrQuotes, AddrCantOpen, FolderCantOpen, LastTab, DriveCantOpen, SortHere, PaneMin, NoBorder, GroupEmpty, GroupTooMany,
         GroupCant, GroupBusy, NewFileHere, NewFolder, SendChanged, SendCant, PatternEmpty, StampEmpty, StampTooMany, StampCant, StampBusy,
-        EditNone, EditOnline, DragCant, ClipNoPath, NoClosedTab, DlgBusy, ExplorerCant, PatternCond,
+        EditNone, EditOnline, DragCant, ClipNoPath, NoClosedTab, DlgBusy, ExplorerCant, PatternCond, SessionCantSave,
+        SessionKept,
     ]
 };
 
@@ -198,6 +201,8 @@ pub(crate) fn fail_pair(kind: Fail) -> (&'static str, &'static str) {
         Fail::ClipNoPath => ("No folder or file path on the clipboard · copy a path, then Ctrl+Shift+V", "클립보드에 폴더·파일 경로가 없음 · 경로를 복사한 뒤 Ctrl+Shift+V"),
         Fail::DlgBusy => ("The dialog isn't responding · try again in a moment", "대화 상자가 응답하지 않음 · 잠시 뒤 다시 해 보세요"),
         Fail::ExplorerCant => ("Couldn't open {name} in Explorer · it may be gone or not connected", "{name}을(를) 탐색기에서 열지 못함 · 없어졌거나 연결되지 않았을 수 있음"),
+        Fail::SessionCantSave => ("Couldn't save the session '{name}'", "세션 '{name}'을(를) 저장하지 못함"),
+        Fail::SessionKept => ("Couldn't save the session '{name}' · the saved file is unchanged", "세션 '{name}'을(를) 저장하지 못함 · 저장돼 있던 파일은 그대로입니다"),
     }
 }
 

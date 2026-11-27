@@ -908,6 +908,19 @@ pub(crate) fn write_ini(path: &Path, text: &str) -> std::result::Result<(), (boo
     r.map_err(|e| (false, e))
 }
 
+// A named session (.grids) saved like grids.ini: written to "<name>.grids.tmp" and swapped in, so a full disk or a
+// drive that goes mid-write leaves the saved file as it was. Only when that folder takes no new file (nothing
+// written yet) is it written in place as before, so a file that may be changed in a folder that takes no new
+// ones still saves. On failure: true = the file that was there before is untouched (the swap way failed).
+pub(crate) fn write_session_file(path: &Path, text: &str) -> std::result::Result<(), (bool, std::io::Error)> {
+    let was = path.is_file();
+    match write_ini(path, text) {
+        Ok(()) => Ok(()),
+        Err((true, _)) => std::fs::write(path, text).map_err(|e| (false, e)),
+        Err((false, e)) => Err((was, e)),
+    }
+}
+
 pub(crate) fn sessions_dir() -> PathBuf {
     ini_path().with_file_name("sessions")
 }

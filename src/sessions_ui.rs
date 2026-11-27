@@ -385,8 +385,11 @@ pub(crate) unsafe fn write_session(path: &Path) {
     for i in 0..app(|a| a.s.panes()) {
         save_view(i);
     }
-    if std::fs::write(path, app(|a| a.s.snapshot())).is_err() {
-        _ = MessageBeep(MB_ICONWARNING);
+    if let Err((kept, e)) = write_session_file(path, &app(|a| a.s.snapshot())) {
+        // the io words go after the text, not into {name} (that is cut to one line of 80 characters)
+        let name = path.file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let kind = if kept { Fail::SessionKept } else { Fail::SessionCantSave };
+        warn(format!("{}: {e}", fail_text(kind, &name, KO.load(Ordering::Relaxed))));
         return;
     }
     app(|a| {

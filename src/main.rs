@@ -2108,6 +2108,37 @@ mod tests {
         _ = std::fs::remove_dir_all(&dir);
     }
 
+    #[test]
+    fn session_file_write() {
+        let dir = tree("sess", &[]);
+        let f = dir.join("Work.grids");
+        let tmp = dir.join("Work.grids.tmp");
+        write_session_file(&f, "panes=1\n").unwrap();
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "panes=1\n");
+        assert!(!tmp.exists());
+        // something held open without sharing: the swap fails, says so, and the saved file keeps every byte
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            let held = std::fs::OpenOptions::new().read(true).share_mode(0).open(&f).unwrap();
+            let (kept, _) = write_session_file(&f, "panes=2\n").unwrap_err();
+            drop(held);
+            assert!(kept && !tmp.exists());
+            assert_eq!(std::fs::read(&f).unwrap(), b"panes=1\n");
+        }
+        // no new file can be made there (the .tmp name is taken): written in place, as before
+        std::fs::create_dir(&tmp).unwrap();
+        write_session_file(&f, "panes=3\n").unwrap();
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "panes=3\n");
+        std::fs::remove_dir(&tmp).unwrap();
+        // a folder in the way: an error, nothing left behind, and not "the saved file is unchanged"
+        let d = dir.join("Dir.grids");
+        std::fs::create_dir(&d).unwrap();
+        assert!(matches!(write_session_file(&d, "x"), Err((false, _))));
+        assert!(d.is_dir() && !dir.join("Dir.grids.tmp").exists());
+        _ = std::fs::remove_dir_all(&dir);
+    }
+
     // A fresh folder under %TEMP% holding `files` (relative path, size).
     fn tree(name: &str, files: &[(String, usize)]) -> PathBuf {
         let root = std::env::temp_dir().join(format!("grids-test-{}-{name}", std::process::id()));
