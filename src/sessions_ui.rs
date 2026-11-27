@@ -407,6 +407,8 @@ pub(crate) unsafe fn save_session_as() -> Result<()> {
     let dir = sessions_dir();
     _ = std::fs::create_dir_all(&dir);
     let dlg: IFileSaveDialog = CoCreateInstance(&FileSaveDialog, None, CLSCTX_INPROC_SERVER)?;
+    // saving to a USB folder must not make it Grids' working folder (that drive could not be ejected)
+    dlg.SetOptions(dlg.GetOptions()? | FOS_NOCHANGEDIR)?;
     let kind = HSTRING::from(tr("Grids session (*.grids)", "Grids 세션 (*.grids)"));
     dlg.SetFileTypes(&[COMDLG_FILTERSPEC { pszName: PCWSTR(kind.as_ptr()), pszSpec: w!("*.grids") }])?;
     dlg.SetDefaultExtension(w!("grids"))?;

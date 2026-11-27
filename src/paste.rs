@@ -1134,7 +1134,8 @@ pub(crate) unsafe fn send_elsewhere(srcs: Vec<String>, dst: &str, mv: bool) -> b
 // Ok(None) = cancelled.
 pub(crate) unsafe fn choose_folder(owner: HWND, start: &str, mv: bool) -> Result<Option<String>> {
     let dlg: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER)?;
-    dlg.SetOptions(dlg.GetOptions()? | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST)?;
+    // NOCHANGEDIR: picking a USB folder must not make it Grids' working folder (that drive could not be ejected)
+    dlg.SetOptions(dlg.GetOptions()? | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST | FOS_NOCHANGEDIR)?;
     let title = if mv { tr("Choose the folder to move to", "이동할 폴더 고르기") } else { tr("Choose the folder to copy to", "복사할 폴더 고르기") };
     _ = dlg.SetTitle(&HSTRING::from(title));
     if is_fs(start) {

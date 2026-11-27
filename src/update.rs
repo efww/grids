@@ -678,10 +678,11 @@ pub(crate) unsafe fn update_msg(main: HWND, what: usize) {
 }
 
 /// End of main(): the window is gone (so the new Grids won't hand its start to this one); start it, no arguments,
-/// same working folder: it opens the last state from grids.ini.
+/// started in its own folder (the one Grids works in anyway, see work_dir; not whatever folder this one was
+/// started in, which may be a drive pulled out since): it opens the last state from grids.ini.
 pub(crate) fn restart_updated() {
     if let Some(exe) = RESTART.get() {
-        let dir = std::env::current_dir().map(|d| HSTRING::from(d.as_os_str())).unwrap_or_default();
+        let dir = work_dir(exe).map(|d| HSTRING::from(d.as_os_str())).unwrap_or_default();
         unsafe { ShellExecuteW(None, w!("open"), &HSTRING::from(exe.as_os_str()), PCWSTR::null(), &dir, SW_SHOWNORMAL) };
     }
 }

@@ -144,6 +144,14 @@ fn quiet_critical_errors() {
     }
 }
 
+/// The folder Grids works in once it is the one running: grids.exe's own folder (a drive root and a UNC share
+/// are fine). Not the folder it was started in: Windows won't eject a drive a process has as its working folder,
+/// and "Open in Grids" from a USB folder, or a USB drive opened with Grids as the folder handler, start it there.
+/// None for a bare name with no folder ("grids.exe" → "") or nothing at all: then the working folder stays.
+pub(crate) fn work_dir(exe: &Path) -> Option<PathBuf> {
+    exe.parent().filter(|d| !d.as_os_str().is_empty()).map(Path::to_path_buf)
+}
+
 fn main() -> Result<()> {
     quiet_critical_errors();
     unsafe {
@@ -205,6 +213,12 @@ fn main() -> Result<()> {
             return Ok(());
         }
 
+        // This is the Grids that stays: leave the folder it was started in (often the drive it was opened on), so
+        // that drive can be ejected once no pane is on it. The arguments are full paths already (resolve above);
+        // once only, before any thread starts. Failing leaves it as it was.
+        if let Some(dir) = std::env::current_exe().ok().as_deref().and_then(work_dir) {
+            _ = std::env::set_current_dir(dir);
+        }
         OleInitialize(None)?; // OLE (not just COM) for drag & drop
         let shell_refs = hold_shell_refs(); // Windows' own copies count on it; waited for after the message loop
         // A grids.ini that is there but unreadable (locked, no access) must not be overwritten with defaults:
@@ -567,6 +581,19 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // The pure part only: set_current_dir is process-wide and would upset tests running alongside.
+    #[test]
+    fn work_dir_is_the_exe_folder() {
+        let wd = |p: &str| work_dir(Path::new(p)).map(|d| d.to_string_lossy().into_owned());
+        assert_eq!(wd(r"C:\Tools\Grids\grids.exe").as_deref(), Some(r"C:\Tools\Grids"));
+        assert_eq!(wd(r"E:\grids.exe").as_deref(), Some(r"E:\"));
+        assert_eq!(wd(r"\\server\share\apps\grids.exe").as_deref(), Some(r"\\server\share\apps"));
+        assert_eq!(wd(r"\\server\share\grids.exe").as_deref(), Some(r"\\server\share\"));
+        assert_eq!(wd("grids.exe"), None);
+        assert_eq!(wd(""), None);
+        assert_eq!(wd(r"C:\"), None);
+    }
 
     // Three separate number spaces: the ⇄ menu (TPM_RETURNCMD, read by open_in_pick), main_proc's WM_COMMAND,
     // and each window's timers. The lists are written by hand: a new constant left out of them is not checked;
