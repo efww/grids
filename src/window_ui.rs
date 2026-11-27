@@ -524,6 +524,11 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 for (k, (_, c)) in theme_pal(dark).accents.iter().enumerate() {
                     check(ID_ACCENT + k, !sys && *c == accent);
                 }
+                let sub = HMENU(wp.0 as _);
+                let n = GetMenuItemCount(Some(sub));
+                if n > 0 && GetMenuItemID(sub, 0) == ID_ACCENT_SYS as u32 && GetMenuItemID(sub, n - 1) == ID_ACCENT_PICK as u32 {
+                    accent_chips(sub, dark);
+                }
             }
             // right-click (or Shift+F10 / the menu key) on a drive button: that drive's shell menu; on the Recycle
             // Bin button: the bin's
@@ -1688,6 +1693,25 @@ pub(crate) const VIEW_END: [(usize, &str, &str); 7] = [
     (ID_ABOUT, "About Grids", "Grids 정보"),
     (ID_STAR, "★ Star Grids on GitHub", "★ GitHub에 별 주기"),
 ];
+
+// The selection colour submenu opening: each preset's chip in the theme's shade (the colours its ticks compare),
+// and Windows' accent colour's when known. The view menu is kept, so every item is set again each time (no chip
+// where there is none now) before the last set of bitmaps goes. None under high contrast: every preset is
+// Windows' highlight there. "Custom..." has none.
+unsafe fn accent_chips(sub: HMENU, dark: bool) {
+    let hc = HC_ON.load(Ordering::Relaxed);
+    let mut items = vec![(ID_ACCENT_SYS, sys_accent(dark))];
+    items.extend(theme_pal(dark).accents.iter().enumerate().map(|(k, (_, c))| (ID_ACCENT + k, Some(*c))));
+    let mut chips = MenuSwatches::new(app(|a| a.dpi));
+    for (id, c) in items {
+        match c.filter(|_| !hc) {
+            Some(c) => chips.put(sub, id, Some(c)),
+            None => set_item_bitmap(sub, id, HBITMAP::default()),
+        }
+    }
+    let old = app(|a| a.accent_chips.replace(chips));
+    drop(old); // its bitmaps no longer in any item
+}
 
 // The view popup opened from the top toolbar (no classic menu bar).
 pub(crate) unsafe fn make_menus() -> Result<HMENU> {

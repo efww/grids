@@ -907,6 +907,16 @@ pub(crate) unsafe fn open_in_menu(h: HWND, src: usize) {
     }
     let others: Vec<(usize, HSTRING, String)> = items.iter().map(|(k, disp, path, t)| (*k, label(*k, *t, disp), path.clone())).collect();
     let wm = shell_menu(menu, src, &picked, no_dirs, &others);
+    // a labelled pane's rows (open, swap, copy, move, compare) start with its colour; found in the submenus by
+    // their numbers, which the whole menu never repeats
+    let mut chips = MenuSwatches::new(app(|a| a.dpi)); // dropped after DestroyMenu
+    for (k, _, _, t) in &items {
+        if let Some(c) = tint_color(*t) {
+            for base in [ID_OPEN_TO, ID_SWAP_TO, ID_COPY_TO, ID_MOVE_TO, ID_WM_PANE] {
+                chips.put(menu, base + k, Some(c));
+            }
+        }
+    }
     let mut rc = RECT::default();
     if let Some(b) = pane_ctl(src, ID_OPEN_IN) {
         _ = GetWindowRect(b, &mut rc);
@@ -963,7 +973,8 @@ pub(crate) unsafe fn open_in_menu(h: HWND, src: usize) {
 
 // Right-click on a pane header: colour label from the selection colour presets, saved with the session.
 pub(crate) unsafe fn tint_menu(h: HWND, i: usize, at: POINT) {
-    let cur = app(|a| a.s.tints[i]);
+    let (cur, dpi) = app(|a| (a.s.tints[i], a.dpi));
+    let mut chips = MenuSwatches::new(dpi); // dropped after DestroyMenu
     let Ok(menu) = CreatePopupMenu() else { return };
     _ = AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, &HSTRING::from(tr("Pane colour", "패널 색")));
     _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
@@ -971,6 +982,7 @@ pub(crate) unsafe fn tint_menu(h: HWND, i: usize, at: POINT) {
         let flags = if k == cur { MF_STRING | MF_CHECKED } else { MF_STRING };
         let name = if k == 0 { tr("None", "없음") } else { tint_name(k) };
         _ = AppendMenuW(menu, flags, k as usize + 1, &HSTRING::from(name));
+        chips.put(menu, k as usize + 1, tint_color(k)); // None: an empty chip
     }
     let pick = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN, at.x, at.y, None, h, None).0;
     _ = DestroyMenu(menu);

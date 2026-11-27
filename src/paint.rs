@@ -296,13 +296,111 @@ impl MenuIcons {
         let px = self.px;
         let bmp = *self.made.entry(index).or_insert_with(|| menu_pix(index, px).and_then(|p| pix_bitmap(&p)));
         if let Some(b) = bmp {
-            let mi = MENUITEMINFOW { cbSize: size_of::<MENUITEMINFOW>() as u32, fMask: MIIM_BITMAP, hbmpItem: b, ..Default::default() };
-            _ = SetMenuItemInfoW(menu, id as u32, false, &mi);
+            set_item_bitmap(menu, id, b);
         }
     }
 }
 
 impl Drop for MenuIcons {
+    fn drop(&mut self) {
+        for b in self.made.values().flatten() {
+            unsafe { _ = DeleteObject((*b).into()) };
+        }
+    }
+}
+
+/// The picture before the item of command id `id` (also found in submenus); a null bitmap takes it away.
+pub(crate) unsafe fn set_item_bitmap(menu: HMENU, id: usize, b: HBITMAP) {
+    let mi = MENUITEMINFOW { cbSize: size_of::<MENUITEMINFOW>() as u32, fMask: MIIM_BITMAP, hbmpItem: b, ..Default::default() };
+    _ = SetMenuItemInfoW(menu, id as u32, false, &mi);
+}
+
+// ---------- colour chips in the colour menus (pane colour, selection colour, ⇄ pane rows) ----------
+// As Windows Terminal's tab colours, Chrome's tab groups and Office's font colour menu: the colour itself beside
+// its name, so it is picked by eye, in the shade the current theme paints.
+
+// Fraction 0..1 of pixel (x, y) inside the square [l, l + w)² with corners rounded by r: 4 × 4 samples.
+fn round_cover(x: i32, y: i32, l: f32, w: f32, r: f32) -> f32 {
+    const N: i32 = 4;
+    let mut n = 0;
+    for sy in 0..N {
+        for sx in 0..N {
+            let (u, v) = (x as f32 + (sx as f32 + 0.5) / N as f32, y as f32 + (sy as f32 + 0.5) / N as f32);
+            if u < l || v < l || u > l + w || v > l + w {
+                continue;
+            }
+            let (cu, cv) = (u.clamp(l + r, l + w - r), v.clamp(l + r, l + w - r));
+            if (u - cu).powi(2) + (v - cv).powi(2) <= r * r {
+                n += 1;
+            }
+        }
+    }
+    n as f32 / (N * N) as f32
+}
+
+/// A chip of colour `fill` (0xRRGGBB) with a rim of `edge`, centred on a px × px canvas, premultiplied: s(12) of
+/// s(16), corners rounded and smoothed. None: the rim alone (no colour).
+pub(crate) fn swatch_pix(px: i32, fill: Option<u32>, edge: u32) -> Pix {
+    let px = px.max(1);
+    let mut side = (px * 3 / 4).max(1);
+    if (px - side) % 2 == 1 {
+        side += 1; // the same margin on both sides
+    }
+    let (o, e, r) = (((px - side) / 2) as f32, (px / 16).max(1) as f32, side as f32 / 4.0);
+    let ch = |c: u32, sh: u32| (c >> sh & 0xFF) as f32;
+    let mut bgra = vec![0u8; (px * px * 4) as usize];
+    for y in 0..px {
+        for x in 0..px {
+            let outer = round_cover(x, y, o, side as f32, r);
+            if outer == 0.0 {
+                continue;
+            }
+            let inner = round_cover(x, y, o + e, side as f32 - 2.0 * e, (r - e).max(0.0));
+            let (rim, body) = (outer - inner, if fill.is_some() { inner } else { 0.0 });
+            let i = ((y * px + x) * 4) as usize;
+            for (k, sh) in [0, 8, 16].into_iter().enumerate() {
+                let v = ch(edge, sh) * rim + fill.map_or(0.0, |f| ch(f, sh)) * body;
+                bgra[i + k] = v.round().min(255.0) as u8;
+            }
+            bgra[i + 3] = ((rim + body) * 255.0).round().min(255.0) as u8;
+        }
+    }
+    Pix { w: px, h: px, bgra }
+}
+
+// A chip's rim on the theme's menu: its colour a third of the way to the menu text, so a grey chip still stands
+// off the menu; the empty chip in the theme's grey text.
+pub(crate) fn chip_edge(fill: Option<u32>, p: &Palette) -> u32 {
+    fill.map_or(p.sub, |c| blend(c, p.text, 0.35))
+}
+
+/// One menu's colour chips, one bitmap per colour. As MenuIcons: DestroyMenu leaves them, so keep this alive
+/// until the menu is destroyed (or, for a kept menu, until its items hold other bitmaps).
+pub(crate) struct MenuSwatches {
+    px: i32,
+    made: std::collections::HashMap<Option<u32>, Option<HBITMAP>>,
+}
+
+impl MenuSwatches {
+    pub(crate) fn new(dpi: i32) -> Self {
+        Self { px: 16 * dpi / 96, made: Default::default() }
+    }
+
+    /// A chip of `fill` (None: the empty one) before the item of command id `id`.
+    pub(crate) unsafe fn put(&mut self, menu: HMENU, id: usize, fill: Option<u32>) {
+        let px = self.px;
+        let bmp = *self.made.entry(fill).or_insert_with(|| {
+            // under high contrast menus take Windows' colours (app mode Default): the rim in its menu text
+            let edge = if HC_ON.load(Ordering::Relaxed) { crate::draw::cref(GetSysColor(COLOR_MENUTEXT)).0 } else { chip_edge(fill, theme_pal(DARK_ON.load(Ordering::Relaxed))) };
+            pix_bitmap(&swatch_pix(px, fill, edge))
+        });
+        if let Some(b) = bmp {
+            set_item_bitmap(menu, id, b);
+        }
+    }
+}
+
+impl Drop for MenuSwatches {
     fn drop(&mut self) {
         for b in self.made.values().flatten() {
             unsafe { _ = DeleteObject((*b).into()) };
@@ -929,6 +1027,57 @@ mod tests {
         assert_eq!(pick_list(&[48, 16, 32], 24), Some(2));
         assert_eq!(pick_list(&[48, 16, 32], 96), Some(0));
         assert_eq!(pick_list(&[], 16), None);
+    }
+
+    // Colour menu chips: centred, the colour inside, nothing outside, smoothed corners, the empty chip a rim only.
+    #[test]
+    fn colour_chips() {
+        let (fill, edge) = (0x8CC5A8u32, 0x112233u32);
+        let at = |p: &Pix, x: i32, y: i32| {
+            let i = ((y * p.w + x) * 4) as usize;
+            [p.bgra[i], p.bgra[i + 1], p.bgra[i + 2], p.bgra[i + 3]]
+        };
+        let bgra = |c: u32| [(c & 0xFF) as u8, (c >> 8 & 0xFF) as u8, (c >> 16 & 0xFF) as u8, 255];
+        for px in [16, 20, 24, 32] {
+            for f in [Some(fill), None] {
+                let p = swatch_pix(px, f, edge);
+                assert_eq!((p.w, p.h, p.bgra.len()), (px, px, (px * px * 4) as usize), "{px} px");
+                for y in 0..px {
+                    for x in 0..px {
+                        let a = at(&p, x, y);
+                        assert!(a[..3].iter().all(|&c| c <= a[3]), "{px} px ({x}, {y}): not premultiplied");
+                        assert_eq!(a, at(&p, px - 1 - x, y), "{px} px ({x}, {y}): not centred across");
+                        assert_eq!(a, at(&p, x, px - 1 - y), "{px} px ({x}, {y}): not centred down");
+                    }
+                }
+                // the margin around the chip is clear, the canvas corners too
+                let o = (0..px).position(|x| at(&p, x, px / 2)[3] > 0).expect("a chip") as i32;
+                let side = px - 2 * o;
+                assert!(side >= px * 3 / 4 && side <= px * 3 / 4 + 1, "{px} px: chip {side} px wide");
+                assert!(o >= 1, "{px} px: no margin");
+                assert_eq!(at(&p, 0, 0)[3], 0);
+                // straight sides crisp, corners rounded (not a full square corner) and smoothed (partly covered pixels)
+                assert!((0..px).all(|x| matches!(at(&p, x, px / 2)[3], 0 | 255)), "{px} px: blurred side");
+                assert!(at(&p, o, o)[3] < 255, "{px} px: square corner");
+                let soft = (0..px / 2).flat_map(|y| (0..px / 2).map(move |x| (x, y))).filter(|&(x, y)| (1..255).contains(&at(&p, x, y)[3])).count();
+                assert!(soft >= 2, "{px} px: {soft} smoothed corner pixels");
+                // the rim along the top edge in the edge colour, opaque
+                assert_eq!(at(&p, px / 2, o), bgra(edge), "{px} px: rim");
+                let mid = at(&p, px / 2, px / 2);
+                match f {
+                    Some(c) => assert_eq!(mid, bgra(c), "{px} px: chip colour"),
+                    None => assert_eq!(mid[3], 0, "{px} px: the empty chip is filled"),
+                }
+            }
+        }
+        // the rim stands off the menu even where the chip barely does: Gray on light and on dark, the empty chip
+        for (p, gray) in [(&LIGHT, 0xC5C5C5), (&DARK, 0x4B4B4B)] {
+            assert_eq!(p.accents[1].1, gray);
+            for f in [Some(gray), None] {
+                let k = contrast(chip_edge(f, p), p.card);
+                assert!(k >= 3.0, "{f:?}: rim contrast {k:.2}");
+            }
+        }
     }
 
     const BG: [u8; 3] = [200, 120, 40]; // B, G, R: a colour, so a dark or light fringe shows

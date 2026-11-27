@@ -56,6 +56,7 @@ pub(crate) struct App {
     #[allow(clippy::type_complexity)]
     pub(crate) status_base: (String, Option<bool>, Vec<String>, Option<(String, u64, u64)>),
     pub(crate) view_menu: HMENU,
+    pub(crate) accent_chips: Option<MenuSwatches>, // the view menu's selection colour chips, replaced as it opens
     pub(crate) base: Option<Session>, // last loaded/saved (or startup) state; differs -> green dot
     pub(crate) dirty: bool,
     pub(crate) tick_no: u32, // TIMER_STATUS ticks so far (tick_plan: every 7th one behind another app)
@@ -174,6 +175,7 @@ thread_local! {
         sel_seen: None,
         status_base: Default::default(),
         view_menu: HMENU::default(),
+        accent_chips: None,
         base: None,
         dirty: false,
         tick_no: 0,
