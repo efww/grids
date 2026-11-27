@@ -328,8 +328,9 @@ pub(crate) unsafe fn shell_change(h: HWND, wp: WPARAM, lp: LPARAM) {
 // name (on_nav confirms it and says so); a pane inside a removed folder opens its nearest parent (go_near).
 pub(crate) unsafe fn shell_tick(h: HWND) {
     _ = KillTimer(Some(h), TIMER_SHELL);
-    let (changes, paths, tabs, recent, favs) =
-        app(|a| (std::mem::take(&mut a.shell_q), a.s.paths.clone(), a.s.tabs.clone(), a.s.recent.clone(), a.s.favs.clone()));
+    let (changes, paths, tabs, recent, favs, closed) = app(|a| {
+        (std::mem::take(&mut a.shell_q), a.s.paths.clone(), a.s.tabs.clone(), a.s.recent.clone(), a.s.favs.clone(), a.closed_tabs.clone())
+    });
     if changes.is_empty() {
         return;
     }
@@ -338,6 +339,7 @@ pub(crate) unsafe fn shell_tick(h: HWND) {
         _ => p.clone(),
     };
     let tabs: Vec<Vec<String>> = tabs.iter().map(|t| t.iter().map(moved).collect()).collect();
+    let closed: Vec<ClosedTab> = closed.into_iter().map(|c| ClosedTab { path: moved(&c.path), ..c }).collect();
     let (recent, _) = follow_list(&recent, &changes, moved_on_disk);
     // favourites change only when one took a new name: a case-only duplicate typed into grids.ini stays otherwise
     let favs = Some(follow_list(&favs, &changes, moved_on_disk)).filter(|f| f.1).map(|f| f.0);
@@ -345,6 +347,7 @@ pub(crate) unsafe fn shell_tick(h: HWND) {
     let fav_moved = favs.is_some();
     let (live, fewer, popup) = app(|a| {
         a.s.recent = recent;
+        a.closed_tabs = closed;
         for (i, t) in tabs.into_iter().enumerate().take(a.s.tabs.len()) {
             a.s.tabs[i] = t;
         }

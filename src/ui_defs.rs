@@ -398,6 +398,7 @@ Alt+↓ in the filter\tFile types: pictures, videos, documents ... (or click the
 Ctrl+Shift+F\tSearch the whole PC with Everything, while it runs (or the orange magnifier): ↑/↓ choose, Enter shows the item in the active pane, Ctrl+Enter opens a folder, Alt+O only under this folder\n\
 Ctrl+T / Ctrl+W\tNew tab (same folder) / close tab, with tabs on (View menu)\n\
 Ctrl+K\tDuplicate the current tab\n\
+Ctrl+Shift+T\tReopen the last closed tab at its old place (again: the one before it)\n\
 Ctrl+Enter / Ctrl+Shift+Enter\tIn the file list, with tabs on: open the selected folders (or the focused one) as new tabs after this one / open the focused folder in a new tab and go there\n\
 Ctrl+PgDn / Ctrl+PgUp\tNext / previous tab\n\
 Alt+1 … Alt+9\tGo to tab 1–8 of the active pane; Alt+9: its last tab\n\
@@ -428,7 +429,7 @@ Drive buttons (C, D …): open that drive in the active pane; its drive is under
 Double-click a splitter: split evenly\n\
 Update button (blue, top right): a newer Grids is out; click to restart into it (settings, folders and sessions stay)\n\
 Pane header: right-click for a colour label (saved with the session); double-click to maximize / restore the pane; drop a folder on it to open it there (a file: its folder)\n\
-Tabs: click to switch, × or middle-click to close, + or double-click the empty strip for a new tab, right-click to duplicate, move left / right or close; drop files on another tab to copy / move them into its folder as in Explorer (Ctrl copies, Shift moves)\n\
+Tabs: click to switch, × or middle-click to close, + or double-click the empty strip for a new tab, right-click to duplicate, move left / right, close or reopen a closed tab; drop files on another tab to copy / move them into its folder as in Explorer (Ctrl copies, Shift moves)\n\
 Arguments: grids.exe C:\\a D:\\b ... or grids.exe work.grids\n\
 If Grids is already running, they open in that window.";
 
@@ -466,6 +467,7 @@ Ctrl+F\t필터 (*.pdf;*.txt 또는 이름 일부, 폴더는 항상 표시)\n\
 Ctrl+Shift+F\tEverything으로 PC 전체 검색, Everything이 실행 중일 때 (주황 돋보기도 가능): ↑/↓ 고르기, Enter는 지금 패널에서 그 항목 보기, Ctrl+Enter는 폴더 열기, Alt+O는 이 폴더 아래에서만\n\
 Ctrl+T / Ctrl+W\t새 탭(같은 폴더) / 탭 닫기, 탭을 켰을 때 (보기 메뉴)\n\
 Ctrl+K\t지금 탭 복제\n\
+Ctrl+Shift+T\t마지막으로 닫은 탭을 원래 자리에 다시 열기 (다시 누르면 그 전에 닫은 탭)\n\
 Ctrl+Enter / Ctrl+Shift+Enter\t파일 목록에서, 탭을 켰을 때: 선택한 폴더(또는 포커스한 폴더)를 지금 탭 뒤에 새 탭으로 열기 / 포커스한 폴더를 새 탭으로 열고 바로 그 탭으로\n\
 Ctrl+PgDn / Ctrl+PgUp\t다음 / 이전 탭\n\
 Alt+1 … Alt+9\t지금 패널의 1~8번째 탭으로 이동, Alt+9는 마지막 탭\n\
@@ -496,6 +498,6 @@ F2, Del, Ctrl+C/X/V, F5\t탐색기와 동일\n\n\
 스플리터 더블클릭: 균등 분할\n\
 업데이트 버튼 (파란색, 오른쪽 위): 새 Grids가 나옴, 누르면 재시작해 업데이트 (설정·폴더·세션 유지)\n\
 패널 머리줄: 오른쪽 클릭 = 패널 색 라벨 (세션에 저장), 더블클릭 = 크게 보기 / 복원, 폴더를 끌어다 놓으면 그 패널에서 열기 (파일은 그 파일이 든 폴더)\n\
-탭: 클릭 = 전환, × 또는 가운데 클릭 = 닫기, + 또는 탭 줄 빈 곳 더블클릭 = 새 탭, 오른쪽 클릭 = 복제·왼쪽/오른쪽으로 옮기기·닫기, 파일을 다른 탭에 끌어다 놓으면 탐색기처럼 그 탭 폴더로 복사·이동(Ctrl 복사·Shift 이동)\n\
+탭: 클릭 = 전환, × 또는 가운데 클릭 = 닫기, + 또는 탭 줄 빈 곳 더블클릭 = 새 탭, 오른쪽 클릭 = 복제·왼쪽/오른쪽으로 옮기기·닫기·닫은 탭 다시 열기, 파일을 다른 탭에 끌어다 놓으면 탐색기처럼 그 탭 폴더로 복사·이동(Ctrl 복사·Shift 이동)\n\
 실행 인자: grids.exe C:\\a D:\\b ... 또는 grids.exe 작업.grids\n\
 이미 실행 중이면 그 창에서 엽니다.";

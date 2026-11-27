@@ -151,6 +151,11 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
             key_used(TIP_CLOSE_TAB);
             tab_said(a, repeat, || close_tab(a, app(|x| x.s.tab[a])));
         }
+        KeyRoute::ReopenTab => {
+            if !repeat {
+                tab_said(a, false, || reopen_closed_tab(a));
+            }
+        }
         KeyRoute::DupTab => tab_said(a, repeat, || dup_tab(a, app(|x| x.s.tab[a]))),
         KeyRoute::StepTab(d) => tab_said(a, repeat, || step_tab(a, d)),
         KeyRoute::MoveTab(d) => tab_said(a, repeat, || {
@@ -374,6 +379,7 @@ pub(crate) enum KeyRoute {
     CyclePane(i32),
     NewTab,
     CloseTab,
+    ReopenTab,
     DupTab,
     StepTab(i32),
     MoveTab(i32),
@@ -458,6 +464,8 @@ pub(crate) fn key_route(vk: VIRTUAL_KEY, ctrl: bool, shift: bool, alt: bool, c: 
         VK_SPACE if !ctrl && !shift && !alt && list() && space_peeks(c.typed_ago) => Peek,
         VK_TAB if ctrl => CyclePane(if shift { -1 } else { 1 }),
         VK_T if ctrl && !shift && !alt && tabs => NewTab,
+        // Ctrl+Shift+T: the last closed tab back (a browser's); held, it reopens one
+        VK_T if ctrl && shift && !alt && tabs => ReopenTab,
         VK_W if ctrl && !shift && !alt && tabs => CloseTab,
         VK_K if ctrl && !shift && !alt && tabs => DupTab,
         k @ (VK_NEXT | VK_PRIOR) if ctrl && !shift && !alt && tabs => StepTab(step(k)),

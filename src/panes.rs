@@ -1124,6 +1124,9 @@ pub(crate) unsafe fn swap_panes(i: usize, j: usize) {
         if let Some(p) = a.say_nav.as_mut() {
             to(p);
         }
+        for c in &mut a.closed_tabs {
+            to(&mut c.pane);
+        }
         a.status_key.clear();
         forget_sel(a);
         a.dirty = session_dirty(&a.s, a.base.as_ref());

@@ -4013,6 +4013,44 @@ mod tests { tr("in", "안") }
         assert_eq!(s.tab[0], 1);
     }
 
+    // Ctrl+Shift+T: a closed tab back at its place (or after the current one), made current
+    #[test]
+    fn tabs_reopen() {
+        let v = |x: &[&str]| x.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        // closed from the middle, back at the same place; the current tab's stale entry takes the folder on display
+        let mut s = Session::default();
+        s.tabs[0] = v(&["x", "old", "z"]);
+        (s.tab[0], s.paths[0]) = (1, "y".into());
+        assert_eq!(s.reopen_tab(0, Some(1), "q").as_deref(), Some("q"));
+        assert_eq!((s.tabs[0].clone(), s.tab[0]), (v(&["x", "q", "y", "z"]), 1));
+        // at the end (k == len) is a place; past it: right after the current one
+        let mut s = Session::default();
+        s.tabs[0] = v(&["x", "y"]);
+        (s.tab[0], s.paths[0]) = (0, "x".into());
+        assert_eq!(s.reopen_tab(0, Some(2), "q").as_deref(), Some("q"));
+        assert_eq!((s.tabs[0].clone(), s.tab[0]), (v(&["x", "y", "q"]), 2));
+        s.paths[0] = "q".into();
+        assert_eq!(s.reopen_tab(0, Some(9), "r").as_deref(), Some("r"));
+        assert_eq!((s.tabs[0].clone(), s.tab[0]), (v(&["x", "y", "q", "r"]), 3));
+        // one tab (none saved, a stale tab number): the reopened one after it; the same folder: nothing to browse
+        let mut s = Session::default();
+        (s.paths[0], s.tab[0]) = (r"C:\a".into(), 5);
+        assert_eq!(s.reopen_tab(0, None, r"c:\A"), None);
+        assert_eq!((s.tabs[0].clone(), s.tab[0]), (v(&[r"C:\a", r"c:\A"]), 1));
+        let mut s = Session::default();
+        s.paths[0] = "a".into();
+        assert_eq!(s.reopen_tab(0, Some(0), "b").as_deref(), Some("b"));
+        assert_eq!((s.tabs[0].clone(), s.tab[0]), (v(&["b", "a"]), 0));
+
+        // the list keeps the newest CLOSED_TABS_MAX, newest last
+        let mut list = Vec::new();
+        for n in 0..CLOSED_TABS_MAX + 5 {
+            note_closed(&mut list, ClosedTab { pane: 0, at: n, path: format!("p{n}") });
+        }
+        assert_eq!(list.len(), CLOSED_TABS_MAX);
+        assert_eq!((list[0].at, list.last().map(|t| t.at)), (5, Some(CLOSED_TABS_MAX + 4)));
+    }
+
     // Ctrl+Enter / Ctrl+Shift+Enter: folders as tabs right after the current one
     #[test]
     fn tabs_open_from_list() {
@@ -4983,6 +5021,10 @@ mod tests { tr("in", "안") }
         assert_eq!((l("Shift+F5"), route("addr", "Shift+F5"), l("Ctrl+Shift+F5")), (Stamp, BoxKey, Shell));
         assert_eq!((l("Ctrl+F3"), l("Ctrl+F5"), l("Ctrl+F6")), (Sort(0), Sort(1), Sort(2)));
         assert_eq!(route_with("", "Ctrl+T", false, 9, None), Shell);
+        // Ctrl+Shift+T: from the list and the boxes; tabs off or AltGr+Shift+T: not ours
+        assert_eq!((l("Ctrl+Shift+T"), route("addr", "Ctrl+Shift+T"), route("filter", "Ctrl+Shift+T")), (ReopenTab, ReopenTab, ReopenTab));
+        assert_eq!((route_with("", "Ctrl+Shift+T", false, 9, None), l("Ctrl+T")), (Shell, NewTab));
+        assert_ne!(l("Ctrl+Alt+Shift+T"), ReopenTab);
         assert_eq!(route_with("", "Ctrl+Enter", false, 9, None), Shell);
         assert_eq!((l("Ctrl+Enter"), l("Ctrl+Shift+Enter")), (OpenTabs(false), OpenTabs(true)));
         assert_eq!((route_with("", "Ctrl+4", true, 4, None), route_with("", "Ctrl+5", true, 4, None)), (Pane(3), Shell));

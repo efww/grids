@@ -223,6 +223,8 @@ pub(crate) unsafe fn tab_menu(h: HWND, i: usize, k: usize, at: POINT) {
     _ = AppendMenuW(menu, on(k + 1 < n), 4, &HSTRING::from(tr("Move right\tCtrl+Shift+PgDn", "오른쪽으로 옮기기\tCtrl+Shift+PgDn")));
     _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
     _ = AppendMenuW(menu, on(n > 1), 2, &HSTRING::from(tr("Close tab\tCtrl+W", "탭 닫기\tCtrl+W"))); // the last tab stays
+    let closed = app(|a| !a.closed_tabs.is_empty());
+    _ = AppendMenuW(menu, on(closed), 5, &HSTRING::from(tr("Reopen closed tab\tCtrl+Shift+T", "닫은 탭 다시 열기\tCtrl+Shift+T")));
     set_active(i);
     let pick = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN, at.x, at.y, None, h, None).0;
     _ = DestroyMenu(menu);
@@ -231,17 +233,55 @@ pub(crate) unsafe fn tab_menu(h: HWND, i: usize, k: usize, at: POINT) {
         2 => _ = close_tab(i, k),
         3 => move_tab(i, k, -1),
         4 => move_tab(i, k, 1),
+        5 => _ = reopen_closed_tab(i),
         _ => {}
     }
     focus_view(i);
 }
 
 pub(crate) unsafe fn close_tab(i: usize, k: usize) -> bool {
-    if app(|a| a.s.tab_list(i).len()) < 2 {
+    let list = app(|a| a.s.tab_list(i));
+    if list.len() < 2 {
         fail(Fail::LastTab, ""); // the last tab stays
         return false;
     }
-    tab_go(i, |s| s.close_tab(i, k))
+    let went = tab_go(i, |s| s.close_tab(i, k));
+    // noted only when it did close: a current tab whose neighbour can't be opened stays (tab_go undid it)
+    if let Some(path) = list.get(k).filter(|_| app(|a| a.s.tab_list(i).len()) < list.len()) {
+        app(|a| note_closed(&mut a.closed_tabs, ClosedTab { pane: i, at: k, path: path.clone() }));
+    }
+    went
+}
+
+// A closed tab, for Ctrl+Shift+T: its pane, its place there and its folder.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ClosedTab {
+    pub(crate) pane: usize,
+    pub(crate) at: usize,
+    pub(crate) path: String,
+}
+
+// How many closed tabs Ctrl+Shift+T can bring back (this run only; never saved).
+pub(crate) const CLOSED_TABS_MAX: usize = 20;
+
+// Newest last; past CLOSED_TABS_MAX the oldest goes.
+pub(crate) fn note_closed(list: &mut Vec<ClosedTab>, t: ClosedTab) {
+    list.push(t);
+    if list.len() > CLOSED_TABS_MAX {
+        list.drain(..list.len() - CLOSED_TABS_MAX);
+    }
+}
+
+// Ctrl+Shift+T / the tab menu's Reopen: the last closed tab back in pane i, at its old place when it was closed
+// there (else right after the current tab), made current. Taken off the list even when its folder can't be opened,
+// so it can't block the older ones. True when a browse was started.
+pub(crate) unsafe fn reopen_closed_tab(i: usize) -> bool {
+    let Some(t) = app(|a| a.closed_tabs.pop()) else {
+        fail(Fail::NoClosedTab, "");
+        return false;
+    };
+    let at = (t.pane == i).then_some(t.at);
+    tab_go(i, |s| s.reopen_tab(i, at, &t.path))
 }
 
 // Ctrl+PgDn / Ctrl+PgUp, wrapping around.

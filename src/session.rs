@@ -520,6 +520,17 @@ impl Session {
         (self.tabs[i], self.tab[i]) = if t.len() > 1 { (t, next) } else { (Vec::new(), 0) };
         go
     }
+
+    /// Ctrl+Shift+T: a closed tab's folder back as a tab at place `at` (0..=len; none or past the end: right after
+    /// the current one), made current. The folder to browse to, None when it is the one on display already.
+    pub(crate) fn reopen_tab(&mut self, i: usize, at: Option<usize>, path: &str) -> Option<String> {
+        let mut t = self.tab_list(i);
+        let cur = if t.len() > 1 { self.tab[i].min(t.len() - 1) } else { 0 };
+        let k = at.filter(|&k| k <= t.len()).unwrap_or(cur + 1);
+        t.insert(k, path.to_string());
+        (self.tabs[i], self.tab[i]) = (t, k);
+        (!path.eq_ignore_ascii_case(&self.paths[i])).then(|| path.to_string())
+    }
 }
 
 /// Panes i and j trade places in the current state and in the save baseline (so the two still line up pane
