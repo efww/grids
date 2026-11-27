@@ -429,7 +429,8 @@ Ctrl\tHeld alone for about a second: every button, field and pane number on scre
 F1\tHelp (opens the README on GitHub)\n\
 Win+Alt+E\tBring Grids to front from any app (again: minimize)\n\
 Ctrl+Alt+G\tIn another app's Open / Save dialog: jump to a folder open in Grids\n\
-F2, Del, Ctrl+C/X/V, F5\tSame as Explorer\n\n\
+F2, Del, Ctrl+C/X/V, F5\tSame as Explorer\n\
+F2\tWhile renaming in a pane: select the name without its extension → the whole name → only the extension, in turn (a folder, or a name whose extension isn't shown, keeps the whole name)\n\n\
 Address bar: click a folder in the path to go there; click a › to list the folders inside; click the current folder or empty space, or press Ctrl+L, to type a path; drag the folder icon in front to drop the current folder into another app, Explorer, the desktop or another pane's header\n\
 Layout button: click for an even grid, press and drag for rows per column (arrow keys + Enter work too)\n\
 ⇄ button: open the selected folder (or the current one) in another pane, with this pane's columns; or copy / move the selected files (up to 10,000) to another pane's folder, a favourite or recent folder, or any folder you choose; swap places with another pane; which program is using the selected files; SHA-256 checksum of the selected files; sort the selected files into date folders; move the selected items into a new folder (Ctrl+F7); make dated backup copies of the selected items (Shift+F5); remove empty folders in this folder; what takes up space in this folder (Ctrl+Shift+U); copy the file list (name, date modified, type, size, full path) as a table for Excel; select the files that differ from another pane's folder (Shift+F2); open this folder in Explorer with the selection; Compare with WinMerge (2 selected items, or this folder with another pane's) when WinMerge is installed\n\
@@ -501,7 +502,8 @@ Ctrl\t혼자 1초쯤 누르고 있기: 화면의 버튼·칸·패널 번호마�
 F1\t도움말 (GitHub README 열기)\n\
 Win+Alt+E\t어디서나 Grids 앞으로 (다시 누르면 최소화)\n\
 Ctrl+Alt+G\t다른 앱의 열기·저장 대화 상자에서: Grids에 열린 폴더로 이동\n\
-F2, Del, Ctrl+C/X/V, F5\t탐색기와 동일\n\n\
+F2, Del, Ctrl+C/X/V, F5\t탐색기와 동일\n\
+F2\t패널에서 이름 바꾸는 중: 누를 때마다 확장명 뺀 이름 → 이름 전체 → 확장명만 차례로 선택 (폴더나 확장명이 안 보이는 이름은 전체 선택 그대로)\n\n\
 주소 칸: 경로의 폴더를 누르면 그리로 이동, › 를 누르면 그 안의 폴더 목록, 현재 폴더·빈 곳을 누르거나 Ctrl+L이면 경로 입력, 맨 앞 폴더 아이콘을 끌면 지금 폴더를 다른 앱·탐색기·바탕 화면·다른 패널 머리줄에 놓을 수 있음\n\
 레이아웃 버튼: 클릭 = 균등 배치, 누른 채 끌기 = 열마다 칸 수 (방향키+Enter도 가능)\n\
 ⇄ 버튼: 선택한 폴더(없으면 현재 폴더)를 다른 패널에서 열기, 열 순서·폭·정렬도 함께. 또는 선택한 파일을 다른 패널 폴더·즐겨찾기·최근 폴더·직접 고른 폴더로 복사·이동 (최대 10,000개). 다른 패널과 자리 바꾸기. 선택한 파일을 쓰고 있는 프로그램 확인. 선택한 파일의 체크섬(SHA-256). 선택한 파일을 날짜별 폴더로 정리. 선택한 항목을 새 폴더로 묶기 (Ctrl+F7). 선택한 항목의 날짜 붙인 사본 만들기 (Shift+F5). 이 폴더 안의 빈 폴더 지우기. 이 폴더 용량 분석 (Ctrl+Shift+U). 파일 목록(이름·수정한 날짜·유형·크기·전체 경로)을 엑셀용 표로 복사. 다른 패널 폴더와 비교해 다른 파일 선택 (Shift+F2). 이 폴더를 탐색기에서 선택 그대로 열기. WinMerge가 있으면 WinMerge로 비교 (선택한 2개, 또는 이 폴더와 다른 패널 폴더)\n\

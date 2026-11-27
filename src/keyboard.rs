@@ -126,7 +126,14 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
         LAST_TYPED.set(Some(Instant::now()));
     }
     let in_main = || IsChild(app(|x| x.main), m.hwnd).as_bool();
-    let ctx = KeyCtx { addr, filt, tabs: tabs_on(), panes: app(|x| x.s.panes()), typed_ago, list: &list, in_main: &in_main };
+    // the name box of an item being renamed in the active pane's list (an Edit inside its shell view)
+    let renaming = || {
+        let mut c = [0u16; 16];
+        let n = GetClassNameW(m.hwnd, &mut c) as usize;
+        String::from_utf16_lossy(&c[..n]).eq_ignore_ascii_case("Edit")
+            && view_of::<IShellView>(a).and_then(|v| v.GetWindow().ok()).is_some_and(|v| !v.0.is_null() && IsChild(v, m.hwnd).as_bool())
+    };
+    let ctx = KeyCtx { addr, filt, tabs: tabs_on(), panes: app(|x| x.s.panes()), typed_ago, list: &list, in_main: &in_main, renaming: &renaming };
     // key_route picks where the key goes; the arms here do it (and say whether it was used)
     match key_route(vk, ctrl, shift, alt, &ctx) {
         KeyRoute::Typing => return !(addr || filt) && shell(),
@@ -342,6 +349,12 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
             app(|x| x.held = Some(vk.0));
             diff_key(a);
         }
+        // held, it steps once (no flicker); the key never reaches the view
+        KeyRoute::RenameCycle => {
+            if !repeat {
+                rename_cycle_key(a, m.hwnd);
+            }
+        }
         KeyRoute::Recent => recent_menu(a),
         KeyRoute::NewFolder => {
             if !repeat {
@@ -437,6 +450,7 @@ pub(crate) enum KeyRoute {
     Invert,
     RestoreSel,
     Diff,
+    RenameCycle,
     Recent,
     NewFolder,
     NewText,
@@ -448,7 +462,8 @@ pub(crate) enum KeyRoute {
 }
 
 // What key_route looks at besides the key: the focus in the address bar / filter, tabs on, the pane count, the last
-// typed key's age; and, asked only by the arms that need it, whether the focus is in the file list / the main window.
+// typed key's age; and, asked only by the arms that need it, whether the focus is in the file list / the main window /
+// a pane's rename box.
 pub(crate) struct KeyCtx<'a> {
     pub(crate) addr: bool,
     pub(crate) filt: bool,
@@ -457,6 +472,7 @@ pub(crate) struct KeyCtx<'a> {
     pub(crate) typed_ago: Option<Duration>,
     pub(crate) list: &'a dyn Fn() -> bool,
     pub(crate) in_main: &'a dyn Fn() -> bool,
+    pub(crate) renaming: &'a dyn Fn() -> bool,
 }
 
 pub(crate) fn key_route(vk: VIRTUAL_KEY, ctrl: bool, shift: bool, alt: bool, c: &KeyCtx) -> KeyRoute {
@@ -554,6 +570,9 @@ pub(crate) fn key_route(vk: VIRTUAL_KEY, ctrl: bool, shift: bool, alt: bool, c: 
         // Shift+F2: select the files that differ from another pane's (Total Commander's Compare Directories); only
         // in the list, so a rename box's Shift+F2 stays its own
         VK_F2 if shift && !ctrl && !alt && list() => Diff,
+        // F2 again while renaming in the list: the selection steps name → whole name → extension (Directory Opus,
+        // XYplorer); Explorer does nothing with it there
+        VK_F2 if !ctrl && !shift && !alt && (c.renaming)() => RenameCycle,
         VK_A if ctrl && shift && !alt && list() => Match(false),
         VK_DOWN if alt && !ctrl && !shift => Recent,
         VK_F3 if !ctrl && !shift && !alt && list() => Peek,
@@ -1051,4 +1070,59 @@ pub(crate) fn key_types(vk: VIRTUAL_KEY, ctrl: bool, alt: bool) -> bool {
 /// Space opens the preview unless a name is being typed (a key within the last second).
 pub(crate) fn space_peeks(typed_ago: Option<Duration>) -> bool {
     typed_ago.is_none_or(|d| d >= Duration::from_secs(1))
+}
+
+/// F2 again in a rename box: the next selection (start, end) in UTF-16 units, as the edit counts them. The name
+/// without its extension → the whole name → the extension alone (after the dot) → the name again; any other
+/// selection, or just a caret (after typing), starts at the name. `whole`: no extension step (a folder, a dot
+/// file, an extension the box doesn't show), so the whole name stays selected.
+pub(crate) fn rename_cycle(name: &str, whole: bool, sel: (usize, usize)) -> (usize, usize) {
+    let n = name.encode_utf16().count();
+    let s = stem_len(name, whole);
+    let sel = (sel.0.min(sel.1), sel.0.max(sel.1));
+    let (stem, all, ext) = ((0, s), (0, n), (s + 1, n));
+    if s + 1 >= n {
+        return all; // no extension (or a name ending in a dot): nothing to step through
+    }
+    match sel {
+        x if x == stem => all,
+        x if x == all => ext,
+        _ => stem,
+    }
+}
+
+// F2 in the active pane's rename box (`edit`): its selection steps on (rename_cycle). The extension step only when
+// the box shows the focused item's extension: a file whose editing name is its parsing name (not a .lnk, nor with
+// extensions hidden); a folder, or an item that can't be read, selects the whole name.
+unsafe fn rename_cycle_key(i: usize, edit: HWND) {
+    use windows::Win32::UI::Input::Ime::{ImmGetCompositionStringW, ImmGetContext, ImmNotifyIME, ImmReleaseContext, CPS_COMPLETE, GCS_COMPSTR, NI_COMPOSITIONSTR};
+    // a Korean syllable still being composed is finished first, and this F2 does only that: a selection moved under
+    // it would put the syllable somewhere else
+    let imc = ImmGetContext(edit);
+    if !imc.is_invalid() {
+        let composing = ImmGetCompositionStringW(imc, GCS_COMPSTR, None, 0) > 0;
+        if composing {
+            _ = ImmNotifyIME(imc, NI_COMPOSITIONSTR, CPS_COMPLETE, 0);
+        }
+        _ = ImmReleaseContext(edit, imc);
+        if composing {
+            return;
+        }
+    }
+    let mut buf = vec![0u16; GetWindowTextLengthW(edit).max(0) as usize + 1];
+    let got = GetWindowTextW(edit, &mut buf).max(0) as usize;
+    let name = String::from_utf16_lossy(&buf[..got.min(buf.len())]);
+    let (mut s, mut e) = (0u32, 0u32);
+    SendMessageW(edit, EM_GETSEL, Some(WPARAM(&mut s as *mut u32 as usize)), Some(LPARAM(&mut e as *mut u32 as isize)));
+    let shows_ext = || -> Option<bool> {
+        let fv = view_of::<IFolderView2>(i)?;
+        let it = fv.GetItem::<IShellItem>(fv.GetFocusedItem().ok()?).ok()?;
+        let attr = it.GetAttributes(SFGAO_FLAGS(SFGAO_FOLDER.0 | SFGAO_STREAM.0)).ok()?.0;
+        let editing = pwstr(it.GetDisplayName(SIGDN_PARENTRELATIVEEDITING).ok()?);
+        let parsing = pwstr(it.GetDisplayName(SIGDN_PARENTRELATIVEPARSING).ok()?);
+        Some(!real_folder(attr) && editing == parsing)
+    };
+    let (a, b) = rename_cycle(&name, !shows_ext().unwrap_or(false), (s as usize, e as usize));
+    SendMessageW(edit, EM_SETSEL, Some(WPARAM(a)), Some(LPARAM(b as isize)));
+    SendMessageW(edit, EM_SCROLLCARET, None, None);
 }

@@ -3048,6 +3048,8 @@ mod tests {
                 let k = r.keys.join(" / ");
                 let ctx = if r.desc.starts_with("In the preview:") || r.desc.starts_with("미리보기에서:") {
                     "preview"
+                } else if r.desc.starts_with("While renaming in a pane:") || r.desc.starts_with("패널에서 이름 바꾸는 중:") {
+                    "rename"
                 } else if k.contains(" in the filter") || k.contains("필터 칸에서 ") {
                     "filter"
                 } else {
@@ -3063,7 +3065,7 @@ mod tests {
     // The first column of the table under `heading`, "(preview)" / "(in the filter)" tails as the context.
     fn readme_key_rows(md: &str, heading: &str) -> Vec<Vec<String>> {
         let table = md.split_once(heading).unwrap_or_else(|| panic!("no {heading:?} heading")).1;
-        let tails = [(" (in the filter)", "filter"), (" (필터 칸에서)", "filter"), (" (preview)", "preview"), (" (미리보기)", "preview")];
+        let tails = [(" (in the filter)", "filter"), (" (필터 칸에서)", "filter"), (" (preview)", "preview"), (" (미리보기)", "preview"), (" (while renaming)", "rename"), (" (이름 바꾸는 중)", "rename")];
         let rows = table.lines().skip_while(|l| !l.starts_with('|')).skip(2).take_while(|l| l.starts_with('|'));
         rows.map(|l| {
             let k = l[1..].split(" | ").next().unwrap().trim();
@@ -3096,7 +3098,7 @@ mod tests {
             only_app.is_empty() && only_doc.is_empty(),
             "in the app's shortcut list but not the README tables: {only_app:?}; in the README tables but not the app's list: {only_doc:?}"
         );
-        for k in [":F1", ":Ctrl+S", "filter:Alt+↓", "preview:F2", "preview:Del", ":Ctrl+Alt+Shift+→", ":Ctrl+C/X/V"] {
+        for k in [":F1", ":Ctrl+S", "filter:Alt+↓", "preview:F2", "preview:Del", "rename:F2", ":Ctrl+Alt+Shift+→", ":Ctrl+C/X/V"] {
             assert!(app.contains(k), "{k}");
         }
     }
@@ -5495,6 +5497,33 @@ mod tests { tr("in", "안") }
         assert_eq!(stem_len("사진😀.png", false), 4); // UTF-16 units, as the edit counts them
     }
 
+    // F2 again while renaming: name → whole name → extension → name; anything else starts at the name.
+    #[test]
+    fn rename_cycles() {
+        let walk = |name: &str, whole: bool, from: (usize, usize)| {
+            let mut at = from;
+            (0..4)
+                .map(|_| {
+                    at = rename_cycle(name, whole, at);
+                    at
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(walk("photo.jpg", false, (0, 5)), [(0, 9), (6, 9), (0, 5), (0, 9)]);
+        assert_eq!(walk("a.tar.gz", false, (0, 5)), [(0, 8), (6, 8), (0, 5), (0, 8)]); // the last dot, as Explorer's own F2
+        assert_eq!(walk("사진😀.png", false, (0, 4)), [(0, 8), (5, 8), (0, 4), (0, 8)]); // UTF-16 units
+        // no extension step: none, a dot file, a folder with a dot (or an extension the box doesn't show), empty
+        for (name, whole) in [("README", false), (".gitignore", false), ("my.folder", true), ("", false), ("a.", false)] {
+            let n = name.encode_utf16().count();
+            assert_eq!(walk(name, whole, (0, 0)), [(0, n); 4], "{name:?}");
+        }
+        // a caret after typing, or a selection of its own: back to the name; ends either way round count the same
+        assert_eq!(rename_cycle("photo.jpg", false, (9, 9)), (0, 5));
+        assert_eq!(rename_cycle("photo.jpg", false, (2, 4)), (0, 5));
+        assert_eq!(rename_cycle("photo.jpg", false, (9, 0)), (6, 9));
+        assert_eq!(rename_cycle("photo.jpg", false, (9, 6)), (0, 5));
+    }
+
     #[test]
     fn peek_zoom() {
         assert_eq!(zoom_k(0), 1.0);
@@ -5609,8 +5638,8 @@ mod tests { tr("in", "안") }
     // key_route for a keycap with the focus in `at`: "" the file list, "addr" the address bar, "filter" the filter.
     fn route_with(at: &str, cap: &str, tabs: bool, panes: usize, typed_ago: Option<Duration>) -> KeyRoute {
         let (vk, ctrl, shift, alt) = cap_key(cap);
-        let (list, in_main) = (|| at.is_empty(), || true);
-        key_route(vk, ctrl, shift, alt, &KeyCtx { addr: at == "addr", filt: at == "filter", tabs, panes, typed_ago, list: &list, in_main: &in_main })
+        let (list, in_main, renaming) = (|| at.is_empty(), || true, || at == "rename");
+        key_route(vk, ctrl, shift, alt, &KeyCtx { addr: at == "addr", filt: at == "filter", tabs, panes, typed_ago, list: &list, in_main: &in_main, renaming: &renaming })
     }
 
     fn route(at: &str, cap: &str) -> KeyRoute {
@@ -5634,6 +5663,7 @@ mod tests { tr("in", "안") }
             let (ctx, key) = cap.split_once(':').unwrap();
             let spots: &[&str] = match (ctx, key) {
                 ("filter", _) => &["filter"],
+                ("rename", _) => &["rename"],
                 (_, "Enter" | "Esc") => &["addr", "filter"],
                 _ => &[""],
             };
@@ -5662,6 +5692,8 @@ mod tests { tr("in", "안") }
         assert_eq!((l("Shift+F5"), route("addr", "Shift+F5"), l("Ctrl+Shift+F5")), (Stamp, BoxKey, Shell));
         // Shift+F2: the list's compare; F2 stays the view's rename, the boxes keep theirs
         assert_eq!((l("Shift+F2"), l("F2"), route("addr", "Shift+F2"), l("Ctrl+Shift+F2")), (Diff, Shell, BoxKey, Shell));
+        // F2 in a pane's rename box: its selection steps on; the box's Shift+F2 / Ctrl+F2 stay its own
+        assert_eq!((route("rename", "F2"), route("rename", "Shift+F2"), route("rename", "Ctrl+F2"), route("addr", "F2")), (RenameCycle, Shell, Shell, BoxKey));
         assert_eq!((l("Ctrl+F3"), l("Ctrl+F5"), l("Ctrl+F6")), (Sort(0), Sort(1), Sort(2)));
         assert_eq!(route_with("", "Ctrl+T", false, 9, None), Shell);
         // Ctrl+Shift+T: from the list and the boxes; tabs off or AltGr+Shift+T: not ours
@@ -5765,7 +5797,7 @@ mod tests { tr("in", "안") }
             calls.set(calls.get() + 1);
             true
         };
-        let ctx = KeyCtx { addr: false, filt: false, tabs: true, panes: 9, typed_ago: None, list: &ask, in_main: &ask };
+        let ctx = KeyCtx { addr: false, filt: false, tabs: true, panes: 9, typed_ago: None, list: &ask, in_main: &ask, renaming: &ask };
         for k in ["Ctrl+Tab", "Ctrl+T", "Alt+←", "Ctrl+L", "Ctrl+Shift+F", "F5", "Ctrl+1", "F1"] {
             let (vk, ctrl, shift, alt) = cap_key(k);
             key_route(vk, ctrl, shift, alt, &ctx);

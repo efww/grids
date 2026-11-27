@@ -146,6 +146,7 @@ The exe is not code-signed, so Windows SmartScreen may warn the first time: choo
 | F2 (preview) | Rename the file shown |
 | Ctrl+wheel, Ctrl+= / Ctrl+- / Ctrl+0 (preview) | Zoom in / out / fit |
 | F2, Del, Ctrl+C / X / V, F5 | Same as Explorer (on F5 the pane's ↑ turns into a spinning ↻ for a moment) |
+| F2 (while renaming) | Select the name without its extension → the whole name → only the extension, in turn, as in Directory Opus and XYplorer (a folder, or a name whose extension isn't shown, keeps the whole name) |
 
 Double-clicking empty space in a pane goes up a folder (View > Double-click empty space: parent folder turns it off).
 
