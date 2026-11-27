@@ -1,4 +1,5 @@
 use crate::*;
+use windows::Win32::System::SystemServices::SFGAO_FILESYSTEM;
 
 // ---------- navigation ----------
 
@@ -1788,6 +1789,17 @@ impl IExplorerBrowserEvents_Impl for Events_Impl {
     }
 }
 
+// The selection when it is exactly one folder on disk (no ZIP, no shell place such as a library or This PC).
+unsafe fn lone_folder(sv: &IShellView) -> Option<IShellItem> {
+    let arr = sv.cast::<IFolderView2>().ok()?.GetSelection(false).ok()?;
+    if arr.GetCount().ok()? != 1 {
+        return None;
+    }
+    let it = arr.GetItemAt(0).ok()?;
+    let attr = it.GetAttributes(SFGAO_FLAGS(SFGAO_FOLDER.0 | SFGAO_STREAM.0 | SFGAO_FILESYSTEM.0)).ok()?.0;
+    (real_folder(attr) && attr & SFGAO_FILESYSTEM.0 != 0).then_some(it)
+}
+
 // Site of each Explorer control. It asks the site for ICommDlgBrowser, whose IncludeObject is the name filter.
 #[implement(IServiceProvider, ICommDlgBrowser)]
 pub(crate) struct Host(pub(crate) Arc<AtomicUsize>); // the pane's slot, as in Events
@@ -1806,7 +1818,19 @@ impl IServiceProvider_Impl for Host_Impl {
 }
 
 impl ICommDlgBrowser_Impl for Host_Impl {
-    fn OnDefaultCommand(&self, _: Ref<IShellView>) -> Result<()> {
+    fn OnDefaultCommand(&self, sv: Ref<IShellView>) -> Result<()> {
+        // Folders set to open in Grids: the default verb would start grids.exe to hand the folder back to this
+        // window, so one selected folder opens right here, as before. Anything else: the view's default action.
+        // Ctrl/Shift held: the view's own variant (new window etc.) as before, not this pane.
+        unsafe {
+            let modded = GetKeyState(VK_CONTROL.0 as i32) < 0 || GetKeyState(VK_SHIFT.0 as i32) < 0;
+            if !modded && default_open_on() {
+                if let Some(it) = sv.ok().ok().and_then(|v| lone_folder(v)) {
+                    browse_item(self.0.load(Ordering::SeqCst), &it);
+                    return Ok(());
+                }
+            }
+        }
         Err(S_FALSE.into()) // let the view do its default action (open)
     }
     fn OnStateChange(&self, _: Ref<IShellView>, change: u32) -> Result<()> {

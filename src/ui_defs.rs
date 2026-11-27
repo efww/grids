@@ -43,6 +43,7 @@ pub(crate) const ID_TREE_QUICK: usize = 1113; // view menu: Explorer's Quick acc
 pub(crate) const ID_DLGJUMP: usize = 1140;
 pub(crate) const ID_CTXMENU: usize = 1145; // view menu: "Open in Grids" in Explorer's right-click menu
 pub(crate) const ID_AUTOSTART: usize = 1146; // view menu: start with Windows, minimized
+pub(crate) const ID_DEFOPEN: usize = 1148; // view menu: folders open in Grids instead of Explorer (shellx.rs)
 pub(crate) const ID_UPDATES: usize = 1150; // view menu: check for updates
 pub(crate) const ID_STAR: usize = 1151; // view menu: star on GitHub
 pub(crate) const ID_TOUR: usize = 1152; // view menu: the getting started tour again

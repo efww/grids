@@ -574,7 +574,7 @@ pub(crate) unsafe fn update_click() {
 }
 
 // A question with its two answers in the UI language (MessageBox's Yes / No follow Windows'). True: the first.
-unsafe fn ask(owner: HWND, title: &HSTRING, body: &HSTRING, yes: &str, no: &str) -> bool {
+pub(crate) unsafe fn ask(owner: HWND, title: &HSTRING, body: &HSTRING, yes: &str, no: &str) -> bool {
     let (yes, no) = (HSTRING::from(yes), HSTRING::from(no));
     let buttons = [
         TASKDIALOG_BUTTON { nButtonID: IDOK.0, pszButtonText: PCWSTR(yes.as_ptr()) },

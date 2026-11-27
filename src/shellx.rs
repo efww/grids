@@ -1,6 +1,6 @@
 use crate::*;
 use windows::Win32::System::Registry::{
-    RegCloseKey, RegDeleteTreeW, RegGetValueW, RegOpenKeyExW, RegSetKeyValueW, HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, REG_SZ, RRF_RT_REG_SZ,
+    RegCloseKey, RegDeleteKeyValueW, RegDeleteTreeW, RegGetValueW, RegOpenKeyExW, RegSetKeyValueW, HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, REG_SZ, RRF_RT_REG_SZ,
 };
 use windows::Win32::System::RestartManager::*;
 use windows::Win32::System::SystemInformation::GetLocalTime;
@@ -992,7 +992,16 @@ pub(crate) unsafe fn ctx_menu_on() -> bool {
 /// Adds or removes the three verbs (in the UI language) and tells Explorer. False = failed, nothing half-done.
 pub(crate) unsafe fn set_ctx_menu(on: bool) -> bool {
     let Some(exe) = this_exe() else { return false };
-    let ok = set_ctx_at(CTX_BASE, &exe, tr("Open in Grids", "Grids에서 열기"), on);
+    // the default verb must never point at a verb that is gone: off goes first, and if it can't, the verbs stay
+    if !on && default_on_at(CTX_BASE) && !set_default_at(CTX_BASE, &exe, ctx_label(), false) {
+        SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, None, None); // one key may have gone back already
+        return false;
+    }
+    let ok = set_ctx_at(CTX_BASE, &exe, ctx_label(), on);
+    // a failed rewrite (language switch) removed the verbs: folders go back to Explorer rather than to nothing
+    if !ok && on && default_on_at(CTX_BASE) && !CTX_KEYS.iter().all(|k| reg_has(&format!(r"{CTX_BASE}\{k}"))) {
+        set_default_at(CTX_BASE, &exe, ctx_label(), false);
+    }
     SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, None, None);
     ok
 }
@@ -1000,6 +1009,7 @@ pub(crate) unsafe fn set_ctx_menu(on: bool) -> bool {
 // View menu click: flips what is really registered, with a note either way.
 pub(crate) unsafe fn toggle_ctx_menu() {
     let on = !ctx_menu_on();
+    let was_default = default_on_at(CTX_BASE); // off also turns "open folders in Grids" off: say so
     let ok = set_ctx_menu(on);
     if !ok {
         _ = MessageBeep(MB_ICONWARNING);
@@ -1009,11 +1019,206 @@ pub(crate) unsafe fn toggle_ctx_menu() {
             "\"Open in Grids\" added to Explorer's right-click menu (Windows 11: under Show more options)",
             "탐색기 오른쪽 클릭 메뉴에 \"Grids에서 열기\"를 넣음 (Windows 11: '더 많은 옵션 표시' 안)",
         ),
+        (true, false) if was_default => tr(
+            "\"Open in Grids\" removed from Explorer's right-click menu · folders open in Explorer again",
+            "탐색기 오른쪽 클릭 메뉴에서 \"Grids에서 열기\"를 뺌 · 폴더도 다시 탐색기로 열림",
+        ),
         (true, false) => tr("\"Open in Grids\" removed from Explorer's right-click menu", "탐색기 오른쪽 클릭 메뉴에서 \"Grids에서 열기\"를 뺌"),
         (false, true) => tr("Could not add \"Open in Grids\" to Explorer's menu", "탐색기 메뉴에 \"Grids에서 열기\"를 등록하지 못함"),
         (false, false) => tr("Could not remove \"Open in Grids\" from Explorer's menu", "탐색기 메뉴에서 \"Grids에서 열기\"를 빼지 못함"),
     };
     app(|a| a.note = Some((text.into(), Instant::now() + Duration::from_secs(3))));
+    update_status();
+}
+
+fn ctx_label() -> &'static str {
+    tr("Open in Grids", "Grids에서 열기")
+}
+
+// ---------- folders open in Grids instead of Explorer ----------
+// (Directory Opus' Explorer Replacement, XYplorer's / Total Commander's "default file manager")
+// The (Default) value of HKCU's Directory\shell and Drive\shell names the verb a double-click runs: "Grids" is
+// the "Open in Grids" verb above. What was there before is kept beside it in DEF_PREV and put back on off.
+
+const DEF_KEYS: [&str; 2] = [r"Directory\shell", r"Drive\shell"];
+const DEF_VERB: &str = "Grids";
+const DEF_PREV: &str = "GridsPrevDefault";
+
+/// A (Default) Grids may take: none, empty, Windows' own "none", or Grids already. Anything else is another
+/// file manager's and is left alone.
+pub(crate) fn default_free(cur: Option<&str>) -> bool {
+    cur.map_or(true, |v| v.is_empty() || v.eq_ignore_ascii_case("none") || v.eq_ignore_ascii_case(DEF_VERB))
+}
+
+/// The program a verb's command runs: `"C:\x\grids.exe" --folder "%V\."` → `C:\x\grids.exe`.
+pub(crate) fn command_exe(cmd: &str) -> Option<&str> {
+    cmd.trim().strip_prefix('"')?.split('"').next().filter(|s| !s.is_empty())
+}
+
+// deletes one value (None: the key's (Default)); true = it is not there now
+unsafe fn reg_unset(key: &str, name: Option<&str>) -> bool {
+    let name = name.map(HSTRING::from);
+    let v = name.as_ref().map_or(PCWSTR::null(), |s| PCWSTR(s.as_ptr()));
+    let r = RegDeleteKeyValueW(HKEY_CURRENT_USER, &HSTRING::from(key), v);
+    r.is_ok() || r == ERROR_FILE_NOT_FOUND || !reg_has(key)
+}
+
+// on = either key's (Default) is Grids: Grids' own panes then open folders themselves, and off clears what is left
+unsafe fn default_on_at(base: &str) -> bool {
+    DEF_KEYS.iter().any(|k| reg_text(&format!(r"{base}\{k}"), None).is_some_and(|v| v.eq_ignore_ascii_case(DEF_VERB)))
+}
+
+// one key to Grids, the value it had kept first (a second "on" keeps the first one's record)
+unsafe fn def_take(key: &str) -> bool {
+    let cur = reg_text(key, None);
+    let mine = cur.as_deref().is_some_and(|v| v.eq_ignore_ascii_case(DEF_VERB));
+    (if mine { reg_text(key, Some(DEF_PREV)).is_some() || reg_put(key, Some(DEF_PREV), "") } else { reg_put(key, Some(DEF_PREV), cur.as_deref().unwrap_or("")) })
+        && reg_put(key, None, DEF_VERB)
+}
+
+// one key back: only while it still says Grids (another program's later choice stays); nothing kept → no value
+unsafe fn def_give_back(key: &str) -> bool {
+    if reg_text(key, None).is_some_and(|v| v.eq_ignore_ascii_case(DEF_VERB)) {
+        let back = match reg_text(key, Some(DEF_PREV)).filter(|p| !p.is_empty()) {
+            Some(p) => reg_put(key, None, &p),
+            None => reg_unset(key, None),
+        };
+        if !back {
+            return false;
+        }
+    }
+    reg_unset(key, Some(DEF_PREV))
+}
+
+// all keys or none: a half that failed is given back
+unsafe fn def_take_all(keys: &[String]) -> bool {
+    if keys.iter().all(|k| def_take(k)) {
+        return true;
+    }
+    for k in keys {
+        def_give_back(k);
+    }
+    false
+}
+
+// On: "Open in Grids" for this exe first (the verb the default names), then both (Default)s, all or nothing;
+// another program's default: nothing touched. Off: both back. True = done as asked.
+unsafe fn set_default_at(base: &str, exe: &str, label: &str, on: bool) -> bool {
+    let keys = DEF_KEYS.map(|k| format!(r"{base}\{k}"));
+    if !on {
+        return keys.iter().fold(true, |ok, k| def_give_back(k) && ok);
+    }
+    if !keys.iter().all(|k| default_free(reg_text(k, None).as_deref())) {
+        return false;
+    }
+    let had_menu = CTX_KEYS.iter().all(|k| reg_text(&format!(r"{base}\{k}"), Some(CTX_MARK)).is_some());
+    if !set_ctx_at(base, exe, label, true) {
+        return false;
+    }
+    if def_take_all(&keys) {
+        return true;
+    }
+    if !had_menu {
+        set_ctx_at(base, exe, label, false);
+    }
+    false
+}
+
+// The default names Grids, but a Grids verb is gone or runs an exe that is not there (Grids moved or deleted).
+// A Grids verb that still works, even another copy's, is left alone; so is a "Grids" verb that isn't Grids'.
+unsafe fn default_stale_at(base: &str, exists: impl Fn(&str) -> bool) -> bool {
+    default_on_at(base)
+        && CTX_KEYS.iter().any(|k| {
+            let key = format!(r"{base}\{k}");
+            !reg_has(&key)
+                || (reg_text(&key, Some(CTX_MARK)).is_some() && !reg_text(&format!(r"{key}\command"), None).as_deref().and_then(command_exe).is_some_and(&exists))
+        })
+}
+
+// None: nothing to fix. Some(true): the verbs now run this exe. Some(false): could not, so folders went back to
+// what opened them before (Explorer) rather than to a command that cannot run.
+unsafe fn repair_default_at(base: &str, exe: &str, label: &str, exists: impl Fn(&str) -> bool) -> Option<bool> {
+    if !default_stale_at(base, exists) {
+        return None;
+    }
+    if set_ctx_at(base, exe, label, true) {
+        return Some(true);
+    }
+    set_default_at(base, exe, label, false);
+    Some(false)
+}
+
+/// Checked in the View menu, and asked by a pane at each double-click / Enter on an item: only the (Default)
+/// value, so right after Grids was moved its own panes still never launch a path that is gone.
+pub(crate) unsafe fn default_open_on() -> bool {
+    default_on_at(CTX_BASE)
+}
+
+unsafe fn set_default_open(on: bool) -> bool {
+    let Some(exe) = this_exe() else { return false };
+    let ok = set_default_at(CTX_BASE, &exe, ctx_label(), on);
+    SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, None, None);
+    ok
+}
+
+/// Once at start: folders set to open in Grids whose grids.exe was moved or deleted get this exe; failing that,
+/// Explorer opens them again and the status line says so.
+pub(crate) unsafe fn repair_default_open() {
+    let Some(exe) = this_exe() else { return };
+    let Some(ok) = repair_default_at(CTX_BASE, &exe, ctx_label(), |p| Path::new(p).is_file()) else { return };
+    SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, None, None);
+    if !ok {
+        _ = MessageBeep(MB_ICONWARNING);
+        let text = tr(
+            "Grids was moved and could not take folder opening over again: Explorer opens folders now",
+            "Grids 위치가 바뀌어 폴더 열기를 다시 맡지 못함: 지금은 탐색기가 폴더를 엶",
+        );
+        app(|a| a.note = Some((text.into(), Instant::now() + Duration::from_secs(5))));
+    }
+}
+
+// View menu click: on asks first (what changes, the exe it points to, turn off before deleting it).
+pub(crate) unsafe fn toggle_default_open(owner: HWND) {
+    let on = !default_open_on();
+    if on {
+        let exe = this_exe().unwrap_or_default();
+        let title = HSTRING::from(tr("Open folders in Grids instead of Explorer?", "폴더를 탐색기 대신 Grids로 열까요?"));
+        let body = HSTRING::from(
+            [
+                tr(
+                    "Double-clicking a folder or drive on the desktop or in Explorer opens it in the active pane of Grids, also inside Explorer windows. For an Explorer window: right-click > Open in new window.",
+                    "바탕 화면이나 탐색기에서 폴더·드라이브를 더블클릭하면 탐색기 창 안에서도 Grids의 지금 패널에서 열립니다. 탐색기 창이 필요하면 오른쪽 클릭 > 새 창에서 열기.",
+                ),
+                tr("\"Open in Grids\" is added to the right-click menu too. It runs:", "오른쪽 클릭 메뉴에 \"Grids에서 열기\"도 함께 들어갑니다. 실행할 파일:"),
+                &exe,
+                tr(
+                    "Turn this off before you delete or move grids.exe. If you forget, run Grids again from anywhere and it is fixed.",
+                    "grids.exe를 지우거나 옮기기 전에 이 항목을 끄세요. 잊었다면 Grids를 아무 위치에서나 다시 실행하면 고쳐집니다.",
+                ),
+            ]
+            .join("\n\n"),
+        );
+        if !ask(owner, &title, &body, tr("Turn on", "켜기"), tr("Cancel", "취소")) {
+            return;
+        }
+    }
+    let ok = set_default_open(on);
+    if !ok {
+        _ = MessageBeep(MB_ICONWARNING);
+    }
+    let text = match (ok, on) {
+        (true, true) => tr(
+            "Folders now open in Grids · for an Explorer window: right-click > Open in new window",
+            "탐색기에서 폴더를 더블클릭해도 Grids로 열립니다 · 탐색기 창은 오른쪽 클릭 > 새 창에서 열기",
+        ),
+        (true, false) => tr("Folders open in Explorer again", "폴더가 다시 탐색기로 열립니다"),
+        (false, true) => tr(
+            "Could not make folders open in Grids (another program may open them already)",
+            "폴더를 Grids로 열도록 바꾸지 못함 (다른 프로그램이 이미 맡고 있을 수 있음)",
+        ),
+        (false, false) => tr("Could not give folder opening back to Explorer", "폴더 열기를 탐색기로 되돌리지 못함"),
+    };
+    app(|a| a.note = Some((text.into(), Instant::now() + Duration::from_secs(5))));
     update_status();
 }
 
@@ -1286,6 +1491,97 @@ mod tests {
             }
             assert!(!ctx_on_at(base, exe));
             _ = RegDeleteTreeW(HKEY_CURRENT_USER, &HSTRING::from(root));
+        }
+    }
+
+    #[test]
+    fn folders_open_in_grids_round_trip() {
+        assert!(default_free(None) && default_free(Some("")) && default_free(Some("none")) && default_free(Some("grids")));
+        assert!(!default_free(Some("Opus")) && !default_free(Some("open")));
+        assert_eq!(command_exe(&ctx_command(r"C:\Tools Dir\grids.exe")), Some(r"C:\Tools Dir\grids.exe"));
+        assert_eq!(command_exe(r#"  "D:\g.exe" x"#), Some(r"D:\g.exe"));
+        assert_eq!(command_exe(r"D:\g.exe x"), None);
+        assert_eq!(command_exe(r#""""#), None);
+        // a scratch branch of HKCU, never the real Software\Classes
+        let (root, base) = (r"Software\GridsTestDef", r"Software\GridsTestDef\Classes");
+        let exe = r"C:\Tools Dir\grids.exe";
+        let (dir, drive) = (format!(r"{base}\{}", DEF_KEYS[0]), format!(r"{base}\{}", DEF_KEYS[1]));
+        unsafe {
+            let fresh = || _ = RegDeleteTreeW(HKEY_CURRENT_USER, &HSTRING::from(root));
+            fresh();
+            // nothing there before (the usual HKCU): on, then off leaves no (Default) and no record
+            assert!(!default_on_at(base));
+            assert!(set_default_at(base, exe, "Open in Grids", true));
+            assert!(default_on_at(base) && ctx_on_at(base, exe)); // the verb the default names is there
+            for k in [&dir, &drive] {
+                assert_eq!(reg_text(k, None).as_deref(), Some(DEF_VERB));
+                assert_eq!(reg_text(k, Some(DEF_PREV)).as_deref(), Some(""));
+            }
+            assert!(set_default_at(base, exe, "Open in Grids", true)); // twice: the first record stays
+            assert_eq!(reg_text(&dir, Some(DEF_PREV)).as_deref(), Some(""));
+            assert!(set_default_at(base, exe, "x", false));
+            assert!(!default_on_at(base));
+            for k in [&dir, &drive] {
+                assert!(reg_has(k)); // the shell key itself stays: other verbs live in it
+                assert_eq!(reg_text(k, None), None);
+                assert_eq!(reg_text(k, Some(DEF_PREV)), None);
+            }
+            assert!(ctx_on_at(base, exe)); // the right-click item stays until it is turned off itself
+            // a value that was there ("none") comes back as it was
+            fresh();
+            assert!(reg_put(&dir, None, "none"));
+            assert!(set_default_at(base, exe, "Open in Grids", true));
+            assert!(set_default_at(base, exe, "x", false));
+            assert_eq!(reg_text(&dir, None).as_deref(), Some("none"));
+            assert_eq!(reg_text(&drive, None), None);
+            // another file manager is the default: nothing touched, not even the right-click item
+            fresh();
+            assert!(reg_put(&drive, None, "Opus"));
+            assert!(!set_default_at(base, exe, "Open in Grids", true));
+            assert_eq!(reg_text(&drive, None).as_deref(), Some("Opus"));
+            assert_eq!(reg_text(&dir, None), None);
+            assert!(!reg_has(&format!(r"{base}\{}", CTX_KEYS[0])));
+            // changed by another program while on: off leaves its choice and drops only the record
+            fresh();
+            assert!(set_default_at(base, exe, "Open in Grids", true));
+            assert!(reg_put(&drive, None, "Opus"));
+            assert!(set_default_at(base, exe, "x", false));
+            assert_eq!(reg_text(&drive, None).as_deref(), Some("Opus"));
+            assert_eq!(reg_text(&drive, Some(DEF_PREV)), None);
+            assert_eq!(reg_text(&dir, None), None);
+            // half done (the second key can't be written: a name over 255 characters): the first is given back
+            fresh();
+            assert!(reg_put(&dir, None, "none"));
+            let bad = format!(r"{base}\{}", "x".repeat(300));
+            assert!(!def_take_all(&[dir.clone(), bad]));
+            assert_eq!(reg_text(&dir, None).as_deref(), Some("none"));
+            assert_eq!(reg_text(&dir, Some(DEF_PREV)), None);
+            // Grids moved and its verbs can't be written again (another "Grids" verb took one key): folders go back
+            fresh();
+            assert!(set_default_at(base, exe, "Open in Grids", true));
+            let theirs = format!(r"{base}\{}", CTX_KEYS[1]);
+            _ = RegDeleteTreeW(HKEY_CURRENT_USER, &HSTRING::from(theirs.as_str()));
+            assert!(reg_put(&theirs, None, "theirs"));
+            assert_eq!(repair_default_at(base, r"D:\new\grids.exe", "Open in Grids", |_| false), Some(false));
+            assert!(!default_on_at(base) && reg_text(&dir, None).is_none());
+            assert_eq!(reg_text(&theirs, None).as_deref(), Some("theirs"));
+            fresh();
+            assert!(set_default_at(base, exe, "Open in Grids", true));
+            // Grids moved: the start rewrites the verbs for the new exe; a copy that still works is left alone
+            let moved = r"D:\new\grids.exe";
+            assert_eq!(repair_default_at(base, moved, "Open in Grids", |p| p == exe), None);
+            assert!(ctx_on_at(base, exe));
+            assert_eq!(repair_default_at(base, moved, "Open in Grids", |p| p == moved), Some(true));
+            assert!(ctx_on_at(base, moved) && default_on_at(base));
+            // a verb gone while the default still names it: written again
+            _ = RegDeleteTreeW(HKEY_CURRENT_USER, &HSTRING::from(format!(r"{base}\{}", CTX_KEYS[2]).as_str()));
+            assert_eq!(repair_default_at(base, moved, "Open in Grids", |_| true), Some(true));
+            assert!(ctx_on_at(base, moved));
+            // not on: nothing to repair
+            assert!(set_default_at(base, moved, "x", false));
+            assert_eq!(repair_default_at(base, exe, "Open in Grids", |_| false), None);
+            assert!(ctx_on_at(base, moved));
+            fresh();
         }
     }
 
