@@ -674,6 +674,7 @@ pub(crate) extern "system" fn pane_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
         match msg {
             WM_TIMER if wp.0 == TIMER_SETTLE => settle_cols(h),
             WM_TIMER if wp.0 == TIMER_SPIN => spin_tick(h),
+            WM_TIMER if wp.0 == TIMER_LOAD => load_tick(h),
             WM_SIZE => layout_pane(h),
             WM_LBUTTONDBLCLK if pane_of(h).is_some_and(|i| on_strip(h, i, lp)) => {
                 // empty strip: a new tab; on a tab it is just a second click (it picks, never closes)

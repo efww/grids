@@ -272,6 +272,106 @@ unsafe fn spin_redraw(h: HWND) {
     }
 }
 
+// ---------- a folder slow to open: a bar flows above the pane's list ----------
+// Like Explorer's address bar or a browser tab while a page loads: from OnNavigationPending until the folder shows
+// (or fails), a thin bar runs along the top of the list. A move that is over in under LOAD_SHOW paints nothing;
+// one that never ends gives up after LOAD_GIVE_UP. Windows' "Animation effects" off: a still bar, full width.
+pub(crate) const LOAD_SHOW: Duration = Duration::from_millis(300);
+const LOAD_CYCLE: Duration = Duration::from_millis(1200);
+const LOAD_GIVE_UP: Duration = Duration::from_secs(60);
+
+/// The bar's span (from, to) across `width` px, `elapsed` after the move started; None while it isn't shown.
+/// A run 30% of the width slides left to right, slowing down, once per LOAD_CYCLE; always inside 0..=width.
+pub(crate) fn load_bar(width: i32, elapsed: Duration, animate: bool) -> Option<(i32, i32)> {
+    if width <= 0 || elapsed < LOAD_SHOW || elapsed >= LOAD_GIVE_UP {
+        return None;
+    }
+    if !animate {
+        return Some((0, width));
+    }
+    let t = ((elapsed - LOAD_SHOW).as_millis() % LOAD_CYCLE.as_millis()) as f32 / LOAD_CYCLE.as_millis() as f32;
+    let eased = 1.0 - (1.0 - t) * (1.0 - t);
+    let run = (width * 3 / 10).max(1);
+    let head = (eased * (width + run) as f32) as i32;
+    Some(((head - run).clamp(0, width), head.clamp(0, width)))
+}
+
+// Windows' "Animation effects" (Settings > Accessibility > Visual effects)
+pub(crate) unsafe fn load_animate() -> bool {
+    let mut on = BOOL(1);
+    _ = SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, Some(&mut on as *mut _ as _), SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0));
+    on.as_bool()
+}
+
+// The band the bar runs in: s(2) high, right above the list.
+unsafe fn load_band(h: HWND) -> RECT {
+    let mut rc = RECT::default();
+    _ = GetClientRect(h, &mut rc);
+    let dpi = app(|a| a.dpi);
+    let v = pane_geo(rc.right, rc.bottom, dpi).view;
+    RECT { top: v.top - 2 * dpi / 96, bottom: v.top, ..v }
+}
+
+// OnNavigationPending: the clock starts (again, for a move over another one). Nothing is painted until the first
+// tick, LOAD_SHOW later, so a quick move costs no redraw. Not yet a pane (its first folder): nothing.
+pub(crate) unsafe fn load_start(i: usize) {
+    let now = Instant::now();
+    let Some((h, shown)) = app(|a| {
+        let p = a.panes.get_mut(i)?.as_mut()?;
+        let shown = p.loading.is_some_and(|t| now - t >= LOAD_SHOW);
+        p.loading = Some(now);
+        p.load_framed = false; // the timer below is the LOAD_SHOW wait again
+        Some((p.hwnd, shown))
+    }) else {
+        return;
+    };
+    SetTimer(Some(h), TIMER_LOAD, LOAD_SHOW.as_millis() as u32, None);
+    if shown {
+        _ = InvalidateRect(Some(h), Some(&load_band(h)), false); // the earlier move's bar goes until this one's shows
+    }
+}
+
+// The move ended (OnNavigationComplete / Failed, or browse() refused it): the bar goes, repainted only if it showed.
+// `since`: only a move started at or after it (browse() refusing its own move, not an earlier one still going).
+pub(crate) unsafe fn load_end(i: usize, since: Option<Instant>) {
+    let now = Instant::now();
+    let Some((h, shown)) = app(|a| {
+        let p = a.panes.get_mut(i)?.as_mut()?;
+        let t = p.loading.filter(|&t| since.is_none_or(|s| t >= s))?;
+        p.loading = None;
+        Some((p.hwnd, now - t >= LOAD_SHOW))
+    }) else {
+        return;
+    };
+    _ = KillTimer(Some(h), TIMER_LOAD);
+    if shown {
+        _ = InvalidateRect(Some(h), Some(&load_band(h)), false);
+    }
+}
+
+// TIMER_LOAD: the first tick (LOAD_SHOW after the start) turns into the frame timer; every tick repaints the band only.
+// A tick a few ms early (timer granularity, ~15ms) waits out the rest rather than a whole LOAD_SHOW more.
+pub(crate) unsafe fn load_tick(h: HWND) {
+    let left = app(|a| {
+        let p = a.panes.iter_mut().flatten().find(|p| p.hwnd == h)?;
+        p.loading = p.loading.filter(|t| t.elapsed() < LOAD_GIVE_UP);
+        let e = p.loading?.elapsed();
+        let first = e >= LOAD_SHOW && !p.load_framed;
+        p.load_framed |= first;
+        Some((e, first))
+    });
+    match left {
+        Some((e, _)) if e < LOAD_SHOW => {
+            _ = SetTimer(Some(h), TIMER_LOAD, (LOAD_SHOW - e).as_millis() as u32 + 1, None);
+            return;
+        }
+        Some((_, true)) => _ = SetTimer(Some(h), TIMER_LOAD, if load_animate() { 30 } else { 1000 }, None),
+        Some((_, false)) => {}
+        None => _ = KillTimer(Some(h), TIMER_LOAD),
+    }
+    _ = InvalidateRect(Some(h), Some(&load_band(h)), false);
+}
+
 // how far round the pane's spin is (0..1), None when it isn't spinning
 fn spin_turn(pane: HWND) -> Option<f32> {
     let now = Instant::now();

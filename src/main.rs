@@ -618,7 +618,7 @@ mod tests {
         assert!(VIEW_BUTTONS.iter().all(|v| main.iter().filter(|&&id| id == v.0).count() == 1));
         // (c) timers, per window: SetTimer with a number already running replaces that timer
         distinct("main timers", &[TIMER_STATUS, TIMER_REVEAL, TIMER_FOCUS, dialog_jump::TIMER_DLG_RETRY, dialog_jump::TIMER_DLG_RESTORE, TIMER_SHELL, TIMER_EV_SELECT, TIMER_BIN, TIMER_TREE_SYNC]);
-        distinct("pane timers", &[TIMER_FILTER, TIMER_SETTLE, TIMER_SPIN]);
+        distinct("pane timers", &[TIMER_FILTER, TIMER_SETTLE, TIMER_SPIN, TIMER_LOAD]);
         // (d) WM_APP messages main_proc handles (not other windows' own: WM_TOUR_END, WM_RENAMED, the switcher's)
         let msgs = [
             WM_NARROW_AGAIN, WM_DROP_OPEN, WM_PEEK_DONE, WM_PANE_ICON, WM_DRIVES, WM_KIDS, WM_THEME_SYNC, WM_PEEK_LOST, WM_PEEK_HOSTED,
@@ -626,6 +626,44 @@ mod tests {
             WM_STAMPED, WM_SIZE_DONE, WM_DISK_DONE, WM_EDITED, WM_OPEN_ARGS, WM_UPDATE, WM_STAR,
         ];
         distinct("main WM_APP messages", &msgs.map(|m| m as usize));
+    }
+
+    // A slow folder's bar: nothing for a quick move, then a run inside the list's width that flows and repeats.
+    #[test]
+    fn load_bar_flows() {
+        let ms = Duration::from_millis;
+        for e in [0, 100, 299] {
+            assert_eq!(load_bar(400, ms(e), true), None, "{e} ms");
+            assert_eq!(load_bar(400, ms(e), false), None, "{e} ms");
+        }
+        for w in [1, 2, 7, 400, 3000] {
+            for e in (300..5000).step_by(17) {
+                let (l, r) = load_bar(w, ms(e), true).unwrap();
+                assert!(0 <= l && l <= r && r <= w, "{w} px {e} ms: {l}..{r}");
+                assert!(r - l <= (w * 3 / 10).max(1), "{w} px {e} ms: {l}..{r}");
+            }
+        }
+        // left to right within a cycle, then again from the left
+        let at = |e| load_bar(400, ms(e), true).unwrap();
+        assert!(at(500).1 < at(800).1 && at(800).1 < at(1100).1);
+        assert!(at(500).0 < at(1100).0);
+        for e in [300, 450, 900, 1400] {
+            assert_eq!(at(e), at(e + 1200), "{e} ms");
+            assert_eq!(at(e), at(e + 3600), "{e} ms");
+        }
+        // somewhere in each cycle the run is whole on screen
+        assert!((300..1500).any(|e| at(e).1 - at(e).0 == 120));
+        // animation effects off: still, full width
+        for e in [300, 777, 5000] {
+            assert_eq!(load_bar(400, ms(e), false), Some((0, 400)));
+        }
+        // no width, or a move that never ended: nothing
+        for w in [0, -5] {
+            assert_eq!(load_bar(w, ms(800), true), None);
+            assert_eq!(load_bar(w, ms(800), false), None);
+        }
+        assert_eq!(load_bar(400, Duration::from_secs(60), true), None);
+        assert_eq!(load_bar(400, Duration::from_secs(3600), false), None);
     }
 
     // A second instance's hand-over waits under a modal dialog, a menu or a drag / resize, and opens otherwise.

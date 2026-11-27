@@ -521,7 +521,11 @@ pub(crate) unsafe fn browse(i: usize, flags: u32) -> bool {
     // OnNavigationPending (raised inside BrowseToIDList) takes the kind from here; cleared once the call returns,
     // accepted or not, so a Pending that never came cannot hand a stale Back/Fwd to the next, unrelated move
     app(|a| a.panes.get_mut(i).and_then(|p| p.as_mut()).map(|p| p.going = Some(go)));
+    let asked = Instant::now();
     let ok = eb.BrowseToIDList(std::ptr::null(), flags).is_ok();
+    if !ok {
+        load_end(i, Some(asked)); // a Pending raised for this refused move leaves no bar behind
+    }
     let fix = app(|a| {
         let p = a.panes.get_mut(i)?.as_mut()?;
         p.going = None;
@@ -2031,7 +2035,8 @@ impl IExplorerBrowserEvents_Impl for Events_Impl {
         app(|a| a.panes.get_mut(i).and_then(|p| p.as_mut()).map(|p| p.moving = Some(p.going.take().unwrap_or(Go::New))));
         unsafe {
             rec_event(i, Nav::Pending, pidl);
-            save_view(i)
+            save_view(i);
+            load_start(i)
         };
         Ok(())
     }
@@ -2047,13 +2052,20 @@ impl IExplorerBrowserEvents_Impl for Events_Impl {
     }
     fn OnNavigationComplete(&self, pidl: *const ITEMIDLIST) -> Result<()> {
         NAV_GEN.fetch_add(1, Ordering::SeqCst);
-        unsafe { on_nav(self.0.load(Ordering::SeqCst), pidl) };
+        let i = self.0.load(Ordering::SeqCst);
+        unsafe {
+            load_end(i, None); // here, not in on_nav, which returns early without its pane
+            on_nav(i, pidl)
+        };
         Ok(())
     }
     fn OnNavigationFailed(&self, pidl: *const ITEMIDLIST) -> Result<()> {
         NAV_GEN.fetch_add(1, Ordering::SeqCst);
         let i = self.0.load(Ordering::SeqCst);
-        unsafe { rec_event(i, Nav::Failed, pidl) };
+        unsafe {
+            load_end(i, None);
+            rec_event(i, Nav::Failed, pidl)
+        };
         app(|a| a.say_nav = a.say_nav.filter(|&p| p != i)); // the tab key's words go with its browse
         app(|a| a.panes.get_mut(i).and_then(|p| p.as_mut()).map(|p| p.moving = None)); // no step taken
         Ok(())

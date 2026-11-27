@@ -17,6 +17,8 @@ pub(crate) struct Pane {
     pub(crate) ticket: u32, // its lookup (WM_PANE_ICON); 0 = none asked
     pub(crate) slot: Arc<AtomicUsize>, // where it is now (swap_panes moves it); its Explorer callbacks read it
     pub(crate) spin: Option<(Instant, Instant)>, // F5: its up arrow spins as ↻ from .0, stopping on a whole turn at .1
+    pub(crate) loading: Option<Instant>, // a move under way since then: its bar flows above the list (load_bar)
+    pub(crate) load_framed: bool, // its TIMER_LOAD already ticks frames (set on the first shown tick, not re-armed after)
     // ← / → / ↑ drawn faint with nowhere to go (nav_dim): steps back and forward Grids counts itself, None before the
     // first folder; whether it shows the desktop; browse()'s kind while it runs, then the pending move's kind
     pub(crate) hist: Option<(u32, u32)>,

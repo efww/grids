@@ -892,7 +892,7 @@ pub(crate) unsafe fn head_rehover(h: HWND) {
 
 // One white plate per pane: a single accent border when active, flat fields in the top bar.
 pub(crate) unsafe fn paint_pane(h: HWND) {
-    let (active, i, dpi, icon_font, small_font, font, accent, focus_c, hot, hot_head, tint, folder, waiting) = app(|a| {
+    let (active, i, dpi, icon_font, small_font, font, accent, focus_c, hot, hot_head, tint, folder, waiting, loading) = app(|a| {
         let i = a.panes.iter().position(|p| p.as_ref().is_some_and(|p| p.hwnd == h));
         // a drop target-to-be looks active too
         let active = a.panes[a.s.active].as_ref().is_some_and(|p| p.hwnd == h) || a.drop_hover == h;
@@ -901,12 +901,13 @@ pub(crate) unsafe fn paint_pane(h: HWND) {
         let tint = i.and_then(|i| tint_color(a.s.tints[i]));
         let folder = i.and_then(|i| a.panes[i].as_ref()).map_or(-1, |p| p.icon);
         let waiting = a.kids.as_ref().filter(|k| k.hwnd == h && k.step == 0).map(|k| k.dir.clone());
+        let loading = i.and_then(|i| a.panes[i].as_ref()).and_then(|p| p.loading).map(|t| t.elapsed());
         // border and current tab edge follow the header; the filter badge, '…' wait shade and field ring keep the colour.
         // Only the active (or drop target) pane quiets: the others' tab edge keeps the colour, since app_away
         // changes repaint just the active pane
         let accent = a.s.accent_now();
         let focus_c = if active { focus_accent(a, h) } else { accent };
-        (active, i, a.dpi, a.icon_font, a.small_font, a.font, accent, focus_c, hot, hot_head, tint, folder, waiting)
+        (active, i, a.dpi, a.icon_font, a.small_font, a.font, accent, focus_c, hot, hot_head, tint, folder, waiting, loading)
     });
     let tabs = i.filter(|_| tabs_on()).map(|i| {
         app(|a| {
@@ -922,6 +923,7 @@ pub(crate) unsafe fn paint_pane(h: HWND) {
     let focus = GetFocus();
     let focused = |id: i32| GetDlgItem(Some(h), id).is_ok_and(|e| e == focus);
     let (addr_on, filt_on) = (focused(ID_EDIT), focused(ID_FILTER));
+    let animate = loading.is_some_and(|e| e >= LOAD_SHOW) && load_animate();
     buffered(h, |dc, rc| {
         let s = |v: i32| v * dpi / 96;
         let pg = pane_geo(rc.right, rc.bottom, dpi);
@@ -979,6 +981,12 @@ pub(crate) unsafe fn paint_pane(h: HWND) {
         }
         if let Some((list, cur, icons)) = &tabs {
             paint_tabs(dc, &pg, list, *cur, dpi, font, focus_c, hot_head, ilist.as_ref().map(|il| (il, icons.as_slice())));
+        }
+        // a folder slow to open: the bar flows just above the list, over the tab strip's foot or the header's.
+        // On tabs (strip or current tab card) and on an idle header the focus colour; on the active header its ink
+        if let Some((l, r)) = loading.and_then(|e| load_bar(pg.view.right - pg.view.left, e, animate)) {
+            let c = if tabs.is_some() || !active { focus_c } else { ink };
+            fill(dc, RECT { left: pg.view.left + l, top: pg.view.top - s(2), right: pg.view.left + r, bottom: pg.view.top }, c);
         }
         // the icon opens the file-type menu: under the mouse its slot is shaded (inside the pill and its focus frame),
         // a ring round the filter badge, whose own colour stays
