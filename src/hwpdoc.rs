@@ -236,7 +236,7 @@ mod tests {
     }
 
     // rhwp's own sample documents (with Hancom's PDFs of them in the same folder), fetched at test time
-    const SAMPLES: &str = "https://raw.githubusercontent.com/edwardkim/rhwp/v0.9.0/samples/";
+    const SAMPLES: &str = "https://raw.githubusercontent.com/edwardkim/rhwp/v0.9.1/samples/";
 
     fn fetch(name: &str, to: &Path) -> bool {
         let url = format!("{SAMPLES}{}", name.replace(' ', "%20"));

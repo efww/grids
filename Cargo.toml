@@ -67,7 +67,7 @@ features = ["with-alloc"]
 
 # HWP/HWPX pages in the preview (hwpdoc.rs): the rhwp document engine, without its PDF import and JS facade
 [dependencies.rhwp]
-version = "=0.9.0"
+version = "=0.9.1"
 default-features = false
 
 # the same font list rhwp loads, to find fonts it would pick by name but cannot draw (hwpdoc.rs)
