@@ -164,6 +164,16 @@ fn main() -> Result<()> {
         // Single instance: hand the arguments to the running window and leave.
         if let Some(prev) = running_instance() {
             start.release();
+            // Grids on another virtual desktop comes to this one (only its own process can move it): asked before
+            // the paths, which may focus a pane or open a dialog. Not at sign-in with nothing to open.
+            let quiet = startup && args.is_empty();
+            let follow = || {
+                if !quiet {
+                    let mut r = 0usize;
+                    _ = SendMessageTimeoutW(prev, follow_msg(), WPARAM(0), LPARAM(0), SMTO_ABORTIFHUNG, 2000, Some(&mut r));
+                }
+            };
+            follow();
             if !args.is_empty() {
                 let data: Vec<u16> = args.join("\n").encode_utf16().collect();
                 let cd = CopyData { dw: COPY_ID, cb: (data.len() * 2) as u32, lp: data.as_ptr() as _ };
@@ -180,11 +190,12 @@ fn main() -> Result<()> {
                     MessageBoxW(None, &text, w!("Grids"), MB_OK | MB_ICONWARNING);
                 }
             }
-            if startup && args.is_empty() {
+            if quiet {
                 return Ok(()); // sign-in start with Grids already open: leave it where it is
             }
             if IsIconic(prev).as_bool() {
                 _ = ShowWindow(prev, SW_RESTORE);
+                follow(); // hidden in the notification area it could only move once shown
             }
             _ = SetForegroundWindow(prev);
             return Ok(());
@@ -1052,6 +1063,43 @@ mod tests {
         let mut cur = Session::default();
         cur.take_layout(&Session::parse("hotkey=0\n"));
         assert!(cur.hotkey);
+    }
+
+    #[test]
+    fn bring_here_moves_only_when_elsewhere() {
+        let d = GUID::from_u128(0x1111_2222_3333_4444_5555_6666_7777_8888);
+        let pinned = GUID::from_u128(0xbb64_d5b7_4de3_4ab2_a87c_db76_01ae_a7dc); // not in Windows' list
+        // switched off, already on this desktop (or shown on all), or nothing found: stays
+        assert_eq!(desk_target(false, false, Some(d)), None);
+        assert_eq!(desk_target(true, true, Some(d)), None);
+        assert_eq!(desk_target(true, false, None), None);
+        assert_eq!(desk_target(true, false, Some(d)), Some(d));
+        // a reference desktop counts only if it is one Windows lists
+        assert!(desk_ok(d, &[pinned, d]));
+        assert!(!desk_ok(pinned, &[d]));
+        assert!(!desk_ok(d, &[]));
+        assert!(!desk_ok(GUID::zeroed(), &[GUID::zeroed()]));
+        // VirtualDesktopIDs: GUIDs as in memory, back to back; a cut-off tail is dropped
+        let mut b = Vec::new();
+        for g in [d, pinned] {
+            b.extend(g.data1.to_le_bytes());
+            b.extend(g.data2.to_le_bytes());
+            b.extend(g.data3.to_le_bytes());
+            b.extend(g.data4);
+        }
+        assert_eq!(desk_ids(&b), vec![d, pinned]);
+        assert_eq!(desk_ids(&b[..20]), vec![d]);
+        assert_eq!(desk_ids(&[]), vec![]);
+        assert_eq!(desk_ids(&[0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11, 0x99, 0, 0, 0, 0, 0, 0, 0])[0].data1, 0x5566_7788);
+        // the setting: older ini on, saved either way, app-wide (a loaded session keeps it)
+        assert!(Session::parse("side=300\n").bring_here);
+        assert!(!Session::parse("follow_desktop=0\n").bring_here);
+        for on in [true, false] {
+            assert_eq!(Session::parse(&Session { bring_here: on, ..Session::default() }.to_ini()).bring_here, on);
+        }
+        let mut cur = Session::default();
+        cur.take_layout(&Session::parse("follow_desktop=0\n"));
+        assert!(cur.bring_here);
     }
 
     #[test]

@@ -208,7 +208,9 @@ unsafe fn tray_menu(main: HWND, at: POINT) {
     }
     _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
     _ = item(menu, TRAY_QUIT, tr("Exit", "끝내기"));
-    // foreground first, or the menu stays open when the user clicks elsewhere; WM_NULL after, as documented
+    // foreground first, or the menu stays open when the user clicks elsewhere; WM_NULL after, as documented.
+    // Grids shown on another virtual desktop comes here before that, or Windows would switch to it.
+    come_here(main);
     _ = SetForegroundWindow(main);
     let pick = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON, at.x, at.y, None, main, None).0;
     _ = PostMessageW(Some(main), WM_NULL, WPARAM(0), LPARAM(0));

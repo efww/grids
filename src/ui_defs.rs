@@ -40,6 +40,7 @@ pub(crate) const ID_FOLLOW: usize = 1110;
 pub(crate) const ID_TABS: usize = 1111;
 pub(crate) const ID_KEY_TIPS: usize = 1112; // view menu: shortcut tips on the status line after a mouse action
 pub(crate) const ID_TREE_QUICK: usize = 1113; // view menu: Explorer's Quick access (pinned folders) atop the folder tree
+pub(crate) const ID_BRING_HERE: usize = 1114; // view menu: called from another virtual desktop, Grids comes to it (window_ui.rs)
 pub(crate) const ID_DLGJUMP: usize = 1140;
 pub(crate) const ID_CTXMENU: usize = 1145; // view menu: "Open in Grids" in Explorer's right-click menu
 pub(crate) const ID_AUTOSTART: usize = 1146; // view menu: start with Windows, minimized

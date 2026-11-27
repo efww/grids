@@ -472,6 +472,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                         }
                     });
                 }
+                ID_BRING_HERE => app(|a| a.s.bring_here ^= true),
                 ID_DLGJUMP => {
                     let on = app(|a| {
                         a.s.dlgjump ^= true;
@@ -507,6 +508,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 check(ID_DBLUP, dblup);
                 check(ID_TABS, TABS_ON.load(Ordering::Relaxed));
                 check(ID_HOTKEY, hot);
+                check(ID_BRING_HERE, app(|a| a.s.bring_here));
                 check(ID_AUTOSTART, autostart_on()); // the Run value and Task Manager's switch, not a setting
                 check(ID_TRAY, app(|a| a.tray_on)); // the icon really there, as Win+Alt+E above
                 check(ID_DLGJUMP, jump);
@@ -581,6 +583,18 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             WM_ENDSESSION if wp.0 != 0 => save_session(),
             WM_ENDSESSION => release_shutdown(h), // the restart was cancelled
             WM_TOUR => open_tour(),
+            // a second start (main.rs) asks before handing over its paths: its own process can't move this window
+            m if m != 0 && m == follow_msg() => {
+                // Inside another process's SendMessageTimeoutW this STA thread may not call out over COM
+                // (RPC_E_CANTCALLOUT_ININPUTSYNCCALL), so the desktop check would fail and nothing would move:
+                // release the sender first. It may then reach its SetForegroundWindow (main.rs) before the move
+                // is done, and if the move is slow Windows can still switch to the other desktop as before.
+                if InSendMessage().as_bool() {
+                    _ = ReplyMessage(LRESULT(1));
+                }
+                come_here(h);
+                return LRESULT(1);
+            }
             WM_HOTKEY if wp.0 == HOTKEY_ID as usize => hotkey_pressed(h),
             WM_HOTKEY if wp.0 == dialog_jump::DLG_HOTKEY_ID as usize => dialog_jump::on_hotkey(),
             WM_TIMER if wp.0 == dialog_jump::TIMER_DLG_RETRY || wp.0 == dialog_jump::TIMER_DLG_RESTORE => dialog_jump::on_timer(wp.0),
@@ -879,8 +893,12 @@ pub(crate) unsafe fn hotkey_pressed(main: HWND) {
 
 // Win+Alt+E and the notification area icon: restored (shown too, if it was hidden there) and in front.
 pub(crate) unsafe fn bring_front(main: HWND) {
+    // moved first, so it isn't restored on the other desktop for a moment; hidden (notification area), it can
+    // only be moved once shown, so asked again then
+    come_here(main);
     if IsIconic(main).as_bool() || !IsWindowVisible(main).as_bool() {
         _ = ShowWindow(main, SW_RESTORE);
+        come_here(main);
     }
     if !IsWindowEnabled(main).as_bool() {
         let p = GetLastActivePopup(main);
@@ -891,6 +909,132 @@ pub(crate) unsafe fn bring_front(main: HWND) {
         // refused (the taskbar button flashes instead): leave focus where it is
         if SetForegroundWindow(main).as_bool() && GetForegroundWindow() == main {
             focus_view(app(|a| a.s.active));
+        }
+    }
+}
+
+// ---------- virtual desktops: called from another one, Grids comes to it ----------
+// Without this Windows switches to the desktop Grids is on, or only flashes its taskbar button. A process may
+// move only its own windows (MoveWindowToDesktop), so a second start asks the running Grids by follow_msg.
+// Every failure leaves things as they were. COM may pump messages: never called inside app() (state.rs).
+
+// The message a second start sends first (main.rs); registered, so an older Grids just ignores it. 0 = failed.
+pub(crate) fn follow_msg() -> u32 {
+    static MSG: AtomicU32 = AtomicU32::new(0);
+    match MSG.load(Ordering::Relaxed) {
+        0 => {
+            let m = unsafe { RegisterWindowMessageW(w!("Grids.FollowDesktop")) };
+            MSG.store(m, Ordering::Relaxed);
+            m
+        }
+        m => m,
+    }
+}
+
+// Where a window goes: None = it stays (switched off, already on this desktop or shown on all, no desktop found).
+pub(crate) fn desk_target(on: bool, here: bool, found: Option<GUID>) -> Option<GUID> {
+    if !on || here {
+        return None;
+    }
+    found
+}
+
+// A reference window's desktop is taken only if it is one of the real desktops Windows lists: a window shown
+// on all desktops may report a special id, and moving Grids there would pin Grids too. No list: not taken.
+pub(crate) fn desk_ok(id: GUID, known: &[GUID]) -> bool {
+    id != GUID::zeroed() && known.contains(&id)
+}
+
+// The registry's list of desktops (VirtualDesktopIDs): 16-byte GUIDs back to back, as in memory.
+pub(crate) fn desk_ids(b: &[u8]) -> Vec<GUID> {
+    b.chunks_exact(16)
+        .map(|c| GUID {
+            data1: u32::from_le_bytes([c[0], c[1], c[2], c[3]]),
+            data2: u16::from_le_bytes([c[4], c[5]]),
+            data3: u16::from_le_bytes([c[6], c[7]]),
+            data4: [c[8], c[9], c[10], c[11], c[12], c[13], c[14], c[15]],
+        })
+        .collect()
+}
+
+unsafe fn known_desktops() -> Vec<GUID> {
+    use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_BINARY};
+    let (mut buf, mut n) = ([0u8; 16 * 64], 16 * 64u32);
+    let key = w!(r"Software\Microsoft\Windows\CurrentVersion\Explorer\VirtualDesktops");
+    if RegGetValueW(HKEY_CURRENT_USER, key, w!("VirtualDesktopIDs"), RRF_RT_REG_BINARY, None, Some(buf.as_mut_ptr() as _), Some(&mut n)).is_err() {
+        return Vec::new();
+    }
+    desk_ids(&buf[..(n as usize).min(buf.len())])
+}
+
+// The desktop of w, if w is an ordinary window of another app on the desktop in use: not the taskbar, the
+// desktop itself, a tool window or a cloaked one (Windows 11 cloaks those of other desktops).
+unsafe fn ref_desktop(vdm: &IVirtualDesktopManager, w: HWND, known: &[GUID]) -> Option<GUID> {
+    use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
+    if w.is_invalid() || !IsWindowVisible(w).as_bool() {
+        return None;
+    }
+    let mut pid = 0u32;
+    GetWindowThreadProcessId(w, Some(&mut pid));
+    if pid == GetCurrentProcessId() || GetWindowLongPtrW(w, GWL_EXSTYLE) as u32 & WS_EX_TOOLWINDOW.0 != 0 {
+        return None;
+    }
+    let mut cloaked = 0u32;
+    if DwmGetWindowAttribute(w, DWMWA_CLOAKED, &mut cloaked as *mut u32 as _, 4).is_err() || cloaked != 0 {
+        return None;
+    }
+    let mut c = [0u16; 32];
+    let n = GetClassNameW(w, &mut c) as usize;
+    if matches!(String::from_utf16_lossy(&c[..n]).as_str(), "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd") {
+        return None;
+    }
+    if !vdm.IsWindowOnCurrentVirtualDesktop(w).ok()?.as_bool() {
+        return None;
+    }
+    vdm.GetWindowDesktopId(w).ok().filter(|id| desk_ok(*id, known))
+}
+
+// The desktop in use, read off a reference window: the one in front, else the topmost usable one.
+unsafe fn current_desktop(vdm: &IVirtualDesktopManager) -> Option<GUID> {
+    let known = known_desktops();
+    if known.is_empty() {
+        return None;
+    }
+    if let Some(id) = ref_desktop(vdm, GetForegroundWindow(), &known) {
+        return Some(id);
+    }
+    struct Find<'a>(&'a IVirtualDesktopManager, &'a [GUID], Option<GUID>);
+    unsafe extern "system" fn each(h: HWND, lp: LPARAM) -> BOOL {
+        let f = &mut *(lp.0 as *mut Find);
+        f.2 = ref_desktop(f.0, h, f.1);
+        BOOL::from(f.2.is_none()) // found: stop
+    }
+    let mut f = Find(vdm, &known, None);
+    _ = EnumWindows(Some(each), LPARAM(&mut f as *mut Find as isize));
+    f.2
+}
+
+// w (a top-level window of Grids) moved to the desktop in use, when switched on and it is elsewhere.
+pub(crate) unsafe fn follow_desktop(w: HWND) {
+    let on = app(|a| a.s.bring_here);
+    if !on {
+        return;
+    }
+    let Ok(vdm) = CoCreateInstance::<_, IVirtualDesktopManager>(&VirtualDesktopManager, None, CLSCTX_ALL) else { return };
+    let here = vdm.IsWindowOnCurrentVirtualDesktop(w).map_or(true, |b| b.as_bool()); // unknown: leave it
+    let found = if here { None } else { current_desktop(&vdm) };
+    if let Some(id) = desk_target(on, here, found) {
+        _ = vdm.MoveWindowToDesktop(w, &id);
+    }
+}
+
+// Main, and the dialog in front of it while it is disabled (it may not have followed its owner).
+pub(crate) unsafe fn come_here(main: HWND) {
+    follow_desktop(main);
+    if !IsWindowEnabled(main).as_bool() {
+        let p = GetLastActivePopup(main);
+        if p != main {
+            follow_desktop(p);
         }
     }
 }
@@ -1512,7 +1656,7 @@ pub(crate) unsafe fn set_language(ko: bool) {
 // The view menu's plain items, in menu order: (command, English, Korean). VIEW_TOP comes before the
 // Selection colour submenu, VIEW_END after the language item. The README test (view_menu_names_in_readmes)
 // and the WM_COMMAND collision test read these, so a new item is checked against both READMEs.
-pub(crate) const VIEW_TOP: [(usize, &str, &str); 14] = [
+pub(crate) const VIEW_TOP: [(usize, &str, &str); 15] = [
     (ID_TREE, "Folder tree\tCtrl+Shift+E", "폴더 트리\tCtrl+Shift+E"),
     (ID_TREE_QUICK, "Show Explorer Quick access in the folder tree", "폴더 트리에 탐색기 빠른 액세스 표시"),
     (ID_TABS, "Tabs in panes", "패널 탭"),
@@ -1521,6 +1665,7 @@ pub(crate) const VIEW_TOP: [(usize, &str, &str); 14] = [
     (ID_EXT, "Show file name extensions", "파일 확장명 표시"),
     (ID_DBLUP, "Double-click empty space: parent folder", "빈 곳 더블클릭: 위 폴더로"),
     (ID_HOTKEY, "Bring Grids to front from anywhere\tWin+Alt+E", "어디서나 Grids 불러오기\tWin+Alt+E"),
+    (ID_BRING_HERE, "Bring Grids to the desktop I'm using", "Grids를 지금 쓰는 데스크톱으로 불러오기"),
     (ID_AUTOSTART, "Start with Windows (minimized)", "Windows 시작 시 실행 (최소화)"),
     (ID_TRAY, "Minimize to the notification area", "최소화하면 알림 영역으로"),
     (ID_DLGJUMP, "Jump to Grids folders from file dialogs\tCtrl+Alt+G", "파일 대화 상자에서 Grids 폴더로 이동\tCtrl+Alt+G"),

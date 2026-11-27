@@ -24,6 +24,7 @@ pub(crate) struct Session {
     pub(crate) tree_quick: bool,       // Explorer's Quick access (its pinned folders) as the tree's first root
     pub(crate) hotkey: bool,          // Win+Alt+E brings Grids to the front, app-wide (not part of a layout)
     pub(crate) dlgjump: bool,          // Ctrl+Alt+G in other apps' file dialogs lists Grids' folders (dialog_jump.rs)
+    pub(crate) bring_here: bool,       // called (Win+Alt+E, the icon, a second start) from another virtual desktop: Grids moves there, app-wide
     pub(crate) tray: bool,             // minimized, Grids leaves the taskbar for a notification area icon (tray.rs), app-wide
     pub(crate) file: String,          // named session (.grids) the layout was last loaded from / saved to
     pub(crate) favs: Vec<String>,      // favourite folders (parsing names), app-wide
@@ -67,6 +68,7 @@ impl Default for Session {
             tree_quick: true,
             hotkey: true,
             dlgjump: true,
+            bring_here: true,
             tray: false,
             file: String::new(),
             favs: Vec::new(),
@@ -245,6 +247,7 @@ impl Session {
                 "tree_quick" => s.tree_quick = v.trim() != "0",
                 "hotkey" => s.hotkey = v.trim() != "0",
                 "dialog_jump" => s.dlgjump = v.trim() != "0",
+                "follow_desktop" => s.bring_here = v.trim() != "0",
                 "tray" => s.tray = v.trim() == "1",
                 "tabs" => s.tabs_on = v.trim() == "1",
                 "ev_here" => s.ev_here = v.trim() == "1",
@@ -323,6 +326,7 @@ impl Session {
         o += &format!("dblup={}\ntree={}\ntree_quick={}\n", self.dblup as u8, self.tree as u8, self.tree_quick as u8);
         o += &format!("hotkey={}\n", self.hotkey as u8);
         o += &format!("dialog_jump={}\n", self.dlgjump as u8);
+        o += &format!("follow_desktop={}\n", self.bring_here as u8);
         o += &format!("tray={}\n", self.tray as u8);
         o += &format!("tabs={}\n", self.tabs_on as u8);
         o += &format!("ev_here={}\nev_sort={}\nupdate_check={}\n", self.ev_here as u8, self.ev_sort, self.updates as u8);
@@ -1133,6 +1137,7 @@ mod tests {
             tree_quick: false,
             hotkey: false,
             dlgjump: false,
+            bring_here: false,
             tray: true,
             file: r"C:\Grids\sessions\일.grids".into(),
             favs: strs(&[r"C:\Users\홍길동", r"\\nas\share"]),
@@ -1188,6 +1193,7 @@ mod tests {
             "tree_quick=0",
             "hotkey=0",
             "dialog_jump=0",
+            "follow_desktop=0",
             "tray=1",
             "tabs=1",
             "ev_here=1",
@@ -1234,6 +1240,7 @@ mod tests {
             "tree_quick=1",
             "hotkey=1",
             "dialog_jump=1",
+            "follow_desktop=1",
             "tray=0",
             "tabs=1",
             "ev_here=0",
@@ -1340,6 +1347,7 @@ mod tests {
         assert_eq!((s.key_tips, s.key_tips_seen), (true, [0; TIP_N]));
         assert!(!s.tray); // before tray=: stays on the taskbar
         assert!(s.tree_quick); // before tree_quick=: Quick access shown atop the tree
+        assert!(s.bring_here); // before follow_desktop=: called, Grids comes to the desktop in use
     }
 
     #[test]
@@ -1476,6 +1484,7 @@ mod tests {
             tree_quick: true,
             hotkey: true,
             dlgjump: true,
+            bring_here: true,
             tray: false,
             file: r"F:\a.grids".into(),
             favs: strs(&[r"F:\fav"]),
