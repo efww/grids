@@ -88,6 +88,16 @@ pub(crate) fn focus_accent(a: &App, pane: HWND) -> u32 {
     }
 }
 
+// A pane's ← / → / ↑ with nowhere to go: its glyph halfway from the header to its usual colour (faint_nav_reads
+// checks it still reads); high contrast's grey text instead, except on the highlight (the active header).
+pub(crate) const FAINT: f32 = 0.5;
+pub(crate) fn faint_ink(bg: u32, fg: u32) -> u32 {
+    match hc_colors() {
+        Some(c) if bg != c.hl => c.gray,
+        _ => blend(bg, fg, FAINT),
+    }
+}
+
 // How far a hot/pressed button's fill moves toward its ink; the palette_contrast test reads it too.
 pub(crate) fn press_tint(tinted: bool, pressed: bool) -> f32 {
     match (tinted, pressed) {
@@ -119,7 +129,9 @@ unsafe fn draw_button_face(d: &DRAWITEMSTRUCT) {
     let (dc, rc, id) = (d.hDC, d.rcItem, d.CtlID as i32);
     // files dragged over a drive / Recycle Bin button press it, as a click would
     let pressed = d.itemState.0 & ODS_SELECTED.0 != 0 || DROP_BTN.load(Ordering::Relaxed) == d.hwndItem.0 as usize;
-    let hot = hover == d.hwndItem || tour_target() == d.hwndItem;
+    // a pane's ← / → / ↑ with nowhere to go (nav.rs): faint, and no hover shade; pressed still shades, as it may be wrong
+    let faint = !on_main && nav_dim_of(parent, id);
+    let hot = (hover == d.hwndItem && !faint) || tour_target() == d.hwndItem;
     let (bg, ink) = if on_main { (pal().bg, pal().text) } else { header_colors(parent) };
     let tinted = bg != pal().bg && bg != pal().card;
     fill(dc, rc, bg);
@@ -141,6 +153,7 @@ unsafe fn draw_button_face(d: &DRAWITEMSTRUCT) {
             let back = if pressed || hot { blend(bg, ink, press_tint(tinted, pressed)) } else { bg };
             return draw_spin(dc, rc, back, fg, dpi, turn);
         }
+        let fg = if faint { faint_ink(bg, if tinted { ink } else { pal().sub }) } else { fg };
         return text(dc, rc, glyph(id), icon_font, fg, DT_CENTER);
     }
     let s = |v: i32| v * dpi / 96;

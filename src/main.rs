@@ -2369,6 +2369,45 @@ mod tests {
         }
     }
 
+    // A pane's faint ← / → / ↑ reads less than a usable one, on an inactive header (sub on card) and on every
+    // selection colour's header (its ink), but still at 1.5:1 or better.
+    #[test]
+    fn faint_nav_reads() {
+        for (theme, p) in [("light", &LIGHT), ("dark", &DARK)] {
+            let heads = std::iter::once(("card", p.card, p.sub)).chain(p.accents.iter().map(|&(n, c)| (n, c, on_color(c))));
+            for (name, bg, fg) in heads {
+                let (faint, usual) = (contrast(faint_ink(bg, fg), bg), contrast(fg, bg));
+                assert!(faint >= 1.5 && faint < usual, "{theme} {name}: faint {faint:.2}, usual {usual:.2}");
+            }
+        }
+    }
+
+    // Steps back / forward Grids counts for the faint buttons, and which buttons go faint.
+    #[test]
+    fn nav_dim_counts() {
+        // the first folder: nothing either way, whatever the kind
+        assert_eq!(hist_step(None, Go::New), (0, 0));
+        assert_eq!(hist_step(None, Go::Back), (0, 0));
+        assert_eq!(nav_dim(None, false), [true, true, false]);
+        // a new folder: one more back, forward gone
+        assert_eq!(hist_step(Some((0, 0)), Go::New), (1, 0));
+        assert_eq!(hist_step(Some((2, 3)), Go::New), (3, 0));
+        // back and forward trade a step; never below 0 when the count was short
+        assert_eq!(hist_step(Some((1, 0)), Go::Back), (0, 1));
+        assert_eq!(hist_step(Some((0, 1)), Go::Fwd), (1, 0));
+        assert_eq!(hist_step(Some((0, 0)), Go::Back), (0, 1));
+        assert_eq!(hist_step(Some((2, 0)), Go::Fwd), (3, 0));
+        // refused back / forward: none that way; accepted or another kind: unchanged
+        assert_eq!(hist_refused(3, 2, Go::Back, false), (0, 2));
+        assert_eq!(hist_refused(3, 2, Go::Fwd, false), (3, 0));
+        assert_eq!(hist_refused(3, 2, Go::Back, true), (3, 2));
+        assert_eq!(hist_refused(3, 2, Go::New, false), (3, 2));
+        // 0 = faint, 1 or more = usual; ↑ faint at the desktop only
+        assert_eq!(nav_dim(Some((0, 0)), false), [true, true, false]);
+        assert_eq!(nav_dim(Some((1, 0)), false), [false, true, false]);
+        assert_eq!(nav_dim(Some((0, 2)), true), [true, false, true]);
+    }
+
     // Windows' contrast themes (white and black ground among them): every text in Grids' own chrome reads
     // at 4.5:1 or better, and every selection colour is the theme's highlight.
     #[test]

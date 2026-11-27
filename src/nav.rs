@@ -513,7 +513,101 @@ pub(crate) unsafe fn drives_changed(gone: u32, back: u32) {
 
 /// true when the browser accepted the move (false: no pane, or nothing to go back/forward/up to)
 pub(crate) unsafe fn browse(i: usize, flags: u32) -> bool {
-    eb_of(i).is_some_and(|eb| eb.BrowseToIDList(std::ptr::null(), flags).is_ok())
+    let Some(eb) = eb_of(i) else { return false };
+    let go = match flags {
+        SBSP_NAVIGATEBACK => Go::Back,
+        SBSP_NAVIGATEFORWARD => Go::Fwd,
+        _ => Go::New,
+    };
+    // OnNavigationPending (raised inside BrowseToIDList) takes the kind from here; cleared once the call returns,
+    // accepted or not, so a Pending that never came cannot hand a stale Back/Fwd to the next, unrelated move
+    app(|a| a.panes.get_mut(i).and_then(|p| p.as_mut()).map(|p| p.going = Some(go)));
+    let ok = eb.BrowseToIDList(std::ptr::null(), flags).is_ok();
+    let fix = app(|a| {
+        let p = a.panes.get_mut(i)?.as_mut()?;
+        p.going = None;
+        // refused: nothing that way after all, whatever was counted (the buttons follow)
+        let was = p.dim();
+        p.hist = p.hist.map(|(b, f)| hist_refused(b, f, go, ok));
+        Some((p.hwnd, was, p.dim()))
+    });
+    if let Some((h, was, now)) = fix {
+        redraw_nav(h, was, now);
+    }
+    ok
+}
+
+// ---------- faint ← / → / ↑ ----------
+// Like Explorer, browsers and Finder, a pane's back / forward / up button with nowhere to go is drawn faint (draw.rs);
+// clicking it still just does nothing. Grids counts the steps itself from its own events: every move goes through
+// OnNavigationPending (kind from browse(), else a new folder) and OnNavigationComplete (on_nav).
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) enum Go {
+    New,
+    Back,
+    Fwd,
+}
+
+// Steps back and forward after a finished move; None = the pane's first folder.
+pub(crate) fn hist_step(h: Option<(u32, u32)>, go: Go) -> (u32, u32) {
+    match (h, go) {
+        (None, _) => (0, 0),
+        (Some((b, _)), Go::New) => (b + 1, 0),
+        (Some((b, f)), Go::Back) => (b.saturating_sub(1), f + 1),
+        (Some((b, f)), Go::Fwd) => (b + 1, f.saturating_sub(1)),
+    }
+}
+
+// The counts after browse() asked to go back or forward: refused means none that way.
+pub(crate) fn hist_refused(b: u32, f: u32, go: Go, ok: bool) -> (u32, u32) {
+    match (go, ok) {
+        (Go::Back, false) => (0, f),
+        (Go::Fwd, false) => (b, 0),
+        _ => (b, f),
+    }
+}
+
+// Which of ←, →, ↑ to draw faint.
+pub(crate) fn nav_dim(h: Option<(u32, u32)>, root: bool) -> [bool; 3] {
+    let (b, f) = h.unwrap_or((0, 0));
+    [b == 0, f == 0, root]
+}
+
+impl Pane {
+    pub(crate) fn dim(&self) -> [bool; 3] {
+        nav_dim(self.hist, self.root)
+    }
+}
+
+pub(crate) fn nav_dim_of(pane: HWND, id: i32) -> bool {
+    let k = [ID_BACK, ID_FWD, ID_UP].iter().position(|&x| x == id);
+    k.is_some_and(|k| app(|a| a.panes.iter().flatten().find(|p| p.hwnd == pane).is_some_and(|p| p.dim()[k])))
+}
+
+unsafe fn redraw_nav(h: HWND, was: [bool; 3], now: [bool; 3]) {
+    for (k, id) in [ID_BACK, ID_FWD, ID_UP].into_iter().enumerate() {
+        if was[k] != now[k] {
+            if let Ok(b) = GetDlgItem(Some(h), id) {
+                _ = InvalidateRect(Some(b), None, false);
+            }
+        }
+    }
+}
+
+// A finished move: its kind (taken at OnNavigationPending) applied to the counts; ↑ faint at the desktop (empty ID list).
+unsafe fn nav_counted(i: usize, pidl: *const ITEMIDLIST) {
+    let root = pidl.is_null() || (*pidl).mkid.cb == 0;
+    let fix = app(|a| {
+        let p = a.panes.get_mut(i)?.as_mut()?;
+        let was = p.dim();
+        p.hist = Some(hist_step(p.hist, p.moving.take().unwrap_or(Go::New)));
+        p.root = root;
+        Some((p.hwnd, was, p.dim()))
+    });
+    if let Some((h, was, now)) = fix {
+        redraw_nav(h, was, now);
+    }
 }
 
 pub(crate) unsafe fn browse_item(i: usize, si: &IShellItem) {
@@ -1789,6 +1883,7 @@ pub(crate) unsafe fn on_nav(i: usize, pidl: *const ITEMIDLIST) {
     if let Ok(b) = GetDlgItem(Some(h), ID_FAV) {
         _ = InvalidateRect(Some(b), None, false);
     }
+    nav_counted(i, pidl);
     if let Ok(fv) = eb.GetCurrentView::<IFolderView2>() {
         if view.0 != 0 {
             _ = fv.SetViewModeAndIconSize(FOLDERVIEWMODE(view.0), view.1);
@@ -1932,6 +2027,8 @@ impl IExplorerBrowserEvents_Impl for Events_Impl {
     fn OnNavigationPending(&self, pidl: *const ITEMIDLIST) -> Result<()> {
         NAV_GEN.fetch_add(1, Ordering::SeqCst);
         let i = self.0.load(Ordering::SeqCst);
+        // this move's kind for the faint ← / → (nav_counted): browse()'s back or forward, else a new folder
+        app(|a| a.panes.get_mut(i).and_then(|p| p.as_mut()).map(|p| p.moving = Some(p.going.take().unwrap_or(Go::New))));
         unsafe {
             rec_event(i, Nav::Pending, pidl);
             save_view(i)
@@ -1958,6 +2055,7 @@ impl IExplorerBrowserEvents_Impl for Events_Impl {
         let i = self.0.load(Ordering::SeqCst);
         unsafe { rec_event(i, Nav::Failed, pidl) };
         app(|a| a.say_nav = a.say_nav.filter(|&p| p != i)); // the tab key's words go with its browse
+        app(|a| a.panes.get_mut(i).and_then(|p| p.as_mut()).map(|p| p.moving = None)); // no step taken
         Ok(())
     }
 }
