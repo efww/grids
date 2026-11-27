@@ -1035,11 +1035,12 @@ pub(crate) enum GoTarget {
     Known(&'static GUID),
     Place(&'static str), // a parsing name, as on_nav records it (a.s.paths)
     Temp,
+    RecentFiles, // not a folder: a second menu of the files other apps opened lately
 }
 
 pub(crate) fn go_targets(ko: bool) -> Vec<Option<(&'static str, GoTarget)>> {
     use GoTarget::*;
-    let rows: [Option<(&str, &str, GoTarget)>; 13] = [
+    let rows: [Option<(&str, &str, GoTarget)>; 15] = [
         Some(("&Home", "홈(&H)", Known(&FOLDERID_Profile))),
         Some(("&Desktop", "바탕 화면(&D)", Known(&FOLDERID_Desktop))),
         Some(("D&ocuments", "문서(&O)", Known(&FOLDERID_Documents))),
@@ -1053,6 +1054,8 @@ pub(crate) fn go_targets(ko: bool) -> Vec<Option<(&'static str, GoTarget)>> {
         None,
         Some(("&Temporary folder", "임시 폴더(&T)", Temp)),
         Some(("&AppData", "AppData(&A)", Known(&FOLDERID_RoamingAppData))),
+        None,
+        Some(("Recent &files", "최근 파일(&F)", RecentFiles)),
     ];
     rows.into_iter().map(|r| r.map(|(en, k, t)| (if ko { k } else { en }, t))).collect()
 }
@@ -1087,6 +1090,7 @@ unsafe fn go_path(t: GoTarget) -> Option<String> {
     match t {
         GoTarget::Place(p) => Some(p.to_string()),
         GoTarget::Temp => Some(go_trim(&std::env::temp_dir().to_string_lossy())).filter(|p| !p.is_empty()),
+        GoTarget::RecentFiles => None,
         // DONT_VERIFY: a folder moved to a share or OneDrive is not probed (no wait); a missing one beeps when picked
         GoTarget::Known(id) => {
             let p = SHGetKnownFolderPath(id, KF_FLAG_DONT_VERIFY, None).ok()?;
@@ -1167,24 +1171,29 @@ pub(crate) fn expand_vars(file: &str, var: impl Fn(&str) -> Option<String>) -> S
 
 // Set while the Ctrl+G menu is open, for its WM_MENUCHAR (Ctrl still held while the letter is typed).
 static GO_OPEN: AtomicBool = AtomicBool::new(false);
+// Set while its recent files menu (Ctrl+G, F) is open: Ctrl+F still held repeats there.
+static RECENT_OPEN: AtomicBool = AtomicBool::new(false);
 
 // The pane window's WM_MENUCHAR while the Ctrl+G menu is open: Ctrl+letter picks as the letter alone would.
 // None: not this menu's, DefWindowProcW as before.
 pub(crate) fn go_menu_char(wp: WPARAM, lp: LPARAM) -> Option<LRESULT> {
-    if !GO_OPEN.load(Ordering::Relaxed) {
+    let recent = RECENT_OPEN.load(Ordering::Relaxed);
+    if !recent && !GO_OPEN.load(Ordering::Relaxed) {
         return None;
     }
     const MNC_EXECUTE: isize = 2;
     const MNC_SELECT: isize = 3;
     let ch = (wp.0 & 0xffff) as u16;
     let ctrl = unsafe { GetKeyState(VK_CONTROL.0 as i32) } < 0;
-    if let Some(k) = go_pick_char(&go_targets(KO.load(Ordering::Relaxed)), ch, ctrl) {
-        return Some(LRESULT(MNC_EXECUTE << 16 | k as isize));
+    if !recent {
+        if let Some(k) = go_pick_char(&go_targets(KO.load(Ordering::Relaxed)), ch, ctrl) {
+            return Some(LRESULT(MNC_EXECUTE << 16 | k as isize));
+        }
     }
-    if ch != 0x07 {
+    if ch != if recent { 0x06 } else { 0x07 } {
         return None; // anything else beeps as in any menu
     }
-    // Ctrl+G held: its repeats keep the highlight where it is, without a beep
+    // Ctrl+G held (Ctrl+F in the recent files menu): its repeats keep the highlight where it is, without a beep
     let menu = HMENU(lp.0 as _);
     let n = unsafe { GetMenuItemCount(Some(menu)) }.max(0) as u32;
     let lit = (0..n).find(|&k| unsafe { GetMenuState(menu, k, MF_BYPOSITION) } & MF_HILITE.0 != 0).unwrap_or(0);
@@ -1199,7 +1208,14 @@ pub(crate) unsafe fn go_menu(i: usize) {
     let (here, dpi) = app(|a| (a.s.paths[i].clone(), a.dpi));
     let paths: Vec<Option<String>> = rows.iter().map(|r| r.and_then(|(_, t)| go_path(t))).collect();
     // each place's icon: known folders' own from their definitions (asked here, outside app), the rest from the cache
-    let known: Vec<i32> = rows.iter().map(|r| if let Some((_, GoTarget::Known(id))) = r { known_icon(id) } else { -1 }).collect();
+    let known: Vec<i32> = rows
+        .iter()
+        .map(|r| match r {
+            Some((_, GoTarget::Known(id))) => known_icon(id),
+            Some((_, GoTarget::RecentFiles)) => known_icon(&FOLDERID_Recent), // Explorer's Recent Items clock
+            _ => -1,
+        })
+        .collect();
     let ix: Vec<i32> = app(|a| paths.iter().zip(&known).map(|(p, &kn)| p.as_ref().map_or(-1, |p| menu_icon_of(a, p, kn))).collect());
     let mut icons = MenuIcons::new(dpi); // dropped after DestroyMenu
     let Ok(menu) = CreatePopupMenu() else { return };
@@ -1209,7 +1225,9 @@ pub(crate) unsafe fn go_menu(i: usize) {
             continue;
         };
         let here_too = paths[k].as_ref().is_some_and(|p| same_dir(p, &here));
+        let recent = matches!(r, Some((_, GoTarget::RecentFiles)));
         let flags = match &paths[k] {
+            None if recent => MF_STRING,
             None => MF_STRING | MF_GRAYED,
             Some(_) if here_too => MF_STRING | MF_CHECKED,
             _ => MF_STRING,
@@ -1217,6 +1235,8 @@ pub(crate) unsafe fn go_menu(i: usize) {
         _ = AppendMenuW(menu, flags, k + 1, &HSTRING::from(*label));
         if paths[k].is_some() {
             icons.put(menu, k + 1, ix[k]);
+        } else if recent {
+            icons.put(menu, k + 1, known[k]);
         }
         if here_too {
             // with an icon the theme may show the check only as a frame behind it: bold too, as the '›' menu
@@ -1231,6 +1251,10 @@ pub(crate) unsafe fn go_menu(i: usize) {
     let pick = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN, rc.left, rc.bottom, None, h, None).0;
     GO_OPEN.store(false, Ordering::Relaxed);
     _ = DestroyMenu(menu);
+    if pick > 0 && matches!(rows.get(pick as usize - 1), Some(Some((_, GoTarget::RecentFiles)))) {
+        recent_files_menu(i, h, rc.left, rc.bottom); // in the same place, as a submenu would open
+        return;
+    }
     if pick > 0 {
         let to = paths.get(pick as usize - 1).cloned().flatten();
         if !to.is_some_and(|p| go_near(i, &p)) {
@@ -1238,6 +1262,129 @@ pub(crate) unsafe fn go_menu(i: usize) {
         }
     }
     focus_view(i);
+}
+
+// ---------- Ctrl+G, F: recent files (Windows' Recent Items, as Finder's Recents or Explorer's Home) ----------
+const RECENT_LOOK: usize = 60; // shortcuts read, newest first
+const RECENT_KEEP: usize = 15; // rows shown
+const RECENT_ID: usize = 100; // first row's command id
+
+// The newest `n` of (item, modified) pairs, newest first.
+pub(crate) fn newest_first<T>(mut v: Vec<(T, u64)>, n: usize) -> Vec<T> {
+    v.sort_by(|a, b| b.1.cmp(&a.1));
+    v.into_iter().take(n).map(|e| e.0).collect()
+}
+
+// A file path → (its folder, its name); None without a folder part or a name. A drive root keeps its backslash.
+pub(crate) fn split_file(p: &str) -> Option<(String, String)> {
+    let (dir, name) = p.rsplit_once('\\')?;
+    if dir.is_empty() || name.is_empty() {
+        return None;
+    }
+    Some((if dir.ends_with(':') { format!("{dir}\\") } else { dir.to_string() }, name.to_string()))
+}
+
+// Shortcut targets (path, saved as a folder), newest first → the files to list: folders, paths without a folder
+// and repeats (in any case) left out, at most `n`.
+pub(crate) fn recent_keep(targets: Vec<(String, bool)>, n: usize) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for (p, dir) in targets {
+        if out.len() == n {
+            break;
+        }
+        if dir || split_file(&p).is_none() || out.iter().any(|o| o.to_lowercase() == p.to_lowercase()) {
+            continue;
+        }
+        out.push(p);
+    }
+    out
+}
+
+// `s` cut in the middle to at most `max` characters ("a very lo…name.docx"), so a menu stays on the screen.
+pub(crate) fn mid_cut(s: &str, max: usize) -> String {
+    let c: Vec<char> = s.chars().collect();
+    if c.len() <= max || max < 3 {
+        return s.to_string();
+    }
+    let tail = (max - 1) / 2;
+    let head = max - 1 - tail;
+    format!("{}…{}", c[..head].iter().collect::<String>(), c[c.len() - tail..].iter().collect::<String>())
+}
+
+// A recent file's menu row, "name<tab>folder": the folder by its own name (a drive root whole), & doubled so it
+// shows as itself, not an underline.
+pub(crate) fn recent_label(path: &str) -> Option<String> {
+    let (dir, name) = split_file(path)?;
+    let folder = if dir.ends_with('\\') { dir.as_str() } else { dir.rsplit('\\').next().unwrap_or(&dir) };
+    Some(format!("{}\t{}", mid_cut(&name, 60), mid_cut(folder, 30)).replace('&', "&&"))
+}
+
+// Windows keeps recent files unless "Show recently opened items" is off (Start_TrackDocs = 0).
+unsafe fn recent_tracked() -> bool {
+    use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
+    let (mut v, mut n) = (1u32, 4u32);
+    let key = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced");
+    let r = RegGetValueW(HKEY_CURRENT_USER, key, w!("Start_TrackDocs"), RRF_RT_REG_DWORD, None, Some(&mut v as *mut u32 as _), Some(&mut n));
+    !r.is_ok() || v != 0
+}
+
+// The files in Recent Items, newest first. Only the shortcuts are read (their saved target, never Resolve), so a
+// file on a share or a drive that is gone is no wait.
+unsafe fn recent_files() -> Vec<String> {
+    use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_DIRECTORY, WIN32_FIND_DATAW};
+    let Some(dir) = go_path(GoTarget::Known(&FOLDERID_Recent)) else { return Vec::new() };
+    let Ok(rd) = std::fs::read_dir(&dir) else { return Vec::new() };
+    let links: Vec<(PathBuf, u64)> = rd
+        .flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x.eq_ignore_ascii_case("lnk")))
+        .filter_map(|e| {
+            let t = e.metadata().ok()?.modified().ok()?;
+            Some((e.path(), t.duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)))
+        })
+        .collect();
+    let targets = newest_first(links, RECENT_LOOK)
+        .into_iter()
+        .filter_map(|p| {
+            let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).ok()?;
+            link.cast::<IPersistFile>().ok()?.Load(&HSTRING::from(p.as_os_str()), STGM_READ).ok()?;
+            let (mut buf, mut fd) = ([0u16; 1024], WIN32_FIND_DATAW::default());
+            link.GetPath(&mut buf, &mut fd, 0).ok()?;
+            let s = String::from_utf16_lossy(&buf[..buf.iter().position(|&c| c == 0).unwrap_or(buf.len())]);
+            Some((s, fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY.0 != 0))
+        })
+        .collect();
+    recent_keep(targets, RECENT_KEEP)
+}
+
+// Ctrl+G, F: files other apps opened lately, with their type's icon; the picked one is shown selected in its
+// folder in pane i (a folder that is gone says so in the status line).
+unsafe fn recent_files_menu(i: usize, h: HWND, x: i32, y: i32) {
+    let on = recent_tracked();
+    let files = if on { recent_files() } else { Vec::new() };
+    let mut icons = MenuIcons::new(app(|a| a.dpi)); // dropped after DestroyMenu
+    let Ok(menu) = CreatePopupMenu() else { return };
+    if files.is_empty() {
+        let note = if on {
+            tr("(No recent files)", "(최근 파일 없음)")
+        } else {
+            tr("Windows isn't keeping recent files", "Windows에서 최근 파일 기록이 꺼져 있음")
+        };
+        _ = AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, &HSTRING::from(note));
+    }
+    for (k, p) in files.iter().enumerate() {
+        let Some(label) = recent_label(p) else { continue };
+        _ = AppendMenuW(menu, MF_STRING, RECENT_ID + k, &HSTRING::from(label));
+        let name = split_file(p).map_or(String::new(), |(_, n)| n);
+        icons.put(menu, RECENT_ID + k, type_icon(&name, false)); // by its type only: no disk access
+    }
+    RECENT_OPEN.store(true, Ordering::Relaxed);
+    let pick = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN, x, y, None, h, None).0 as usize;
+    RECENT_OPEN.store(false, Ordering::Relaxed);
+    _ = DestroyMenu(menu);
+    match pick.checked_sub(RECENT_ID).and_then(|k| files.get(k)).and_then(|p| split_file(p)) {
+        Some((dir, name)) => show_in_pane(i, dir, Some(name)),
+        None => focus_view(i),
+    }
 }
 
 pub(crate) unsafe fn apply_filter(i: usize) {

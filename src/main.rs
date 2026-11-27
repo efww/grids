@@ -2652,6 +2652,42 @@ mod tests {
         }
         let places: Vec<GoTarget> = en.iter().flatten().map(|r| r.1).collect();
         assert!(places.contains(&GoTarget::Place(THIS_PC)) && places.contains(&GoTarget::Place(RECYCLE_BIN)));
+        // F (Ctrl+F) is the recent files row, the second menu
+        for rows in [&en, &ko] {
+            assert!(go_pick_char(rows, 0x06, true).is_some_and(|k| rows[k].is_some_and(|r| r.1 == GoTarget::RecentFiles)));
+            assert_eq!(at(rows, 'f' as u16), Some('F'));
+        }
+    }
+
+    // Ctrl+G, F: Recent Items' shortcuts read newest first; folders, paths without a folder and repeats left out.
+    #[test]
+    fn recent_files_list() {
+        let v = vec![("old", 5u64), ("new", 9), ("mid", 7), ("older", 1)];
+        assert_eq!(newest_first(v.clone(), 3), vec!["new", "mid", "old"]);
+        assert_eq!(newest_first(v, 10).len(), 4);
+        let t = |p: &str, dir: bool| (p.to_string(), dir);
+        let got = recent_keep(
+            vec![
+                t(r"C:\Docs\a.docx", false),
+                t(r"C:\Docs", true),
+                t(r"c:\docs\A.DOCX", false),
+                t("", false),
+                t("nofolder.txt", false),
+                t(r"D:\b.pdf", false),
+                t(r"\\srv\share\c.hwp", false),
+                t(r"C:\e.txt", false),
+            ],
+            3,
+        );
+        assert_eq!(got, vec![r"C:\Docs\a.docx", r"D:\b.pdf", r"\\srv\share\c.hwp"]);
+        assert_eq!(split_file(r"D:\b.pdf"), Some((r"D:\".into(), "b.pdf".into())));
+        assert_eq!(split_file(r"C:\Docs\a.docx"), Some((r"C:\Docs".into(), "a.docx".into())));
+        assert_eq!((split_file(r"C:\Docs\"), split_file("a.txt")), (None, None));
+        assert_eq!(recent_label(r"C:\Work\R&D\plan.docx").as_deref(), Some("plan.docx\tR&&D"));
+        assert_eq!(recent_label(r"D:\b.pdf").as_deref(), Some("b.pdf\tD:\\"));
+        assert_eq!(mid_cut("abcdefghij", 5), "ab…ij");
+        assert_eq!(mid_cut("가나다라마바", 4), "가나…바");
+        assert_eq!(mid_cut("short", 60), "short");
     }
 
     // The shortcut window is the in-app manual: mouse-only actions (menus on right-click, drops, the session
