@@ -429,9 +429,7 @@ pub(crate) unsafe fn set_active(i: usize) {
         for h in hs.into_iter().flatten() {
             repaint_header(h);
         }
-        if let Some(item) = view_of::<IFolderView2>(i).and_then(|fv| fv.GetFolder::<IShellItem>().ok()) {
-            sync_tree(&item);
-        }
+        request_tree_sync();
         mark_drive();
     }
 }
@@ -1162,6 +1160,11 @@ pub(crate) unsafe fn toggle_tree() {
         (a.tree_hwnd == f || IsChild(a.tree_hwnd, f).as_bool(), a.s.active)
     });
     relayout();
+    // hidden, the tree followed nothing: shown again (and laid out), it goes to the active pane's folder now
+    cancel_tree_sync();
+    if app(|a| a.s.tree) {
+        sync_tree_active();
+    }
     redraw_all();
     if had_focus {
         focus_view(i);
@@ -1240,9 +1243,7 @@ pub(crate) unsafe fn set_layout(h: Vec<usize>) {
     if gone {
         let i = app(|a| a.s.active);
         if view_of::<IShellView>(i).is_some() {
-            if let Some(item) = view_of::<IFolderView2>(i).and_then(|fv| fv.GetFolder::<IShellItem>().ok()) {
-                sync_tree(&item);
-            }
+            request_tree_sync();
             focus_view(i);
         } else {
             // a pane made just now for that cell: on_nav focuses it once its folder shows

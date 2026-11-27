@@ -1637,9 +1637,7 @@ pub(crate) unsafe fn on_nav(i: usize, pidl: *const ITEMIDLIST) {
         dark_list(h);
     }
     if app(|a| a.s.active == i) {
-        if let Ok(item) = SHCreateItemFromIDList::<IShellItem>(pidl) {
-            sync_tree(&item);
-        }
+        request_tree_sync(); // the list first; the tree follows the last of quick moves only
     }
     // set_layout's focus for a pane made in place of the active one: once, and only if focus went nowhere else since
     if app(|a| a.focus_req == h && a.s.active == i && std::mem::take(&mut a.focus_req) == h) {

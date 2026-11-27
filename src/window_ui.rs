@@ -212,6 +212,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 }
                 return LRESULT(1);
             }
+            WM_TIMER if wp.0 == TIMER_TREE_SYNC => tree_sync_tick(h),
             WM_TIMER if wp.0 == TIMER_REVEAL => {
                 _ = KillTimer(Some(h), TIMER_REVEAL);
                 reveal_tree_selection();

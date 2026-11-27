@@ -129,6 +129,7 @@ pub(crate) unsafe fn toggle_tree_quick() {
         _ = t.RemoveRoot(&q);
         let i = app(|a| a.s.active);
         if let Some(item) = view_of::<IFolderView2>(i).and_then(|fv| fv.GetFolder::<IShellItem>().ok()) {
+            cancel_tree_sync(); // done right here
             sync_tree(&item);
             return;
         }
@@ -196,6 +197,63 @@ pub(crate) unsafe fn sync_tree(item: &IShellItem) {
     start_reveal(main); // and again while the tree finishes expanding
 }
 
+/// TIMER_TREE_SYNC: the tree follows only while shown, only when asked since, and never over a click or key
+/// that just reached the tree (its own pick goes on to navigate).
+pub(crate) fn tree_sync_due(shown: bool, wanted: bool, tree_input: bool) -> bool {
+    shown && wanted && !tree_input
+}
+
+// A pane moved or another pane became active: the tree follows a moment later (TIMER_TREE_SYNC), once,
+// to whatever the active pane shows then. A hidden tree isn't expanded at all; showing it again syncs.
+pub(crate) unsafe fn request_tree_sync() {
+    let (main, shown) = app(|a| (a.main, a.s.tree && a.tree.is_some()));
+    app(|a| a.tree_want = shown && !main.0.is_null());
+    if main.0.is_null() {
+        return;
+    }
+    if shown {
+        SetTimer(Some(main), TIMER_TREE_SYNC, 100, None);
+    } else {
+        _ = KillTimer(Some(main), TIMER_TREE_SYNC);
+    }
+}
+
+// Drops a waiting follow: the tree was hidden, or the user is picking in it.
+pub(crate) unsafe fn cancel_tree_sync() {
+    let main = app(|a| {
+        a.tree_want = false;
+        a.main
+    });
+    if !main.0.is_null() {
+        _ = KillTimer(Some(main), TIMER_TREE_SYNC);
+    }
+}
+
+// The tree selects the active pane's folder now.
+pub(crate) unsafe fn sync_tree_active() {
+    let i = app(|a| a.s.active);
+    if let Some(item) = view_of::<IFolderView2>(i).and_then(|fv| fv.GetFolder::<IShellItem>().ok()) {
+        sync_tree(&item);
+    }
+}
+
+pub(crate) unsafe fn tree_sync_tick(h: HWND) {
+    _ = KillTimer(Some(h), TIMER_TREE_SYNC);
+    if app(|a| tree_sync_due(a.s.tree, std::mem::take(&mut a.tree_want), a.tree_input)) {
+        sync_tree_active();
+    }
+}
+
+// F6 into the tree: a waiting follow runs first, so the arrows start from the folder shown now.
+pub(crate) unsafe fn flush_tree_sync() {
+    if app(|a| a.tree_want) {
+        cancel_tree_sync();
+        if app(|a| a.s.tree && !a.tree_input) {
+            sync_tree_active();
+        }
+    }
+}
+
 // Scrolls the tree so the selected folder is on screen: vertically, and sideways when deep nesting
 // pushes its name past a narrow sidebar.
 pub(crate) unsafe fn reveal_tree_selection() {
@@ -251,6 +309,14 @@ pub(crate) unsafe fn start_reveal(main: HWND) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tree_follows_only_when_shown_asked_and_untouched() {
+        assert!(tree_sync_due(true, true, false));
+        assert!(!tree_sync_due(false, true, false)); // hidden: nothing expanded
+        assert!(!tree_sync_due(true, false, false)); // nothing asked (already done, or cancelled)
+        assert!(!tree_sync_due(true, true, true)); // a click/key in the tree: its own pick wins
+    }
 
     #[test]
     fn quick_access_reopens_drive_paths_only() {

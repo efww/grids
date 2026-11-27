@@ -245,6 +245,7 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
                 1 => _ = focus_ctl(a, ID_EDIT),
                 2 => _ = focus_ctl(a, ID_FILTER),
                 3 => {
+                    flush_tree_sync();
                     _ = SetFocus(tv);
                     reveal_tree_selection();
                 }
@@ -565,7 +566,12 @@ pub(crate) unsafe fn pre_translate(m: &MSG) -> bool {
     }
     if matches!(m.message, WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN | WM_XBUTTONDOWN) {
         let t = in_tree();
-        app(|a| a.tree_input = tree_input_click(a.tree_input, t, m.message == WM_LBUTTONDOWN));
+        if app(|a| {
+            a.tree_input = tree_input_click(a.tree_input, t, m.message == WM_LBUTTONDOWN);
+            a.tree_input
+        }) {
+            cancel_tree_sync(); // a waiting follow must not undo the pick
+        }
     }
     match m.message {
         WM_MOUSEMOVE => {
@@ -634,7 +640,12 @@ pub(crate) unsafe fn pre_translate(m: &MSG) -> bool {
             // cleared while key() runs, so the selection sync it triggers isn't taken for user input
             let prev = app(|a| std::mem::take(&mut a.tree_input));
             let used = key(m);
-            app(|a| a.tree_input = tree_input_after(prev, tree, used));
+            if app(|a| {
+                a.tree_input = tree_input_after(prev, tree, used);
+                a.tree_input
+            }) {
+                cancel_tree_sync(); // an arrow in the tree: its pick, not a waiting follow
+            }
             used
         }
         WM_KEYUP | WM_SYSKEYUP => {

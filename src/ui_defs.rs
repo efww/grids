@@ -62,6 +62,7 @@ pub(crate) const TIMER_REVEAL: usize = 3;
 pub(crate) const TIMER_SETTLE: usize = 4; // on a pane: narrow column widths going back on after a folder change
 pub(crate) const TIMER_SPIN: usize = 6; // on a pane: next frame of the F5 spin
 pub(crate) const TIMER_FOCUS: usize = 5; // after a click brought Grids back: that click is handled, focus still nowhere?
+pub(crate) const TIMER_TREE_SYNC: usize = 7; // on main: the folder tree follows the active pane's folder, once moves pause
 // tree-view messages (the sidebar's SysTreeView32)
 pub(crate) const TVM_GETNEXTITEM: u32 = 0x110A;
 pub(crate) const TVM_ENSUREVISIBLE: u32 = 0x1114;
