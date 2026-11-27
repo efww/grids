@@ -59,10 +59,7 @@ impl IconMemo {
 
 // "X:\" exactly (a drive's root) → its letter.
 pub(crate) fn drive_root(path: &str) -> Option<u8> {
-    match path.as_bytes() {
-        [c, b':', b'\\'] if c.is_ascii_alphabetic() => Some(c.to_ascii_uppercase()),
-        _ => None,
-    }
+    drive_letter(path).filter(|&(_, rest)| rest == "\\").map(|(c, _)| c)
 }
 
 // A tab's icon (-1: none). The current tab: the address bar's icon, or while that is still on its way the one
@@ -357,7 +354,7 @@ pub(crate) enum DropAt {
 
 // A folder path that files can be copied into: "X:\…" or "\\server\share…" (not "::{GUID}" shell places).
 pub(crate) fn disk_folder(p: &str) -> bool {
-    matches!(p.as_bytes(), [c, b':', b'\\', ..] if c.is_ascii_alphabetic()) || (p.starts_with(r"\\") && !p.starts_with(r"\\?"))
+    drive_letter(p).is_some_and(|(_, rest)| rest.starts_with('\\')) ||(p.starts_with(r"\\") && !p.starts_with(r"\\?"))
 }
 
 // `hit`: tab_hit at the drop point (None outside the strip, so always with tabs off); `tabs`: tab_list.

@@ -140,8 +140,7 @@ pub(crate) unsafe fn toggle_tree_quick() {
 /// "C:\..." : a folder on a drive letter. Only these are reopened by path from Quick access; a pinned share
 /// that is offline would hold the window up while its path is parsed again.
 pub(crate) fn drive_path(p: &str) -> bool {
-    let b = p.as_bytes();
-    b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] == b'\\'
+    drive_letter(p).is_some_and(|(_, rest)| rest.starts_with('\\'))
 }
 
 // The real path of an item somewhere below the Quick access root (not the root itself), when it is a drive

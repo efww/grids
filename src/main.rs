@@ -893,6 +893,51 @@ mod tests {
         }
     }
 
+    // Every drive check on one path, side by side, all built on drive_letter: what may follow "X:" is each one's
+    // own (drive_root: "\" alone; drive_of: anything; drive_bit: nothing or "\"; vol_key: anything; drive_path,
+    // disk_folder, clip_paths: "\…"). is_fs keeps its own looser test ("1:\" and "\\?\" pass, "C:" doesn't).
+    #[test]
+    fn drive_rules_one_table() {
+        const C: Option<u32> = Some(1 << 2);
+        type Row<'a> = (Option<(u8, &'a str)>, Option<u8>, Option<u8>, Option<u32>, Option<&'a str>, bool, bool, bool, Vec<&'a str>);
+        #[rustfmt::skip]
+        let table: [(&str, Row); 16] = [
+            //  input                letter              root       of         bit   vol_key           path   disk   is_fs  clip_paths
+            (r"C:\",          (Some((b'C', r"\")),      Some(b'C'), Some(b'C'), C,    Some("c:"),          true,  true,  true,  vec![r"C:\"])),
+            (r"c:\Users",     (Some((b'C', r"\Users")), None,       Some(b'C'), C,    Some("c:"),          true,  true,  true,  vec![r"c:\Users"])),
+            ("C:",            (Some((b'C', "")),        None,       Some(b'C'), C,    Some("c:"),          false, false, false, vec![r"C:\"])),
+            ("c:",            (Some((b'C', "")),        None,       Some(b'C'), C,    Some("c:"),          false, false, false, vec![r"c:\"])),
+            ("C:x",           (Some((b'C', "x")),       None,       Some(b'C'), None, Some("c:"),          false, false, false, vec![])),
+            ("C:/x",          (Some((b'C', "/x")),      None,       Some(b'C'), None, Some("c:"),          false, false, false, vec![r"C:\x"])),
+            (r"\\srv\share",  (None,                    None,       None,       None, Some(r"\\srv\share"), false, true,  true,  vec![r"\\srv\share"])),
+            (r"\\srv",        (None,                    None,       None,       None, Some(r"\\srv\"),     false, true,  true,  vec![r"\\srv"])),
+            (r"\\?\C:\x",     (None,                    None,       None,       None, Some(r"\\?\c:"),     false, false, true,  vec![])),
+            (THIS_PC,         (None,                    None,       None,       None, None,                false, false, false, vec![])),
+            ("search-ms:q",   (None,                    None,       None,       None, None,                false, false, false, vec![])),
+            ("shell:Downloads", (None,                  None,       None,       None, None,                false, false, false, vec![])),
+            (r"1:\",          (None,                    None,       None,       None, None,                false, false, true,  vec![])),
+            (r"가:\",         (None,                    None,       None,       None, None,                false, false, false, vec![])),
+            ("",              (None,                    None,       None,       None, None,                false, false, false, vec![])),
+            ("C",             (None,                    None,       None,       None, None,                false, false, false, vec!["C"])),
+        ];
+        for (p, want) in table {
+            let clip = clip_paths(p, |_| None);
+            let vol = vol_key(p);
+            let got: Row = (
+                drive_letter(p),
+                drive_root(p),
+                drive_of(p),
+                drive_bit(p),
+                vol.as_deref(),
+                drive_path(p),
+                disk_folder(p),
+                is_fs(p),
+                clip.iter().map(String::as_str).collect(),
+            );
+            assert_eq!(got, want, "{p:?}");
+        }
+    }
+
     #[test]
     fn address_crumbs() {
         let c = |p: &str| crumbs(p).into_iter().map(|(n, g)| format!("{n}={g}")).collect::<Vec<_>>();

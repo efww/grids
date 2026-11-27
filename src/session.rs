@@ -632,6 +632,16 @@ pub(crate) fn layout_differs(cur: &Session, base: &Session) -> bool {
         || (0..cur.panes()).any(|i| cur.tints[i] != base.tints[i])
 }
 
+// "X:…", any case: the upper-case letter and what follows the ':'. None for \\server, ::{GUID}, "1:\", "가:\".
+// The one rule the drive checks build on (drive_root, drive_of, drive_bit, drive_path, disk_folder …); each then
+// says what may follow the ':'. Bytes first: the first two are ASCII, so [2..] is on a character boundary.
+pub(crate) fn drive_letter(p: &str) -> Option<(u8, &str)> {
+    match p.as_bytes() {
+        [c, b':', ..] if c.is_ascii_alphabetic() => Some((c.to_ascii_uppercase(), &p[2..])),
+        _ => None,
+    }
+}
+
 // Drives, folders and shares; not shell places like This PC or the Recycle Bin, whose columns are their own.
 pub(crate) fn is_fs(path: &str) -> bool {
     path.get(1..3) == Some(":\\") || path.starts_with(r"\\")

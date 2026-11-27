@@ -463,7 +463,8 @@ pub(crate) fn clip_paths(text: &str, var: impl Fn(&str) -> Option<String>) -> Ve
         _ => s.to_string(),
     };
     let mut s = expand_vars(&s, var).replace('/', "\\");
-    if s.len() == 2 && s.as_bytes()[0].is_ascii_alphabetic() && s.ends_with(':') {
+    let bare = drive_letter(&s).is_some_and(|(_, rest)| rest.is_empty());
+    if bare {
         s.push('\\');
     }
     let cut = cut_line_end(&s).to_string();
@@ -528,8 +529,7 @@ fn cut_line_end(s: &str) -> &str {
 
 // A drive path (C:\…), a share (\\server\…) or a relative one; no ':' past the drive, nothing Windows refuses.
 fn path_shaped(p: &str) -> bool {
-    let b = p.as_bytes();
-    let drive = b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] == b'\\';
+    let drive = drive_letter(p).is_some_and(|(_, rest)| rest.starts_with('\\'));
     let unc = p.len() > 2 && p.starts_with(r"\\");
     !p.is_empty()
         && p.len() < 32_000

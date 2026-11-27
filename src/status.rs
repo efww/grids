@@ -256,8 +256,7 @@ fn disk_job() -> std::sync::MutexGuard<'static, DiskJob> {
 
 // "C:" when `path` starts with a drive letter; a shell path like "::{…}" (This PC) is not a drive.
 fn drive(path: &str) -> Option<&str> {
-    let b = path.as_bytes();
-    (b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':').then(|| &path[..2])
+    drive_letter(path).map(|_| &path[..2])
 }
 
 // The drive ("c:") or share ("\\server\share") a path is on, lower case; None = neither (no free space shown).
@@ -737,4 +736,18 @@ pub(crate) unsafe fn status_base(i: usize, path: &str, main: HWND, fv: &IFolderV
     }
     app(|a| a.status_base = (head, size, parts, disk));
     settled
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The status bar names the drive as the path writes it ("c:", not "C:"); vol_key lower-cases it only to compare.
+    #[test]
+    fn drive_keeps_its_case() {
+        assert_eq!([drive(r"c:\x"), drive(r"D:\"), drive("e:"), drive("C:x")], [Some("c:"), Some("D:"), Some("e:"), Some("C:")]);
+        for p in [r"\\srv\share", r"\\?\C:\x", THIS_PC, r"1:\", r"가:\", "", "C"] {
+            assert_eq!(drive(p), None, "{p}");
+        }
+    }
 }

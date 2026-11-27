@@ -426,8 +426,7 @@ pub(crate) unsafe fn rec_event(i: usize, ev: Nav, pidl: *const ITEMIDLIST) {
 
 // A drive letter's bit (A = bit 0) for a path on it, any case: "E:\x", "e:". None for \\server, ::{GUID} and the like.
 pub(crate) fn drive_bit(path: &str) -> Option<u32> {
-    let b = path.as_bytes();
-    (b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':' && matches!(b.get(2), None | Some(b'\\'))).then(|| 1 << (b[0].to_ascii_uppercase() - b'A'))
+    drive_letter(path).filter(|&(_, rest)| rest.is_empty() || rest.starts_with('\\')).map(|(c, _)| 1 << (c - b'A'))
 }
 
 // The panes a drive change moves: (to This PC: in a folder on a letter that `gone`, not marked yet; back home:

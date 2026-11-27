@@ -1218,10 +1218,7 @@ pub(crate) fn mask_letters(mask: u32) -> Vec<u8> {
 
 // Drive letter of a folder path ("d:\x" -> D); UNC, shell and search locations have none.
 pub(crate) fn drive_of(path: &str) -> Option<u8> {
-    match path.as_bytes() {
-        [c, b':', ..] if c.is_ascii_alphabetic() => Some(c.to_ascii_uppercase()),
-        _ => None,
-    }
+    drive_letter(path).map(|(c, _)| c)
 }
 
 // The drive's kind only: reading a volume label can wait on a sleeping disk or a dead share.
