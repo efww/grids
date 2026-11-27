@@ -129,6 +129,9 @@ pub(crate) const DARK: Palette = Palette {
 pub(crate) static DARK_ON: AtomicBool = AtomicBool::new(false);
 pub(crate) static KO: AtomicBool = AtomicBool::new(false);
 pub(crate) static TABS_ON: AtomicBool = AtomicBool::new(true); // copy of Session::tabs_on for pane_geo
+// px the UI font is taller than Windows' default at this DPI (Settings > Accessibility > Text size): the toolbar,
+// pane bar, tab strip and status line grow by it so bigger text still fits. 0 at the default size. Set by apply_font.
+pub(crate) static TEXT_GROW: AtomicI32 = AtomicI32::new(0);
 
 /// UI text: English unless Korean is picked in the view menu (the Explorer parts follow Windows).
 pub(crate) fn tr(en: &'static str, ko: &'static str) -> &'static str {

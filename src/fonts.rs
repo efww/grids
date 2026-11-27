@@ -33,6 +33,18 @@ pub(crate) unsafe fn ui_logfont(dpi: i32) -> LOGFONTW {
     lf
 }
 
+// How many px taller than at the default text size the bars must be for this UI font (lf_height its LOGFONT height,
+// tm_height the measured tmHeight). The default message font is 12 px at 96 DPI (tmHeight 16): up to that, rounded
+// for the DPI, it is 0 whatever GDI's rounding measures (or ui_logfont's fallback), so no bar moves by a stray pixel;
+// a bigger Text size counts what its line is taller than the default 16 px one.
+pub(crate) fn text_grow(lf_height: i32, tm_height: i32, dpi: i32) -> i32 {
+    if lf_height.abs() <= (12 * dpi + 48) / 96 {
+        0
+    } else {
+        (tm_height - 16 * dpi / 96).max(0)
+    }
+}
+
 // Whether the font in use (old) and the one Windows' settings now ask for (new) draw differently. Compared
 // after ui_logfont's face override, so a Korean message font named Malgun Gothic doesn't count as a change.
 pub(crate) fn font_changed(old: &LOGFONTW, new: &LOGFONTW) -> bool {
@@ -74,6 +86,7 @@ pub(crate) unsafe fn apply_font() {
     };
     let (old, old_icon, panes, load_edit) = app(|a| {
         a.fh = tm.tmHeight;
+        TEXT_GROW.store(text_grow(lf.lfHeight, tm.tmHeight, dpi), Ordering::Relaxed);
         let old_small = std::mem::replace(&mut a.small_font, small);
         if !old_small.is_invalid() {
             unsafe { _ = DeleteObject(old_small.into()) };
@@ -85,7 +98,7 @@ pub(crate) unsafe fn apply_font() {
     if !load_edit.0.is_null() {
         SendMessageW(load_edit, WM_SETFONT, Some(WPARAM(font.0 as usize)), Some(LPARAM(1)));
     }
-    for p in panes {
+    for &p in &panes {
         for id in [ID_EDIT, ID_FILTER] {
             if let Ok(c) = GetDlgItem(Some(p), id) {
                 SendMessageW(c, WM_SETFONT, Some(WPARAM(font.0 as usize)), Some(LPARAM(1)));
@@ -98,6 +111,11 @@ pub(crate) unsafe fn apply_font() {
         _ = DeleteObject(f.into());
     }
     relayout();
+    // the pane bars grew or shrank with the text: a pane whose height came out the same gets no WM_SIZE, so every
+    // pane lays out its fields and list here (as toggle_tabs does)
+    for p in panes {
+        layout_pane(p);
+    }
     redraw_all();
 }
 
@@ -114,6 +132,26 @@ mod tests {
         assert_eq!(icon_face("Arial"), "Segoe MDL2 Assets"); // GDI's substitute on Windows 10
         assert_eq!(icon_face("Segoe MDL2 Assets"), "Segoe MDL2 Assets");
         assert_eq!(icon_face("Segoe Fluent"), "Segoe MDL2 Assets");
+    }
+
+    #[test]
+    fn text_grow_only_past_default() {
+        // the default text size gives 0 at any DPI, also when GDI measures a pixel more, or on ui_logfont's fallback
+        for dpi in [96, 106, 120, 144, 168, 192, 240] {
+            let lf = (12 * dpi + 48) / 96;
+            for tm in [16 * dpi / 96, 16 * dpi / 96 + 1, 16 * dpi / 96 + 2] {
+                assert_eq!(text_grow(-lf, tm, dpi), 0, "{dpi} {tm}");
+            }
+            assert_eq!(text_grow(logfont("Segoe UI", 12 * dpi / 96).lfHeight, 16 * dpi / 96 + 1, dpi), 0, "{dpi}");
+        }
+        // Text size 125 .. 225 % at 96 DPI: what the line is taller than the default 16 px one
+        assert_eq!(text_grow(-15, 20, 96), 4);
+        assert_eq!(text_grow(-18, 24, 96), 8);
+        assert_eq!(text_grow(-24, 32, 96), 16);
+        assert_eq!(text_grow(-27, 36, 96), 20);
+        assert_eq!(text_grow(27, 36, 96), 20); // a cell height (positive) counts the same
+        assert_eq!(text_grow(-36, 48, 144), 24); // 200 % on a 150 % screen
+        assert_eq!(text_grow(-14, 15, 96), 0); // never negative
     }
 
     #[test]

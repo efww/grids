@@ -127,12 +127,24 @@ pub(crate) struct Geo {
     pub(crate) zoom: bool, // one pane fills the grid: no splitters
 }
 
+/// Main window bars at this DPI, taller by `grow` (TEXT_GROW) for a bigger Text size: (toolbar height, toolbar button
+/// height, status line height). The buttons stay s(5) from the top.
+pub(crate) fn bars_h(dpi: i32, grow: i32) -> (i32, i32, i32) {
+    let s = |v: i32| v * dpi / 96;
+    (s(34) + grow, s(24) + grow, s(24) + grow)
+}
+
+pub(crate) fn text_grow_now() -> i32 {
+    TEXT_GROW.load(Ordering::Relaxed)
+}
+
 pub(crate) fn geo(a: &App) -> Geo {
     let mut rc = RECT::default();
     unsafe { _ = GetClientRect(a.main, &mut rc) };
     let s = |v: i32| v * a.dpi / 96;
-    let (pad, gap, top) = (s(8), s(8), s(34));
-    let bot = (rc.bottom - s(24)).max(top);
+    let (top, _, status_h) = bars_h(a.dpi, text_grow_now());
+    let (pad, gap) = (s(8), s(8));
+    let bot = (rc.bottom - status_h).max(top);
     let side = a.s.side.clamp(s(120), (rc.right - 2 * pad - gap - s(240)).max(s(120)));
     let gx = if a.s.tree { pad + side + gap } else { pad };
     Geo {
@@ -238,9 +250,15 @@ pub(crate) struct PaneGeo {
 }
 
 pub(crate) fn pane_geo(w: i32, h: i32, dpi: i32) -> PaneGeo {
+    pane_geo_at(w, h, dpi, text_grow_now(), TABS_ON.load(Ordering::Relaxed))
+}
+
+// pane_geo with the text growth and the tab strip given rather than read: the bar and its pills and buttons are
+// `grow` px taller (widths stay; the vertical inset is the same), the tab strip too.
+pub(crate) fn pane_geo_at(w: i32, h: i32, dpi: i32, grow: i32, tabs: bool) -> PaneGeo {
     let s = |v: i32| v * dpi / 96;
-    let (bar, bh, b, pad) = (s(30), s(22), s(24), s(4));
-    let strip = tab_strip_h(dpi);
+    let (bar, bh, b, pad) = (s(30) + grow, s(22) + grow, s(24), s(4));
+    let strip = tab_strip_h_at(dpi, grow, tabs);
     let y = (bar - bh) / 2;
     let r = |x: i32, wd: i32| RECT { left: x, top: y, right: x + wd.max(0), bottom: y + bh };
     let fav = r(w - pad - b, b);
@@ -260,12 +278,13 @@ pub(crate) fn pane_geo(w: i32, h: i32, dpi: i32) -> PaneGeo {
         fav,
         tabs: RECT { left: s(2), top: bar, right: w - s(2), bottom: bar + strip },
         // 2px in, so the active ring stays visible around the list
-        view: RECT { left: s(2), top: bar + strip, right: w - s(2), bottom: h - s(2) },
+        view: RECT { left: s(2), top: bar + strip, right: w - s(2), bottom: (h - s(2)).max(bar + strip) },
     }
 }
 
-pub(crate) fn tab_strip_h(dpi: i32) -> i32 {
-    if TABS_ON.load(Ordering::Relaxed) { 26 * dpi / 96 } else { 0 }
+// The tab strip's height: grown with the Text size as the bar is, none while tabs are off.
+pub(crate) fn tab_strip_h_at(dpi: i32, grow: i32, tabs: bool) -> i32 {
+    if tabs { 26 * dpi / 96 + grow } else { 0 }
 }
 
 // Tabs share the strip evenly up to a comfortable width, then a '+' after the last. (tabs, '+')
@@ -415,6 +434,59 @@ mod tests {
         assert_eq!(pick_place(&p, Some("0,0,800,600"), win), win);
         assert_eq!(pick_place(&p, None, win), win);
         assert_eq!(pick_place(&[], Some(home.as_str()), None), None);
+    }
+
+    #[test]
+    fn bars_grow_with_text_size() {
+        let r = |l, t, rr, b| RECT { left: l, top: t, right: rr, bottom: b };
+        // default text size (grow 0): the same pixels as before
+        assert_eq!(bars_h(96, 0), (34, 24, 24));
+        assert_eq!(bars_h(144, 0), (51, 36, 36));
+        for dpi in [96, 120, 144, 192] {
+            assert_eq!(tab_strip_h_at(dpi, 0, true), 26 * dpi / 96);
+            assert_eq!(tab_strip_h_at(dpi, 8, false), 0); // tabs off: no strip, grown or not
+        }
+        let pg = pane_geo_at(800, 400, 96, 0, true);
+        assert_eq!(pg.addr.top, 4);
+        assert_eq!(pg.addr.bottom, 26);
+        assert_eq!(pg.num, r(4, 4, 22, 26));
+        assert_eq!(pg.btn[0], r(22, 4, 46, 26));
+        assert_eq!(pg.fav, r(772, 4, 796, 26));
+        assert_eq!(pg.tabs, r(2, 30, 798, 56));
+        assert_eq!(pg.view, r(2, 56, 798, 398));
+        assert_eq!(pane_geo_at(800, 400, 96, 0, false).view, r(2, 30, 798, 398));
+        let p0 = pane_geo_at(1000, 500, 144, 0, true);
+        assert_eq!((p0.addr.top, p0.addr.bottom, p0.tabs.top, p0.tabs.bottom, p0.view.top), (6, 39, 45, 84, 84));
+
+        // Text size 100 .. 225 % at common DPIs: everything still holds its text
+        for dpi in [96, 120, 144, 168, 192] {
+            for pct in [100, 125, 150, 175, 200, 225] {
+                let lf = (12 * dpi * pct + 4800) / 9600;
+                let tm = (lf * 4 + 2) / 3 + 1; // Segoe UI's line is about 4/3 of its em, one more for GDI rounding
+                let grow = crate::text_grow(-lf, tm, dpi);
+                let ctx = format!("dpi {dpi} text {pct}%: lf {lf} tm {tm} grow {grow}");
+                let (top, btn_h, status_h) = bars_h(dpi, grow);
+                assert!(btn_h >= tm && 5 * dpi / 96 + btn_h <= top, "toolbar {ctx}");
+                assert!(status_h >= tm, "status {ctx}");
+                let pg = pane_geo_at(800, 400, dpi, grow, true);
+                for p in [pg.addr, pg.filt] {
+                    assert!(p.bottom - p.top >= tm + 2, "edit in pill {ctx}"); // layout_pane's edit is fh + 2 tall
+                    assert!(p.top >= 0 && p.bottom <= pg.tabs.top, "pill in bar {ctx}");
+                }
+                // the fields keep their distance from the top, so the colour label band above them stays as it is
+                assert_eq!(pg.addr.top, pane_geo_at(800, 400, dpi, 0, true).addr.top, "{ctx}");
+                let (tabs, plus) = tab_rects(pg.tabs, 3, dpi);
+                for t in tabs.iter().chain([&plus]) {
+                    assert!(t.bottom - t.top >= tm && t.bottom <= pg.view.top, "tab {ctx}");
+                }
+                assert!(pg.view.bottom - pg.view.top > 0, "{ctx}");
+                // a squashed pane: the list never gets a negative height
+                for h in [0, 20, 60] {
+                    let v = pane_geo_at(300, h, dpi, grow, true).view;
+                    assert!(v.bottom >= v.top, "list in a {h} px pane {ctx}");
+                }
+            }
+        }
     }
 
     #[test]

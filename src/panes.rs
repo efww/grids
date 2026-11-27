@@ -251,6 +251,7 @@ pub(crate) unsafe fn relayout() {
         }
         let g = geo(a);
         let s = |v: i32| v * a.dpi / 96;
+        let btn_h = bars_h(a.dpi, text_grow_now()).1; // toolbar buttons grow with the Text size, as the toolbar does
         let sr = side_rect(&g);
         let tree = RECT { left: sr.left + s(2), top: sr.top + s(4), right: sr.right - s(2), bottom: sr.bottom - s(2) };
         let mut moves = if g.tree { vec![(a.tree_hwnd, tree)] } else { Vec::new() };
@@ -262,16 +263,16 @@ pub(crate) unsafe fn relayout() {
         shown.push((tb(ID_TB_EV), ev));
         let left = [(ID_TB_LAYOUT, s(70)), (ID_TB_SAVE, s(32)), (ID_TB_LOAD, s(32)), (ID_TB_VIEW, s(32)), (ID_TB_FAV, s(32)), (ID_TB_EV, s(32))];
         for (id, w) in left.into_iter().filter(|&(id, _)| id != ID_TB_EV || ev) {
-            moves.push((tb(id), RECT { left: x, top: s(5), right: x + w, bottom: s(5) + s(24) }));
+            moves.push((tb(id), RECT { left: x, top: s(5), right: x + w, bottom: s(5) + btn_h }));
             x += w + s(4);
         }
         let right = g.w - g.pad; // the theme toggle sits at the far right
-        moves.push((tb(ID_TB_THEME), RECT { left: right - s(32), top: s(5), right, bottom: s(5) + s(24) }));
+        moves.push((tb(ID_TB_THEME), RECT { left: right - s(32), top: s(5), right, bottom: s(5) + btn_h }));
         // a newer release: the blue Update button just left of it
         let mut edge = right - s(32);
         let up = update_shown();
         if up {
-            moves.push((tb(ID_TB_UPDATE), RECT { left: edge - s(8) - s(78), top: s(5), right: edge - s(8), bottom: s(5) + s(24) }));
+            moves.push((tb(ID_TB_UPDATE), RECT { left: edge - s(8) - s(78), top: s(5), right: edge - s(8), bottom: s(5) + btn_h }));
             edge -= s(8) + s(78);
         }
         shown.push((tb(ID_TB_UPDATE), up));
@@ -284,14 +285,14 @@ pub(crate) unsafe fn relayout() {
         let dw = if x + n * (s(46) + s(2)) - s(2) + s(6) + s(30) <= edge - s(12) { s(46) } else { s(32) };
         let mut bx = x;
         for &(_, _, h) in &a.drives {
-            moves.push((h, RECT { left: x, top: s(5), right: x + dw, bottom: s(5) + s(24) }));
+            moves.push((h, RECT { left: x, top: s(5), right: x + dw, bottom: s(5) + btn_h }));
             shown.push((h, x + dw <= edge - s(12)));
             x += dw + s(2);
             bx = x - s(2) + s(6);
         }
         let bin = tb(ID_BIN);
         if !bin.0.is_null() {
-            moves.push((bin, RECT { left: bx, top: s(5), right: bx + s(30), bottom: s(5) + s(24) }));
+            moves.push((bin, RECT { left: bx, top: s(5), right: bx + s(30), bottom: s(5) + btn_h }));
             shown.push((bin, bx + s(30) <= edge - s(12)));
         }
         if !a.status_hwnd.0.is_null() {
