@@ -1214,6 +1214,17 @@ pub(crate) unsafe fn cache_folder_icon() {
     cache_stock_icon(&FOLDER_ICON, SIID_FOLDER);
 }
 
+// This PC's icon, for the folder menus (Ctrl+G, recent folders): asked once at startup, as the plain folder's.
+static PC_ICON: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(i32::MIN);
+
+pub(crate) fn pc_icon() -> i32 {
+    PC_ICON.load(Ordering::Relaxed).max(-1)
+}
+
+pub(crate) unsafe fn cache_pc_icon() {
+    cache_stock_icon(&PC_ICON, SIID_DESKTOPPC);
+}
+
 // Makes / removes the buttons of drive letters that came or went; true if any did. The caller lays them out.
 // Panes on a letter that went, or moved off one that came back, follow (drives_changed).
 pub(crate) unsafe fn refresh_drives() -> bool {

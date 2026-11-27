@@ -394,6 +394,7 @@ fn main() -> Result<()> {
         apply_font();
         refresh_drives(); // laid out by the relayout below
         cache_folder_icon(); // tabs of folders not opened yet this run
+        cache_pc_icon(); // This PC in the Ctrl+G and recent folder menus
         if app(|a| a.s.updates) {
             check_star(); // ticks View > Star once gh says so; network, so only with updates on
         }
@@ -2326,6 +2327,61 @@ mod tests {
         // the last mouse line has no "name: " and continues the one above
         assert!(en[1].last().unwrap().desc.ends_with("If Grids is already running, they open in that window."));
         assert!(ko[1].last().unwrap().desc.ends_with("이미 실행 중이면 그 창에서 엽니다."));
+    }
+
+    // Folder menus' icons: the shell place's own → seen this run (any case) → drive kind → known folder → plain folder.
+    #[test]
+    fn menu_icon_order() {
+        assert_eq!(menu_icon_pick(7, Some(3), 4, 5, 6), 7); // the bin as its button shows it now, not as visited
+        assert_eq!(menu_icon_pick(-1, Some(3), 4, 5, 6), 3);
+        assert_eq!(menu_icon_pick(-1, None, 4, 5, 6), 4);
+        assert_eq!(menu_icon_pick(-1, Some(-1), -1, 5, 6), 5);
+        assert_eq!(menu_icon_pick(-1, None, -1, -1, 6), 6);
+        assert_eq!(menu_icon_pick(-1, None, -1, -1, -1), -1); // text alone
+        let mut seen = IconMemo::default();
+        seen.put(r"C:\Users\Me\Downloads", 42);
+        assert_eq!(menu_icon_pick(-1, seen.get(r"c:\users\me\DOWNLOADS"), -1, 5, 6), 42);
+        assert_eq!(menu_icon_pick(-1, seen.get(r"C:\Users\Me\Music"), -1, 5, 6), 5);
+    }
+
+    // A known folder's registered icon location → (file, index), %NAME% expanded, unknown names left as they are.
+    #[test]
+    fn icon_locations() {
+        let var = |v: &str| (v.eq_ignore_ascii_case("SystemRoot")).then(|| r"C:\Windows".to_string());
+        let sys = r"C:\Windows\system32\imageres.dll";
+        assert_eq!(icon_location(r"%SystemRoot%\system32\imageres.dll,-184", var), Some((sys.into(), -184)));
+        assert_eq!(icon_location(r#""%SystemRoot%\system32\imageres.dll", -183"#, var), Some((sys.into(), -183)));
+        assert_eq!(icon_location(r"%SystemRoot%\system32\imageres.dll", var), Some((sys.into(), 0)));
+        assert_eq!(icon_location(r"imageres.dll,3", var), Some(("imageres.dll".into(), 3)));
+        assert_eq!(icon_location(r"%NOPE%\a,b.dll", var), Some((r"%NOPE%\a,b.dll".into(), 0)));
+        assert_eq!(icon_location(r"50%%\x.dll,1", var), Some((r"50%%\x.dll".into(), 1)));
+        assert_eq!(icon_location("", var), None);
+        assert_eq!(icon_location(r#""" ,-1"#, var), None);
+    }
+
+    // A menu icon: centred on an s(16) square at every scale, and its DIB holds the premultiplied pixels unchanged.
+    #[test]
+    fn menu_icon_bitmaps() {
+        for dpi in [72, 96, 144, 192] {
+            let px = MenuIcons::new(dpi).px;
+            assert_eq!(px, 16 * dpi / 96);
+            let small = Pix { w: px / 2, h: px / 4, bgra: vec![200; (px / 2 * (px / 4) * 4) as usize] };
+            let c = menu_canvas(&small, px).expect("fits");
+            assert_eq!((c.w, c.h, c.bgra.len()), (px, px, (px * px * 4) as usize));
+            let at = |x: i32, y: i32| c.bgra[((y * px + x) * 4) as usize];
+            assert_eq!((at(0, 0), at(px / 4, px * 3 / 8), at(px - 1, px - 1)), (0, 200, 0)); // in the middle
+            assert!(menu_canvas(&Pix { w: px + 1, h: px, bgra: vec![0; ((px + 1) * px * 4) as usize] }, px).is_none());
+            let mut p = Pix { w: px, h: px, bgra: (0..px * px * 4).map(|k| (k * 7 % 256) as u8).collect() };
+            p.bgra.chunks_exact_mut(4).for_each(|q| q[3] = q[0].max(q[1]).max(q[2])); // premultiplied
+            unsafe {
+                let b = pix_bitmap(&p).expect("DIB");
+                let back = bitmap_raw(b);
+                _ = DeleteObject(b.into());
+                let back = back.expect("read back");
+                assert_eq!((back.w, back.h), (px, px));
+                assert!(back.bgra == p.bgra, "{dpi}");
+            }
+        }
     }
 
     // Ctrl+G's menu: one underlined letter per row, the same rows and letters in both languages, and Ctrl+letter

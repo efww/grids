@@ -74,6 +74,26 @@ pub(crate) fn tab_icon_pick(current: bool, pane: i32, saved: Option<i32>, drive:
     saved.filter(|&n| n >= 0).or(Some(drive).filter(|&n| n >= 0)).unwrap_or(folder.max(-1))
 }
 
+// A folder menu item's icon (-1: none): the shell place's own (This PC; the bin as its button shows it now, not as
+// it was when visited) → seen this run → its drive kind's (a root) → the known folder's registered one → plain folder.
+pub(crate) fn menu_icon_pick(place: i32, saved: Option<i32>, drive: i32, known: i32, folder: i32) -> i32 {
+    [place, saved.unwrap_or(-1), drive, known, folder].into_iter().find(|&n| n >= 0).unwrap_or(-1)
+}
+
+// The icon of `path` in a folder menu (inside app(): reads only what is cached, calls nothing).
+// `known`: its known folder's own icon (known_icon), or -1.
+pub(crate) fn menu_icon_of(a: &App, path: &str, known: i32) -> i32 {
+    let place = if path.eq_ignore_ascii_case(THIS_PC) {
+        pc_icon()
+    } else if path.eq_ignore_ascii_case(RECYCLE_BIN) {
+        bin_icon()
+    } else {
+        -1
+    };
+    let kind = drive_root(path).and_then(|c| a.drives.iter().find(|d| d.0 == c)).map(|d| d.1);
+    menu_icon_pick(place, a.tab_icons.get(path), kind.map_or(-1, drive_icon), known, folder_icon())
+}
+
 // Each tab's icon for the painter (inside app(): reads only what is cached, calls nothing).
 pub(crate) fn tab_icons_of(a: &App, i: usize, list: &[String], cur: usize) -> Vec<i32> {
     let pane = a.panes.get(i).and_then(|p| p.as_ref()).map_or(-1, |p| p.icon);

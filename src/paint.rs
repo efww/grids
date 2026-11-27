@@ -211,6 +211,105 @@ pub(crate) unsafe fn shell_icon(dc: HDC, small: &IImageList, index: i32, r: RECT
     draw_list_icon(dc, small, index, r)
 }
 
+// ---------- folder icons in the folder menus (Ctrl+G, recent folders, '›', '…') ----------
+// As Explorer's address bar drop-downs and Finder's Go menu: each place shows its icon, picked from what this run
+// already knows (menu_icon_of), never by reading the folder.
+
+/// A picture centred on a px × px canvas: every item of one menu takes the same square, so their text lines up.
+/// None when it is larger than px (or empty).
+pub(crate) fn menu_canvas(p: &Pix, px: i32) -> Option<Pix> {
+    if px <= 0 || p.w <= 0 || p.h <= 0 || p.w > px || p.h > px || p.bgra.len() != (p.w * p.h * 4) as usize {
+        return None;
+    }
+    let mut bgra = vec![0u8; (px * px * 4) as usize];
+    let (x0, y0, row) = ((px - p.w) / 2, (px - p.h) / 2, (p.w * 4) as usize);
+    for y in 0..p.h {
+        let (s, d) = ((y * p.w * 4) as usize, (((y0 + y) * px + x0) * 4) as usize);
+        bgra[d..d + row].copy_from_slice(&p.bgra[s..s + row]);
+    }
+    Some(Pix { w: px, h: px, bgra })
+}
+
+// System icon `index` at px × px, premultiplied, from the list shell_icon would take: a larger one averaged down,
+// else the list's own (centred when even the largest is smaller). A mask-only icon gives None: it would be a black square.
+unsafe fn menu_pix(index: i32, px: i32) -> Option<Pix> {
+    let lists = icon_lists();
+    let sides: Vec<i32> = lists.iter().map(|l| l.2).collect();
+    let (_, list, side) = &lists[pick_list(&sides, px)?];
+    if *side > px {
+        return menu_canvas(shrunk(list, index, px)?.as_ref(), px);
+    }
+    let mut p = icon_pix(list, index)?;
+    if p.bgra.chunks_exact(4).all(|q| q[3] == 0) {
+        return None;
+    }
+    fix_alpha(&mut p.bgra);
+    menu_canvas(&p, px)
+}
+
+/// Premultiplied top-down pixels as a 32-bit DIB, which a menu draws with its alpha. The caller deletes it.
+pub(crate) unsafe fn pix_bitmap(p: &Pix) -> Option<HBITMAP> {
+    if p.w <= 0 || p.h <= 0 || p.bgra.len() != (p.w * p.h * 4) as usize {
+        return None;
+    }
+    let bmi = BITMAPINFO {
+        bmiHeader: BITMAPINFOHEADER {
+            biSize: size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: p.w,
+            biHeight: -p.h,
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: BI_RGB.0,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut bits = std::ptr::null_mut();
+    let bmp = CreateDIBSection(None, &bmi, DIB_RGB_COLORS, &mut bits, None, 0).ok()?;
+    if bits.is_null() {
+        _ = DeleteObject(bmp.into());
+        return None;
+    }
+    std::slice::from_raw_parts_mut(bits as *mut u8, p.bgra.len()).copy_from_slice(&p.bgra);
+    _ = GdiFlush();
+    Some(bmp)
+}
+
+/// One menu's item icons, s(16) square: one bitmap per icon index, shared by all its items (a '›' list may hold
+/// hundreds of plain folders). DestroyMenu leaves item bitmaps alone, so they go when this is dropped: keep it
+/// alive until after DestroyMenu. Outside app(..): reading an icon calls the shell.
+pub(crate) struct MenuIcons {
+    pub(crate) px: i32,
+    made: std::collections::HashMap<i32, Option<HBITMAP>>,
+}
+
+impl MenuIcons {
+    pub(crate) fn new(dpi: i32) -> Self {
+        Self { px: 16 * dpi / 96, made: Default::default() }
+    }
+
+    /// Icon `index` before the item of command id `id`; -1, or an icon that can't be had, leaves it text alone.
+    pub(crate) unsafe fn put(&mut self, menu: HMENU, id: usize, index: i32) {
+        if index < 0 {
+            return;
+        }
+        let px = self.px;
+        let bmp = *self.made.entry(index).or_insert_with(|| menu_pix(index, px).and_then(|p| pix_bitmap(&p)));
+        if let Some(b) = bmp {
+            let mi = MENUITEMINFOW { cbSize: size_of::<MENUITEMINFOW>() as u32, fMask: MIIM_BITMAP, hbmpItem: b, ..Default::default() };
+            _ = SetMenuItemInfoW(menu, id as u32, false, &mi);
+        }
+    }
+}
+
+impl Drop for MenuIcons {
+    fn drop(&mut self) {
+        for b in self.made.values().flatten() {
+            unsafe { _ = DeleteObject((*b).into()) };
+        }
+    }
+}
+
 // The folder icon's square at the front of the address pill, like Explorer's address bar; none in a narrow pill.
 // Fixed by the geometry alone, so crumbs and edit never shift when an icon arrives or goes.
 pub(crate) fn addr_icon(addr: RECT, dpi: i32) -> Option<RECT> {
@@ -324,9 +423,12 @@ pub(crate) unsafe fn crumb_click(h: HWND, i: usize, x: i32, y: i32) {
         None => return,
         Some(Some((_, _, Crumb::Go(p)))) => Some(p),
         Some(Some((_, r, Crumb::More(list)))) => {
+            let (ix, dpi): (Vec<i32>, i32) = app(|a| (list.iter().map(|(_, p)| menu_icon_of(a, p, -1)).collect(), a.dpi));
+            let mut icons = MenuIcons::new(dpi); // dropped after DestroyMenu
             let Ok(menu) = CreatePopupMenu() else { return };
             for (k, (n, _)) in list.iter().enumerate() {
                 _ = AppendMenuW(menu, MF_STRING, k + 1, &HSTRING::from(n.replace('&', "&&")));
+                icons.put(menu, k + 1, ix[k]);
             }
             let mut p = POINT { x: r.left, y: r.bottom };
             _ = ClientToScreen(h, &mut p);
@@ -502,12 +604,19 @@ pub(crate) unsafe fn kids_show(h: HWND, id: usize) {
     let items = crumb_layout(dc, font, k.i, crumb_field(addr, dpi));
     ReleaseDC(Some(h), dc);
     let Some(r) = kids_anchor(&items, &k.dir) else { return };
+    let kid = |name: &str| format!("{}\\{name}", k.dir.trim_end_matches('\\'));
+    let ix: Vec<i32> = match &list {
+        Ok((names, _)) => app(|a| names.iter().map(|n| menu_icon_of(a, &kid(n), -1)).collect()),
+        Err(()) => Vec::new(),
+    };
+    let mut icons = MenuIcons::new(dpi); // dropped after DestroyMenu
     let Ok(menu) = CreatePopupMenu() else { return };
     let gray = |t: &str| _ = AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, &HSTRING::from(t));
     let names = match &list {
         Ok((names, cut)) => {
             for (n, name) in names.iter().enumerate() {
                 _ = AppendMenuW(menu, MF_STRING, n + 1, &HSTRING::from(name.replace('&', "&&")));
+                icons.put(menu, n + 1, ix[n]);
                 if k.next.as_ref().is_some_and(|x| x.to_lowercase() == name.to_lowercase()) {
                     _ = SetMenuDefaultItem(menu, n as u32 + 1, 0); // where this pane is now: bold
                 }
@@ -529,7 +638,7 @@ pub(crate) unsafe fn kids_show(h: HWND, id: usize) {
     let pick = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN, p.x, p.y, None, h, None).0;
     _ = DestroyMenu(menu);
     if let Some(name) = names.get((pick as usize).wrapping_sub(1)) {
-        let to = format!("{}\\{name}", k.dir.trim_end_matches('\\'));
+        let to = kid(name);
         if !navigate(k.i, &to) {
             fail(Fail::FolderCantOpen, &to); // gone or unreachable
         }

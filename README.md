@@ -132,7 +132,7 @@ The exe is not code-signed, so Windows SmartScreen may warn the first time: choo
 
 Double-clicking empty space in a pane goes up a folder (View > Double-click empty space: parent folder turns it off).
 
-Address bar: click a folder in the path to go there; click a › to list the folders inside; click the current folder or empty space, or press Ctrl+L, to type a path.
+Address bar: click a folder in the path to go there; click a › to list the folders inside; click the current folder or empty space, or press Ctrl+L, to type a path. The › and … lists, Alt+↓'s recent folders and Ctrl+G's menu show each folder's icon (Downloads, Pictures, drives, This PC, Recycle Bin …), as Explorer's address bar does.
 
 Getting started tour: the first time Grids starts on a new install (no grids.ini yet, started without folders), bubbles point at the layout button, the address bar, ⇄, save and the View button one by one, with how to use each and the moves that are easy to miss. → / Enter next, ← back, Tab between its buttons, Esc or a click elsewhere closes; screen readers read each step. View > Getting started tour shows it again any time (where grids.ini can't be written next to the exe, it comes up at every start).
 

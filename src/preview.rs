@@ -352,7 +352,7 @@ pub(crate) unsafe fn bitmap_pix(bmp: HBITMAP) -> Option<Pix> {
 }
 
 // The bitmap's pixels as 32-bit top-down BGRA, alpha as it comes.
-unsafe fn bitmap_raw(bmp: HBITMAP) -> Option<Pix> {
+pub(crate) unsafe fn bitmap_raw(bmp: HBITMAP) -> Option<Pix> {
     let mut bm = BITMAP::default();
     GetObjectW(bmp.into(), size_of::<BITMAP>() as i32, Some(&mut bm as *mut _ as _));
     let (w, h) = (bm.bmWidth, bm.bmHeight.abs());

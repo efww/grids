@@ -979,7 +979,12 @@ pub(crate) unsafe fn tint_menu(h: HWND, i: usize, at: POINT) {
 // Alt+↓ or right-click on ← / →: folders recently visited in any pane, opened in this one.
 pub(crate) unsafe fn recent_menu(i: usize) {
     let Some(h) = app(|a| a.panes[i].as_ref().map(|p| p.hwnd)) else { return };
-    let items = app(|a| recent_items(&a.s.recent, &a.s.paths[i]));
+    let (items, ix, dpi) = app(|a| {
+        let items = recent_items(&a.s.recent, &a.s.paths[i]);
+        let ix: Vec<i32> = items.iter().map(|p| menu_icon_of(a, p, -1)).collect();
+        (items, ix, a.dpi)
+    });
+    let mut icons = MenuIcons::new(dpi); // dropped after DestroyMenu
     let Ok(menu) = CreatePopupMenu() else { return };
     if items.is_empty() {
         _ = AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, &HSTRING::from(tr("No recent folders yet", "최근 폴더가 아직 없습니다")));
@@ -987,6 +992,7 @@ pub(crate) unsafe fn recent_menu(i: usize) {
     for (k, p) in items.iter().enumerate() {
         // "name<tab>parent"; drive roots and share roots show whole
         _ = AppendMenuW(menu, MF_STRING, k + 1, &HSTRING::from(folder_label(p)));
+        icons.put(menu, k + 1, ix[k]);
     }
     let mut rc = RECT::default();
     if let Some(b) = pane_ctl(i, ID_BACK) {
@@ -1068,6 +1074,69 @@ unsafe fn go_path(t: GoTarget) -> Option<String> {
     }
 }
 
+// A known folder's own icon from its registered definition ("%SystemRoot%\system32\imageres.dll,-184" for Downloads),
+// as a system image list index; -1 when it has none (Home, AppData) or the shell fails. Only the definition is read,
+// never the folder, so one moved to a share is no wait. Asked once per folder; outside app(..).
+unsafe fn known_icon(id: &GUID) -> i32 {
+    thread_local! {
+        static KNOWN: RefCell<Vec<(GUID, i32)>> = const { RefCell::new(Vec::new()) };
+    }
+    if let Some(n) = KNOWN.with(|k| k.borrow().iter().find(|e| e.0 == *id).map(|e| e.1)) {
+        return n;
+    }
+    let n = known_icon_ask(id).unwrap_or(-1);
+    KNOWN.with(|k| k.borrow_mut().push((*id, n)));
+    n
+}
+
+unsafe fn known_icon_ask(id: &GUID) -> Option<i32> {
+    let kfm: IKnownFolderManager = CoCreateInstance(&KnownFolderManager, None, CLSCTX_INPROC_SERVER).ok()?;
+    let kf = kfm.GetFolder(id).ok()?;
+    let mut d = KNOWNFOLDER_DEFINITION::default();
+    let got = kf.GetFolderDefinition(&mut d).is_ok();
+    let icon = (got && !d.pszIcon.is_null()).then(|| d.pszIcon.to_string().ok()).flatten();
+    // FreeKnownFolderDefinitionFields is a header inline: each string the definition holds, freed here
+    for s in [d.pszName, d.pszDescription, d.pszRelativePath, d.pszParsingName, d.pszTooltip, d.pszLocalizedName, d.pszIcon, d.pszSecurity] {
+        if !s.is_null() {
+            CoTaskMemFree(Some(s.0 as _));
+        }
+    }
+    let (file, at) = icon_location(&icon?, |v| std::env::var(v).ok())?;
+    let n = Shell_GetCachedImageIndexW(&HSTRING::from(file), at, 0);
+    (n >= 0).then_some(n)
+}
+
+// A registered icon location ("%SystemRoot%\system32\imageres.dll,-184", maybe quoted, maybe without the index)
+// → (its file, %NAME% expanded by `var` and left as it is when unknown, as ExpandEnvironmentStrings; the index).
+pub(crate) fn icon_location(s: &str, var: impl Fn(&str) -> Option<String>) -> Option<(String, i32)> {
+    let s = s.trim();
+    let (file, at) = match s.rsplit_once(',').map(|(f, n)| (f, n.trim().parse::<i32>())) {
+        Some((f, Ok(n))) => (f, n),
+        _ => (s, 0),
+    };
+    let file = file.trim().trim_matches('"').trim();
+    if file.is_empty() {
+        return None;
+    }
+    let (mut out, mut rest) = (String::new(), file);
+    while let Some(a) = rest.find('%') {
+        out.push_str(&rest[..a]);
+        let after = &rest[a + 1..];
+        match after.find('%').filter(|&b| b > 0).and_then(|b| Some((var(&after[..b])?, b))) {
+            Some((v, b)) => {
+                out.push_str(&v);
+                rest = &after[b + 1..];
+            }
+            None => {
+                out.push('%');
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    Some((out, at))
+}
+
 // Set while the Ctrl+G menu is open, for its WM_MENUCHAR (Ctrl still held while the letter is typed).
 static GO_OPEN: AtomicBool = AtomicBool::new(false);
 
@@ -1099,24 +1168,32 @@ pub(crate) fn go_menu_char(wp: WPARAM, lp: LPARAM) -> Option<LRESULT> {
 pub(crate) unsafe fn go_menu(i: usize) {
     let Some(h) = app(|a| a.panes[i].as_ref().map(|p| p.hwnd)) else { return };
     let rows = go_targets(KO.load(Ordering::Relaxed));
-    let here = app(|a| a.s.paths[i].clone());
+    let (here, dpi) = app(|a| (a.s.paths[i].clone(), a.dpi));
+    let paths: Vec<Option<String>> = rows.iter().map(|r| r.and_then(|(_, t)| go_path(t))).collect();
+    // each place's icon: known folders' own from their definitions (asked here, outside app), the rest from the cache
+    let known: Vec<i32> = rows.iter().map(|r| if let Some((_, GoTarget::Known(id))) = r { known_icon(id) } else { -1 }).collect();
+    let ix: Vec<i32> = app(|a| paths.iter().zip(&known).map(|(p, &kn)| p.as_ref().map_or(-1, |p| menu_icon_of(a, p, kn))).collect());
+    let mut icons = MenuIcons::new(dpi); // dropped after DestroyMenu
     let Ok(menu) = CreatePopupMenu() else { return };
-    let mut paths: Vec<Option<String>> = Vec::with_capacity(rows.len());
     for (k, r) in rows.iter().enumerate() {
-        let Some((label, t)) = r else {
+        let Some((label, _)) = r else {
             _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
-            paths.push(None);
             continue;
         };
-        let p = go_path(*t);
-        let mut flags = MF_STRING;
-        match &p {
-            None => flags |= MF_GRAYED,
-            Some(p) if same_dir(p, &here) => flags |= MF_CHECKED,
-            _ => {}
-        }
+        let here_too = paths[k].as_ref().is_some_and(|p| same_dir(p, &here));
+        let flags = match &paths[k] {
+            None => MF_STRING | MF_GRAYED,
+            Some(_) if here_too => MF_STRING | MF_CHECKED,
+            _ => MF_STRING,
+        };
         _ = AppendMenuW(menu, flags, k + 1, &HSTRING::from(*label));
-        paths.push(p);
+        if paths[k].is_some() {
+            icons.put(menu, k + 1, ix[k]);
+        }
+        if here_too {
+            // with an icon the theme may show the check only as a frame behind it: bold too, as the '›' menu
+            _ = SetMenuDefaultItem(menu, k as u32 + 1, 0);
+        }
     }
     let mut rc = RECT::default();
     if let Some(e) = pane_ctl(i, ID_EDIT) {
