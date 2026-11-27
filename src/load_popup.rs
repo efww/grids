@@ -114,6 +114,14 @@ pub(crate) const LOAD_EMPTY: (&str, &str) = ("No saved sessions", "저장된 세
 pub(crate) const LOAD_SAVE_LABEL: (&str, &str) = ("+ Save as new", "+ 새 이름으로 저장");
 pub(crate) const LOAD_FOLDER_LABEL: (&str, &str) = ("Open sessions folder", "세션 폴더 열기");
 
+// A card's right-click menu, in menu order: (command, English, Korean); a line goes above the shortcut. The README
+// test (menu_names_in_readmes) finds each name in the Sessions line of both READMEs.
+pub(crate) const CARD_MENU: [(usize, &str, &str); 3] = [
+    (1, "Rename", "이름 바꾸기"),
+    (2, "Delete", "삭제"),
+    (3, "Create desktop shortcut", "바탕 화면에 바로 가기 만들기"),
+];
+
 // What a screen reader hears for card k of n: "Work, 6 panes, 5 min ago, 2/4", and whether it's the session you're in.
 pub(crate) fn load_speech(name: &str, panes: usize, ago: &str, k: usize, n: usize, is_current: bool, ko: bool) -> String {
     let at = format!("{}/{n}", k + 1);
@@ -694,10 +702,12 @@ pub(crate) extern "system" fn load_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                     _ => return LRESULT(0),
                 };
                 let Ok(menu) = CreatePopupMenu() else { return LRESULT(0) };
-                _ = AppendMenuW(menu, MF_STRING, 1, &HSTRING::from(tr("Rename", "이름 바꾸기")));
-                _ = AppendMenuW(menu, MF_STRING, 2, &HSTRING::from(tr("Delete", "삭제")));
-                _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
-                _ = AppendMenuW(menu, MF_STRING, 3, &HSTRING::from(tr("Create desktop shortcut", "바탕 화면에 바로 가기 만들기")));
+                for (id, en, ko) in CARD_MENU {
+                    if id == 3 {
+                        _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
+                    }
+                    _ = AppendMenuW(menu, MF_STRING, id, &HSTRING::from(tr(en, ko)));
+                }
                 let mut at = POINT::default();
                 _ = GetCursorPos(&mut at);
                 let pick = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, at.x, at.y, None, h, None).0;

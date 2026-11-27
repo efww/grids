@@ -3061,6 +3061,76 @@ mod tests {
         assert!(missing.is_empty(), "view menu items the READMEs don't name as on the menu:\n{}", missing.join("\n"));
     }
 
+    // A menu item's name as the menu shows it: no key after a tab or in a "  (Ctrl+…)" tail, no Korean "(&X)"
+    // wherever it is, no '&' mark ("&&" is a plain '&'); a count {n} reads "N".
+    fn menu_shown(s: &str) -> String {
+        let s = s.split('\t').next().unwrap();
+        let (mut out, mut rest) = (String::new(), s.split("  (").next().unwrap());
+        while let Some(i) = rest.find("(&") {
+            let tail = &rest[i + 2..];
+            let mut cs = tail.chars();
+            match (cs.next(), cs.next()) {
+                (Some(c), Some(')')) if c != '&' => {
+                    out.push_str(&rest[..i]);
+                    rest = &tail[c.len_utf8() + 1..];
+                }
+                _ => {
+                    out.push_str(&rest[..i + 2]);
+                    rest = tail;
+                }
+            }
+        }
+        out.push_str(rest);
+        out.replace("&&", "\0").replace('&', "").replace('\0', "&").replace("{n}", "N")
+    }
+
+    // Every ⇄ menu item, and every item of a tab's and a session card's right-click menu, is named in README.md /
+    // README.ko.md word for word as the menu shows it, so a reader can find it there (and a renamed item can't
+    // leave the docs behind). A ⇄ slot's "{n} selected" variant and the checksum's Stop item stand for the plain
+    // one; the tab and card items are looked for in the Tabs / Sessions line only ("Delete" is found anywhere).
+    #[test]
+    fn menu_names_in_readmes() {
+        assert_eq!(menu_shown(M_SWAP.0), "Swap places with");
+        assert_eq!(menu_shown(M_SWAP.1), "자리 바꾸기");
+        assert_eq!(menu_shown(M_COPY.1), "선택한 N개 복사");
+        assert_eq!(menu_shown(M_LIST.1), "이 폴더 파일 목록을 표로 복사 (엑셀용)");
+        assert_eq!(menu_shown(M_HASH.1), "선택한 파일의 체크섬(SHA-256)");
+        assert_eq!(menu_shown("Duplicate tab\tCtrl+K"), "Duplicate tab");
+        assert_eq!(menu_shown("R&&D (&X)"), "R&D ");
+        // the menus' own ids, which their pick match reads
+        let ids = |v: Vec<usize>| -> Vec<usize> {
+            let mut v = v;
+            v.sort();
+            v
+        };
+        assert_eq!(ids(TAB_MENU.iter().map(|m| m.0).collect()), [1, 2, 3, 4, 5]);
+        assert_eq!(ids(CARD_MENU.iter().map(|m| m.0).collect()), [1, 2, 3]);
+
+        let (md, md_ko) = (include_str!("../README.md"), include_str!("../README.ko.md"));
+        let line = |doc: &'static str, start: &str| -> &'static str { doc.lines().find(|l| l.starts_with(start)).unwrap_or_else(|| panic!("no {start:?} line")) };
+        let mut open_in = vec![M_CHOOSE];
+        for slot in menu_slots() {
+            let plain: Vec<_> = slot.iter().filter(|t| **t != M_HASH_STOP && !t.0.contains("{n}")).copied().collect();
+            open_in.extend(if plain.is_empty() { slot.to_vec() } else { plain });
+        }
+        let groups = [
+            ("⇄ menu", open_in, md, md_ko),
+            ("tab menu", TAB_MENU.iter().map(|m| (m.1, m.2)).collect(), line(md, "- **Tabs**"), line(md_ko, "- **탭**")),
+            ("session card menu", CARD_MENU.iter().map(|m| (m.1, m.2)).collect(), line(md, "- **Sessions**"), line(md_ko, "- **세션**")),
+        ];
+        let mut missing = Vec::new();
+        for (what, items, en_doc, ko_doc) in &groups {
+            for (en, ko) in items {
+                for (doc, name, file) in [(en_doc, menu_shown(en), "README.md"), (ko_doc, menu_shown(ko), "README.ko.md")] {
+                    if !doc.contains(name.as_str()) {
+                        missing.push(format!("{file}, {what}: {name:?}"));
+                    }
+                }
+            }
+        }
+        assert!(missing.is_empty(), "menu items the READMEs don't name as on the menu:\n{}", missing.join("\n"));
+    }
+
     // README.md's and README.ko.md's feature lists ("- **" lines) pair up line for line: as many on each side, and
     // each pair names the same keys, so a line added on one side only, or out of order, shows up here.
     #[test]

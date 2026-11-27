@@ -210,18 +210,35 @@ pub(crate) unsafe fn pick_nth_tab(i: usize, n: usize) -> bool {
     k < len && pick_tab(i, k)
 }
 
-// Right-click on a tab: duplicate, move or close that tab.
+// A tab's right-click menu, in menu order: (command, English, Korean); a line goes above Close tab. The README
+// test (menu_names_in_readmes) finds each name in the Tabs line of both READMEs.
+pub(crate) const TAB_MENU: [(usize, &str, &str); 5] = [
+    (1, "Duplicate tab\tCtrl+K", "탭 복제\tCtrl+K"),
+    (3, "Move left\tCtrl+Shift+PgUp", "왼쪽으로 옮기기\tCtrl+Shift+PgUp"),
+    (4, "Move right\tCtrl+Shift+PgDn", "오른쪽으로 옮기기\tCtrl+Shift+PgDn"),
+    (2, "Close tab\tCtrl+W", "탭 닫기\tCtrl+W"),
+    (5, "Reopen closed tab\tCtrl+Shift+T", "닫은 탭 다시 열기\tCtrl+Shift+T"),
+];
+
+// Right-click on a tab: duplicate, move or close that tab (TAB_MENU, greyed where it can't).
 pub(crate) unsafe fn tab_menu(h: HWND, i: usize, k: usize, at: POINT) {
     let n = app(|a| a.s.tab_list(i).len());
     let Ok(menu) = CreatePopupMenu() else { return };
     let on = |yes: bool| if yes { MF_STRING } else { MF_STRING | MF_GRAYED };
-    _ = AppendMenuW(menu, MF_STRING, 1, &HSTRING::from(tr("Duplicate tab\tCtrl+K", "탭 복제\tCtrl+K")));
-    _ = AppendMenuW(menu, on(k > 0 && k < n), 3, &HSTRING::from(tr("Move left\tCtrl+Shift+PgUp", "왼쪽으로 옮기기\tCtrl+Shift+PgUp")));
-    _ = AppendMenuW(menu, on(k + 1 < n), 4, &HSTRING::from(tr("Move right\tCtrl+Shift+PgDn", "오른쪽으로 옮기기\tCtrl+Shift+PgDn")));
-    _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
-    _ = AppendMenuW(menu, on(n > 1), 2, &HSTRING::from(tr("Close tab\tCtrl+W", "탭 닫기\tCtrl+W"))); // the last tab stays
     let closed = app(|a| !a.closed_tabs.is_empty());
-    _ = AppendMenuW(menu, on(closed), 5, &HSTRING::from(tr("Reopen closed tab\tCtrl+Shift+T", "닫은 탭 다시 열기\tCtrl+Shift+T")));
+    for (id, en, ko) in TAB_MENU {
+        let yes = match id {
+            2 => n > 1, // the last tab stays
+            3 => k > 0 && k < n,
+            4 => k + 1 < n,
+            5 => closed,
+            _ => true,
+        };
+        if id == 2 {
+            _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
+        }
+        _ = AppendMenuW(menu, on(yes), id, &HSTRING::from(tr(en, ko)));
+    }
     set_active(i);
     let pick = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN, at.x, at.y, None, h, None).0;
     _ = DestroyMenu(menu);
