@@ -189,3 +189,11 @@ Claude가 제안하고 gpt-6.2-sol이 동의한 개선을 사람 확인 없이 �
 | #375 | 2026-11-27 11:41 | 기능 | 복사·이동 같은 긴 작업이 도는 동안 PC가 저절로 절전에 들어가지 않게 (TeraCopy·FreeFileSync식) | 큰 파일을 USB나 NAS로 복사·이동해 두고 자리를 비워도 PC가 도중에 잠들지 않아 작업이 끝까지 진행된다. 복사 중에는 상태줄에 '복사·이동 중… · 절전 안 함'이 보이고, 작업이 끝나면 평소처럼 절전 설정대로 돌아간다. | 7 files changed, 134 insertions(+), 5 deletions(-) |
 | #370 | 2026-11-27 11:51 | 품질 | 정밀 터치패드·고해상도 휠로 Everything 검색 결과와 용량 분석 목록이 스크롤되지 않는 버그 수정 | 노트북 터치패드를 두 손가락으로 쓸거나 부드럽게 도는 휠을 굴리면, 이제 Everything 검색 결과 목록과 폴더 용량 분석 목록도 즐겨찾기 목록처럼 따라 내려가고 올라갑니다. 보통 마우스 휠은 지금과 똑같이 움직입니다. | 5 files changed, 52 insertions(+), 13 deletions(-) |
 | #379 | 2026-11-27 12:09 | UX | Ctrl+P: 열린 패널·탭을 폴더 이름으로 찾아가기 | Ctrl+P를 누르고 'down'처럼 폴더 이름 몇 글자를 친 뒤 Enter를 누르면, 그 폴더가 열려 있는 패널(10~16번 포함)이나 다른 패널의 탭으로 곧바로 옮겨 갑니다. Ctrl+Tab을 여러 번 누르며 찾을 필요가 없습니다. | 6 files changed, 561 insertions(+), 2 deletions(-) |
+
+## 릴리즈 R54 · 2026-11-27 14:15 KST · 업데이트 3개
+
+| # | 구현 시각(KST) | 분류 | 업데이트 | 사용자에게 달라지는 것 | 변경 |
+|---|---|---|---|---|---|
+| #392 | 2026-11-27 13:08 | 요청 | Run gh by full path |  | 2 files changed, 25 insertions(+), 2 deletions(-) |
+| #393 | 2026-11-27 13:23 | 요청 | Preview handlers out of process only |  | 1 file changed, 3 insertions(+), 1 deletion(-) |
+| #395 | 2026-11-27 13:46 | 요청 | Updater never overwrites unrecorded files |  | 1 file changed, 117 insertions(+), 19 deletions(-) |
