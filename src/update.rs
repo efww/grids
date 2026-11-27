@@ -54,6 +54,7 @@ pub(crate) enum UpFail {
     Damaged,
     NoWrite,
     Swap,
+    Taken, // grids.new.exe, or every grids.old*.exe name, is someone else's file
 }
 
 impl UpFail {
@@ -63,6 +64,7 @@ impl UpFail {
             UpFail::Checksum => tr("the checksum did not match", "체크섬이 맞지 않음"),
             UpFail::Damaged => tr("the package has no usable grids.exe", "패키지에 쓸 수 있는 grids.exe가 없음"),
             UpFail::NoWrite => tr("Grids' folder can't be written to", "Grids 폴더에 쓸 수 없음"),
+            UpFail::Taken => tr("Grids' folder has grids.new.exe / grids.old*.exe files that Grids didn't make, delete or move them and try again", "Grids 폴더에 Grids가 만들지 않은 grids.new.exe·grids.old*.exe 파일이 있음, 그 파일을 직접 지우거나 옮긴 뒤 다시 해 보세요"),
             UpFail::Swap => tr("the running grids.exe couldn't be replaced, try again after restarting Grids", "실행 중인 grids.exe를 바꿀 수 없음, Grids를 다시 시작한 뒤 해 보세요"),
         }
     }
@@ -200,8 +202,9 @@ pub(crate) fn unpack(zip: &[u8], sums: &str, ver: &str) -> std::result::Result<V
 }
 
 // The updater's own files are known by a record, not by their names: next to each grids.new.exe / grids.old*.exe it
-// writes, a <name>.sha256 with the file's SHA-256. Repair and tidy only ever move or delete a file whose SHA-256
-// matches its record; a stray file that merely has one of these names is left alone.
+// writes, a <name>.sha256 with the file's SHA-256. Repair, tidy, fetch and swap only ever move, delete or overwrite a
+// file whose SHA-256 matches its record; a stray file that merely has one of these names is left alone, and new files
+// are only ever written to free names (never over an existing file).
 
 pub(crate) fn record_path(p: &Path) -> PathBuf {
     let mut s = p.as_os_str().to_owned();
@@ -209,8 +212,16 @@ pub(crate) fn record_path(p: &Path) -> PathBuf {
     PathBuf::from(s)
 }
 
+// A new file at p, never over an existing one; one this made but couldn't fill goes again.
+fn write_new(p: &Path, data: &[u8]) -> std::io::Result<()> {
+    let mut f = std::fs::OpenOptions::new().write(true).create_new(true).open(p)?;
+    let r = std::io::Write::write_all(&mut f, data).and_then(|_| f.sync_all());
+    drop(f);
+    r.inspect_err(|_| _ = std::fs::remove_file(p))
+}
+
 pub(crate) fn record(p: &Path, hash: &str) -> std::io::Result<()> {
-    std::fs::File::create(record_path(p)).and_then(|mut f| std::io::Write::write_all(&mut f, hash.as_bytes()).and_then(|_| f.sync_all()))
+    write_new(&record_path(p), hash.as_bytes())
 }
 
 /// Exactly what record() writes: 64 lowercase hex digits (a single trailing newline tolerated), nothing else.
@@ -219,12 +230,37 @@ pub(crate) fn is_record(b: &[u8]) -> bool {
     h.len() == 64 && h.iter().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(c))
 }
 
+// p's record when the file named like it is one (None: there is none, or it is someone else's file).
+fn read_record(p: &Path) -> Option<String> {
+    let r = record_path(p);
+    // Size first: a big file under this name is someone else's and never gets read whole.
+    if !std::fs::metadata(&r).is_ok_and(|m| m.len() <= 65) {
+        return None;
+    }
+    let b = std::fs::read(&r).ok().filter(|b| is_record(b))?;
+    String::from_utf8(b).ok().map(|h| h.trim_end().to_string())
+}
+
 // Drops p's record, but only a file that is one: anything else with that name is someone else's and stays.
 fn forget(p: &Path) {
-    let r = record_path(p);
-    if std::fs::metadata(&r).is_ok_and(|m| m.len() <= 65) && std::fs::read(&r).is_ok_and(|b| is_record(&b)) {
-        _ = std::fs::remove_file(r);
+    if read_record(p).is_some() {
+        _ = std::fs::remove_file(record_path(p));
     }
+}
+
+// p is the updater's own file: its SHA-256 matches its record.
+fn mine(p: &Path) -> bool {
+    read_record(p).is_some_and(|r| std::fs::read(p).ok().and_then(|b| sha256_hex(&b)).is_some_and(|h| h == r))
+}
+
+/// Frees an updater name for a new file: an own file there goes, with its record (an orphan record too). False when
+/// the name stays taken (someone else's file or record, or an own file still locked); someone else's is never touched.
+pub(crate) fn clear(p: &Path) -> bool {
+    if p.exists() && (!mine(p) || std::fs::remove_file(p).is_err()) {
+        return false;
+    }
+    forget(p);
+    !record_path(p).exists()
 }
 
 /// grids.new.exe (written and recorded by fetch) takes the running exe's place, which becomes grids.old.exe (or the
@@ -235,13 +271,13 @@ fn forget(p: &Path) {
 /// until then there is no grids.exe to double-click, only those two.
 pub(crate) fn swap_exe(exe: &Path) -> std::io::Result<()> {
     let new = exe.with_file_name(NEW_EXE);
-    let drop_new = || {
-        _ = std::fs::remove_file(&new);
-        forget(&new);
+    let drop_new = || _ = clear(&new); // only the one fetch wrote and recorded
+    // the first name that is free or holds an own leftover; someone else's grids.oldN.exe is skipped, never deleted
+    let Some(old) = OLD_EXES.iter().map(|n| exe.with_file_name(n)).find(|o| clear(o)) else {
+        drop_new();
+        return Err(std::io::ErrorKind::AlreadyExists.into());
     };
-    let free = OLD_EXES.iter().map(|n| exe.with_file_name(n)).find(|o| !o.exists() || std::fs::remove_file(o).is_ok());
-    let hash = std::fs::read(exe).ok().and_then(|b| sha256_hex(&b));
-    let (Some(old), Some(hash)) = (free, hash) else {
+    let Some(hash) = std::fs::read(exe).ok().and_then(|b| sha256_hex(&b)) else {
         drop_new();
         return Err(std::io::ErrorKind::ResourceBusy.into());
     };
@@ -437,12 +473,21 @@ fn fetch(r: &UpRelease, exe: &Path) -> std::result::Result<(), UpFail> {
     let zip = http_get(&r.zip, EXE_MAX, 60).ok_or(UpFail::Download)?;
     let sums = http_get(&r.sums, 64 << 10, 15).ok_or(UpFail::Download)?;
     let data = unpack(&zip, &String::from_utf8_lossy(&sums), &r.ver)?;
-    // the record first: a write cut short then never matches it, so repair won't take a half exe
+    put_new(exe, &data)
+}
+
+/// grids.new.exe beside exe, holding data, and its record. Only ever over an own leftover: someone else's
+/// grids.new.exe (or a file named like its record) is left as it is and the update fails (Taken).
+pub(crate) fn put_new(exe: &Path, data: &[u8]) -> std::result::Result<(), UpFail> {
     let new = exe.with_file_name(NEW_EXE);
-    let hash = sha256_hex(&data).ok_or(UpFail::Damaged)?;
-    let wrote = record(&new, &hash).and_then(|_| std::fs::File::create(&new)).and_then(|mut f| std::io::Write::write_all(&mut f, &data).and_then(|_| f.sync_all()));
-    wrote.map_err(|_| {
-        _ = std::fs::remove_file(&new);
+    let hash = sha256_hex(data).ok_or(UpFail::Damaged)?;
+    if !clear(&new) {
+        let theirs = (new.exists() && !mine(&new)) || (read_record(&new).is_none() && record_path(&new).exists());
+        return Err(if theirs { UpFail::Taken } else { UpFail::NoWrite });
+    }
+    // the record first: a write cut short then never matches it, so repair won't take a half exe
+    record(&new, &hash).map_err(|_| UpFail::NoWrite)?;
+    write_new(&new, data).map_err(|_| {
         forget(&new);
         UpFail::NoWrite
     })
@@ -621,8 +666,8 @@ pub(crate) unsafe fn update_msg(main: HWND, what: usize) {
         }
         1 => {
             let Ok(exe) = std::env::current_exe() else { return update_failed(UpFail::NoWrite) };
-            if swap_exe(&exe).is_err() {
-                return update_failed(UpFail::Swap);
+            if let Err(e) = swap_exe(&exe) {
+                return update_failed(if e.kind() == std::io::ErrorKind::AlreadyExists { UpFail::Taken } else { UpFail::Swap });
             }
             // closing saves grids.ini and the views as always; the new exe starts once this one is gone
             _ = RESTART.set(exe);
@@ -773,6 +818,7 @@ mod tests {
         put(EXE, "old");
         fetched("new");
         put("grids.old.exe", "older");
+        record(&dir.join("grids.old.exe"), &sha256_hex(b"older").unwrap()).unwrap(); // an own leftover: makes way
         swap_exe(&exe).unwrap();
         assert_eq!((read(EXE), read("grids.old.exe"), read(NEW_EXE)), (Some("new".into()), Some("old".into()), None));
         assert_eq!(read("grids.old.exe.sha256"), sha256_hex(b"old"));
@@ -812,6 +858,58 @@ mod tests {
         put("grids.old2.exe.sha256", &sha256_hex(b"x").unwrap());
         tidy_exes(&dir, &mine);
         assert_eq!((read("grids.old.exe.sha256"), read("grids.old2.exe.sha256")), (Some("my notes about grids".into()), None));
+        _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn update_leaves_others_files() {
+        let dir = std::env::temp_dir().join(format!("grids-update-others-{}", std::process::id()));
+        _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join(EXE);
+        let read = |n: &str| std::fs::read_to_string(dir.join(n)).ok();
+        let put = |n: &str, t: &str| std::fs::write(dir.join(n), t).unwrap();
+        let rec = |n: &str, t: &str| record(&dir.join(n), &sha256_hex(t.as_bytes()).unwrap()).unwrap();
+        put(EXE, "old");
+
+        // fetch: someone else's grids.new.exe (no record, or a record that doesn't match it) is not overwritten
+        put(NEW_EXE, "theirs");
+        assert_eq!(put_new(&exe, b"new"), Err(UpFail::Taken));
+        assert_eq!((read(NEW_EXE), read("grids.new.exe.sha256")), (Some("theirs".into()), None));
+        rec(NEW_EXE, "something else");
+        assert_eq!(put_new(&exe, b"new"), Err(UpFail::Taken));
+        assert_eq!((read(NEW_EXE), read("grids.new.exe.sha256")), (Some("theirs".into()), sha256_hex(b"something else")));
+        // a user's file named like the record, no exe: stays too
+        std::fs::remove_file(dir.join(NEW_EXE)).unwrap();
+        put("grids.new.exe.sha256", "my notes");
+        assert_eq!(put_new(&exe, b"new"), Err(UpFail::Taken));
+        assert_eq!((read(NEW_EXE), read("grids.new.exe.sha256")), (None, Some("my notes".into())));
+        // an own leftover (recorded, matching) or an orphan record makes way
+        std::fs::remove_file(dir.join("grids.new.exe.sha256")).unwrap();
+        put(NEW_EXE, "stale");
+        rec(NEW_EXE, "stale");
+        assert_eq!(put_new(&exe, b"new"), Ok(()));
+        assert_eq!((read(NEW_EXE), read("grids.new.exe.sha256")), (Some("new".into()), sha256_hex(b"new")));
+
+        // swap: someone else's grids.old*.exe (no record, a record that doesn't match, or a user's file named like
+        // the record) are skipped, not deleted: the replaced exe takes the next free name
+        put("grids.old.exe", "theirs 1");
+        put("grids.old2.exe", "theirs 2");
+        rec("grids.old2.exe", "not this");
+        put("grids.old3.exe.sha256", "my notes");
+        swap_exe(&exe).unwrap();
+        assert_eq!((read(EXE), read(NEW_EXE), read("grids.old4.exe")), (Some("new".into()), None, Some("old".into())));
+        assert_eq!((read("grids.old.exe"), read("grids.old2.exe"), read("grids.old3.exe")), (Some("theirs 1".into()), Some("theirs 2".into()), None));
+        assert_eq!((read("grids.old2.exe.sha256"), read("grids.old3.exe.sha256")), (sha256_hex(b"not this"), Some("my notes".into())));
+        assert_eq!(read("grids.old4.exe.sha256"), sha256_hex(b"old"));
+
+        // every name taken by someone else: the update fails and only its own download goes
+        put("grids.old4.exe", "theirs 4"); // no longer what its record says
+        put("grids.old5.exe", "theirs 5");
+        put_new(&exe, b"newer").unwrap();
+        assert_eq!(swap_exe(&exe).map_err(|e| e.kind()), Err(std::io::ErrorKind::AlreadyExists));
+        assert_eq!((read(EXE), read(NEW_EXE), read("grids.new.exe.sha256")), (Some("new".into()), None, None));
+        assert_eq!((read("grids.old4.exe"), read("grids.old5.exe")), (Some("theirs 4".into()), Some("theirs 5".into())));
         _ = std::fs::remove_dir_all(&dir);
     }
 
