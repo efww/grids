@@ -298,6 +298,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             WM_HASH => hash_msg(h, wp.0, lp.0 != 0),
             WM_GROUPED => grouped_msg(),
             WM_STAMPED => stamped_msg(),
+            WM_EDITED => edited_msg(lp),
             WM_COPY_DONE => copy_done_msg(h),
             WM_USAGE => usage_msg(),
             WM_SIZE_DONE => update_status(), // the selection's size is in: shown now, not at the next tick

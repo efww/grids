@@ -138,14 +138,17 @@ pub(crate) enum Fail {
     StampTooMany,
     StampCant,
     StampBusy,
+    EditNone,
+    EditOnline,
 }
 
 #[cfg(test)] // every kind, for the fail_texts test
-pub(crate) const FAILS: [Fail; 22] = {
+pub(crate) const FAILS: [Fail; 24] = {
     use Fail::*;
     [
         AddrNotFound, AddrQuotes, AddrCantOpen, FolderCantOpen, LastTab, DriveCantOpen, SortHere, PaneMin, NoBorder, GroupEmpty, GroupTooMany,
         GroupCant, GroupBusy, NewFileHere, NewFolder, SendChanged, SendCant, PatternEmpty, StampEmpty, StampTooMany, StampCant, StampBusy,
+        EditNone, EditOnline,
     ]
 };
 
@@ -174,6 +177,8 @@ pub(crate) fn fail_pair(kind: Fail) -> (&'static str, &'static str) {
         Fail::StampTooMany => ("Too many items to copy (over 10,000)", "사본을 만들 항목이 너무 많음 (1만 개 초과)"),
         Fail::StampCant => ("Dated copies can't be made of these items here", "이 항목들은 여기서 날짜 붙인 사본을 만들 수 없음"),
         Fail::StampBusy => ("Already making dated copies · wait until it's done", "이미 사본을 만드는 중 · 끝날 때까지 기다리세요"),
+        Fail::EditNone => ("No text file to edit · folders and binary files (programs, archives …) aren't opened", "편집할 글자 파일이 없음 · 폴더와 이진 파일(프로그램·압축 파일 등)은 열지 않음"),
+        Fail::EditOnline => ("Online-only files are skipped · keep them on this device first", "온라인 전용 파일은 건너뜀 · 먼저 이 장치에 내려받으세요"),
     }
 }
 

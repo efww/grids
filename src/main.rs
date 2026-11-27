@@ -4703,6 +4703,36 @@ mod tests { tr("in", "안") }
         assert_eq!(l("Space"), Peek);
         assert_eq!((l("Ctrl+Shift+S"), l("Ctrl+F4"), l("Shift+Num+"), l("Num\u{2212}")), (Save, FocusAddr, Match(false), Match(true)));
         assert_eq!((l("Alt+1"), l("Alt+9"), l("Ctrl+Shift+Tab"), l("Ctrl+Shift+PgUp")), (NthTab(1), NthTab(9), CyclePane(-1), MoveTab(-1)));
+        // Ctrl+E: the list's own (editor); the tree keeps Ctrl+Shift+E, the boxes keep their Ctrl+E
+        assert_eq!((l("Ctrl+E"), l("Ctrl+Shift+E")), (Edit, Tree));
+        assert_eq!((route("addr", "Ctrl+E"), route("filter", "Ctrl+E"), route("addr", "Ctrl+Shift+E")), (BoxKey, BoxKey, Tree));
+    }
+
+    // Ctrl+E never runs a file: its edit verb, else text by its first bytes (by its type when online-only, never read).
+    #[test]
+    fn edit_picks() {
+        use EditHow::*;
+        let unread = || -> Option<Vec<u8>> { panic!("read") };
+        assert_eq!(edit_how(true, false, false, unread), Verb); // .bat, .ps1, a picture: its own "edit"
+        assert_eq!(edit_how(true, true, false, unread), Verb);
+        assert_eq!(edit_how(false, false, false, || Some(b"[core]\r\n\tbare = false\r\n".to_vec())), Text); // a config without an extension
+        assert_eq!(edit_how(false, false, false, || Some(Vec::new())), Text); // a new empty file
+        assert_eq!(edit_how(false, false, false, || Some([0xFF, 0xFE, b'a', 0].to_vec())), Text); // UTF-16
+        assert_eq!(edit_how(false, false, true, || Some(b"MZ\x90\0\x03\0\0\0".to_vec())), Binary); // an exe, whatever its name
+        assert_eq!(edit_how(false, false, false, || Some(b"PK\x03\x04\x14\0\0\0".to_vec())), Binary);
+        assert_eq!((edit_how(false, false, true, || None), edit_how(false, false, false, || None)), (Text, Binary)); // locked
+        assert_eq!((edit_how(false, true, true, unread), edit_how(false, true, false, unread)), (Text, Online));
+    }
+
+    #[test]
+    fn edited_notes() {
+        assert_eq!(edited_note(false, 3, 3, Some(3), 0), "Opened 3 in an editor");
+        assert_eq!(edited_note(true, 3, 3, Some(3), 0), "편집기로 3개를 열었습니다");
+        assert_eq!(edited_note(true, 10, 10, Some(14), 0), "편집기로 10/14개만 열었습니다 (한 번에 10개까지)");
+        assert_eq!(edited_note(false, 8, 10, Some(14), 2), "Opened 8 of 14 files in an editor (10 at a time) · 2 skipped");
+        assert_eq!(edited_note(false, 10, 10, Some(10), 0), "Opened 10 in an editor");
+        assert_eq!(edited_note(true, 10, 10, None, 0), "편집기로 10개만 열었습니다 (한 번에 10개까지)");
+        assert_eq!(edited_note(true, 1, 2, Some(2), 1), "편집기로 1개를 열었습니다 · 1개 건너뜀");
     }
 
     // The file list / main window are asked only by the arms that need them (a shell view lookup per key otherwise).

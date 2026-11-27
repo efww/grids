@@ -277,6 +277,12 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
             }
         }
         KeyRoute::CopyPaths => copy_paths(a),
+        // held, it opens once (and the repeats don't reach the view)
+        KeyRoute::Edit => {
+            if !repeat {
+                edit_files(a);
+            }
+        }
         KeyRoute::Usage => {
             if !repeat {
                 open_usage(a);
@@ -378,6 +384,7 @@ pub(crate) enum KeyRoute {
     Mark,
     Sort(usize),
     CopyPaths,
+    Edit,
     Usage,
     MoveMenu,
     Match(bool),
@@ -478,6 +485,9 @@ pub(crate) fn key_route(vk: VIRTUAL_KEY, ctrl: bool, shift: bool, alt: bool, c: 
             _ => 2,
         }),
         VK_C if ctrl && shift && !alt && list() => CopyPaths,
+        // Ctrl+E: the chosen files in an editor, never run (Total Commander's F4, which is the address bar's here);
+        // a pane has no Explorer search box for it to reach. Ctrl+Shift+E stays the tree's (above).
+        VK_E if ctrl && !shift && !alt && list() => Edit,
         VK_U if ctrl && shift && !alt && list() => Usage,
         // Ctrl+M: the ⇄ menu, opened when M is let go
         VK_M if ctrl && !shift && !alt && list() => MoveMenu,

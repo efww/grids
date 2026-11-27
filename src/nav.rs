@@ -1421,6 +1421,7 @@ pub(crate) const WM_PEEK_HOSTED: u32 = WM_APP + 49; // wParam = preview generati
 pub(crate) const WM_PEEK_LOST: u32 = WM_APP + 48; // the preview went inactive: close it unless it is active again
 pub(crate) const WM_GROUPED: u32 = WM_APP + 52; // Ctrl+F7 moved everything in; the details stay in GROUPED
 pub(crate) const WM_STAMPED: u32 = WM_APP + 61; // Shift+F5's dated copies are done; the details stay in STAMPED
+pub(crate) const WM_EDITED: u32 = WM_APP + 64; // Ctrl+E's files were handed to their editors; lParam = Box<Edited>
 pub(crate) const WM_FONT_SYNC: u32 = WM_APP + 58; // Windows' text size may have changed: refont if the UI font did
 pub(crate) static NARROWING: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(-1); // column << 32 | width
 

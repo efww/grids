@@ -4,7 +4,9 @@ use windows::Win32::System::Registry::{
 };
 use windows::Win32::System::RestartManager::*;
 use windows::Win32::System::SystemInformation::GetLocalTime;
+use std::os::windows::fs::MetadataExt;
 use windows::Win32::System::Threading::GetCurrentProcessId;
+use windows::Win32::UI::Shell::Common::{PERCEIVED, PERCEIVED_TYPE_TEXT};
 use windows::Win32::UI::Controls::{
     TASKDIALOGCONFIG, TASKDIALOG_BUTTON, TDCBF_CANCEL_BUTTON, TDCBF_CLOSE_BUTTON, TDF_ALLOW_DIALOG_CANCELLATION, TDF_POSITION_RELATIVE_TO_WINDOW,
     TD_INFORMATION_ICON, TD_WARNING_ICON,
@@ -391,6 +393,207 @@ pub(crate) fn stamped_note(ko: bool, n: usize, first: &str, aborted: bool) -> St
         (false, false, 1) => format!("Made a dated copy: {first}"),
         (true, false, _) => format!("날짜 붙인 사본 {n}개 만듦"),
         (false, false, _) => format!("Made {n} dated copies"),
+    }
+}
+
+// ---------- Ctrl+E: the chosen files in an editor, never run ----------
+// (Total Commander's F4 Edit, Directory Opus / XYplorer's Edit command; F4 is the address bar's here)
+
+pub(crate) const EDIT_MAX: usize = 10; // files handed over per press
+const EDIT_SCAN_MAX: u32 = 2000; // how far into the selection files are counted
+
+/// How Ctrl+E opens one file. Never with its own default verb: a .bat, .reg or .vbs would run.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum EditHow {
+    Verb,   // its type's own "edit" verb (.bat / .cmd in Notepad, .ps1 in its editor, a picture in Paint …)
+    Text,   // as a .txt: the user's text editor, else Notepad
+    Binary, // not text: left alone
+    Online, // online-only and not text by its type: not downloaded just to look
+}
+
+/// verb: its type has an "edit" verb; online: only in the cloud (its content is never read here); text_type: its
+/// type is perceived as text; head: its first 8 KB, read only when asked. A file that can't be read goes by its type.
+pub(crate) fn edit_how(verb: bool, online: bool, text_type: bool, head: impl FnOnce() -> Option<Vec<u8>>) -> EditHow {
+    let text = |t: bool| if t { EditHow::Text } else { EditHow::Binary };
+    if verb {
+        EditHow::Verb
+    } else if online {
+        if text_type { EditHow::Text } else { EditHow::Online }
+    } else {
+        text(head().map_or(text_type, |b| looks_text(&b)))
+    }
+}
+
+/// What Ctrl+E did, for the status line: `opened` handed to an editor out of `picked` sent; `total`: the files
+/// chosen (None: more than were counted); `skipped`: left alone (binary, online-only) or not opened.
+pub(crate) fn edited_note(ko: bool, opened: usize, picked: usize, total: Option<usize>, skipped: usize) -> String {
+    let cut = total.map_or(picked >= EDIT_MAX, |t| t > picked);
+    let mut note = match (ko, cut, total) {
+        (true, true, Some(t)) => format!("편집기로 {opened}/{t}개만 열었습니다 (한 번에 {EDIT_MAX}개까지)"),
+        (true, true, None) => format!("편집기로 {opened}개만 열었습니다 (한 번에 {EDIT_MAX}개까지)"),
+        (true, false, _) => format!("편집기로 {opened}개를 열었습니다"),
+        (false, true, Some(t)) => format!("Opened {opened} of {t} files in an editor ({EDIT_MAX} at a time)"),
+        (false, true, None) => format!("Opened {opened} files in an editor ({EDIT_MAX} at a time)"),
+        (false, false, _) => format!("Opened {opened} in an editor"),
+    };
+    if skipped > 0 {
+        note += &if ko { format!(" · {skipped}개 건너뜀") } else { format!(" · {skipped} skipped") };
+    }
+    note
+}
+
+// The files Ctrl+E opens: the selected ones when the focused item is among them (or nothing has the focus), else
+// the focused one, in view order. Real folders (not ZIPs) and items without a file path (This PC, inside a ZIP)
+// are left out. The first EDIT_MAX, and how many there were (None: the selection is longer than EDIT_SCAN_MAX).
+unsafe fn edit_targets(i: usize) -> (Vec<String>, Option<usize>) {
+    let Some(fv) = view_of::<IFolderView2>(i) else { return (Vec::new(), Some(0)) };
+    let file = |it: &IShellItem| {
+        let attr = it.GetAttributes(SFGAO_FLAGS(SFGAO_FOLDER.0 | SFGAO_STREAM.0)).unwrap_or_default().0;
+        (!real_folder(attr)).then(|| it.GetDisplayName(SIGDN_FILESYSPATH).ok().map(|p| pwstr(p))).flatten()
+    };
+    let focus = fv.GetFocusedItem().ok().filter(|&k| k >= 0);
+    if let Some(k) = focus.filter(|&k| is_selected(&fv, k) != Some(true)) {
+        let one: Vec<String> = fv.GetItem::<IShellItem>(k).ok().and_then(|it| file(&it)).into_iter().collect();
+        let n = one.len();
+        return (one, Some(n));
+    }
+    let sel = fv.Items::<IShellItemArray>(_SVGIO(SVGIO_SELECTION.0 | SVGIO_FLAG_VIEWORDER.0)).or_else(|_| fv.GetSelection(false));
+    let Ok(arr) = sel else { return (Vec::new(), Some(0)) };
+    let n = arr.GetCount().unwrap_or(0);
+    let (mut paths, mut count) = (Vec::new(), 0);
+    for k in 0..n.min(EDIT_SCAN_MAX) {
+        if let Some(p) = arr.GetItemAt(k).ok().and_then(|it| file(&it)) {
+            count += 1;
+            if paths.len() < EDIT_MAX {
+                paths.push(p);
+            }
+        }
+    }
+    (paths, (n <= EDIT_SCAN_MAX).then_some(count))
+}
+
+// a finished Ctrl+E, for the UI thread (WM_EDITED: boxed in its lParam)
+pub(crate) struct Edited {
+    picked: usize,
+    total: Option<usize>,
+    opened: usize,
+    binary: usize,
+    online: usize,
+    failed: Option<String>, // the first file no editor took
+}
+
+// Ctrl+E in a file list: the files go to a worker thread (it reads their heads and waits on the shell), the
+// status line hears back once.
+pub(crate) unsafe fn edit_files(i: usize) {
+    let (paths, total) = edit_targets(i);
+    if paths.is_empty() {
+        return fail(Fail::EditNone, "");
+    }
+    let main = app(|a| a.main.0 as usize);
+    let job = std::thread::Builder::new().spawn(move || {
+        let com = CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok();
+        let mut done = Edited { picked: paths.len(), total, opened: 0, binary: 0, online: 0, failed: None };
+        for p in &paths {
+            match edit_one(p) {
+                Some(EditHow::Binary) => done.binary += 1,
+                Some(EditHow::Online) => done.online += 1,
+                Some(_) => done.opened += 1,
+                None => _ = done.failed.get_or_insert_with(|| base_of(p).to_string()),
+            }
+        }
+        if com {
+            CoUninitialize();
+        }
+        // the box comes back if the message can't be posted (the window is gone)
+        let ptr = Box::into_raw(Box::new(done));
+        if PostMessageW(Some(HWND(main as _)), WM_EDITED, WPARAM(0), LPARAM(ptr as isize)).is_err() {
+            drop(Box::from_raw(ptr));
+        }
+    });
+    match job {
+        Ok(job) => keep_job(job),
+        Err(_) => _ = MessageBeep(MB_ICONWARNING),
+    }
+}
+
+// Worker thread: one file in its editor. Some(how it went: Verb / Text opened, Binary / Online left alone),
+// None when no editor took it. Order: its "edit" verb, then as a .txt, then Notepad; each step only after the
+// one before failed, and never the file's own "open".
+unsafe fn edit_one(path: &str) -> Option<EditHow> {
+    let ext = Path::new(path).extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
+    let dir = Path::new(path).parent().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default();
+    let online = std::fs::metadata(path).is_ok_and(|m| cloud_only(m.file_attributes()));
+    let verb = !ext.is_empty() && has_edit_verb(&ext);
+    if verb && shell_run(w!("edit"), path, None, false, &dir) {
+        return Some(EditHow::Verb);
+    }
+    let head = || {
+        use std::io::Read;
+        let mut b = Vec::new();
+        std::fs::File::open(path).ok()?.take(8192).read_to_end(&mut b).ok()?;
+        Some(b)
+    };
+    match edit_how(false, online, text_type(&ext), head) {
+        EditHow::Text => {
+            let notepad = format!(r"{}\System32\notepad.exe", std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into()));
+            let ok = shell_run(w!("open"), path, None, true, &dir) || shell_run(w!("open"), &notepad, Some(&quote_arg(path)), false, &dir);
+            ok.then_some(EditHow::Text)
+        }
+        how => Some(how),
+    }
+}
+
+// ShellExecuteEx that waits for the shell to hand over (the worker ends right after) and shows no error box of
+// its own. `as_text`: `file` opened as a .txt is, whatever its own type.
+unsafe fn shell_run(verb: PCWSTR, file: &str, params: Option<&str>, as_text: bool, dir: &str) -> bool {
+    let (file, dir) = (HSTRING::from(file), HSTRING::from(dir));
+    let params = params.map(HSTRING::from);
+    let mut info = SHELLEXECUTEINFOW {
+        cbSize: size_of::<SHELLEXECUTEINFOW>() as u32,
+        fMask: SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI | if as_text { SEE_MASK_CLASSNAME } else { 0 },
+        lpVerb: verb,
+        lpFile: PCWSTR(file.as_ptr()),
+        lpParameters: params.as_ref().map_or(PCWSTR::null(), |p| PCWSTR(p.as_ptr())),
+        lpDirectory: if dir.is_empty() { PCWSTR::null() } else { PCWSTR(dir.as_ptr()) },
+        lpClass: if as_text { w!(".txt") } else { PCWSTR::null() },
+        nShow: SW_SHOWNORMAL.0,
+        ..Default::default()
+    };
+    ShellExecuteExW(&mut info).is_ok()
+}
+
+// The command `verb` runs for files of type `ext` (".bat"), as registered.
+unsafe fn assoc_command(ext: &str, verb: PCWSTR) -> Option<String> {
+    let mut buf = [0u16; 1024];
+    let mut n = buf.len() as u32;
+    let hr = AssocQueryStringW(ASSOCF_INIT_IGNOREUNKNOWN | ASSOCF_NOTRUNCATE, ASSOCSTR_COMMAND, &HSTRING::from(ext), verb, Some(PWSTR(buf.as_mut_ptr())), &mut n);
+    hr.is_ok().then(|| String::from_utf16_lossy(&buf[..buf.iter().position(|&c| c == 0).unwrap_or(0)]))
+}
+
+// An "edit" verb of its own, not one that is its "open" again (that would run a script).
+unsafe fn has_edit_verb(ext: &str) -> bool {
+    assoc_command(ext, w!("edit")).is_some_and(|e| !e.trim().is_empty() && assoc_command(ext, w!("open")).is_none_or(|o| !o.eq_ignore_ascii_case(&e)))
+}
+
+// Windows perceives the type as text (.txt, .log, .md, .csv … however the user's editor is set up).
+unsafe fn text_type(ext: &str) -> bool {
+    let (mut kind, mut flag) = (PERCEIVED::default(), 0u32);
+    !ext.is_empty() && AssocGetPerceivedType(&HSTRING::from(ext), &mut kind, &mut flag, None).is_ok() && kind == PERCEIVED_TYPE_TEXT
+}
+
+// WM_EDITED on the main window: how many went to an editor (not whether it is up yet: that isn't known), or why
+// none did, with a beep.
+pub(crate) unsafe fn edited_msg(lp: LPARAM) {
+    if lp.0 == 0 {
+        return;
+    }
+    let e = *Box::from_raw(lp.0 as *mut Edited);
+    match (e.opened, e.failed) {
+        (0, Some(name)) => fail(Fail::AddrCantOpen, &name),
+        (0, None) if e.online > 0 && e.binary == 0 => fail(Fail::EditOnline, ""),
+        (0, None) => fail(Fail::EditNone, ""),
+        // the rest were binary, online-only or taken by no editor
+        (n, _) => set_note(edited_note(KO.load(Ordering::Relaxed), n, e.picked, e.total, e.picked.saturating_sub(n))),
     }
 }
 
