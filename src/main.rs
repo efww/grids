@@ -959,11 +959,18 @@ mod tests {
 
     #[test]
     fn focus_rings() {
-        let walk = |back, tree| (0..4).map(|p| focus_ring(p, back, tree)).collect::<Vec<_>>();
-        assert_eq!(walk(false, true), [1, 2, 3, 0]);
-        assert_eq!(walk(true, true), [3, 0, 1, 2]);
-        assert_eq!(walk(false, false)[..3], [1, 2, 0]);
-        assert_eq!(walk(true, false)[..3], [2, 0, 1]);
+        // list → address → filter → tree → toolbar → list; Shift+F6 the other way
+        let walk = |back, tree| (0..5).map(|p| focus_ring(p, back, tree)).collect::<Vec<_>>();
+        assert_eq!(walk(false, true), [1, 2, 3, 4, 0]);
+        assert_eq!(walk(true, true), [4, 0, 1, 2, 3]);
+        // no tree: skipped both ways (the tree's place, its window gone, counts as the filter)
+        assert_eq!(walk(false, false), [1, 2, 4, 4, 0]);
+        assert_eq!(walk(true, false), [4, 0, 1, 1, 2]);
+        // the toolbar's ←/→ wrap at the ends, Home / End go to the ends
+        assert_eq!([0, 1, 4].map(|c| toolbar_step(5, c, VK_RIGHT)), [1, 2, 0]);
+        assert_eq!([0, 1, 4].map(|c| toolbar_step(5, c, VK_LEFT)), [4, 0, 3]);
+        assert_eq!((toolbar_step(5, 3, VK_HOME), toolbar_step(5, 1, VK_END)), (0, 4));
+        assert_eq!(toolbar_step(1, 0, VK_RIGHT), 0);
     }
 
     #[test]

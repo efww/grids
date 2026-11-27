@@ -447,9 +447,10 @@ pub(crate) unsafe fn ev_close(back: bool) {
     if !back {
         return;
     }
-    let (main, active) = app(|a| (a.main, a.s.active));
+    let (main, active, kbd) = app(|a| (a.main, a.s.active, a.tb_kbd));
     let btn = GetDlgItem(Some(main), ID_TB_EV).unwrap_or_default();
-    if !prev.0.is_null() && IsWindow(Some(prev)).as_bool() && IsWindowVisible(prev).as_bool() && prev != btn {
+    // opened from the toolbar keys (F6, Enter): back to the button, as the layout / load popups
+    if !prev.0.is_null() && IsWindow(Some(prev)).as_bool() && IsWindowVisible(prev).as_bool() && (prev != btn || kbd) {
         _ = SetFocus(Some(prev));
     } else {
         focus_view(active);

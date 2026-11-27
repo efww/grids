@@ -310,12 +310,17 @@ pub(crate) unsafe fn relayout() {
     };
     move_all(&moves, None);
     for (h, on) in shown {
+        // a toolbar button the keys were on, squeezed out of a narrow window: the focus to the list, not lost
+        if !on && !h.0.is_null() && GetFocus() == h && is_toolbar_button(h) {
+            focus_view(app(|a| a.s.active));
+        }
         _ = ShowWindow(h, if on { SW_SHOW } else { SW_HIDE });
     }
     start_reveal(main); // sidebar size may have changed: keep its selection in view
     if let Ok(b) = GetDlgItem(Some(main), ID_TB_LAYOUT) {
         if text_of(b) != label {
             _ = SetWindowTextW(b, &HSTRING::from(label));
+            layout_a11y(b);
         }
     }
     _ = InvalidateRect(Some(main), None, true);

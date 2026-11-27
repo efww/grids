@@ -142,6 +142,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 if state == WA_INACTIVE {
                     end_nudge(); // Alt+Tab mid Ctrl+Alt+arrow: that key release never comes here
                     keep_focus(h);
+                    toolbar_away();
                 } else if state == WA_ACTIVE && !min {
                     restore_focus();
                     return LRESULT(0);
@@ -926,6 +927,136 @@ pub(crate) fn toolbar_tips() -> [(i32, &'static str, &'static str); 7] {
     ]
 }
 
+// ---------- the toolbar from the keys (F6, as Explorer's toolbar or Office's ribbon) ----------
+
+// A button of the top toolbar: main's own owner-drawn buttons (the panes' are theirs).
+pub(crate) unsafe fn is_toolbar_button(h: HWND) -> bool {
+    !h.0.is_null() && GetParent(h).ok() == Some(app(|a| a.main)) && is_icon_button(h)
+}
+
+// The toolbar buttons the keys step through, left to right: hidden ones (Everything not running, no update,
+// drives and the bin squeezed out of a narrow window) are skipped.
+pub(crate) unsafe fn toolbar_buttons() -> Vec<HWND> {
+    let main = app(|a| a.main);
+    let mut v: Vec<(i32, HWND)> = Vec::new();
+    let mut c = GetWindow(main, GW_CHILD).unwrap_or_default();
+    while !c.0.is_null() {
+        if IsWindowVisible(c).as_bool() && is_icon_button(c) {
+            let mut rc = RECT::default();
+            _ = GetWindowRect(c, &mut rc);
+            v.push((rc.left, c));
+        }
+        c = GetWindow(c, GW_HWNDNEXT).unwrap_or_default();
+    }
+    v.sort_by_key(|x| x.0);
+    v.into_iter().map(|x| x.1).collect()
+}
+
+// ←/→ step to the next button, wrapping at the ends; Home / End go to the first / last. n > 0.
+pub(crate) fn toolbar_step(n: usize, cur: usize, vk: VIRTUAL_KEY) -> usize {
+    match vk {
+        VK_LEFT => (cur.min(n - 1) + n - 1) % n,
+        VK_RIGHT => (cur + 1) % n,
+        VK_HOME => 0,
+        _ => n - 1,
+    }
+}
+
+// The focus on a toolbar button, its ring on (the button repaints itself as it takes the focus).
+unsafe fn toolbar_focus(b: HWND) {
+    let id = GetDlgCtrlID(b);
+    app(|a| (a.tb_kbd, a.tb_last) = (true, id));
+    _ = SetFocus(Some(b));
+    _ = InvalidateRect(Some(b), None, false);
+}
+
+// F6 into the toolbar: the button last picked from the keys, or the first when that one is gone or hidden.
+pub(crate) unsafe fn focus_toolbar() {
+    let bs = toolbar_buttons();
+    let last = app(|a| a.tb_last);
+    if let Some(&b) = bs.iter().find(|&&b| GetDlgCtrlID(b) == last).or(bs.first()) {
+        toolbar_focus(b);
+    }
+}
+
+// The ring off (a mouse press, or the keys leaving the toolbar), the focused button repainted without it.
+pub(crate) unsafe fn toolbar_ring_off() {
+    if app(|a| std::mem::take(&mut a.tb_kbd)) {
+        let f = GetFocus();
+        if is_toolbar_button(f) {
+            _ = InvalidateRect(Some(f), None, false);
+        }
+    }
+}
+
+thread_local! {
+    // the toolbar button Enter went down on: it is pressed when Enter is let go there (toolbar_enter_up), so a
+    // held Enter can't go on into the box or menu it opens (their own loops don't come through pre_translate)
+    static TB_ENTER: Cell<Option<HWND>> = const { Cell::new(None) };
+}
+
+// A key on a focused toolbar button, with no Ctrl, Alt or Shift: ←/→, Home / End pick, Enter presses (on its
+// release), Esc goes back to the active list. Space, Shift+F10 and the menu key stay the button's own (its
+// click, the drive / Recycle Bin menu); any other key goes on to the shortcuts as before.
+pub(crate) unsafe fn toolbar_key(m: &MSG) -> Option<bool> {
+    let vk = VIRTUAL_KEY(m.wParam.0 as u16);
+    let repeat = m.lParam.0 & (1 << 30) != 0;
+    match vk {
+        VK_LEFT | VK_RIGHT | VK_HOME | VK_END => {
+            let bs = toolbar_buttons();
+            let cur = bs.iter().position(|&b| b == m.hwnd).unwrap_or(0);
+            if let Some(&b) = bs.get(toolbar_step(bs.len().max(1), cur, vk)) {
+                toolbar_focus(b);
+            }
+        }
+        VK_RETURN => {
+            if !repeat {
+                TB_ENTER.set(Some(m.hwnd));
+                // a button focused by a mouse press (save, theme, view) pressed from the keys: its ring on too
+                if !app(|a| a.tb_kbd) {
+                    toolbar_focus(m.hwnd);
+                }
+            }
+        }
+        VK_ESCAPE => {
+            toolbar_ring_off();
+            focus_view(app(|a| a.s.active));
+        }
+        _ => return None,
+    }
+    Some(true)
+}
+
+// Grids' main window losing the activation (WM_ACTIVATE): an Enter held over the switch presses nothing on its
+// release, and the ring goes off when the keys had already left the toolbar (Ctrl+L, Ctrl+1, a drive's Enter).
+// Still on a button, it stays: restore_focus comes back to that button.
+pub(crate) unsafe fn toolbar_away() {
+    TB_ENTER.set(None);
+    if !is_toolbar_button(GetFocus()) {
+        app(|a| a.tb_kbd = false);
+    }
+}
+
+// Enter let go: the button it went down on is pressed if it still has the focus. The view button opens its
+// menu with the first item lit, as Alt does, so a screen reader has an item to read.
+pub(crate) unsafe fn toolbar_enter_up(m: &MSG) -> bool {
+    let Some(b) = TB_ENTER.take() else { return false };
+    if b != m.hwnd || GetFocus() != b || !is_toolbar_button(b) {
+        return false;
+    }
+    if GetDlgCtrlID(b) == ID_TB_VIEW {
+        view_menu_key();
+    } else {
+        SendMessageW(b, BM_CLICK, None, None);
+    }
+    true
+}
+
+// What a screen reader calls the layout button: "Layout 2×2", not the bare grid its face shows.
+pub(crate) unsafe fn layout_a11y(b: HWND) {
+    a11y_name(b, Some(&format!("{} {}", tr("Layout", "레이아웃"), text_of(b))));
+}
+
 // ---------- drive buttons (top toolbar) ----------
 
 pub(crate) fn mask_letters(mask: u32) -> Vec<u8> {
@@ -1290,6 +1421,10 @@ pub(crate) unsafe fn refresh_drives() -> bool {
             set_hover(HWND::default());
         }
         tip_text(h, "", TTM_DELTOOLW);
+        a11y_clear(h); // a later window may get the same HWND value
+        if GetFocus() == h {
+            focus_view(app(|a| a.s.active)); // the keys were on it: to the list, not to main (where F6 can't start)
+        }
         _ = RevokeDragDrop(h);
         _ = DROP_BTN.compare_exchange(h.0 as usize, 0, Ordering::Relaxed, Ordering::Relaxed);
         _ = DestroyWindow(h);
@@ -1353,6 +1488,9 @@ pub(crate) unsafe fn set_language(ko: bool) {
         if let Ok(b) = GetDlgItem(Some(main), id) {
             tip_text(b, hint, TTM_UPDATETIPTEXTW);
         }
+    }
+    if let Ok(b) = GetDlgItem(Some(main), ID_TB_LAYOUT) {
+        layout_a11y(b);
     }
     for (c, kind, h) in app(|a| a.drives.clone()) {
         tip_text(h, &drive_tip(c, kind), TTM_UPDATETIPTEXTW);

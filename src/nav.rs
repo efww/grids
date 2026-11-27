@@ -547,7 +547,9 @@ pub(crate) unsafe fn restore_focus() {
     let ok = IsWindow(Some(k)).as_bool()
         && ((shown && (pane_ctl(i, ID_EDIT) == Some(k) || pane_ctl(i, ID_FILTER) == Some(k)))
             || view_of::<IShellView>(i).and_then(|sv| sv.GetWindow().ok()).is_some_and(within)
-            || (tree && IsWindowVisible(th).as_bool() && within(th)));
+            || (tree && IsWindowVisible(th).as_bool() && within(th))
+            // a toolbar button the keys were on (F6), still shown: the layout / load popup closing comes back there
+            || (app(|a| a.tb_kbd) && IsWindowVisible(k).as_bool() && is_toolbar_button(k)));
     if ok {
         if pane_ctl(i, ID_EDIT) == Some(k) {
             _ = ShowWindow(k, SW_SHOWNA); // an idle address edit hides behind its crumbs; EN_SETFOCUS syncs it

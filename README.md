@@ -92,7 +92,7 @@ The exe is not code-signed, so Windows SmartScreen may warn the first time: choo
 | Ctrl+L, Alt+D, F4 | Address bar: also `..` or a subfolder name, a file to open, or a command such as `cmd`, `wt`, `powershell` (runs in this pane's folder), or part of a recent or favourite folder's name |
 | Ctrl+F | Name filter |
 | Alt+↓ (in the filter) | File types menu (or click the filter's icon) |
-| F6 / Shift+F6 | Move between file list, address bar, filter and folder tree |
+| F6 / Shift+F6 | Move between file list, address bar, filter, folder tree and the top toolbar (on the toolbar: ←/→ pick a button, Enter press it, Shift+F10 drive / Recycle Bin menu, Esc back to the list) |
 | Enter / Esc | Apply / cancel the address or filter |
 | Win+Alt+E | Bring Grids to front from any app, ready to type in the active pane (again: minimize; View > Bring Grids to front from anywhere turns it off) |
 | Ctrl+H | Show hidden files |

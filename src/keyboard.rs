@@ -98,6 +98,13 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
     if !fav.0.is_null() && m.hwnd == fav && fav_step(VIRTUAL_KEY(m.wParam.0 as u16), ctrl, alt, shift).is_some() {
         return false;
     }
+    // a focused top toolbar button: ←/→, Home / End, Enter and Esc (with no Ctrl, Alt or Shift: Alt+← stays Back,
+    // Alt+Shift+→ the pane move); other keys go on to the shortcuts below
+    if !ctrl && !shift && !alt && is_toolbar_button(m.hwnd) {
+        if let Some(used) = toolbar_key(m) {
+            return used;
+        }
+    }
     if let Some(i) = pane_of(m.hwnd) {
         set_active(i);
     }
@@ -240,8 +247,13 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
             let th = app(|x| x.tree_hwnd);
             let tv = FindWindowExW(Some(th), None, w!("SysTreeView32"), PCWSTR::null()).ok().filter(|_| !th.0.is_null() && IsWindowVisible(th).as_bool());
             let in_tree = th == m.hwnd || IsChild(th, m.hwnd).as_bool();
-            let pos = if addr { 1 } else if filt { 2 } else if in_tree { 3 } else { 0 };
-            match focus_ring(pos, shift, tv.is_some()) {
+            let on_bar = is_toolbar_button(m.hwnd);
+            let pos = if addr { 1 } else if filt { 2 } else if in_tree { 3 } else if on_bar { 4 } else { 0 };
+            let to = focus_ring(pos, shift, tv.is_some());
+            if to != 4 {
+                toolbar_ring_off();
+            }
+            match to {
                 1 => _ = focus_ctl(a, ID_EDIT),
                 2 => _ = focus_ctl(a, ID_FILTER),
                 3 => {
@@ -249,6 +261,7 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
                     _ = SetFocus(tv);
                     reveal_tree_selection();
                 }
+                4 => focus_toolbar(),
                 _ => focus_view(a),
             }
         }
@@ -522,10 +535,13 @@ pub(crate) fn key_route(vk: VIRTUAL_KEY, ctrl: bool, shift: bool, alt: bool, c: 
     }
 }
 
-// F6 ring: 0 file list, 1 address bar, 2 filter, 3 folder tree (skipped without one).
+// F6 ring: 0 file list, 1 address bar, 2 filter, 3 folder tree (skipped without one), 4 top toolbar.
 pub(crate) fn focus_ring(pos: usize, back: bool, tree: bool) -> usize {
-    let n = if tree { 4 } else { 3 };
-    (pos.min(n - 1) + if back { n - 1 } else { 1 }) % n
+    let ring: &[usize] = if tree { &[0, 1, 2, 3, 4] } else { &[0, 1, 2, 4] };
+    let n = ring.len();
+    // a place not in the ring (the tree's, with the tree gone) counts as the one before it
+    let k = ring.iter().rposition(|&p| p <= pos).unwrap_or(0);
+    ring[(k + if back { n - 1 } else { 1 }) % n]
 }
 
 // Keys Grids handles itself (Ctrl+Tab, F6, ...) only sync the tree; tree keys (arrows, typing) still navigate.
@@ -585,6 +601,7 @@ pub(crate) unsafe fn pre_translate(m: &MSG) -> bool {
             false
         }
         WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN => {
+            toolbar_ring_off(); // a click on a toolbar button looks as it always has: no keyboard ring
             kids_cancel();
             usage_click_away(m.hwnd);
             if let Some(i) = pane_of(m.hwnd) {
@@ -651,6 +668,10 @@ pub(crate) unsafe fn pre_translate(m: &MSG) -> bool {
         WM_KEYUP | WM_SYSKEYUP => {
             let armed = app(|a| a.held) == Some(VK_M.0);
             app(|a| a.held = a.held.filter(|&k| k != m.wParam.0 as u16));
+            // Enter let go on the toolbar button it went down on: that button pressed
+            if VIRTUAL_KEY(m.wParam.0 as u16) == VK_RETURN && toolbar_enter_up(m) {
+                return true;
+            }
             // Ctrl+M let go: the ⇄ menu of the pane it was pressed in, under its ⇄ button as a click opens it
             if VIRTUAL_KEY(m.wParam.0 as u16) == VK_M {
                 let pane = MENU_KEY.take().filter(|_| armed);

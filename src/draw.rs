@@ -1,4 +1,5 @@
 use crate::*;
+use windows::Win32::UI::Controls::ODS_FOCUS;
 
 // ---------- drawing (plain GDI: square shapes need no anti-aliasing, and fills are cheap) ----------
 
@@ -99,10 +100,13 @@ pub(crate) fn press_tint(tinted: bool, pressed: bool) -> f32 {
 
 pub(crate) unsafe fn draw_button(d: &DRAWITEMSTRUCT) {
     draw_button_face(d);
-    // the button the getting started tour points at: a ring in the selection colour (the header ink on a tinted header)
-    if tour_target() == d.hwndItem {
-        let (main, accent, dpi) = app(|a| (a.main, a.s.accent_now(), a.dpi));
-        let parent = GetParent(d.hwndItem).unwrap_or_default();
+    // the button the getting started tour points at, or the toolbar button the keys are on (F6): a ring in the
+    // selection colour (high contrast's highlight; the header ink on a tinted header), drawn once if both
+    let (main, kbd) = app(|a| (a.main, a.tb_kbd));
+    let parent = GetParent(d.hwndItem).unwrap_or_default();
+    let keyed = kbd && parent == main && d.itemState.0 & ODS_FOCUS.0 != 0;
+    if tour_target() == d.hwndItem || keyed {
+        let (accent, dpi) = app(|a| (a.s.accent_now(), a.dpi));
         let ring = if parent == main { accent } else { header_colors(parent).1 };
         frame(d.hDC, d.rcItem, (2 * dpi / 96).max(2), ring);
     }
@@ -465,5 +469,10 @@ pub(crate) unsafe fn tip_text(btn: HWND, tip: &str, msg: u32) {
         lpszText: PWSTR(tip.as_ptr() as *mut u16),
         ..Default::default()
     };
-    SendMessageW(app(|a| a.tip), msg, None, Some(LPARAM(&ti as *const _ as isize)));
+    let (tips, main) = app(|a| (a.tip, a.main));
+    SendMessageW(tips, msg, None, Some(LPARAM(&ti as *const _ as isize)));
+    // a toolbar button's screen reader description is its tooltip, so the keys it names are read out with it
+    if ti.hwnd == main {
+        a11y_desc(btn, (msg != TTM_DELTOOLW && !tip.is_empty()).then(|| tip.to_string()).as_deref());
+    }
 }

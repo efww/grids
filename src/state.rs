@@ -104,6 +104,8 @@ pub(crate) struct App {
     pub(crate) head_hot: Option<(HWND, HeadHot)>,            // tab, its ×, '+' or the filter icon under the mouse (runtime only)
     pub(crate) kids: Option<KidsAsk>,                        // '›' clicked, its subfolder list not back yet
     pub(crate) held: Option<u16>,        // key whose auto-repeats are swallowed until it is released (runtime only)
+    pub(crate) tb_kbd: bool,             // the top toolbar reached from the keys (F6): its focused button shows a ring
+    pub(crate) tb_last: i32,             // the toolbar button last picked from the keys, where F6 comes back to
     pub(crate) matcher: Option<Matcher>, // select-by-pattern box while open
     pub(crate) match_last: String,       // last pattern used (runtime only, never saved)
     pub(crate) peek: HWND,               // F3 quick preview while open
@@ -218,6 +220,8 @@ thread_local! {
         head_hot: None,
         kids: None,
         held: None,
+        tb_kbd: false,
+        tb_last: 0,
         matcher: None,
         match_last: String::new(),
         peek: HWND::default(),

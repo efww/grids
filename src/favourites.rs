@@ -431,10 +431,11 @@ pub(crate) extern "system" fn fav_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                     // Esc mid-press drops the drag, the list stays
                     VK_ESCAPE if pressing => cancel(),
                     VK_ESCAPE => {
-                        let (main, prev, active) = app(|a| (a.main, a.fav_prev, a.s.active));
+                        let (main, prev, active, kbd) = app(|a| (a.main, a.fav_prev, a.s.active, a.tb_kbd));
                         _ = DestroyWindow(h);
                         let fav_btn = GetDlgItem(Some(main), ID_TB_FAV).unwrap_or_default();
-                        if !prev.0.is_null() && IsWindow(Some(prev)).as_bool() && IsWindowVisible(prev).as_bool() && prev != fav_btn {
+                        // opened from the toolbar keys (F6, Enter): back to the button, as the layout / load popups
+                        if !prev.0.is_null() && IsWindow(Some(prev)).as_bool() && IsWindowVisible(prev).as_bool() && (prev != fav_btn || kbd) {
                             _ = SetFocus(Some(prev));
                         } else {
                             focus_view(active);

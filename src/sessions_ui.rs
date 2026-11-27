@@ -628,6 +628,7 @@ pub(crate) unsafe fn refresh_save_button() {
     if dirty {
         hint += tr(" · unsaved layout changes", " · 저장 안 된 배치 변경");
     }
+    a11y_desc(b, Some(&hint)); // read out after its name, as the other toolbar buttons' tooltips (tip_text)
     let hint = HSTRING::from(hint);
     let ti = TTTOOLINFOW {
         cbSize: size_of::<TTTOOLINFOW>() as u32,
