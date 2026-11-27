@@ -418,6 +418,7 @@ fn main() -> Result<()> {
         apply_theme();
         apply_font();
         refresh_drives(); // laid out by the relayout below
+        refresh_clouds(); // after them, before the bin
         cache_folder_icon(); // tabs of folders not opened yet this run
         cache_pc_icon(); // This PC in the Ctrl+G and recent folder menus
         if app(|a| a.s.updates) {
@@ -607,6 +608,7 @@ mod tests {
             .to_vec();
         main.extend((0..26).map(|d| ID_DRIVE as usize + d));
         main.push(ID_BIN as usize);
+        main.extend((0..MAX_CLOUD).map(|k| ID_CLOUD as usize + k));
         main.extend(VIEW_TOP.iter().chain(&VIEW_END).map(|v| v.0));
         main.push(ID_LANG);
         main.extend((0..LIGHT.accents.len()).map(|k| ID_ACCENT + k));
@@ -891,6 +893,43 @@ mod tests {
             assert_eq!(drive_icon_id(k), SIID_DRIVEFIXED, "{k}");
             assert_eq!(drive_icon(k), -1, "{k}"); // never asked: no icon, the letter alone
         }
+    }
+
+    // Cloud folder buttons: only pinned ones on a drive path, not a drive root, one per folder, by name, at most 8.
+    #[test]
+    fn cloud_buttons() {
+        let reg = |name: &str, pinned: bool, path: &str| CloudReg { name: name.into(), pinned, path: path.into(), icon: String::new() };
+        let got = cloud_list(vec![
+            reg("OneDrive - Personal", true, r"C:\Users\a\OneDrive\"),
+            reg("Dropbox", true, r"C:\Users\a\Dropbox"),
+            reg("Hidden", false, r"C:\Users\a\Hidden"),          // not pinned to the navigation pane
+            reg("Google Drive", true, r"G:\"),                   // a drive root: G: has its own button
+            reg("Empty", true, ""),                              // no folder registered
+            reg("Share", true, r"\\server\share"),               // not a drive path
+            reg("Shell", true, "::{20D04FE0-3AEA-1069-A2D8-08002B30309D}"),
+            reg("dropbox again", true, r"c:\users\A\DROPBOX"),   // the same folder in another case
+            reg("", true, r"D:\Box"),                            // no name: its folder's
+            reg("@shell32.dll,-1", true, r"D:\iCloud Drive"),    // a resource string: its folder's
+        ]);
+        let names: Vec<&str> = got.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["Box", "Dropbox", "iCloud Drive", "OneDrive - Personal"]);
+        assert_eq!(got[3].path, r"C:\Users\a\OneDrive"); // trailing backslash off
+        let many: Vec<CloudReg> = (0..12).rev().map(|k| reg(&format!("c{k:02}"), true, &format!(r"C:\c{k}"))).collect();
+        let got = cloud_list(many);
+        assert_eq!(got.len(), MAX_CLOUD);
+        assert_eq!((got[0].name.as_str(), got[7].name.as_str()), ("c00", "c07"));
+        assert!(cloud_list(Vec::new()).is_empty());
+        // the underline: whole names only, any case, the deepest of nested ones
+        let roots = [r"C:\Users\a\OneDrive", r"C:\Users\a\OneDrive - Work", r"C:\Users\a\OneDrive\Sub"];
+        let at = |p: &str| cloud_mark(p, roots);
+        assert_eq!(at(r"C:\Users\a\OneDrive"), Some(0));
+        assert_eq!(at(r"c:\users\A\onedrive\Docs"), Some(0));
+        assert_eq!(at(r"C:\Users\a\OneDrive - Work\x"), Some(1));
+        assert_eq!(at(r"C:\Users\a\OneDrive2"), None);
+        assert_eq!(at(r"C:\Users\a\OneDrive\Sub\deep"), Some(2));
+        assert_eq!(at(r"C:\Users\a"), None);
+        assert_eq!(at(THIS_PC), None);
+        assert_eq!(cloud_mark(r"C:\x", [""]), None);
     }
 
     // Every drive check on one path, side by side, all built on drive_letter: what may follow "X:" is each one's

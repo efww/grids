@@ -25,6 +25,23 @@ pub(crate) struct Pane {
     pub(crate) moving: Option<Go>,
 }
 
+// A cloud folder as Explorer's navigation pane registers it (window_ui.rs cloud_regs): name, pinned there, folder
+// path (%variables% expanded), DefaultIcon. Only the registration: the folder itself is never looked at.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct CloudReg {
+    pub(crate) name: String,
+    pub(crate) pinned: bool,
+    pub(crate) path: String,
+    pub(crate) icon: String,
+}
+
+// A cloud folder button on the top toolbar: what it was made for, its icon (system image list, -1 = none), the button.
+pub(crate) struct Cloud {
+    pub(crate) reg: CloudReg,
+    pub(crate) ix: i32,
+    pub(crate) h: HWND,
+}
+
 pub(crate) struct App {
     pub(crate) s: Session,
     pub(crate) main: HWND,
@@ -130,6 +147,8 @@ pub(crate) struct App {
     pub(crate) drives: Vec<(u8, u32, HWND)>, // top toolbar drive buttons, A→Z: letter, drive type, button
     pub(crate) drive_mask: u32,              // GetLogicalDrives() they were made for
     pub(crate) drive_mark: Option<u8>,       // the active pane's drive (underlined)
+    pub(crate) clouds: Vec<Cloud>,           // cloud folder buttons after the drives, by name (refresh_clouds)
+    pub(crate) cloud_mark: HWND,             // the cloud button of the active pane's folder (underlined, not its drive)
     pub(crate) hot_on: bool,                 // Win+Alt+E actually registered (s.hotkey is only the wish)
     pub(crate) tray_on: bool,                // the notification area icon is really there (s.tray is only the wish)
     pub(crate) focus_keep: HWND,             // focus when Grids last went to the back; coming back puts it there again
@@ -251,6 +270,8 @@ thread_local! {
         drives: Vec::new(),
         drive_mask: 0,
         drive_mark: None,
+        clouds: Vec::new(),
+        cloud_mark: HWND::default(),
         hot_on: false,
         tray_on: false,
         focus_keep: HWND::default(),

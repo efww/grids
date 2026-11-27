@@ -189,6 +189,21 @@ unsafe fn draw_button_face(d: &DRAWITEMSTRUCT) {
         }
         return text(dc, rc, &label, font, ink, DT_CENTER);
     }
+    if (ID_CLOUD..ID_CLOUD + MAX_CLOUD as i32).contains(&id) {
+        // its provider's icon (the folder icon when it has none), centred; underlined while the active pane is in it
+        let (ix, marked, accent) = app(|a| (a.clouds.iter().find(|c| c.h == d.hwndItem).map_or(-1, |c| c.ix), a.cloud_mark == d.hwndItem, a.s.accent_now()));
+        if marked {
+            fill(dc, RECT { left: rc.left + s(7), top: rc.bottom - s(2), right: rc.right - s(7), bottom: rc.bottom }, accent);
+        }
+        let ix = if ix >= 0 { ix } else { folder_icon() };
+        if let Some(il) = (ix >= 0).then(|| small_ilist()).flatten() {
+            let (x, y) = (rc.left + (rc.right - rc.left - s(16)) / 2, rc.top + (rc.bottom - rc.top - s(16)) / 2);
+            if shell_icon(dc, &il, ix, RECT { left: x, top: y, right: x + s(16), bottom: y + s(16) }) {
+                return;
+            }
+        }
+        return text(dc, rc, glyph(ID_CLOUD), icon_font, if marked { pal().text } else { fg }, DT_CENTER);
+    }
     if id == ID_BIN {
         // the desktop's bin, empty or full, centred; a glyph bin when the shell gave no icon
         let ix = bin_icon();

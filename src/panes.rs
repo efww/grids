@@ -278,17 +278,28 @@ pub(crate) unsafe fn relayout() {
         shown.push((tb(ID_TB_UPDATE), up));
         // drive buttons after them; in a narrow window the last letters hide rather than run into the theme toggle
         // wide enough for a drive-kind icon before the letter when all of them fit, else letters only, as before
-        // the Recycle Bin button last, s(6) after them: the first to hide, and counted in so wide drive buttons
-        // never push it out alone
+        // then the cloud folder buttons (square icons), s(6) after the drives; the Recycle Bin button last, s(6)
+        // after them: the first to hide, the clouds next; all counted in so wide drive buttons never push them out
+        // alone. No cloud folders: everything exactly where it was without them.
         x += s(6);
         let n = a.drives.len() as i32;
-        let dw = if x + n * (s(46) + s(2)) - s(2) + s(6) + s(30) <= edge - s(12) { s(46) } else { s(32) };
+        let m = a.clouds.len() as i32;
+        let cw = if m > 0 { m * (s(30) + s(2)) - s(2) + s(6) } else { 0 };
+        let dw = if x + n * (s(46) + s(2)) - s(2) + s(6) + cw + s(30) <= edge - s(12) { s(46) } else { s(32) };
         let mut bx = x;
         for &(_, _, h) in &a.drives {
             moves.push((h, RECT { left: x, top: s(5), right: x + dw, bottom: s(5) + btn_h }));
             shown.push((h, x + dw <= edge - s(12)));
             x += dw + s(2);
             bx = x - s(2) + s(6);
+        }
+        for c in &a.clouds {
+            moves.push((c.h, RECT { left: bx, top: s(5), right: bx + s(30), bottom: s(5) + btn_h }));
+            shown.push((c.h, bx + s(30) <= edge - s(12)));
+            bx += s(30) + s(2);
+        }
+        if m > 0 {
+            bx += s(6) - s(2);
         }
         let bin = tb(ID_BIN);
         if !bin.0.is_null() {
@@ -364,6 +375,7 @@ pub(crate) unsafe fn end_drag() {
         _ = ShowWindow(b, SW_HIDE);
     }
     refresh_drives(); // one that came or went mid-drag
+    refresh_clouds();
     relayout();
     redraw_all();
 }
@@ -495,8 +507,8 @@ pub(crate) unsafe fn paint_accent(c: u32) {
     for p in panes {
         repaint_header(p); // all of them: inactive panes show the accent in their filter badge
     }
-    for (_, _, h) in app(|a| a.drives.clone()) {
-        _ = InvalidateRect(Some(h), None, false); // the active drive's underline
+    for h in app(|a| a.drives.iter().map(|d| d.2).chain(a.clouds.iter().map(|c| c.h)).collect::<Vec<_>>()) {
+        _ = InvalidateRect(Some(h), None, false); // the active drive's (or cloud folder's) underline
     }
     status_dirty(); // the note chip and the drive bar
 }

@@ -198,6 +198,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                     note_arranged(h);
                 }
                 refresh_drives(); // one that came or went mid-resize
+                refresh_clouds();
                 relayout();
                 redraw_all();
                 tour_place();
@@ -309,7 +310,8 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             // mid-drag or mid-resize, end_drag / WM_EXITSIZEMOVE pick it up instead
             WM_DRIVES => {
                 bin_count(); // also when Grids comes to the front (WM_ACTIVATEAPP posts this)
-                if !app(|a| a.drag.is_some() || a.sizing) && refresh_drives() {
+                // both looked at: a cloud folder can come or go with the drive letters unchanged
+                if !app(|a| a.drag.is_some() || a.sizing) && refresh_drives() | refresh_clouds() {
                     relayout();
                     redraw_all();
                 }
@@ -445,6 +447,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 id if id == ID_TB_VIEW as usize => popup_menu(app(|a| a.view_menu), ID_TB_VIEW),
                 id if (ID_DRIVE as usize..ID_DRIVE as usize + 26).contains(&id) => open_drive(b'A' + (id - ID_DRIVE as usize) as u8),
                 id if id == ID_BIN as usize => open_bin(),
+                id if (ID_CLOUD as usize..ID_CLOUD as usize + MAX_CLOUD).contains(&id) => open_cloud(id - ID_CLOUD as usize),
                 ID_TREE => toggle_tree(),
                 ID_TREE_QUICK => toggle_tree_quick(),
                 ID_HIDDEN => toggle_hidden(),
@@ -530,12 +533,13 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                     accent_chips(sub, dark);
                 }
             }
-            // right-click (or Shift+F10 / the menu key) on a drive button: that drive's shell menu; on the Recycle
-            // Bin button: the bin's
+            // right-click (or Shift+F10 / the menu key) on a drive or cloud folder button: its shell menu; on the
+            // Recycle Bin button: the bin's
             WM_CONTEXTMENU => {
                 let bin = GetDlgItem(Some(h), ID_BIN).ok().filter(|b| b.0 as usize == wp.0);
                 let drive = app(|a| a.drives.iter().find(|d| d.2 .0 as usize == wp.0).map(|d| (d.0, d.2)));
-                let Some(b) = bin.or(drive.map(|d| d.1)) else {
+                let cloud = app(|a| a.clouds.iter().position(|c| c.h.0 as usize == wp.0).map(|k| (k, a.clouds[k].h)));
+                let Some(b) = bin.or(drive.map(|d| d.1)).or(cloud.map(|c| c.1)) else {
                     return DefWindowProcW(h, msg, wp, lp);
                 };
                 // where now: the button may be gone (WM_DRIVES) by the time the menu closes
@@ -547,9 +551,10 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                     }
                     (x, y) => POINT { x, y },
                 };
-                match drive {
-                    Some((c, _)) => drive_menu(c, at),
-                    None => bin_menu(at),
+                match (drive, cloud) {
+                    (Some((c, _)), _) => drive_menu(c, at),
+                    (None, Some((k, _))) => cloud_menu(k, at),
+                    (None, None) => bin_menu(at),
                 }
             }
             WM_COPYDATA => {
@@ -618,8 +623,9 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 for i in 0..MAXP {
                     destroy_pane(i);
                 }
-                // the drive and Recycle Bin buttons' drop targets, before the buttons go with this window
-                for b in app(|a| a.drives.iter().map(|d| d.2).collect::<Vec<_>>()).into_iter().chain(GetDlgItem(Some(h), ID_BIN).ok()) {
+                // the drive, cloud folder and Recycle Bin buttons' drop targets, before the buttons go with this window
+                let places = app(|a| a.drives.iter().map(|d| d.2).chain(a.clouds.iter().map(|c| c.h)).collect::<Vec<_>>());
+                for b in places.into_iter().chain(GetDlgItem(Some(h), ID_BIN).ok()) {
                     _ = RevokeDragDrop(b);
                 }
                 app(|a| (a.tree, a.quick_root) = (None, None));
@@ -1286,12 +1292,40 @@ unsafe fn drive_menu_msg(msg: u32, wp: WPARAM, lp: LPARAM) -> Option<LRESULT> {
 // open it in the active pane instead of an Explorer window. Only on a right-click: making the item and filling the
 // menu can wait on a dead share, as in Explorer.
 pub(crate) unsafe fn drive_menu(c: u8, at: POINT) {
-    shell_menu(&format!("{}:\\", c as char), at, || open_drive(c));
+    shell_menu(&format!("{}:\\", c as char), at, &[], || open_drive(c));
 }
 
 // The shell's own menu of the item with parsing name `parse` at a screen point; Open / Explore run `open` instead
 // (the item in the active pane).
-unsafe fn shell_menu(parse: &str, at: POINT, on_open: impl FnOnce()) {
+// The shell's canonical verb ("open", "delete" …) of a QueryContextMenu id (offset already taken off).
+unsafe fn cm_verb(cm: &IContextMenu, id: usize) -> Option<String> {
+    let mut verb = [0u16; 64];
+    cm.GetCommandString(id, GCS_VERBW, None, PSTR(verb.as_mut_ptr() as *mut u8), verb.len() as u32).ok()?;
+    let n = verb.iter().position(|&w| w == 0).unwrap_or(verb.len());
+    Some(String::from_utf16_lossy(&verb[..n]))
+}
+
+// Takes the items with these verbs off the shell's menu, then the separators left doubled or at an end.
+unsafe fn drop_verbs(menu: HMENU, cm: &IContextMenu, verbs: &[&str]) {
+    for pos in (0..GetMenuItemCount(Some(menu)).max(0)).rev() {
+        let id = GetMenuItemID(menu, pos);
+        if id >= 1 && id != u32::MAX && cm_verb(cm, id as usize - 1).is_some_and(|v| verbs.iter().any(|x| v.eq_ignore_ascii_case(x))) {
+            _ = DeleteMenu(menu, pos as u32, MF_BYPOSITION);
+        }
+    }
+    let sep = |pos: i32| GetMenuState(menu, pos as u32, MF_BYPOSITION) & MF_SEPARATOR.0 != 0;
+    let mut pos = GetMenuItemCount(Some(menu)) - 1;
+    while pos >= 0 {
+        let n = GetMenuItemCount(Some(menu));
+        if sep(pos) && (pos == 0 || pos == n - 1 || sep(pos - 1)) {
+            _ = DeleteMenu(menu, pos as u32, MF_BYPOSITION);
+        }
+        pos -= 1;
+    }
+}
+
+// `skip`: verbs left off the menu (a cloud folder's: deleting it from a toolbar button would empty the cloud).
+unsafe fn shell_menu(parse: &str, at: POINT, skip: &[&str], on_open: impl FnOnce()) {
     let main = app(|a| a.main);
     let cm = SHCreateItemFromParsingName::<_, _, IShellItem>(&HSTRING::from(parse), None).and_then(|item| item.BindToHandler::<_, IContextMenu>(None, &BHID_SFUIObject));
     let Ok(cm) = cm else {
@@ -1305,18 +1339,16 @@ unsafe fn shell_menu(parse: &str, at: POINT, on_open: impl FnOnce()) {
         _ = MessageBeep(MB_ICONWARNING);
         return;
     }
+    if !skip.is_empty() {
+        drop_verbs(menu, &cm, skip);
+    }
     DRIVE_CM.with(|s| *s.borrow_mut() = (cm.cast().ok(), cm.cast().ok()));
     // TPM_RETURNCMD: the shell's ids 1..0x7fff must never come as WM_COMMAND (drive buttons, view menu ids)
     let pick = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_LEFTALIGN | TPM_TOPALIGN, at.x, at.y, None, main, None).0;
     DRIVE_CM.with(|s| *s.borrow_mut() = (None, None));
     if pick > 0 {
         let id = pick as usize - 1;
-        let mut verb = [0u16; 64];
-        let open = cm.GetCommandString(id, GCS_VERBW, None, PSTR(verb.as_mut_ptr() as *mut u8), verb.len() as u32).is_ok() && {
-            let n = verb.iter().position(|&w| w == 0).unwrap_or(verb.len());
-            let v = String::from_utf16_lossy(&verb[..n]);
-            v.eq_ignore_ascii_case("open") || v.eq_ignore_ascii_case("explore")
-        };
+        let open = cm_verb(&cm, id).is_some_and(|v| v.eq_ignore_ascii_case("open") || v.eq_ignore_ascii_case("explore"));
         if open {
             on_open();
         } else {
@@ -1474,7 +1506,7 @@ pub(crate) unsafe fn open_bin() {
 
 // Right-click, Shift+F10 or the menu key: Explorer's bin menu (Empty Recycle Bin asks first, by the shell itself).
 pub(crate) unsafe fn bin_menu(at: POINT) {
-    shell_menu(RECYCLE_BIN, at, || open_bin());
+    shell_menu(RECYCLE_BIN, at, &[], || open_bin());
     bin_soon(); // an emptying may end after InvokeCommand returns
 }
 
@@ -1567,17 +1599,7 @@ pub(crate) unsafe fn refresh_drives() -> bool {
     };
     let mut back = 0u32; // letters that came, removable or fixed: the panes moved off them may go home
     for (_, _, h) in gone {
-        if hover == h {
-            set_hover(HWND::default());
-        }
-        tip_text(h, "", TTM_DELTOOLW);
-        a11y_clear(h); // a later window may get the same HWND value
-        if GetFocus() == h {
-            focus_view(app(|a| a.s.active)); // the keys were on it: to the list, not to main (where F6 can't start)
-        }
-        _ = RevokeDragDrop(h);
-        _ = DROP_BTN.compare_exchange(h.0 as usize, 0, Ordering::Relaxed, Ordering::Relaxed);
-        _ = DestroyWindow(h);
+        unmake_place_button(h, hover);
     }
     for c in added {
         let kind = GetDriveTypeW(&HSTRING::from(format!("{}:\\", c as char)));
@@ -1601,13 +1623,204 @@ pub(crate) unsafe fn refresh_drives() -> bool {
     true
 }
 
-// The underline follows the active pane's drive: on the 300ms status tick, and at once on a pane switch.
+// A drive or cloud button going: its tooltip, screen reader props, drop target and the focus go first.
+unsafe fn unmake_place_button(h: HWND, hover: HWND) {
+    if hover == h {
+        set_hover(HWND::default());
+    }
+    tip_text(h, "", TTM_DELTOOLW);
+    a11y_clear(h); // a later window may get the same HWND value
+    if GetFocus() == h {
+        focus_view(app(|a| a.s.active)); // the keys were on it: to the list, not to main (where F6 can't start)
+    }
+    _ = RevokeDragDrop(h);
+    _ = DROP_BTN.compare_exchange(h.0 as usize, 0, Ordering::Relaxed, Ordering::Relaxed);
+    _ = DestroyWindow(h);
+}
+
+// ---------- cloud folder buttons (top toolbar) ----------
+// OneDrive, Dropbox, iCloud, Box …: the folders Explorer pins atop its navigation pane (and Files lists under
+// "Cloud drives"), as square icon buttons after the drive letters. Read from their registration only, never the
+// folder itself, so a provider that is offline or a slow disk is no wait; checked when the drives are.
+
+const CLOUD_NS: &str = r"Software\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace";
+
+// The buttons to show from the registrations: pinned to the navigation pane, on a drive path but not a drive root
+// (that letter has its own button), one per folder (any case), by name, at most MAX_CLOUD.
+pub(crate) fn cloud_list(raw: Vec<CloudReg>) -> Vec<CloudReg> {
+    let mut v: Vec<CloudReg> = raw
+        .into_iter()
+        .filter(|c| c.pinned)
+        .filter_map(|mut c| {
+            let p = c.path.trim().trim_end_matches('\\').to_string();
+            if !drive_path(&p) {
+                return None; // empty, a drive root (G:\), a share, a shell place
+            }
+            if c.name.trim().is_empty() || c.name.starts_with('@') {
+                c.name = p.rsplit('\\').next().unwrap_or(&p).to_string(); // no name, or a resource string
+            }
+            c.path = p;
+            Some(c)
+        })
+        .collect();
+    v.sort_by_cached_key(|c| (c.name.to_lowercase(), c.path.to_lowercase()));
+    let mut seen: Vec<String> = Vec::new();
+    v.retain(|c| {
+        let k = c.path.to_lowercase();
+        let new = !seen.contains(&k);
+        seen.push(k);
+        new
+    });
+    v.truncate(MAX_CLOUD);
+    v
+}
+
+// Which cloud folder `path` is in: any case, only at a whole name ("…\OneDrive" is not in "…\OneDrive - Work"),
+// the deepest when one holds another.
+pub(crate) fn cloud_mark<'a>(path: &str, roots: impl IntoIterator<Item = &'a str>) -> Option<usize> {
+    let under = |root: &str| {
+        let mut pc = path.chars();
+        root.chars().all(|r| pc.next().is_some_and(|c| c.to_lowercase().eq(r.to_lowercase()))) && matches!(pc.next(), None | Some('\\'))
+    };
+    roots.into_iter().enumerate().filter(|(_, r)| !r.is_empty() && under(r)).max_by_key(|(_, r)| r.chars().count()).map(|(k, _)| k)
+}
+
+pub(crate) fn cloud_tip(name: &str, path: &str) -> String {
+    format!(
+        "{name} — {path} · {}",
+        tr("open in the active pane · Drop files: copy / move · Right-click: cloud menu", "지금 패널에서 열기 · 끌어 놓기: 복사·이동 · 오른쪽 클릭: 클라우드 메뉴")
+    )
+}
+
+// A REG_SZ / REG_EXPAND_SZ under HKCU as stored (variables left for expand_vars); None = the value's default.
+unsafe fn cloud_text(key: &str, name: Option<&str>) -> Option<String> {
+    use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_NOEXPAND, RRF_RT_REG_EXPAND_SZ, RRF_RT_REG_SZ};
+    let (mut buf, mut n) = ([0u16; 1024], 2048u32);
+    let name = name.map(HSTRING::from);
+    let v = name.as_ref().map_or(PCWSTR::null(), |s| PCWSTR(s.as_ptr()));
+    let flags = RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ | RRF_NOEXPAND;
+    RegGetValueW(HKEY_CURRENT_USER, &HSTRING::from(key), v, flags, None, Some(buf.as_mut_ptr() as _), Some(&mut n)).ok().ok()?;
+    Some(String::from_utf16_lossy(&buf[..(n as usize / 2).min(1024)]).trim_end_matches('\0').to_string())
+}
+
+unsafe fn cloud_dword(key: &str, name: &str) -> Option<u32> {
+    use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
+    let (mut v, mut n) = (0u32, 4u32);
+    RegGetValueW(HKEY_CURRENT_USER, &HSTRING::from(key), &HSTRING::from(name), RRF_RT_REG_DWORD, None, Some(&mut v as *mut u32 as _), Some(&mut n)).ok().ok()?;
+    Some(v)
+}
+
+// The CLSIDs registered under Explorer's navigation pane root, each with what its class says.
+unsafe fn cloud_regs() -> Vec<CloudReg> {
+    use windows::Win32::System::Registry::{RegCloseKey, RegEnumKeyExW, RegOpenKeyExW, HKEY, HKEY_CURRENT_USER, KEY_READ};
+    let mut k = HKEY::default();
+    if RegOpenKeyExW(HKEY_CURRENT_USER, &HSTRING::from(CLOUD_NS), None, KEY_READ, &mut k).is_err() {
+        return Vec::new();
+    }
+    let mut ids = Vec::new();
+    for i in 0..64u32 {
+        let mut buf = [0u16; 256];
+        let mut n = buf.len() as u32;
+        if RegEnumKeyExW(k, i, Some(PWSTR(buf.as_mut_ptr())), &mut n, None, None, None, None).is_err() {
+            break; // ERROR_NO_MORE_ITEMS
+        }
+        ids.push(String::from_utf16_lossy(&buf[..(n as usize).min(buf.len())]));
+    }
+    _ = RegCloseKey(k);
+    ids.iter().filter(|id| id.starts_with('{')).map(|id| cloud_reg(id)).collect()
+}
+
+unsafe fn cloud_reg(id: &str) -> CloudReg {
+    let key = format!(r"Software\Classes\CLSID\{id}");
+    let bag = format!(r"{key}\Instance\InitPropertyBag");
+    // an empty TargetFolderPath counts as none: the known folder may still name it
+    let path = match cloud_text(&bag, Some("TargetFolderPath")).filter(|p| !p.trim().is_empty()) {
+        Some(p) => Some(expand_vars(&p, |v| std::env::var(v).ok())),
+        // DONT_VERIFY, as Ctrl+G: the folder is not probed
+        None => cloud_text(&bag, Some("TargetKnownFolder")).and_then(|g| CLSIDFromString(&HSTRING::from(g.trim())).ok()).and_then(|g| {
+            let p = SHGetKnownFolderPath(&g, KF_FLAG_DONT_VERIFY, None).ok()?;
+            let s = p.to_string().ok();
+            CoTaskMemFree(Some(p.0 as _));
+            s
+        }),
+    };
+    CloudReg {
+        name: cloud_text(&key, None).unwrap_or_default(),
+        pinned: cloud_dword(&key, "System.IsPinnedToNameSpaceTree") == Some(1),
+        path: path.unwrap_or_default(),
+        icon: cloud_text(&format!(r"{key}\DefaultIcon"), None).unwrap_or_default(),
+    }
+}
+
+// Its DefaultIcon as a system image list index, -1 when it has none (the folder icon is drawn instead).
+unsafe fn cloud_icon(src: &str) -> i32 {
+    let Some((file, at)) = icon_location(src, |v| std::env::var(v).ok()) else { return -1 };
+    Shell_GetCachedImageIndexW(&HSTRING::from(file), at, 0).max(-1)
+}
+
+// Reads the registrations again and remakes the buttons when the list differs; true if it did (the caller lays
+// them out). Each time Grids comes to the front, so only the registry here; icons only for a new list.
+pub(crate) unsafe fn refresh_clouds() -> bool {
+    let list = cloud_list(cloud_regs());
+    let Some((main, hover, gone)) = app(|a| {
+        let same = a.clouds.len() == list.len() && a.clouds.iter().zip(&list).all(|(c, r)| c.reg == *r);
+        (!same).then(|| (a.main, a.hover, std::mem::take(&mut a.clouds)))
+    }) else {
+        return false;
+    };
+    for c in gone {
+        unmake_place_button(c.h, hover);
+    }
+    let mut made = Vec::new();
+    for (k, reg) in list.into_iter().enumerate() {
+        let ix = cloud_icon(&reg.icon);
+        let name = HSTRING::from(reg.name.as_str()); // also the accessible name
+        let h = child(main, w!("BUTTON"), PCWSTR(name.as_ptr()), BS_OWNERDRAW as u32, WINDOW_EX_STYLE(0), ID_CLOUD + k as i32, HFONT::default());
+        add_tip(h, &cloud_tip(&reg.name, &reg.path));
+        button_drop(h, reg.path.clone()); // files dropped on it go to that folder, as on a drive button
+        made.push(Cloud { reg, ix, h });
+    }
+    app(|a| a.clouds = made);
+    mark_drive();
+    true
+}
+
+// Left click, and Open / Explore in its menu: the folder in the active pane.
+unsafe fn open_cloud_at(name: &str, path: &str) {
+    let i = app(|a| a.s.active);
+    if navigate(i, path) {
+        focus_view(i);
+    } else {
+        fail(Fail::FolderCantOpen, name); // removed since, or the provider's folder is gone
+    }
+}
+
+pub(crate) unsafe fn open_cloud(k: usize) {
+    if let Some((name, path)) = app(|a| a.clouds.get(k).map(|c| (c.reg.name.clone(), c.reg.path.clone()))) {
+        open_cloud_at(&name, &path);
+    }
+}
+
+// Right-click, Shift+F10 or the menu key: the folder's shell menu (the provider's "Always keep on this device",
+// "Free up space", "View online" …).
+pub(crate) unsafe fn cloud_menu(k: usize, at: POINT) {
+    if let Some((name, path)) = app(|a| a.clouds.get(k).map(|c| (c.reg.name.clone(), c.reg.path.clone()))) {
+        // no Delete / Cut: a slip would send the whole cloud folder to the bin, and the provider syncs that
+        shell_menu(&path, at, &["delete", "cut"], || open_cloud_at(&name, &path));
+    }
+}
+
+// The underline follows the active pane's drive, or its cloud folder instead when it is in one: on the 300ms status
+// tick, and at once on a pane switch.
 pub(crate) unsafe fn mark_drive() {
     let Some(hs) = app(|a| {
-        let m = drive_of(&a.s.paths[a.s.active]);
-        (a.drive_mark != m).then(|| {
+        let p = &a.s.paths[a.s.active];
+        let cm = cloud_mark(p, a.clouds.iter().map(|c| c.reg.path.as_str())).map_or(HWND::default(), |k| a.clouds[k].h);
+        let m = if cm.0.is_null() { drive_of(p) } else { None };
+        (a.drive_mark != m || a.cloud_mark != cm).then(|| {
             a.drive_mark = m;
-            a.drives.iter().map(|d| d.2).collect::<Vec<_>>()
+            a.cloud_mark = cm;
+            a.drives.iter().map(|d| d.2).chain(a.clouds.iter().map(|c| c.h)).collect::<Vec<_>>()
         })
     }) else {
         return;
@@ -1644,6 +1857,9 @@ pub(crate) unsafe fn set_language(ko: bool) {
     }
     for (c, kind, h) in app(|a| a.drives.clone()) {
         tip_text(h, &drive_tip(c, kind), TTM_UPDATETIPTEXTW);
+    }
+    for (tip, h) in app(|a| a.clouds.iter().map(|c| (cloud_tip(&c.reg.name, &c.reg.path), c.h)).collect::<Vec<_>>()) {
+        tip_text(h, &tip, TTM_UPDATETIPTEXTW);
     }
     bin_relabel(main);
     // a filtered pane's empty-list words follow the new language now, not at the next browse
