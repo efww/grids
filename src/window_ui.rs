@@ -302,6 +302,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             WM_UPDATE => update_msg(h, wp.0),
             WM_STAR => star_msg(wp.0 != 0),
             WM_HASH => hash_msg(h, wp.0, lp.0 != 0),
+            WM_DUPES => dupes_msg(wp.0, lp.0 != 0),
             WM_GROUPED => grouped_msg(),
             WM_STAMPED => stamped_msg(),
             WM_EDITED => edited_msg(lp),

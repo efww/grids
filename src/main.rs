@@ -88,6 +88,7 @@ mod listing;
 mod clipadd;
 mod switcher;
 mod photos;
+mod dupes;
 
 use ui_defs::*;
 // explicit, so it wins over the same name glob-imported from windows (a glob clash would turn match patterns into bindings)
@@ -131,6 +132,7 @@ use listing::*;
 use clipadd::*;
 use switcher::*;
 use photos::*;
+use dupes::*;
 
 /// Let a drive with no disk (empty card reader slot, DVD drive, pulled USB stick) just fail the file call,
 /// instead of Windows' "No Disk" system box freezing the calling thread until it is answered.
@@ -581,7 +583,7 @@ mod tests {
             assert_eq!(open_in_pick(ID_DIFF_TO + k), OpenPick::Diff(k));
             menu.extend([ID_OPEN_TO + k, ID_COPY_TO + k, ID_MOVE_TO + k, ID_SWAP_TO + k, ID_WM_PANE + k, ID_DIFF_TO + k]);
         }
-        let shell = [ID_INUSE, ID_WM_PAIR, ID_HASH, ID_GROUP, ID_STAMP, ID_ORG, ID_ORG + 1, ID_ORG + 2, ID_EMPTY, ID_USAGE, ID_LIST, ID_CLIPADD, ID_RESTORE, ID_EXPLORER, ID_PHOTO, ID_PHOTO + 1, ID_PHOTO + 2];
+        let shell = [ID_INUSE, ID_WM_PAIR, ID_HASH, ID_GROUP, ID_STAMP, ID_ORG, ID_ORG + 1, ID_ORG + 2, ID_EMPTY, ID_USAGE, ID_LIST, ID_CLIPADD, ID_RESTORE, ID_EXPLORER, ID_PHOTO, ID_PHOTO + 1, ID_PHOTO + 2, ID_DUPES];
         for p in shell {
             assert_eq!(open_in_pick(p), OpenPick::Shell, "{p}");
         }
@@ -627,7 +629,7 @@ mod tests {
         let msgs = [
             WM_NARROW_AGAIN, WM_DROP_OPEN, WM_PEEK_DONE, WM_PANE_ICON, WM_DRIVES, WM_KIDS, WM_THEME_SYNC, WM_PEEK_LOST, WM_PEEK_HOSTED,
             WM_HASH, WM_SHELL_CHANGE, WM_GROUPED, WM_TOUR, WM_TRAY, WM_COPY_DONE, WM_USAGE, WM_FONT_SYNC, WM_BIN_COUNT, WM_BIN_CHANGE,
-            WM_STAMPED, WM_SIZE_DONE, WM_DISK_DONE, WM_EDITED, WM_OPEN_ARGS, WM_UPDATE, WM_STAR,
+            WM_STAMPED, WM_SIZE_DONE, WM_DISK_DONE, WM_EDITED, WM_OPEN_ARGS, WM_UPDATE, WM_STAR, WM_DUPES,
         ];
         distinct("main WM_APP messages", &msgs.map(|m| m as usize));
     }
@@ -3176,7 +3178,7 @@ mod tests {
         let line = |doc: &'static str, start: &str| -> &'static str { doc.lines().find(|l| l.starts_with(start)).unwrap_or_else(|| panic!("no {start:?} line")) };
         let mut open_in = vec![M_CHOOSE];
         for slot in menu_slots() {
-            let plain: Vec<_> = slot.iter().filter(|t| **t != M_HASH_STOP && !t.0.contains("{n}")).copied().collect();
+            let plain: Vec<_> = slot.iter().filter(|t| **t != M_HASH_STOP && **t != M_DUPES_STOP && !t.0.contains("{n}")).copied().collect();
             open_in.extend(if plain.is_empty() { slot.to_vec() } else { plain });
         }
         let groups = [
@@ -3227,11 +3229,12 @@ mod tests {
 
     // Every source file, compiled in: the test exe runs on the Windows runner without the source tree.
     // A new module must be listed here too (ui_text_pairs_match checks this against main.rs's `mod` lines).
-    const SOURCES: [(&str, &str); 44] = [
+    const SOURCES: [(&str, &str); 45] = [
         ("main.rs", include_str!("main.rs")),
         ("autostart.rs", include_str!("autostart.rs")),
         ("clipadd.rs", include_str!("clipadd.rs")),
         ("dialog_jump.rs", include_str!("dialog_jump.rs")),
+        ("dupes.rs", include_str!("dupes.rs")),
         ("docparse.rs", include_str!("docparse.rs")),
         ("draw.rs", include_str!("draw.rs")),
         ("everything.rs", include_str!("everything.rs")),
@@ -3752,8 +3755,8 @@ mod tests { tr("in", "안") }
 
     // Every ⇄ menu item that can show at the top level at the same time: one letter each, none a pane digit,
     // none the first letter of an unmarked item (the grey title, "Pane 10" …), in both languages.
-    fn menu_slots() -> [&'static [(&'static str, &'static str)]; 17] {
-        [&[M_SWAP], &[M_COPY], &[M_MOVE], &[M_INUSE], &[M_HASH, M_HASH_STOP], &[M_ORG], &[M_PHOTO], &[M_GROUP_N, M_GROUP], &[M_STAMP_N, M_STAMP], &[M_EMPTY], &[M_USAGE], &[M_LIST_N, M_LIST], &[M_CLIPADD_N, M_CLIPADD], &[M_RESTORE], &[M_DIFF], &[M_EXPLORER_SEL, M_EXPLORER], &[M_WM_PAIR, M_WM_PANE]]
+    fn menu_slots() -> [&'static [(&'static str, &'static str)]; 18] {
+        [&[M_SWAP], &[M_COPY], &[M_MOVE], &[M_INUSE], &[M_HASH, M_HASH_STOP], &[M_ORG], &[M_PHOTO], &[M_GROUP_N, M_GROUP], &[M_STAMP_N, M_STAMP], &[M_EMPTY], &[M_DUPES, M_DUPES_STOP], &[M_USAGE], &[M_LIST_N, M_LIST], &[M_CLIPADD_N, M_CLIPADD], &[M_RESTORE], &[M_DIFF], &[M_EXPLORER_SEL, M_EXPLORER], &[M_WM_PAIR, M_WM_PANE]]
     }
 
     // X is Explorer's own letter: no other ⇄ item (nor the title, a pane row or a digit) takes it

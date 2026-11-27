@@ -668,7 +668,7 @@ unsafe fn diff_panes(src: usize) -> (String, Vec<(usize, String, String, u8)>) {
 }
 
 // The view's files by index (folders and items with no name left out), from the properties it already holds.
-unsafe fn diff_items(fv: &IFolderView2, n: i32) -> (Vec<i32>, Vec<DiffItem>) {
+pub(crate) unsafe fn diff_items(fv: &IFolderView2, n: i32) -> (Vec<i32>, Vec<DiffItem>) {
     use windows::Win32::Storage::EnhancedStorage::{PKEY_DateModified, PKEY_Size};
     let one = |k: i32| -> Option<DiffItem> {
         let it = fv.GetItem::<IShellItem>(k).ok()?;
@@ -688,7 +688,7 @@ unsafe fn diff_items(fv: &IFolderView2, n: i32) -> (Vec<i32>, Vec<DiffItem>) {
 
 // `hits` (ascending) selected in pane i's view and nothing else; the first one focused and shown in that view
 // (the keyboard stays where it is). No hits: its selection cleared.
-unsafe fn diff_apply(i: usize, fv: &IFolderView2, hits: &[i32]) {
+pub(crate) unsafe fn diff_apply(i: usize, fv: &IFolderView2, hits: &[i32]) {
     let Some(&first) = hits.first() else {
         if let Some(sv) = view_of::<IShellView>(i) {
             _ = sv.SelectItem(std::ptr::null(), SVSI_DESELECTOTHERS.0 as u32);

@@ -57,7 +57,7 @@ fn is_sha(s: &str) -> bool {
     s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-fn base_name(s: &str) -> &str {
+pub(crate) fn base_name(s: &str) -> &str {
     s.rsplit(['/', '\\']).next().unwrap_or(s)
 }
 
@@ -187,10 +187,10 @@ fn io_why(e: &std::io::Error) -> Why {
 }
 
 // FILE_ATTRIBUTE_OFFLINE | RECALL_ON_OPEN | RECALL_ON_DATA_ACCESS: OneDrive & co. would download it on read
-const ONLINE_ONLY: u32 = 0x1000 | 0x4_0000 | 0x40_0000;
+pub(crate) const ONLINE_ONLY: u32 = 0x1000 | 0x4_0000 | 0x40_0000;
 
 // None = cancelled. `each` gets the bytes read so far.
-fn hash_file(path: &str, stop: &dyn Fn() -> bool, each: &mut dyn FnMut(u64)) -> Option<Got> {
+pub(crate) fn hash_file(path: &str, stop: &dyn Fn() -> bool, each: &mut dyn FnMut(u64)) -> Option<Got> {
     let before = match std::fs::metadata(path) {
         Ok(m) if m.is_dir() => return Some(Got::Skip(Why::Folder)),
         Ok(m) if m.file_attributes() & ONLINE_ONLY != 0 => return Some(Got::Skip(Why::Online)),
@@ -325,7 +325,7 @@ unsafe fn clip_text() -> std::result::Result<String, String> {
     Ok(s)
 }
 
-fn drop_note(mine: &str) {
+pub(crate) fn drop_note(mine: &str) {
     app(|a| {
         if a.note.as_ref().is_some_and(|(s, _)| s == mine) {
             a.note = None;
