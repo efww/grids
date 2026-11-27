@@ -4772,6 +4772,65 @@ mod tests { tr("in", "안") }
     }
 
     #[test]
+    fn markdown_lines_more() {
+        use Style::*;
+        let rule = "────────";
+        let want: &[(&str, &str, Style)] = &[
+            ("## 설치 ##", "설치", H2),
+            ("### 셋", "셋", H3),
+            ("#### 넷 #", "넷", H3),
+            ("# C#", "C#", H1),
+            ("#", "#", Plain),
+            ("#태그", "#태그", Plain),
+            ("* 별", "• 별", Bullet),
+            ("+ 더하기", "• 더하기", Bullet),
+            ("    * 깊이", "        • 깊이", Bullet),
+            (">붙은 인용", "붙은 인용", Quote),
+            ("***", rule, Quote),
+            ("___", rule, Quote),
+            ("* * *", rule, Quote),
+            ("- - -", rule, Quote),
+            ("--- ", rule, Quote),
+            ("\t_ _\t_", rule, Quote),
+            ("- -", "• -", Bullet),
+            ("**", "**", Plain),
+            ("* *", "• *", Bullet),
+            ("--", "--", Plain),
+            ("*-*", "*-*", Plain),
+            ("`__init__`", "__init__", Plain),
+            ("`2 ** 3`", "2 ** 3", Plain),
+            ("**굵게**", "굵게", Plain),
+            ("__굵게__", "굵게", Plain),
+            ("이름: ______", "이름: ______", Plain),
+            ("짝 없는 ` 하나", "짝 없는 ` 하나", Plain),
+            ("2 ** 3 그리고 **굵게**", "2 ** 3 그리고 굵게", Plain),
+            ("``a`b``", "a`b", Plain),
+            ("**굵게**한글", "굵게한글", Plain),
+            ("`코드`🙂", "코드🙂", Plain),
+            ("🙂**", "🙂**", Plain),
+            ("__", "__", Plain),
+            ("`", "`", Plain),
+            ("", "", Plain),
+            ("~~~", "", Mono), // fence: no output line
+            ("***", "***", Mono),
+            ("~~~", "", Mono),
+            ("```", "", Mono),
+            ("열린 울타리", "열린 울타리", Mono),
+            ("# 아님", "# 아님", Mono),
+        ];
+        let src = want.iter().map(|w| w.0).collect::<Vec<_>>().join("\r\n");
+        let got = md_lines(&src);
+        let fences = want.iter().filter(|w| w.0.starts_with("~~~") || w.0.starts_with("```")).count();
+        assert_eq!(got.len(), src.lines().count() - fences);
+        let expect: Vec<(String, Style)> = want
+            .iter()
+            .filter(|w| !(w.0.starts_with("~~~") || w.0.starts_with("```")))
+            .map(|w| (w.1.to_string(), w.2))
+            .collect();
+        assert_eq!(got, expect);
+    }
+
+    #[test]
     fn icon_alpha() {
         let mut photo = vec![10, 20, 30, 0, 40, 50, 60, 0];
         fix_alpha(&mut photo);

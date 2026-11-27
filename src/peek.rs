@@ -987,7 +987,8 @@ pub(crate) struct Line {
     table: Option<(Vec<Vec<String>>, Vec<i32>)>,
 }
 
-/// Markdown lines with their look: headings, bullets, quotes, fenced code. Inline marks are dropped.
+/// Markdown lines with their look: headings, bullets, quotes, rules, fenced code; one entry per source line
+/// (fence lines are left out). Code spans keep their text; paired bold marks are dropped, unpaired marks stay.
 pub(crate) fn md_lines(text: &str) -> Vec<(String, Style)> {
     let mut out = Vec::new();
     let mut code = false;
@@ -1001,26 +1002,108 @@ pub(crate) fn md_lines(text: &str) -> Vec<(String, Style)> {
             out.push((l.to_string(), Style::Mono));
             continue;
         }
-        let clean = |s: &str| s.replace("**", "").replace("__", "").replace('`', "");
+        // An ATX heading's closing #s go only when a space comes before them ("# C#" keeps its #).
+        let heading = |h: &str| {
+            let h = h.trim_end();
+            let bare = h.trim_end_matches('#');
+            md_inline(if bare.len() < h.len() && (bare.is_empty() || bare.ends_with([' ', '\t'])) { bare.trim_end() } else { h })
+        };
         let h3 = t.strip_prefix("### ").or_else(|| t.strip_prefix("#### ")).or_else(|| t.strip_prefix("##### "));
         let item = t.strip_prefix("- ").or_else(|| t.strip_prefix("* ")).or_else(|| t.strip_prefix("+ "));
-        let (text, style) = if let Some(h) = h3 {
-            (clean(h), Style::H3)
+        let (text, style) = if md_rule(t) {
+            ("────────".into(), Style::Quote)
+        } else if let Some(h) = h3 {
+            (heading(h), Style::H3)
         } else if let Some(h) = t.strip_prefix("## ") {
-            (clean(h), Style::H2)
+            (heading(h), Style::H2)
         } else if let Some(h) = t.strip_prefix("# ") {
-            (clean(h), Style::H1)
+            (heading(h), Style::H1)
         } else if let Some(b) = item {
             let indent = "    ".repeat((l.len() - t.len()) / 2);
-            (format!("{indent}• {}", clean(b)), Style::Bullet)
+            (format!("{indent}• {}", md_inline(b)), Style::Bullet)
         } else if let Some(q) = t.strip_prefix("> ").or_else(|| t.strip_prefix('>')) {
-            (clean(q), Style::Quote)
-        } else if t.len() >= 3 && t.chars().all(|c| c == '-') {
-            ("────────".into(), Style::Quote)
+            (md_inline(q), Style::Quote)
         } else {
-            (clean(l), Style::Plain)
+            (md_inline(l), Style::Plain)
         };
         out.push((text, style));
+    }
+    out
+}
+
+// A thematic break: three or more of the same -, * or _, with any spaces or tabs between them.
+fn md_rule(t: &str) -> bool {
+    let mut mark = None;
+    let mut n = 0;
+    for c in t.chars() {
+        match c {
+            ' ' | '\t' => {}
+            '-' | '*' | '_' if mark.is_none() || mark == Some(c) => {
+                mark = Some(c);
+                n += 1;
+            }
+            _ => return false,
+        }
+    }
+    n >= 3
+}
+
+// Inline marks: a code span (a run of N backticks closed by exactly N) keeps its text as is and loses only the
+// backticks; ** and __ go when they pair up around text that neither starts nor ends with a space. Anything
+// unpaired (a lone backtick, "2 ** 3", a "______" blank to fill in) stays as written.
+fn md_inline(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < s.len() {
+        let c = b[i];
+        if c == b'`' {
+            let n = b[i..].iter().take_while(|&&x| x == b'`').count();
+            let open = i + n;
+            let mut j = open;
+            let mut close = None;
+            while let Some(p) = s[j..].find('`') {
+                let at = j + p;
+                let m = b[at..].iter().take_while(|&&x| x == b'`').count();
+                if m == n {
+                    close = Some(at);
+                    break;
+                }
+                j = at + m;
+            }
+            match close {
+                Some(at) => {
+                    out.push_str(&s[open..at]);
+                    i = at + n;
+                }
+                None => {
+                    out.push_str(&s[i..open]);
+                    i = open;
+                }
+            }
+            continue;
+        }
+        if (c == b'*' || c == b'_') && b.get(i + 1) == Some(&c) {
+            let mark = &s[i..i + 2];
+            let start = i + 2;
+            // Only the nearest closing mark is tried; if it does not fit, the opening mark stays and the search
+            // goes on right after it, so "2 ** 3 and **bold**" still loses the marks around "bold".
+            if let Some(end) = s[start..].find(mark).map(|p| start + p) {
+                let inner = &s[start..end];
+                let edge = |ch: Option<char>| ch.is_some_and(|ch| !ch.is_whitespace());
+                if edge(inner.chars().next()) && edge(inner.chars().next_back()) {
+                    out.push_str(&md_inline(inner));
+                    i = end + 2;
+                    continue;
+                }
+            }
+            out.push_str(mark);
+            i = start;
+            continue;
+        }
+        let ch = s[i..].chars().next().unwrap_or_default();
+        out.push(ch);
+        i += ch.len_utf8().max(1);
     }
     out
 }
