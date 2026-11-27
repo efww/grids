@@ -483,9 +483,7 @@ pub(crate) unsafe fn crumb_layout(dc: HDC, font: HFONT, i: usize, field: RECT) -
 }
 
 pub(crate) fn addr_rect(h: HWND, dpi: i32) -> RECT {
-    let mut rc = RECT::default();
-    _ = unsafe { GetClientRect(h, &mut rc) };
-    pane_geo(rc.right, rc.bottom, dpi).addr
+    unsafe { pane_geo_of(h, dpi) }.addr
 }
 
 // The crumb under a pane-client point: None off the crumbs (edit showing, or outside the address pill),
@@ -853,17 +851,13 @@ unsafe fn track_leave(h: HWND) {
 pub(crate) unsafe fn head_hot_of(h: HWND, x: i32, y: i32) -> Option<HeadHot> {
     let i = app(|a| a.panes.iter().position(|p| p.as_ref().is_some_and(|p| p.hwnd == h)))?;
     let (n, cur, dpi) = app(|a| (a.s.tab_list(i).len(), a.s.tab[i], a.dpi));
-    let mut rc = RECT::default();
-    _ = GetClientRect(h, &mut rc);
-    head_hot_at(&pane_geo(rc.right, rc.bottom, dpi), n, cur, x, y, dpi)
+    head_hot_at(&pane_geo_of(h, dpi), n, cur, x, y, dpi)
 }
 
 // Where a header target is painted in h: the whole tab strip (a tab lightening moves its neighbours' hairlines),
 // or the filter icon's slot.
 unsafe fn head_hot_rect(h: HWND, t: HeadHot, dpi: i32) -> RECT {
-    let mut rc = RECT::default();
-    _ = GetClientRect(h, &mut rc);
-    let pg = pane_geo(rc.right, rc.bottom, dpi);
+    let pg = pane_geo_of(h, dpi);
     match t {
         HeadHot::Kind => RECT { right: pg.filt.left + 24 * dpi / 96, ..pg.filt }, // the icon can be wider than a narrow pill
         _ => pg.tabs,
@@ -934,7 +928,7 @@ pub(crate) unsafe fn paint_pane(h: HWND) {
     let animate = loading.is_some_and(|e| e >= LOAD_SHOW) && load_animate();
     buffered(h, |dc, rc| {
         let s = |v: i32| v * dpi / 96;
-        let pg = pane_geo(rc.right, rc.bottom, dpi);
+        let pg = pane_geo_of(h, dpi);
         fill(dc, rc, pal().card);
         // active: header bar in the selection colour, same colour as the border
         fill(dc, RECT { bottom: pg.view.top, ..rc }, head);
@@ -959,7 +953,8 @@ pub(crate) unsafe fn paint_pane(h: HWND) {
             };
             text(dc, pg.num, &(i + 1).to_string(), small_font, ink, DT_CENTER);
         }
-        for (p, on) in [(pg.addr, addr_on), (pg.filt, filt_on)] {
+        // a folded field is zero wide: no pill, no ring
+        for (p, on) in [(pg.addr, addr_on), (pg.filt, filt_on)].into_iter().filter(|(p, _)| p.right > p.left) {
             fill(dc, p, pal().pill);
             if on {
                 frame(dc, p, 1, if active { ink } else { accent });
@@ -970,7 +965,7 @@ pub(crate) unsafe fn paint_pane(h: HWND) {
         }
         // idle address bar: C: › Users › Public, parents dimmed, the crumb under the mouse shaded,
         // a '›' whose subfolder list is on its way tinted and showing '…'
-        if let Some(i) = i.filter(|_| crumbs_on) {
+        if let Some(i) = i.filter(|_| crumbs_on && pg.addr.right > pg.addr.left) {
             for (k, (r, label, c)) in crumb_layout(dc, font, i, crumb_field(pg.addr, dpi)).into_iter().enumerate() {
                 let wait = matches!(&c, Crumb::Kids(d, _) if waiting.as_ref() == Some(d));
                 if wait {

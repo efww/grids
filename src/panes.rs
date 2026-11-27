@@ -291,16 +291,70 @@ pub(crate) unsafe fn move_all(moves: &[(HWND, RECT)], eb: Option<(&IExplorerBrow
     _ = EndDeferWindowPos(dwp);
 }
 
-pub(crate) unsafe fn layout_pane(h: HWND) {
-    let Some((eb, dpi, disp)) = app(|a| a.panes.iter().flatten().find(|p| p.hwnd == h).map(|p| (p.eb.clone(), a.dpi, p.disp.clone()))) else {
-        return;
-    };
-    let fh = app(|a| a.fh) + 2;
+// Pane window h's geometry as it is on screen: a narrow bar spreads its focused address or filter edit. Painting,
+// clicks, hover and layout_pane all go through here, so what is drawn is what is hit.
+pub(crate) unsafe fn pane_geo_of(h: HWND, dpi: i32) -> PaneGeo {
+    pane_geo_wide(h, dpi, None)
+}
+
+// pane_geo_of with the focused field given (None: read it)
+unsafe fn pane_geo_wide(h: HWND, dpi: i32, wide: Option<Wide>) -> PaneGeo {
     let mut rc = RECT::default();
     _ = GetClientRect(h, &mut rc);
+    let wide = wide.unwrap_or_else(|| {
+        let f = GetFocus();
+        let on = |id: i32| !f.is_invalid() && GetDlgItem(Some(h), id).is_ok_and(|e| e == f);
+        if on(ID_EDIT) {
+            Wide::Addr
+        } else if on(ID_FILTER) {
+            Wide::Filt
+        } else {
+            Wide::No
+        }
+    });
+    pane_geo_at(rc.right, rc.bottom, dpi, text_grow_now(), TABS_ON.load(Ordering::Relaxed), wide)
+}
+
+// Posted to a pane: its address edit, clicked while it showed typed text, took the focus; spread it now that the
+// click has put the caret (moved during the click, the caret would land where the edit was)
+pub(crate) const WM_FIELD_SPREAD: u32 = WM_APP + 66;
+
+// Focus going into or out of h's address / filter edit: a folded bar spreads or folds that field again (only the
+// bar's own controls move); on a bar with room the field just repaints its focus ring (and the address swaps
+// crumbs and edit).
+pub(crate) unsafe fn field_focus(h: HWND, id: i32) {
+    let dpi = app(|a| a.dpi);
+    let (no, wide) = (pane_geo_wide(h, dpi, Some(Wide::No)), if id == ID_EDIT { Wide::Addr } else { Wide::Filt });
+    if pane_geo_wide(h, dpi, Some(wide)) != no {
+        let e = GetDlgItem(Some(h), ID_EDIT).unwrap_or_default();
+        if id == ID_EDIT && GetFocus() == e && GetKeyState(VK_LBUTTON.0 as i32) < 0 {
+            _ = PostMessageW(Some(h), WM_FIELD_SPREAD, WPARAM(0), LPARAM(0));
+        } else {
+            place_head(h);
+        }
+        sync_addr(h); // repaints
+    } else if id == ID_EDIT {
+        sync_addr(h);
+    } else {
+        _ = InvalidateRect(Some(h), None, false);
+    }
+}
+
+// The bar's buttons and edits where pane_geo_of puts them now (the list below stays)
+pub(crate) unsafe fn place_head(h: HWND) {
+    if let Some((moves, _)) = head_moves(h) {
+        move_all(&moves, None);
+        head_rehover(h); // the filter icon may have moved under a still pointer
+    }
+}
+
+// The bar's controls with their places, and pane_geo_of itself
+unsafe fn head_moves(h: HWND) -> Option<(Vec<(HWND, RECT)>, PaneGeo)> {
+    let dpi = app(|a| a.panes.iter().flatten().any(|p| p.hwnd == h).then_some(a.dpi))?;
+    let fh = app(|a| a.fh) + 2;
     let s = |v: i32| v * dpi / 96;
-    let pg = pane_geo(rc.right, rc.bottom, dpi);
-    // borderless edit, vertically centred inside its pill
+    let pg = pane_geo_of(h, dpi);
+    // borderless edit, vertically centred inside its pill (none in a folded one: it is zero wide)
     let inside = |p: RECT, l: i32, r: i32| {
         let top = p.top + (p.bottom - p.top - fh) / 2;
         RECT { left: p.left + l, top, right: (p.right - r).max(p.left + l), bottom: top + fh }
@@ -310,6 +364,15 @@ pub(crate) unsafe fn layout_pane(h: HWND) {
     moves.push((ctl(ID_EDIT), inside(pg.addr, crumb_field(pg.addr, dpi).left - pg.addr.left, s(6)))); // where the crumbs start
     moves.push((ctl(ID_FILTER), inside(pg.filt, s(24), s(6))));
     moves.push((ctl(ID_FAV), pg.fav));
+    Some((moves, pg))
+}
+
+pub(crate) unsafe fn layout_pane(h: HWND) {
+    let Some((eb, disp)) = app(|a| a.panes.iter().flatten().find(|p| p.hwnd == h).map(|p| (p.eb.clone(), p.disp.clone()))) else {
+        return;
+    };
+    let Some((moves, pg)) = head_moves(h) else { return };
+    let ctl = |id: i32| GetDlgItem(Some(h), id).unwrap_or_default();
     move_all(&moves, Some((&eb, pg.view)));
     show_path_end(ctl(ID_EDIT), &disp);
     sync_addr(h);

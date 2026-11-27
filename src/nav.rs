@@ -1540,9 +1540,7 @@ pub(crate) unsafe fn kind_menu(i: usize) {
     }
     let clear = if cur.is_empty() && text_of(f).is_empty() { MF_STRING | MF_GRAYED } else { MF_STRING };
     _ = AppendMenuW(menu, clear, 101, &HSTRING::from(tr("Clear filter", "필터 지우기")));
-    let mut rc = RECT::default();
-    _ = GetClientRect(h, &mut rc);
-    let pg = pane_geo(rc.right, rc.bottom, app(|a| a.dpi));
+    let pg = pane_geo_of(h, app(|a| a.dpi));
     let mut at = POINT { x: pg.filt.left, y: pg.filt.bottom };
     _ = ClientToScreen(h, &mut at);
     let pick = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN, at.x, at.y, None, h, None).0 as usize;

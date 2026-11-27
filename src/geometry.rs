@@ -271,6 +271,8 @@ pub(crate) fn cell_rect(g: &Geo, h: &[usize], i: usize) -> RECT {
 }
 
 // Inside a pane plate: icon buttons, address pill, ⇄, filter pill on top; the Explorer view below.
+// Whatever a narrow bar folds away is zero wide (see pane_geo_at).
+#[derive(PartialEq, Debug)]
 pub(crate) struct PaneGeo {
     pub(crate) num: RECT,      // pane number (Ctrl+N); zero width when the pane is too narrow
     pub(crate) btn: [RECT; 4], // back, forward, up, open-in
@@ -281,31 +283,76 @@ pub(crate) struct PaneGeo {
     pub(crate) view: RECT,
 }
 
-pub(crate) fn pane_geo(w: i32, h: i32, dpi: i32) -> PaneGeo {
-    pane_geo_at(w, h, dpi, text_grow_now(), TABS_ON.load(Ordering::Relaxed))
+/// The header field a focused edit spreads over a narrow, folded bar: the address (Ctrl+L, F4, F6) or the filter (Ctrl+F).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Wide {
+    No,
+    Addr,
+    Filt,
 }
 
-// pane_geo with the text growth and the tab strip given rather than read: the bar and its pills and buttons are
-// `grow` px taller (widths stay; the vertical inset is the same), the tab strip too.
-pub(crate) fn pane_geo_at(w: i32, h: i32, dpi: i32, grow: i32, tabs: bool) -> PaneGeo {
+pub(crate) fn pane_geo(w: i32, h: i32, dpi: i32) -> PaneGeo {
+    pane_geo_at(w, h, dpi, text_grow_now(), TABS_ON.load(Ordering::Relaxed), Wide::No)
+}
+
+// pane_geo with the text growth, the tab strip and the focused field given rather than read: the bar and its pills
+// and buttons are `grow` px taller (widths stay; the vertical inset is the same), the tab strip too.
+// A narrow bar folds the way a browser toolbar or VS Code's command bar does, so nothing overlaps or thins to a thread:
+// the filter to its icon, then forward, ⇄, ★, back go (their keys still work), then the address. What stays keeps
+// its shape; what goes is zero wide in its place (menus still open from there). From s(272) on, nothing folds.
+pub(crate) fn pane_geo_at(w: i32, h: i32, dpi: i32, grow: i32, tabs: bool, wide: Wide) -> PaneGeo {
     let s = |v: i32| v * dpi / 96;
-    let (bar, bh, b, pad) = (s(30) + grow, s(22) + grow, s(24), s(4));
+    let (bar, bh, b, pad, gap) = (s(30) + grow, s(22) + grow, s(24), s(4), s(2));
     let strip = tab_strip_h_at(dpi, grow, tabs);
     let y = (bar - bh) / 2;
     let r = |x: i32, wd: i32| RECT { left: x, top: y, right: x + wd.max(0), bottom: y + bh };
-    let fav = r(w - pad - b, b);
-    let fw = s(150).min((w - 2 * pad - 5 * b) / 3).max(0);
-    let filt = r(fav.left - s(2) - fw, fw);
-    let open = r(filt.left - s(2) - b, b);
-    // pane number at the far left, only while the address edit (pill minus its s(8)/s(6) insets) keeps s(32)
+    let fw0 = s(150).min((w - 2 * pad - 5 * b) / 3).max(0);
+    // pane number at the far left, only while the address edit (pill minus its s(8)/s(6) insets) keeps s(32) on
+    // the unfolded bar: it shows from the same width as before folding came in
+    let open0 = w - pad - b - gap - fw0 - gap - b;
     let nw = s(18);
-    let nw = if open.left - s(4) - (pad + 3 * b + s(4) + nw) >= s(8) + s(6) + s(32) { nw } else { 0 };
+    let nw = if open0 - s(4) - (pad + 3 * b + s(4) + nw) >= s(8) + s(6) + s(32) { nw } else { 0 };
     let x = pad + nw;
-    let addr_x = x + 3 * b + s(4);
+    let fw = if fw0 >= s(48) { fw0 } else { b }; // the filter folds to its icon slot (search icon / filter badge)
+    // the bar with the first k of forward, ⇄, ★, back gone: (back, forward, up, ⇄, filter, ★, address left, right)
+    let lay = |k: usize| {
+        let on = |n: usize, wd: i32| if k > n { 0 } else { wd };
+        let back = r(x, on(3, b));
+        let fwd = r(back.right, on(0, b));
+        let up = r(fwd.right, b);
+        let fav = if k > 2 { r(w - pad, 0) } else { r(w - pad - b, b) };
+        let filt = r(if k > 2 { w - pad - fw } else { fav.left - gap - fw }, fw);
+        let open = if k > 1 { r(filt.left - gap, 0) } else { r(filt.left - gap - b, b) };
+        let end = if k > 1 { filt.left } else { open.left } - s(4);
+        (back, fwd, up, open, filt, fav, up.right + s(4), end)
+    };
+    let k = (0..4).find(|&k| lay(k).7 - lay(k).6 >= s(48)).unwrap_or(4);
+    let (back, fwd, mut up, mut open, mut filt, mut fav, ax, end) = lay(k);
+    // the address goes under s(24); then, below any real pane, the filter icon and up if they no longer fit
+    let mut addr = if end - ax >= s(24) { r(ax, end - ax) } else { r(ax.min(filt.left), 0) };
+    if filt.left < up.right {
+        filt = r(w - pad, 0);
+    }
+    if up.right > w - pad {
+        up = r(up.left, 0);
+    }
+    // a focused folded field spreads from the buttons on the left to the end (if that leaves a pill of its kind);
+    // what it covers goes for the while. Back, forward and up never move with the focus, so a click on one still
+    // lands as the edit loses focus
+    let span = r(up.right + s(4), w - pad - up.right - s(4));
+    let spread = match wide {
+        Wide::Addr => (k > 0 || addr.right == addr.left) && span.right - span.left >= s(24),
+        Wide::Filt => (fw0 < s(48) || filt.right == filt.left) && span.right - span.left >= s(48),
+        Wide::No => false,
+    };
+    if spread {
+        (addr, filt) = if wide == Wide::Addr { (span, r(span.right, 0)) } else { (r(span.left, 0), span) };
+        (open, fav) = (r(open.left.max(span.left), 0), r(fav.left.max(span.left), 0));
+    }
     PaneGeo {
         num: r(pad, nw),
-        btn: [r(x, b), r(x + b, b), r(x + 2 * b, b), open],
-        addr: r(addr_x, open.left - s(4) - addr_x),
+        btn: [back, fwd, up, open],
+        addr,
         filt,
         fav,
         tabs: RECT { left: s(2), top: bar, right: w - s(2), bottom: bar + strip },
@@ -532,7 +579,7 @@ mod tests {
             assert_eq!(tab_strip_h_at(dpi, 0, true), 26 * dpi / 96);
             assert_eq!(tab_strip_h_at(dpi, 8, false), 0); // tabs off: no strip, grown or not
         }
-        let pg = pane_geo_at(800, 400, 96, 0, true);
+        let pg = pane_geo_at(800, 400, 96, 0, true, Wide::No);
         assert_eq!(pg.addr.top, 4);
         assert_eq!(pg.addr.bottom, 26);
         assert_eq!(pg.num, r(4, 4, 22, 26));
@@ -540,8 +587,8 @@ mod tests {
         assert_eq!(pg.fav, r(772, 4, 796, 26));
         assert_eq!(pg.tabs, r(2, 30, 798, 56));
         assert_eq!(pg.view, r(2, 56, 798, 398));
-        assert_eq!(pane_geo_at(800, 400, 96, 0, false).view, r(2, 30, 798, 398));
-        let p0 = pane_geo_at(1000, 500, 144, 0, true);
+        assert_eq!(pane_geo_at(800, 400, 96, 0, false, Wide::No).view, r(2, 30, 798, 398));
+        let p0 = pane_geo_at(1000, 500, 144, 0, true, Wide::No);
         assert_eq!((p0.addr.top, p0.addr.bottom, p0.tabs.top, p0.tabs.bottom, p0.view.top), (6, 39, 45, 84, 84));
 
         // Text size 100 .. 225 % at common DPIs: everything still holds its text
@@ -554,13 +601,13 @@ mod tests {
                 let (top, btn_h, status_h) = bars_h(dpi, grow);
                 assert!(btn_h >= tm && 5 * dpi / 96 + btn_h <= top, "toolbar {ctx}");
                 assert!(status_h >= tm, "status {ctx}");
-                let pg = pane_geo_at(800, 400, dpi, grow, true);
+                let pg = pane_geo_at(800, 400, dpi, grow, true, Wide::No);
                 for p in [pg.addr, pg.filt] {
                     assert!(p.bottom - p.top >= tm + 2, "edit in pill {ctx}"); // layout_pane's edit is fh + 2 tall
                     assert!(p.top >= 0 && p.bottom <= pg.tabs.top, "pill in bar {ctx}");
                 }
                 // the fields keep their distance from the top, so the colour label band above them stays as it is
-                assert_eq!(pg.addr.top, pane_geo_at(800, 400, dpi, 0, true).addr.top, "{ctx}");
+                assert_eq!(pg.addr.top, pane_geo_at(800, 400, dpi, 0, true, Wide::No).addr.top, "{ctx}");
                 let (tabs, plus) = tab_rects(pg.tabs, 3, dpi);
                 for t in tabs.iter().chain([&plus]) {
                     assert!(t.bottom - t.top >= tm && t.bottom <= pg.view.top, "tab {ctx}");
@@ -568,11 +615,76 @@ mod tests {
                 assert!(pg.view.bottom - pg.view.top > 0, "{ctx}");
                 // a squashed pane: the list never gets a negative height
                 for h in [0, 20, 60] {
-                    let v = pane_geo_at(300, h, dpi, grow, true).view;
+                    let v = pane_geo_at(300, h, dpi, grow, true, Wide::No).view;
                     assert!(v.bottom >= v.top, "list in a {h} px pane {ctx}");
                 }
             }
         }
+    }
+
+    // A narrow pane's bar folds rather than overlapping or thinning fields to a few pixels; wide bars are as before.
+    #[test]
+    fn narrow_bar_folds() {
+        let r = |l, t, rr, b| RECT { left: l, top: t, right: rr, bottom: b };
+        let at = |w, dpi, wide| pane_geo_at(w, 300, dpi, 0, true, wide);
+        let p = at(800, 96, Wide::No);
+        let row = |p: &PaneGeo| [p.num, p.btn[0], p.btn[1], p.btn[2], p.addr, p.btn[3], p.filt, p.fav];
+        let (t, b) = (4, 26);
+        assert_eq!(row(&p), [(4, 22), (22, 46), (46, 70), (70, 94), (98, 590), (594, 618), (620, 770), (772, 796)].map(|(x0, x1)| r(x0, t, x1, b)));
+        assert_eq!((p.tabs, p.view), (r(2, 30, 798, 56), r(2, 56, 798, 298)));
+        let p = at(300, 96, Wide::No);
+        assert_eq!(row(&p), [(4, 22), (22, 46), (46, 70), (70, 94), (98, 183), (187, 211), (213, 270), (272, 296)].map(|(x0, x1)| r(x0, t, x1, b)));
+        let p = at(1200, 144, Wide::No);
+        let (t, b) = (6, 39);
+        assert_eq!(row(&p), [(6, 33), (33, 69), (69, 105), (105, 141), (147, 885), (891, 927), (930, 1155), (1158, 1194)].map(|(x0, x1)| r(x0, t, x1, b)));
+        assert_eq!((p.tabs, p.view), (r(3, 45, 1197, 84), r(3, 84, 1197, 297)));
+
+        let on = |r: &RECT| r.right > r.left;
+        for dpi in [96, 120, 144, 192] {
+            let s = |v: i32| v * dpi / 96;
+            for grow in [0, 6] {
+                let (mut seen, mut unfolded) = ([false; 8], false);
+                for w in 40..=900 {
+                    let no = pane_geo_at(w, 300, dpi, grow, true, Wide::No);
+                    for wide in [Wide::No, Wide::Addr, Wide::Filt] {
+                        let p = pane_geo_at(w, 300, dpi, grow, true, wide);
+                        let ctx = format!("{w}@{dpi} grow {grow} {wide:?}");
+                        // what shows is inside the plate, in order and apart; whole buttons, real pills
+                        let shown: Vec<RECT> = row(&p).into_iter().filter(on).collect();
+                        assert!(shown.windows(2).all(|x| x[0].right <= x[1].left), "{ctx}");
+                        assert!(shown.iter().all(|r| r.left >= 0 && r.right <= w), "{ctx}");
+                        assert!(p.btn.iter().chain([&p.fav]).all(|r| [0, s(24)].contains(&(r.right - r.left))), "{ctx}");
+                        let (aw, fw) = (p.addr.right - p.addr.left, p.filt.right - p.filt.left);
+                        assert!(aw == 0 || aw >= s(24), "address {aw} {ctx}");
+                        assert!(fw == 0 || fw == s(24) || fw >= s(48), "filter {fw} {ctx}");
+                        // focus spreads a field but never moves back / forward / up, or the number
+                        assert_eq!((&p.btn[..3], p.num), (&no.btn[..3], no.num), "{ctx}");
+                        if w >= s(272) {
+                            assert_eq!((row(&p), fw >= s(48)), (row(&no), true), "nothing folds {ctx}");
+                            assert!(shown.len() == 8, "{ctx}");
+                        }
+                    }
+                    // widening never hides what showed, nor folds the filter again
+                    for (k, r) in row(&no).iter().enumerate() {
+                        assert!(on(r) || !seen[k], "{k} hides again at {w}@{dpi}");
+                        seen[k] |= on(r);
+                    }
+                    let open = no.filt.right - no.filt.left >= s(48);
+                    assert!(open || !unfolded, "filter folds again at {w}@{dpi}");
+                    unfolded |= open;
+                }
+            }
+        }
+        // 60 px: only up and the filter icon; Ctrl+L / Ctrl+F spread their field over the rest
+        let p = at(60, 96, Wide::No);
+        assert_eq!(row(&p).map(|r| r.right - r.left), [0, 0, 0, 24, 0, 0, 24, 0]);
+        assert_eq!((at(60, 96, Wide::Addr).addr.left, at(60, 96, Wide::Addr).addr.right), (32, 56));
+        assert_eq!(at(60, 96, Wide::Filt).filt, p.filt); // no room for a pill: the icon slot stays
+        let p = at(100, 96, Wide::Filt);
+        assert_eq!((p.filt.left, p.filt.right, p.addr.right - p.addr.left), (32, 96, 0));
+        // 150 px: no thread of an address or filter, and ⇄ clear of up
+        let p = at(150, 96, Wide::No);
+        assert_eq!(row(&p).map(|r| r.right - r.left), [0, 24, 0, 24, 62, 0, 24, 0]);
     }
 
     #[test]

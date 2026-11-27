@@ -1857,7 +1857,8 @@ mod tests {
             assert!(row.windows(2).all(|x| x[0].right <= x[1].left), "{w}@{dpi}");
             assert!(p.num.right > p.num.left && p.fav.right <= w && p.view.top >= p.btn[0].bottom);
         }
-        // the number only shows while the address edit keeps s(32); otherwise the bar is laid out as before
+        // the number only shows while the address edit keeps s(32), and then nothing in the bar is folded away;
+        // otherwise the bar starts at the edge, the address (if any is left) just after up
         for dpi in [96, 144] {
             let s = |v: i32| v * dpi / 96;
             for w in 60..=600 {
@@ -1865,9 +1866,11 @@ mod tests {
                 if p.num.right > p.num.left {
                     let row = [p.num, p.btn[0], p.btn[1], p.btn[2], p.addr, p.btn[3], p.filt, p.fav];
                     assert!(row.windows(2).all(|x| x[0].right <= x[1].left), "{w}@{dpi}");
+                    assert!(row.iter().all(|r| r.right > r.left), "{w}@{dpi}");
                     assert!((p.addr.right - s(6)) - (p.addr.left + s(8)) >= s(32), "{w}@{dpi}");
                 } else {
-                    assert!(p.btn[0].left == s(4) && p.addr.left == s(4) + 3 * s(24) + s(4), "{w}@{dpi}");
+                    assert!(p.btn[0].left == s(4), "{w}@{dpi}");
+                    assert!(p.addr.right == p.addr.left || p.addr.left == p.btn[2].right + s(4), "{w}@{dpi}");
                 }
             }
         }

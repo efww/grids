@@ -671,9 +671,7 @@ pub(crate) extern "system" fn pane_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
         };
         let on_kind_icon = |x: i32, y: i32| {
             let dpi = app(|a| a.dpi);
-            let mut rc = RECT::default();
-            _ = GetClientRect(h, &mut rc);
-            filter_icon_rect(pane_geo(rc.right, rc.bottom, dpi).filt, 24 * dpi / 96)
+            filter_icon_rect(pane_geo_of(h, dpi).filt, 24 * dpi / 96)
                 .is_some_and(|r| x >= r.left && x < r.right && y >= r.top && y < r.bottom)
         };
         match msg {
@@ -772,6 +770,7 @@ pub(crate) extern "system" fn pane_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 }
             }
             WM_KIDS => kids_show(h, wp.0),
+            WM_FIELD_SPREAD => place_head(h), // follows the focus as it is by now
             // folder icon looked up: only the icon's square is repainted, nothing moves
             // (and the tab strip: the folder's tabs keep this icon for this run, IconMemo)
             WM_PANE_ICON => {
@@ -804,9 +803,8 @@ pub(crate) extern "system" fn pane_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             }
             WM_CTLCOLOREDIT => return edit_colors(wp),
             WM_COMMAND => match ((wp.0 & 0xffff) as i32, ((wp.0 >> 16) & 0xffff) as u32) {
-                // pill gets an accent outline while its edit has focus
-                (ID_EDIT, EN_SETFOCUS | EN_KILLFOCUS) => sync_addr(h),
-                (ID_FILTER, EN_SETFOCUS | EN_KILLFOCUS) => _ = InvalidateRect(Some(h), None, false),
+                // pill gets an accent outline while its edit has focus; a folded one spreads out meanwhile
+                (id @ (ID_EDIT | ID_FILTER), EN_SETFOCUS | EN_KILLFOCUS) => field_focus(h, id),
                 // the buttons only: the mouse's side buttons (WM_APPCOMMAND) share nav but are a shortcut already
                 (ID_BACK, _) => {
                     if nav(SBSP_NAVIGATEBACK) {
