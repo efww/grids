@@ -603,6 +603,33 @@ mod tests {
         // (c) timers, per window: SetTimer with a number already running replaces that timer
         distinct("main timers", &[TIMER_STATUS, TIMER_REVEAL, TIMER_FOCUS, dialog_jump::TIMER_DLG_RETRY, dialog_jump::TIMER_DLG_RESTORE, TIMER_SHELL, TIMER_EV_SELECT, TIMER_BIN, TIMER_TREE_SYNC]);
         distinct("pane timers", &[TIMER_FILTER, TIMER_SETTLE, TIMER_SPIN]);
+        // (d) WM_APP messages main_proc handles (not other windows' own: WM_TOUR_END, WM_RENAMED, the switcher's)
+        let msgs = [
+            WM_NARROW_AGAIN, WM_DROP_OPEN, WM_PEEK_DONE, WM_PANE_ICON, WM_DRIVES, WM_KIDS, WM_THEME_SYNC, WM_PEEK_LOST, WM_PEEK_HOSTED,
+            WM_HASH, WM_SHELL_CHANGE, WM_GROUPED, WM_TOUR, WM_TRAY, WM_COPY_DONE, WM_USAGE, WM_FONT_SYNC, WM_BIN_COUNT, WM_BIN_CHANGE,
+            WM_STAMPED, WM_SIZE_DONE, WM_DISK_DONE, WM_EDITED, WM_OPEN_ARGS, WM_UPDATE, WM_STAR,
+        ];
+        distinct("main WM_APP messages", &msgs.map(|m| m as usize));
+    }
+
+    // A second instance's hand-over waits under a modal dialog, a menu or a drag / resize, and opens otherwise.
+    #[test]
+    fn open_args_wait_for_dialogs() {
+        for enabled in [false, true] {
+            for menu in [false, true] {
+                for busy in [false, true] {
+                    assert_eq!(defer_args(enabled, menu, busy), !enabled || menu || busy, "{enabled} {menu} {busy}");
+                }
+            }
+        }
+        assert!(!defer_args(true, false, false));
+        // each hand-over stays one entry, in arrival order, its arguments as sent
+        let mut q = Vec::new();
+        queue_args(&mut q, r"C:\a.grids");
+        queue_args(&mut q, &format!("{FOLDER_FLAG}\nC:\\x\nD:\\y"));
+        assert_eq!(q, [vec![r"C:\a.grids".to_string()], vec![FOLDER_FLAG.to_string(), r"C:\x".into(), r"D:\y".into()]]);
+        assert_eq!(q.remove(0), [r"C:\a.grids"]);
+        assert_eq!(q.len(), 1);
     }
 
     #[test]

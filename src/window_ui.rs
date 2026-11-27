@@ -304,6 +304,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             WM_USAGE => usage_msg(),
             WM_SIZE_DONE => update_status(), // the selection's size is in: shown now, not at the next tick
             WM_DISK_DONE => disk_done(),
+            WM_OPEN_ARGS => open_queued(true),
             // mid-drag or mid-resize, end_drag / WM_EXITSIZEMOVE pick it up instead
             WM_DRIVES => {
                 bin_count(); // also when Grids comes to the front (WM_ACTIVATEAPP posts this)
@@ -334,6 +335,10 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                     autosave();
                 }
                 shutdown_tick(h); // a refused restart's reason goes once the copy is over
+                // every tick, minimized too: a hand-over held back under a dialog or menu opens once that is gone
+                if app(|a| !a.open_queue.is_empty()) {
+                    open_queued(false);
+                }
                 // a menu's modal loop or Ctrl+Alt+Del can swallow the key release: Ctrl or Alt up ends the nudge anyway
                 let up = |k: VIRTUAL_KEY| GetAsyncKeyState(k.0 as i32) >= 0;
                 if app(|a| a.nudge.is_some()) && (up(VK_CONTROL) || up(VK_MENU)) {
@@ -546,7 +551,10 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 }
                 // copy first: the sender's buffer is only valid during this call
                 let text = String::from_utf16_lossy(std::slice::from_raw_parts(cd.lp as *const u16, cd.cb as usize / 2));
-                open_args(text.split('\n').map(String::from).collect());
+                // opened from the message loop, not inside this call: a dialog or menu may be up (open_queued);
+                // should the post fail, the status tick opens it
+                app(|a| queue_args(&mut a.open_queue, &text));
+                _ = PostMessageW(Some(h), WM_OPEN_ARGS, WPARAM(0), LPARAM(0));
                 return LRESULT(1);
             }
             WM_DPICHANGED => {

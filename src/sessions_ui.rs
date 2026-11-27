@@ -1,4 +1,5 @@
 use crate::*;
+use windows::Win32::System::Threading::GetCurrentThreadId;
 
 // ---------- sessions ----------
 
@@ -315,6 +316,60 @@ pub(crate) unsafe fn load_session_file(path: &Path) {
     relayout();
     redraw_all();
     focus_view(app(|a| a.s.active));
+}
+
+// Posted to main by WM_COPYDATA: open what a second instance handed over (open_queued), unless something is up.
+pub(crate) const WM_OPEN_ARGS: u32 = WM_APP + 65;
+
+/// A second instance's hand-over waits (stays in App::open_queue) while main is disabled under a modal dialog
+/// (save, delete confirm, colour, About), a menu's loop runs, or something is being dragged or sized: opening a
+/// session then destroys every pane, the one that put the dialog, menu or drag up included.
+pub(crate) fn defer_args(main_enabled: bool, menu_mode: bool, busy: bool) -> bool {
+    !main_enabled || menu_mode || busy
+}
+
+/// WM_COPYDATA's text as one queue entry: its arguments in order, never merged with an earlier hand-over.
+pub(crate) fn queue_args(q: &mut Vec<Vec<String>>, text: &str) {
+    q.push(text.split('\n').map(String::from).collect());
+}
+
+// Open the waiting hand-overs one at a time, checking again before each. `posted`: from WM_OPEN_ARGS, which
+// may hold them back (the dialog comes forward, the status line says why); the status tick only retries.
+pub(crate) unsafe fn open_queued(posted: bool) {
+    let main = app(|a| a.main);
+    let mut front = app(|a| std::mem::take(&mut a.open_front));
+    let wait = tr("Opens once the dialog or menu is closed", "대화 상자나 메뉴를 닫으면 엽니다");
+    while app(|a| !a.open_queue.is_empty()) {
+        let mut gti = GUITHREADINFO { cbSize: size_of::<GUITHREADINFO>() as u32, ..Default::default() };
+        let got = GetGUIThreadInfo(GetCurrentThreadId(), &mut gti).is_ok();
+        let menu = got && (gti.flags & (GUI_INMENUMODE | GUI_POPUPMENUMODE | GUI_SYSTEMMENUMODE)).0 != 0;
+        let held = got && (!gti.hwndCapture.is_invalid() || (gti.flags & GUI_INMOVESIZE).0 != 0);
+        let busy = held || app(|a| a.drag.is_some() || a.nudge.is_some() || a.sizing);
+        let enabled = IsWindowEnabled(main).as_bool();
+        if defer_args(enabled, menu, busy) {
+            if posted {
+                // the sender puts main in front after its answer, which may undo this: the next tick tries again
+                front = !enabled;
+                // a drag or resize ends on its own: no note then, only for a dialog or a menu
+                if !enabled || menu {
+                    app(|a| a.note = Some((wait.to_string(), Instant::now() + Duration::from_secs(5))));
+                    update_status();
+                }
+            }
+            if front && !enabled {
+                bring_front(main);
+            }
+            app(|a| a.open_front = posted && front);
+            return;
+        }
+        let Some(args) = app(|a| (!a.open_queue.is_empty()).then(|| a.open_queue.remove(0))) else { break };
+        app(|a| {
+            if a.note.as_ref().is_some_and(|n| n.0 == wait) {
+                a.note = None;
+            }
+        });
+        open_args(args);
+    }
 }
 
 // Paths from the command line or a second instance: a session file loads, folders fill panes from the active one on.

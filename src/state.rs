@@ -89,6 +89,8 @@ pub(crate) struct App {
     pub(crate) home: Homes,         // cell each off-screen slot's pane last had, for when it comes back (runtime only)
     pub(crate) focus_req: HWND,     // pane to focus once its folder shows (set_layout gave it the active pane's place)
     pub(crate) note: Option<(String, Instant)>, // status line confirmation and when it goes (runtime only)
+    pub(crate) open_queue: Vec<Vec<String>>,    // second-instance arguments not opened yet, one entry per hand-over (open_queued)
+    pub(crate) open_front: bool,                // held back under a dialog: bring it forward once more at the next tick
     pub(crate) lost: usize,                     // missing folders the shown note counts (gone_note)
     pub(crate) tips_now: u16,                   // shortcut tips (bit = TIP_* action) already shown since Grids started (runtime only)
     pub(crate) said: Option<Instant>,           // the note (by its end time) last handed to screen readers
@@ -201,6 +203,8 @@ thread_local! {
         home: [None; MAXP],
         focus_req: HWND::default(),
         note: None,
+        open_queue: Vec::new(),
+        open_front: false,
         tips_now: 0,
         lost: 0,
         said: None,
