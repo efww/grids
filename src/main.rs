@@ -4509,6 +4509,28 @@ mod tests { tr("in", "안") }
     }
 
     #[test]
+    fn wheel_notch_rest() {
+        let mut acc = 0;
+        assert_eq!(wheel_notches(&mut acc, -120), -1); // a plain mouse notch: one step, as before
+        assert_eq!(acc, 0);
+        let got: Vec<i32> = (0..4).map(|_| wheel_notches(&mut acc, 30)).collect();
+        assert_eq!(got, vec![0, 0, 0, 1]); // a touchpad's small deltas add up to a notch
+        assert_eq!((wheel_notches(&mut acc, 240), acc), (2, 0));
+        for _ in 0..3 {
+            assert_eq!(wheel_notches(&mut acc, -30), 0);
+        }
+        assert_eq!(acc, -90);
+        assert_eq!((wheel_notches(&mut acc, 30), acc), (0, 30)); // turning back starts over from 0
+        assert_eq!((wheel_notches(&mut acc, 0), acc), (0, 30)); // nothing sent: the rest stays
+        let mut acc = 119;
+        assert_eq!((wheel_notches(&mut acc, i16::MAX as i32), acc), (274, 6));
+        let mut acc = -119;
+        assert_eq!((wheel_notches(&mut acc, i16::MIN as i32), acc), (-274, -7));
+        let mut acc = i32::MAX - 1;
+        assert_eq!(wheel_notches(&mut acc, i16::MAX as i32), i32::MAX / 120); // no overflow
+    }
+
+    #[test]
     fn peek_wheel() {
         use Wheel::*;
         assert_eq!(wheel_action(0, 0, true, false), Step); // a picture: straight to the next file

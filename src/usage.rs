@@ -197,7 +197,7 @@ fn usage_worker() {
 // prev: focus before it opened (Esc goes back there); want: the row to select once the rows come (the folder ←
 // came up from); list: sorted, as shown; rows: rows on screen
 #[derive(Default)]
-struct UsageUi { h: HWND, prev: HWND, pane: usize, gen: usize, dir: String, want: Option<String>, list: Vec<URow>, head: String, max: u64, total: u64, done: bool, failed: bool, sel: Option<usize>, top: usize, rows: usize, w: i32 }
+struct UsageUi { h: HWND, prev: HWND, pane: usize, gen: usize, dir: String, want: Option<String>, list: Vec<URow>, head: String, max: u64, total: u64, done: bool, failed: bool, sel: Option<usize>, top: usize, rows: usize, w: i32, wheel: i32 }
 
 thread_local! {
     static UI: RefCell<UsageUi> = RefCell::new(UsageUi::default());
@@ -458,9 +458,12 @@ pub(crate) extern "system" fn usage_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPAR
                 }
             }
             WM_MOUSEWHEEL => {
-                let d = -((wp.0 >> 16) as i16 as i32) / 120 * 3;
-                ui(|u| u.top = (u.top as i32 + d).clamp(0, u.list.len().saturating_sub(u.rows) as i32) as usize);
-                _ = InvalidateRect(Some(h), None, false);
+                // touchpads send less than a notch at a time: the rest waits in u.wheel
+                let d = ui(|u| -wheel_notches(&mut u.wheel, (wp.0 >> 16) as i16 as i32) * 3);
+                if d != 0 {
+                    ui(|u| u.top = (u.top as i32 + d).clamp(0, u.list.len().saturating_sub(u.rows) as i32) as usize);
+                    _ = InvalidateRect(Some(h), None, false);
+                }
             }
             // another Grids window took over: close; another app: stay, the counting goes on
             WM_ACTIVATE if (wp.0 & 0xffff) as u32 == WA_INACTIVE => {

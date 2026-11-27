@@ -348,12 +348,7 @@ pub(crate) extern "system" fn fav_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                 if g.rows.len() >= g.n || press.is_some_and(|p| !p.live) {
                     return LRESULT(0); // nothing hidden, or a click still on its row
                 }
-                let notches = app(|a| {
-                    a.fav_wheel += (wp.0 >> 16) as i16 as i32;
-                    let d = a.fav_wheel / 120;
-                    a.fav_wheel -= d * 120;
-                    d
-                });
+                let notches = app(|a| wheel_notches(&mut a.fav_wheel, (wp.0 >> 16) as i16 as i32));
                 let top = (g.first as i32 - notches * 3).clamp(0, (g.n - g.rows.len()) as i32) as usize;
                 app(|a| a.fav_top = top);
                 let g = fav_geo_now();

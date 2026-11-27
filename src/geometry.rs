@@ -15,6 +15,21 @@ pub(crate) fn cells(start: i32, len: i32, ratios: &[f64], gap: i32) -> Vec<(i32,
     out
 }
 
+/// Whole wheel notches (120 each) from a `WM_MOUSEWHEEL` delta, keeping the rest in `acc` for the next message:
+/// precision touchpads and smooth wheels send 10-60 at a time. Turning back starts the rest over, so it answers at once.
+pub(crate) fn wheel_notches(acc: &mut i32, delta: i32) -> i32 {
+    if delta == 0 {
+        return 0;
+    }
+    if *acc != 0 && (*acc < 0) != (delta < 0) {
+        *acc = 0;
+    }
+    *acc = acc.saturating_add(delta);
+    let n = *acc / 120;
+    *acc -= n * 120;
+    n
+}
+
 /// Moves the boundary after cell `k` to `pos`, keeping both neighbours at least `min` px.
 pub(crate) fn drag_ratio(r: &mut [f64], k: usize, pos: i32, start: i32, len: i32, gap: i32, min: i32) {
     let avail = (len - gap * (r.len() as i32 - 1)).max(1) as f64;

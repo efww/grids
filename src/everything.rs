@@ -73,6 +73,7 @@ pub(crate) struct EvState {
     closed: Option<Instant>,
     last: String, // text kept for the next time it opens (runtime only)
     pick: Option<EvPick>,
+    wheel: i32, // wheel delta short of a notch (touchpads send less than 120)
 }
 
 thread_local! {
@@ -422,6 +423,7 @@ pub(crate) unsafe fn open_ev() {
     _ = MoveWindow(edit, e.left, e.top, e.right - e.left, e.bottom - e.top, false);
     ev(|e| {
         (e.h, e.edit, e.prev, e.hits, e.total, e.sel, e.top, e.hot) = (h, edit, prev, Vec::new(), 0, None, 0, None);
+        e.wheel = 0;
         (e.tip, e.tip_row, e.drag) = (tip, None, None);
         (e.waiting, e.failed) = (false, false);
     });
@@ -888,9 +890,11 @@ pub(crate) extern "system" fn ev_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
             }
             WM_MOUSEWHEEL => {
                 ev_tip_hide();
-                let d = -((wp.0 >> 16) as i16 as i32) / 120 * 3;
-                ev(|e| e.top = (e.top as i32 + d).clamp(0, e.hits.len().saturating_sub(e.rows) as i32) as usize);
-                _ = InvalidateRect(Some(h), None, false);
+                let d = ev(|e| -wheel_notches(&mut e.wheel, (wp.0 >> 16) as i16 as i32) * 3);
+                if d != 0 {
+                    ev(|e| e.top = (e.top as i32 + d).clamp(0, e.hits.len().saturating_sub(e.rows) as i32) as usize);
+                    _ = InvalidateRect(Some(h), None, false);
+                }
             }
             WM_ACTIVATE if (wp.0 & 0xffff) as u32 == WA_INACTIVE => _ = PostMessageW(Some(h), WM_CLOSE, WPARAM(0), LPARAM(0)),
             WM_DESTROY => ev(|e| {
