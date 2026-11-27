@@ -11,9 +11,20 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 static STARRED: AtomicU8 = AtomicU8::new(0);
 static BUSY: AtomicBool = AtomicBool::new(false);
 
-// gh exits 0 only on 2xx: 204 for "starred" on GET, 204 for a PUT that took. Missing gh is an Err.
+/// gh.exe's full path in System32, Windows or PATH's absolute folders (as the address bar looks up a command).
+/// Never the bare name: Command::new("gh") tries Grids' own folder first, so a gh.exe dropped next to it would run.
+pub(crate) fn gh_path(sys_root: &str, path_var: &str, is_file: impl Fn(&Path) -> bool) -> Option<String> {
+    find_prog("gh.exe", &prog_dirs(sys_root, path_var), &[], is_file)
+}
+
+// gh exits 0 only on 2xx: 204 for "starred" on GET, 204 for a PUT that took. gh not found is false (the page opens).
 fn gh(args: &[&str]) -> bool {
-    std::process::Command::new("gh")
+    let env = |k: &str| std::env::var(k).unwrap_or_default();
+    let root = Some(env("SystemRoot")).filter(|r| !r.is_empty()).unwrap_or_else(|| r"C:\Windows".into());
+    let Some(exe) = gh_path(&root, &env("PATH"), |p| std::fs::metadata(p).is_ok_and(|m| m.is_file())) else {
+        return false;
+    };
+    std::process::Command::new(exe)
         .args(args)
         .creation_flags(CREATE_NO_WINDOW)
         .stdin(std::process::Stdio::null())

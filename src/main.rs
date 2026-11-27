@@ -1125,6 +1125,18 @@ mod tests {
         assert_eq!(find_prog(".exe", &dirs, &exts, |_| false), None);
     }
 
+    // "Star on GitHub" runs gh by full path from System32, Windows or PATH's absolute folders: never one next to
+    // Grids or in a relative PATH entry, and nothing (the page opens) when there is none.
+    #[test]
+    fn gh_by_full_path() {
+        let path = r#".;bin;"C:\Program Files\GitHub CLI\";C:\Other"#;
+        let files = [r"C:\Program Files\GitHub CLI\gh.exe", r"C:\Other\gh.exe", r"bin\gh.exe", r".\gh.exe", r"C:\Tools\gh.cmd"];
+        let is_file = |p: &Path| files.iter().any(|f| f.eq_ignore_ascii_case(&p.to_string_lossy()));
+        assert_eq!(gh_path(r"C:\Windows", path, is_file).as_deref(), Some(files[0]));
+        assert_eq!(gh_path(r"C:\Windows", r".;bin;C:\Tools", is_file), None);
+        assert_eq!(gh_path(r"C:\Windows", "", |_| false), None);
+    }
+
     // Repro: a bare command typed in the address bar must never run a same-named file planted in the pane's folder.
     // A cmd.bat that leaves hit.txt sits in the folder; the address bar's launch of "cmd /c exit" there must not run it.
     #[test]
