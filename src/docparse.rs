@@ -267,13 +267,15 @@ pub(crate) fn unescape(s: &str) -> String {
 
 /// The words of an Office / HWPX / ODF XML part: character data inside any `text` element, a line break
 /// after each `para` element, a tab for `tab` and a break for `br` elements. Tag names are compared whole
-/// ("w:t", "a:p", "hp:t", "text:p").
-pub(crate) fn xml_text(xml: &str, text: &[&str], para: &[&str], tab: &[&str], br: &[&str]) -> String {
+/// ("w:t", "a:p", "hp:t", "text:p"). Everything inside a `skip` element is left out: tab-stop definitions
+/// ("w:tabs", "a:tabLst") and the Fallback copy of a text box Word writes twice ("mc:Fallback"); nesting counts.
+pub(crate) fn xml_text(xml: &str, text: &[&str], para: &[&str], tab: &[&str], br: &[&str], skip: &[&str]) -> String {
     let mut out = String::new();
     let mut depth = 0usize;
+    let mut skipped = 0usize;
     let mut rest = xml;
     while let Some(i) = rest.find('<') {
-        if depth > 0 {
+        if depth > 0 && skipped == 0 {
             out.push_str(&unescape(&rest[..i]));
         }
         rest = &rest[i + 1..];
@@ -286,6 +288,13 @@ pub(crate) fn xml_text(xml: &str, text: &[&str], para: &[&str], tab: &[&str], br
         let close = tag.starts_with('/');
         let empty = tag.ends_with('/');
         let name = tag.trim_start_matches('/').split(|c: char| c.is_whitespace() || c == '/').next().unwrap_or("");
+        if skip.contains(&name) && !empty {
+            skipped = if close { skipped.saturating_sub(1) } else { skipped + 1 };
+            continue;
+        }
+        if skipped > 0 {
+            continue;
+        }
         if text.contains(&name) && !empty {
             depth = if close { depth.saturating_sub(1) } else { depth + 1 };
         }
@@ -404,7 +413,7 @@ fn attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
 
 /// sharedStrings.xml: each <si>'s text, runs joined.
 pub(crate) fn xlsx_strings(xml: &str) -> Vec<String> {
-    xml.split("<si>").skip(1).map(|si| xml_text(si.split("</si>").next().unwrap_or(""), &["t"], &[], &[], &[])).collect()
+    xml.split("<si>").skip(1).map(|si| xml_text(si.split("</si>").next().unwrap_or(""), &["t"], &[], &[], &[], &[])).collect()
 }
 
 /// A worksheet as rows of cell text, at most `max_r` x `max_c`; shared strings looked up, inline strings read.
@@ -425,7 +434,7 @@ pub(crate) fn xlsx_rows(sheet: &str, strings: &[String], max_r: usize, max_c: us
         let text = match attr(&tag, "t") {
             // a cell shows a line at most: one huge shared string used by every cell must not be copied whole each time
             Some("s") => v.and_then(|v| v.trim().parse::<usize>().ok()).and_then(|k| strings.get(k)).map(|t| t.chars().take(CELL_MAX).collect()).unwrap_or_default(),
-            Some("inlineStr") => xml_text(body, &["t"], &[], &[], &[]),
+            Some("inlineStr") => xml_text(body, &["t"], &[], &[], &[], &[]),
             Some("b") => match v.as_deref() {
                 Some("1") => "TRUE".into(),
                 _ => "FALSE".into(),

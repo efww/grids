@@ -642,7 +642,10 @@ fn office_text(path: &str, ext: &str) -> Option<Body> {
     let mut f = std::fs::File::open(path).ok()?;
     let es = zip_entries(&mut f)?;
     let mut part = |name: &str| zip_find(&es, name).and_then(|e| zip_read(&mut f, e, 32 << 20)).map(|b| decode_text(&b));
-    let text = |xml: String, t: &[&str], p: &[&str]| xml_text(&xml, t, p, &["w:tab", "a:tab", "text:tab"], &["w:br", "a:br", "text:line-break"]);
+    // tab-stop lists are settings, not tabs; a text box's Fallback repeats its Choice
+    let text = |xml: String, t: &[&str], p: &[&str]| {
+        xml_text(&xml, t, p, &["w:tab", "a:tab", "text:tab"], &["w:br", "a:br", "text:line-break"], &["w:tabs", "a:tabLst", "mc:Fallback"])
+    };
     let body = match ext {
         "docx" | "docm" | "dotx" => text(part("word/document.xml")?, &["w:t"], &["w:p"]),
         "xlsx" | "xlsm" | "xltx" => {

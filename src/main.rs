@@ -4778,7 +4778,7 @@ mod tests { tr("in", "안") }
         let doc = zip_read(&mut cur, zip_find(&es, "WORD/document.xml").unwrap(), 1 << 20).unwrap();
         assert_eq!(doc.len(), big.len());
         assert_eq!(zip_read(&mut cur, &es[1], 10).unwrap().len(), 10); // capped
-        let text = xml_text(&decode_text(&doc), &["w:t"], &["w:p"], &[], &[]);
+        let text = xml_text(&decode_text(&doc), &["w:t"], &["w:p"], &[], &[], &[]);
         assert_eq!(text.lines().next(), Some("안녕 & hi"));
         assert!(zip_entries(&mut std::io::Cursor::new(b"not a zip at all".to_vec())).is_none());
     }
@@ -4786,7 +4786,19 @@ mod tests { tr("in", "안") }
     #[test]
     fn xml_and_sheets() {
         let x = r#"<a:p><a:r><a:t>One</a:t></a:r><a:br/><a:r><a:t xml:space="preserve"> two</a:t></a:r></a:p><a:p><a:t/><a:t>&#xD55C;&lt;</a:t></a:p>"#;
-        assert_eq!(xml_text(x, &["a:t"], &["a:p"], &[], &["a:br"]), "One\n two\n한<\n");
+        assert_eq!(xml_text(x, &["a:t"], &["a:p"], &[], &["a:br"], &[]), "One\n two\n한<\n");
+        // tab-stop definitions are not tabs; a text box's Fallback copy is not shown twice
+        let (tab, br, skip) = (&["w:tab", "a:tab", "text:tab"][..], &["w:br", "a:br"][..], &["w:tabs", "a:tabLst", "mc:Fallback"][..]);
+        let w = r#"<w:p><w:pPr><w:tabs><w:tab w:val="right" w:pos="9016"/></w:tabs></w:pPr><w:r><w:t>목차</w:t></w:r></w:p><w:p><w:r><w:t>A</w:t><w:tab/><w:t>1</w:t></w:r></w:p>"#;
+        assert_eq!(xml_text(w, &["w:t"], &["w:p"], tab, br, skip), "목차\nA\t1\n");
+        let bx = r#"<w:p><w:r><mc:AlternateContent><mc:Choice Requires="wps"><w:drawing><wps:txbx><w:txbxContent><w:p><w:r><w:t>글상자</w:t></w:r></w:p></w:txbxContent></wps:txbx></w:drawing></mc:Choice><mc:Fallback><w:pict><v:textbox><w:txbxContent><w:p><w:r><w:t>글상자</w:t></w:r></w:p></w:txbxContent></v:textbox></w:pict></mc:Fallback></mc:AlternateContent></w:r><w:r><w:t>뒤</w:t></w:r></w:p>"#;
+        assert_eq!(xml_text(bx, &["w:t"], &["w:p"], tab, br, skip), "글상자\n뒤\n");
+        let nested = r#"<w:p><mc:Fallback><w:t>a</w:t><mc:AlternateContent><mc:Fallback><w:t>b</w:t></mc:Fallback></mc:AlternateContent><w:t>c</w:t></mc:Fallback><w:t>끝</w:t></w:p>"#;
+        assert_eq!(xml_text(nested, &["w:t"], &["w:p"], tab, br, skip), "끝\n");
+        let s = "<a:p><a:pPr><a:tabLst><a:tab pos=\"914400\" algn=\"l\"/></a:tabLst></a:pPr><a:r><a:t>슬라이드\t글</a:t></a:r></a:p>";
+        assert_eq!(xml_text(s, &["a:t"], &["a:p"], tab, br, skip), "슬라이드\t글\n");
+        let e = r#"<w:p><w:pPr><w:tabs/></w:pPr><w:r><w:t>살아 있음</w:t></w:r></w:p>"#;
+        assert_eq!(xml_text(e, &["w:t"], &["w:p"], tab, br, skip), "살아 있음\n");
         assert_eq!((cell_ref("A1"), cell_ref("AB12"), cell_ref("1A")), (Some((0, 0)), Some((27, 11)), None));
         assert_eq!(cell_ref(&format!("{}1", "A".repeat(20))), None); // too many letters: no cell, no overflow
         let ss = xlsx_strings("<sst><si><t>이름</t></si><si><r><t>A</t></r><r><t>B</t></r></si></sst>");
