@@ -1,6 +1,5 @@
 use crate::*;
 use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL};
-use windows::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime};
 use windows::Win32::UI::Controls::{
     TOOLTIPS_CLASSW, TTF_ABSOLUTE, TTF_TRACK, TTF_TRANSPARENT, TTM_ADDTOOLW, TTM_SETMAXTIPWIDTH, TTM_TRACKACTIVATE, TTM_TRACKPOSITION,
     TTM_UPDATETIPTEXTW, TTTOOLINFOW,
@@ -781,16 +780,11 @@ pub(crate) unsafe fn type_icon(name: &str, folder: bool) -> i32 {
     fi.iIcon
 }
 
-/// A FILETIME (UTC) as local "2026-11-03 14:05", the way the status bar and the preview write dates.
+/// A FILETIME (UTC) as local "2026-11-03 14:05", the way Explorer's list, the preview and the table copy write
+/// dates (the same local_date); empty if it can't be converted.
 fn ev_date(ft: u64) -> String {
-    let ft = FILETIME { dwLowDateTime: ft as u32, dwHighDateTime: (ft >> 32) as u32 };
-    let (mut utc, mut st) = (SYSTEMTIME::default(), SYSTEMTIME::default());
-    unsafe {
-        if FileTimeToSystemTime(&ft, &mut utc).is_err() || SystemTimeToTzSpecificLocalTime(None, &utc, &mut st).is_err() {
-            return String::new();
-        }
-    }
-    format!("{:04}-{:02}-{:02} {:02}:{:02}", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute)
+    let d = local_date(ft);
+    if d == [0; 6] { String::new() } else { date_min(d) }
 }
 
 unsafe fn paint_ev(h: HWND) {
@@ -1039,6 +1033,14 @@ pub(crate) extern "system" fn ev_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ev_dates_match_the_shared_conversion() {
+        assert_eq!(ev_date(u64::MAX), "");
+        for ft in [134_129_520_000_000_000u64, 134_285_904_000_000_000] {
+            assert_eq!(ev_date(ft), date_min(local_date(ft)));
+        }
+    }
 
     fn counted(s: &str) -> Vec<u8> {
         let w: Vec<u16> = s.encode_utf16().collect();

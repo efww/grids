@@ -1,8 +1,7 @@
 use crate::*;
 use windows::Win32::Storage::EnhancedStorage::*;
-use windows::Win32::Storage::FileSystem::{FileTimeToLocalFileTime, FindClose, FindFirstFileW, GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW, WIN32_FIND_DATAW};
+use windows::Win32::Storage::FileSystem::{FindClose, FindFirstFileW, GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW, WIN32_FIND_DATAW};
 use windows::Win32::System::Com::StructuredStorage::{IStorage, StgOpenStorageEx, STGFMT_STORAGE};
-use windows::Win32::System::Time::FileTimeToSystemTime;
 use windows::Win32::UI::Shell::PropertiesSystem::{IPropertyStore, PSFormatForDisplayAlloc, SHGetPropertyStoreFromParsingName, GPS_DEFAULT, PDFF_DEFAULT};
 use windows::Win32::Graphics::Imaging::*;
 use windows::Win32::UI::HiDpi::GetDpiForSystem;
@@ -859,19 +858,13 @@ fn when(t: std::io::Result<std::time::SystemTime>) -> Option<String> {
     when_ft((t.as_secs() + 11_644_473_600) * 10_000_000 + t.subsec_nanos() as u64 / 100)
 }
 
-// A FILETIME (100 ns since 1601, UTC) as local "2026-10-23 10:27"; 0 = not known.
+// A FILETIME (100 ns since 1601, UTC) as local "2026-10-23 10:27"; 0 or not convertible = not known.
 fn when_ft(ft: u64) -> Option<String> {
     if ft == 0 {
         return None;
     }
-    let ft = FILETIME { dwLowDateTime: ft as u32, dwHighDateTime: (ft >> 32) as u32 };
-    let mut local = FILETIME::default();
-    let mut st = SYSTEMTIME::default();
-    unsafe {
-        FileTimeToLocalFileTime(&ft, &mut local).ok()?;
-        FileTimeToSystemTime(&local, &mut st).ok()?;
-    }
-    Some(format!("{:04}-{:02}-{:02} {:02}:{:02}", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute))
+    let d = local_date(ft);
+    (d != [0; 6]).then(|| date_min(d))
 }
 
 /// 30360942 -> "30,360,942"
@@ -1011,6 +1004,18 @@ pub(crate) unsafe fn version_rows(path: &str) -> Vec<(String, String)> {
 mod tests {
     use super::*;
     use crate::tests::zip_bytes;
+
+    // F3's dates come from the same conversion as Explorer's list and the table copy (compared function to
+    // function, so it holds in any time zone the tests run in).
+    #[test]
+    fn preview_dates_match_the_shared_conversion() {
+        assert_eq!(when_ft(0), None);
+        assert_eq!(when_ft(u64::MAX), None);
+        for ft in [134_129_520_000_000_000u64, 134_285_904_000_000_000] {
+            // 2026-01-15 and 2026-07-15 12:00 UTC: one in each season
+            assert_eq!(when_ft(ft), Some(date_min(local_date(ft))));
+        }
+    }
 
     // Writes the document to a file of its own, reads it the way F3 does with no preview handler, then
     // deletes it before anything is checked, so a failing test leaves nothing behind.

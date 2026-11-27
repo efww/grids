@@ -35,7 +35,7 @@ pub(crate) fn list_table(rows: &[Row], ko: bool) -> String {
         if name.starts_with(['=', '+', '-', '@']) {
             name.insert(0, '\'');
         }
-        let date = r.date.map(|d| format!("{:04}-{:02}-{:02} {:02}:{:02}", d[0], d[1], d[2], d[3], d[4])).unwrap_or_default();
+        let date = r.date.map(date_min).unwrap_or_default();
         let size = r.size.map(|s| s.to_string()).unwrap_or_default();
         out.push_str(&format!("{name}\t{date}\t{}\t{size}\t{}\r\n", cell(&r.kind), cell(&r.path)));
     }

@@ -3,7 +3,7 @@ use crate::rename_rules::*;
 use std::collections::{HashMap, HashSet};
 use std::os::windows::fs::MetadataExt;
 use windows::Win32::Storage::FileSystem::{CreateFileW, DELETE, FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING};
-use windows::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime};
+use windows::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime, TIME_ZONE_INFORMATION};
 use windows::Win32::UI::Controls::{
     LVCOLUMNW, LVCF_TEXT, LVCF_WIDTH, LVIF_TEXT, LVM_INSERTCOLUMNW, LVM_SETITEMCOUNT, LVN_GETDISPINFOW, LVS_EX_DOUBLEBUFFER, LVS_EX_FULLROWSELECT,
     LVS_NOSORTHEADER, LVS_OWNERDATA, LVS_REPORT, LVS_SHOWSELALWAYS, MEASUREITEMSTRUCT, NMLVDISPINFOW, ODS_DISABLED, ODS_FOCUS, ODT_LISTBOX,
@@ -430,15 +430,29 @@ unsafe fn layout(h: HWND) {
 
 // ---------- opening: the active pane's selection, or every file in its folder ----------
 
+// A FILETIME (UTC) as local [year, month, day, hour, minute, second]; [0; 6] if it can't be converted.
+// The one conversion for every date Grids shows (preview, Everything results, rename, table copy): each date
+// gets the daylight-saving rule of its own day, as Explorer's Date modified column does. FileTimeToLocalFileTime
+// would apply today's offset to a date in the other season and be an hour off.
 pub(crate) fn local_date(ft: u64) -> [u16; 6] {
+    local_date_in(ft, None)
+}
+
+// The same in a given time zone (None = the system's); the tests pin one with daylight saving.
+pub(crate) fn local_date_in(ft: u64, tz: Option<&TIME_ZONE_INFORMATION>) -> [u16; 6] {
     let ft = FILETIME { dwLowDateTime: ft as u32, dwHighDateTime: (ft >> 32) as u32 };
     let (mut utc, mut st) = (SYSTEMTIME::default(), SYSTEMTIME::default());
     unsafe {
-        if FileTimeToSystemTime(&ft, &mut utc).is_err() || SystemTimeToTzSpecificLocalTime(None, &utc, &mut st).is_err() {
+        if FileTimeToSystemTime(&ft, &mut utc).is_err() || SystemTimeToTzSpecificLocalTime(tz.map(|t| t as *const _), &utc, &mut st).is_err() {
             return [0; 6];
         }
     }
     [st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond]
+}
+
+// [2026, 3, 8, 1, 5, ..] -> "2026-03-08 01:05", the way every date in Grids is written.
+pub(crate) fn date_min(d: [u16; 6]) -> String {
+    format!("{:04}-{:02}-{:02} {:02}:{:02}", d[0], d[1], d[2], d[3], d[4])
 }
 
 fn folder_names(dir: &str) -> HashSet<String> {
@@ -1719,6 +1733,47 @@ pub(crate) extern "system" fn rename_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPA
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // A UTC wall-clock time as a FILETIME (100 ns since 1601-01-01).
+    fn ft_utc(y: i64, mo: i64, d: i64, h: i64, mi: i64) -> u64 {
+        let (y2, m2) = if mo <= 2 { (y - 1, mo + 9) } else { (y, mo - 3) };
+        let era = y2.div_euclid(400);
+        let yoe = y2 - era * 400;
+        let doy = (153 * m2 + 2) / 5 + d - 1;
+        let days = era * 146_097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719_468; // since 1970-01-01
+        ((days * 86_400 + h * 3600 + mi * 60 + 11_644_473_600) * 10_000_000) as u64
+    }
+
+    // US Eastern: UTC-5, daylight UTC-4 from the 2nd Sunday of March 02:00 to the 1st Sunday of November 02:00
+    // (2026: Mar 8 07:00Z and Nov 1 06:00Z). A date in the other season must get its own offset, not today's.
+    #[test]
+    fn local_date_uses_each_dates_own_daylight_rule() {
+        let rule = |mo, day| SYSTEMTIME { wMonth: mo, wDayOfWeek: 0, wDay: day, wHour: 2, ..Default::default() };
+        let tz = TIME_ZONE_INFORMATION { Bias: 300, StandardDate: rule(11, 1), StandardBias: 0, DaylightDate: rule(3, 2), DaylightBias: -60, ..Default::default() };
+        for ((y, mo, d, h, mi), want) in [
+            ((2026, 1, 15, 12, 0), [2026, 1, 15, 7, 0, 0]),
+            ((2026, 7, 15, 12, 0), [2026, 7, 15, 8, 0, 0]),
+            ((2026, 3, 8, 6, 30), [2026, 3, 8, 1, 30, 0]),
+            ((2026, 3, 8, 7, 30), [2026, 3, 8, 3, 30, 0]),
+            ((2026, 11, 1, 5, 30), [2026, 11, 1, 1, 30, 0]),
+            ((2026, 11, 1, 6, 30), [2026, 11, 1, 1, 30, 0]),
+            ((2026, 3, 1, 3, 0), [2026, 2, 28, 22, 0, 0]),
+        ] {
+            assert_eq!(local_date_in(ft_utc(y, mo, d, h, mi), Some(&tz)), want, "{y}-{mo}-{d} {h}:{mi}Z");
+        }
+        // the two instants the preview and Everything tests use
+        assert_eq!(ft_utc(2026, 1, 15, 12, 0), 134_129_520_000_000_000);
+        let ft = ft_utc(2026, 7, 15, 12, 0);
+        assert_eq!(ft, 134_285_904_000_000_000);
+        assert_eq!(local_date_in(ft, None), local_date(ft));
+        assert_eq!(local_date(u64::MAX), [0; 6]);
+    }
+
+    #[test]
+    fn date_min_pads_every_field() {
+        assert_eq!(date_min([2026, 3, 8, 1, 5, 9]), "2026-03-08 01:05");
+        assert_eq!(date_min([2026, 12, 31, 23, 59, 0]), "2026-12-31 23:59");
+    }
 
     #[test]
     fn rename_api_paths() {
