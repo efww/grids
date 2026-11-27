@@ -35,7 +35,10 @@ from ..pipeline import ORIGINS, PROTO, apply_overrides, compute, impact, load_ex
 
 STATIC = Path(__file__).resolve().parent / "static"
 HOME = Path(os.environ.get("PID_IO_HOME", Path.cwd() / "projects")).resolve()
-KINDS = {"pdf": ".pdf", "template": ".xlsx", "ref": ".xlsx", "concept": ".xlsx", "plot": ".pdf", "plotref": ".pdf"}
+VERSION = "v13"                                      # pid_io version shown in handoff files
+
+KINDS = {"pdf": ".pdf", "template": ".xlsx", "ref": ".xlsx", "concept": ".xlsx", "plot": ".pdf", "plotref": ".pdf",
+         "model3d": ".html"}
 COLORS = {"FIELD": (0.08, 0.68, 0.38), "DCS_SHARED": (0.31, 0.63, 0.88), "PANEL_CR": (0.31, 0.63, 0.88),
           "PANEL_BEHIND": (0.5, 0.5, 0.5), "PLC": (0.49, 0.4, 0.8), "ESD_INTERLOCK": (0.82, 0.2, 0.36),
           "DCS_INTERLOCK": (1, 0.73, 0), "HW_INTERLOCK": (1, 0.73, 0)}
@@ -978,6 +981,85 @@ def export_basis(name: str, sensitivity: bool = True):
     return {"files": [out.name], **r}
 
 
+def twin_view(name: str):
+    """STEP 10 screen: base model, alignment result, last handoff set."""
+    from .. import twin
+    files = meta(name).get("files", {})
+    out = {"model": files.get("model3d"), "base": None, "fit": None, "error": None, "sets": []}
+    od = pdir(name) / "output"
+    out["sets"] = sorted([p.name for p in od.glob("3D인계_*") if p.is_dir()], reverse=True)[:10] if od.exists() else []
+    if not files.get("model3d"):
+        return out
+    try:
+        base = twin.parse_base(pdir(name) / "input" / files["model3d"])
+        out["base"] = {k: base[k] for k in ("file", "sha256", "bytes", "three", "title", "dx_e", "refs")}
+        out["base"]["equipment"] = len(base["equipment"])
+        out["base"]["racks"] = list(base["racks"].values())
+        d3 = data_3d(name)
+        out["fit"] = twin.fit(plot_read(name) or {}, d3["racks"], base)
+    except Exception as e:                                 # noqa: BLE001
+        out["error"] = str(e)
+    return out
+
+
+def export_twin(name: str):
+    """supplemented model + standard 7 files + STRUCTURED_MODEL_DATA into output/3D인계_<stamp>/."""
+    from .. import twin, basis, threed
+    files = meta(name).get("files", {})
+    if not files.get("model3d"):
+        raise ValueError("배관 3D 모델(HTML)을 먼저 올려 주세요")
+    c = computed(name)
+    data, syms, notes, con, rows, log = c
+    s, res, lay = cable_result(name)
+    dd, am, ob = _plot_dec(name), _area_map(name), _obstacles(lay)
+    tr = cable.TR.build(res, lay, s, dd)
+    sp = cable.SP.build(tr, s["values"], lay.m_per_pt if lay else None, dd, ob)
+    d3 = threed.build(name, res, lay, tr, sp, s, plot_read(name))
+    # index fields on instruments / JB extras for the 3D popup
+    idx = {r.tag: r for r in rows if r.kind == "instrument"}
+    for x in d3["instruments"]:
+        r = idx.get(x["tag"])
+        if r:
+            x["index"] = {"Instrument Type": r.desc, "Service": getattr(r, "service", ""), "System": r.system, "I/O Type": r.io,
+                          "P&ID No": r.dwg, "Equipment No": getattr(r, "equip", ""), "Status": r.status, "산출구분": r.origin}
+    jbi = {j["no"]: j for j in res["jbs"]}
+    for j in d3["jbs"]:
+        jj = jbi.get(j["no"]) or {}
+        j["extra"] = {"멀티": jj.get("multi", ""), "멀티 크기": jj.get("multi_size", ""), "스페어": jj.get("spare", ""),
+                      "단자": jj.get("terminals", ""), "태그": ", ".join(jj.get("tags") or [])[:300]}
+    base_path = pdir(name) / "input" / files["model3d"]
+    base = twin.parse_base(base_path)
+    tf = twin.fit(plot_read(name) or {}, d3["racks"], base)
+    inst = twin.to_model(d3, tf, base, s["values"])
+    inst.update(version=VERSION, project=name)
+    stamp = time.strftime("%Y%m%d_%H%M")
+    od = pdir(name) / "output" / f"3D인계_{stamp}"
+    od.mkdir(parents=True, exist_ok=True)
+    model_file = od / f"{Path(files['model3d']).stem}_계장보강.html"
+    model_file.write_text(twin.build_html(base_path, inst), encoding="utf-8")
+    data_file = od / "STRUCTURED_MODEL_DATA_FULL.json"
+    data_file.write_text(json.dumps(inst, ensure_ascii=False), encoding="utf-8")
+    # validation: audit invariants (NORMAL) + recorded changed / missing cases
+    base_m = basis.metrics(rows, res, tr, sp, con)
+    imap = cable.index_map(res, tr, sp)
+    val = [["T-NORMAL", a["점검"], "OK (불변 조건)", a["결과"], "PASS" if a["결과"] == "OK" else ("HOLD" if a["결과"] == "주의" else "FAIL"),
+            "pid_io audit", a["내용"][:200]] for a in basis.audit(rows, res, tr, sp, s, imap)]
+    val.append(["T-NORMAL", "좌표 맞춤 잔차 (장비 기준 중앙값 / 최대)", "≤ 5 m / ≤ 15 m (개념 모델)", f"{tf['median_m']} / {tf['max_m']} m",
+                "PASS" if tf["median_m"] <= 5 and tf["max_m"] <= 15 else "HOLD", "pid_io twin.fit", tf["formula"]])
+    import copy as _cp
+    for cid, key, val_ in (("T-CHANGED-JB60", "jb_sizes", "60"), ("T-CHANGED-AG", "trunk_off", "AG 서포트"), ("T-CHANGED-SPARE30", "jb_spare", 0.3),
+                           ("T-MISSING-PLOT", "plot_use", "가정 길이만")):
+        s2 = _cp.deepcopy(s)
+        s2["values"][key] = val_
+        m2 = basis.metrics(rows, *basis.chain(rows, s2, am, lay, dd, ob), con)
+        val.append([cid, f"{key} = {val_}", "기대값 미잠금 (기록)", basis.words(base_m, m2) or "변화 없음", "RECORDED", "pid_io", "05 기대값은 담당자가 사전 잠금"])
+    chk = f"pid_io audit NG {sum(1 for r in val if r[4] == 'FAIL')} · HOLD {sum(1 for r in val if r[4] == 'HOLD')}"
+    srcs = {k: files.get(k) for k in ("pdf", "plot", "plotref", "template", "ref")}
+    twin.standard_files(od, name, VERSION, base, base_path, inst, tf, s, res, tr, sp, base_m["HW IO"], srcs, val,
+                        model_file, data_file, chk)
+    return {"files": [od.name], "dir": od.name, "counts": inst["counts"], "fit": {k: tf[k] for k in ("median_m", "max_m", "anchors", "rack_anchors")}}
+
+
 def data_3d(name: str):
     from .. import threed
     s, res, lay = cable_result(name)
@@ -1429,6 +1511,24 @@ class H(BaseHTTPRequestHandler):
             if act == "basis_export" and method == "POST":
                 with CALC:
                     return self._send(200, export_basis(name, not self._json().get("quick")))
+            if act == "twin":
+                with CALC:
+                    if method == "POST":
+                        return self._send(200, export_twin(name))
+                    return self._send(200, twin_view(name))
+            if act == "twin_set" and len(parts) >= 5:            # open the supplemented model of a set
+                d_ = pdir(name) / "output" / Path(parts[4]).name
+                f = next(iter(sorted(d_.glob("*_계장보강.html"))), None)
+                if not f:
+                    return self._send(404, {"error": "no model"})
+                return self._send(200, f.read_bytes(), "text/html; charset=utf-8")
+            if act == "twin_file" and len(parts) >= 6:          # /api/p/<name>/twin_file/<set>/<file>
+                f = pdir(name) / "output" / Path(parts[4]).name / Path(parts[5]).name
+                if not f.exists():
+                    return self._send(404, {"error": "no file"})
+                ct = {".html": "text/html; charset=utf-8", ".json": "application/json; charset=utf-8",
+                      ".csv": "text/csv; charset=utf-8"}.get(f.suffix.lower(), "application/octet-stream")
+                return self._send(200, f.read_bytes(), ct)
             if act == "data3d":
                 with CALC:
                     return self._send(200, data_3d(name))

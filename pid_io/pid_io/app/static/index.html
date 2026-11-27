@@ -175,6 +175,7 @@ details summary::marker{color:var(--green)}
     <div class="st ext" data-s="jb"><i>7</i>JB<span class="chip" style="margin-left:auto;font-size:10.5px;padding:0 6px">확장</span></div>
     <div class="st ext" data-s="tray"><i>8</i>트레이<span class="chip" style="margin-left:auto;font-size:10.5px;padding:0 6px">확장</span></div>
     <div class="st ext" data-s="support"><i>9</i>서포트<span class="chip" style="margin-left:auto;font-size:10.5px;padding:0 6px">확장</span></div>
+    <div class="st ext" data-s="twin"><i>10</i>3D 인계<span class="chip" style="margin-left:auto;font-size:10.5px;padding:0 6px">확장</span></div>
     <div class="st" data-s="ai" style="margin-top:14px;border-top:1px solid var(--line-l)"><i>AI</i>AI 연결 설정</div>
     <div class="foot">도면 인식은 한 번,<br>체크리스트를 바꾸면 IO가<br>즉시 다시 계산됩니다.<br><br><span class="mono">IO 1점 = 인덱스 1행</span><br><br><span id="fontst"></span></div>
   </nav>
@@ -200,7 +201,7 @@ const post = (path, data) => api(path, {method:"POST", headers:{"Content-Type":"
 const P = p => `p/${encodeURIComponent(S.project)}/${p}`;
 function toast(msg, err) { const t=$("#toast"); t.textContent=msg; t.className="toast"+(err?" err":""); t.style.display="block"; clearTimeout(t._h); t._h=setTimeout(()=>t.style.display="none", err?6000:2500); }
 
-function go(screen) { S.tok++; S.screen = screen; if (["cable","jb","tray","support"].includes(screen)) CK.data = null; $("#main").className = ""; render(); }
+function go(screen) { S.tok++; S.screen = screen; if (["cable","jb","tray","support","twin"].includes(screen)) CK.data = null; $("#main").className = ""; render(); }
 document.querySelectorAll("#nav .st").forEach(el => el.onclick = () => go(el.dataset.s));
 
 function navState() {
@@ -208,7 +209,7 @@ function navState() {
   document.querySelectorAll("#nav .st").forEach(el => {
     const s = el.dataset.s;
     el.classList.toggle("on", s === S.screen);
-    el.classList.toggle("dis", (!S.project && !["projects","ai"].includes(s)) || (!ex && ["concept","review","output","cable","jb","tray","support"].includes(s)));
+    el.classList.toggle("dis", (!S.project && !["projects","ai"].includes(s)) || (!ex && ["concept","review","output","cable","jb","tray","support","twin"].includes(s)));
     el.classList.toggle("done", (s==="projects" && S.project) || (s==="extract" && ex));
   });
   $("#pname").textContent = S.project || "선택 안 됨";
@@ -232,6 +233,7 @@ async function render() {
     if (S.screen === "jb") return await renderJB(m);
     if (S.screen === "tray") return await renderTray(m);
     if (S.screen === "support") return await renderSupport(m);
+    if (S.screen === "twin") return await renderTwin(m);
   } catch (e) { toast(e.message, true); }
 }
 
@@ -284,7 +286,7 @@ function fileCard(kind, title, desc, required) {
           : `<div class="n">${desc}<br><span style="font-size:12px;color:var(--mute)">버튼을 누르거나 파일을 여기로 끌어 놓으세요</span></div>`}
       ${u.busy ? `<div class="prog"><i style="width:${u.pct||0}%"></i></div>` : ""}
       ${u.err ? `<div class="er">✕ ${esc(u.err)}</div>` : ""}
-      <label class="btn sm ${f?"line":""}">${f?"다른 파일로 바꾸기":"파일 선택"}<input type="file" data-k="${kind}" accept="${kind==="pdf"?".pdf":".xlsx"}"></label>
+      <label class="btn sm ${f?"line":""}">${f?"다른 파일로 바꾸기":"파일 선택"}<input type="file" data-k="${kind}" accept="${({pdf:".pdf",plot:".pdf",plotref:".pdf",model3d:".html,.htm"})[kind]||".xlsx"}"></label>
     </div>
   </div>`;
 }
@@ -344,6 +346,11 @@ async function renderExtract(m) {
     ${fileCard("pdf","P&ID PDF","레전드 포함 벡터 PDF",true)}
     ${fileCard("template","인덱스 양식",`표준 Instrument Index 양식 (.xlsx). 열 순서·머리글이 표준과 같아야 합니다. <a href="/api/template_std" download>표준 양식 받기</a>`,true)}
     ${fileCard("ref","레퍼런스 인덱스","채점용 (INDEX 시트). 없어도 결과 동일",false)}
+  </div>
+  <div class="grid g3" style="margin-top:16px">
+    ${fileCard("plot","PLOT PLAN","벡터 PDF (선택). 올리면 STEP 6~9에서 도면 좌표로 JB·경로·트레이·서포트를 잡습니다. 추출과 상관없이 언제 올려도 됩니다",false)}
+    ${fileCard("plotref","축척 참고 PLOT (선택)","축척 표기가 없는 확대본이면, 축척(1:N)이 적힌 이전 PLOT PLAN을 올리면 같은 장비 크기로 축척을 맞춥니다",false)}
+    <div class="panel" style="margin:0;font-size:12.5px;color:var(--sub);line-height:1.6"><b style="color:var(--ink)">PLOT PLAN</b><br>여기서 올려도 되고 STEP 6 'PLOT PLAN 초안' 탭에서 올려도 같습니다. 새 PLOT을 올리면 이전 PLOT에서 고친 위치(JB 이동·경로·트레이 크기)는 지워지고 새로 계산합니다.</div>
   </div>
   <div class="panel" style="margin-top:16px">
     <div style="display:flex;justify-content:space-between;margin-bottom:8px"><b>${running?esc(j.msg):(j.state==="error"?"오류":(st.extracted?"추출 완료":"대기"))}</b>
@@ -1588,6 +1595,52 @@ async function renderSupport(m) {
   btn("#spmk", "cable_export", "케이블 · JB · 트레이 · 서포트 엑셀");
   btn("#sp3d", "export_3d", "3D 데이터 (JSON)");
   $("#spview").onclick = () => window.open("/viewer3d?p=" + encodeURIComponent(S.project), "_blank");
+}
+
+/* ---------------------------------------------------------------- 10 3D handoff */
+async function renderTwin(m) {
+  const t = S.tok;
+  const d = await api(P("twin"));
+  if (t !== S.tok) return;
+  m.className = "ext-page";
+  const f = d.fit, b = d.base;
+  const files = [["00_manifest.json","버전·출처·승인 범위·Gate·미결"],["01_scope.csv","확정 물량 범위 (담당·분류·규격·단위·수량·Rule)"],
+    ["02_input_model_contract.json","입력·모델 구조 (엔티티 ID, 최소/파생/승인 값, 좌표·인터페이스)"],["03_engineering_rules.json","승인 Rule Set (계산식·판정·예외·단위)"],
+    ["04_test_inputs.json","독립 실행 입력 (NORMAL / CHANGED / MISSING / HOLDOUT, 기대값 없음)"],["05_validation.csv","기대값 vs 실행값 (허용차·판정·확인자)"],
+    ["06_model_handoff.json","원본 대비 보강 모델 목록·변경·해시·검증 근거"]];
+  m.innerHTML = `
+  <div class="head"><div><div class="eyebrow">STEP 10</div><h1>3D 인계</h1>
+    <p class="lead">배관팀 3D 모델(Three.js HTML) 위에 계장 레이어(트레이·케이블·JB·계기·서포트)를 얹은 <b>보강 모델</b>과 회사 AI 플랫폼 <b>표준 인계 7종</b>을 만듭니다. 원본 모델은 바꾸지 않습니다.</p></div>
+    <div style="display:flex;gap:8px"><button class="btn" id="twmk" ${d.model?"":"disabled"}>보강 모델 + 인계 7종 만들기</button></div></div>
+  <div style="display:flex;gap:20px;align-items:flex-start">
+  <div style="flex:1;min-width:0">
+    <div class="panel"><h2>1. 배관 3D 모델 (Seed)</h2>
+      <div class="kv"><span>${d.model?`<b class="mono">${esc(d.model)}</b>`:"아직 없음"}</span><label class="btn sm line">${d.model?"다른 파일":"파일 선택 (.html)"}<input type="file" accept=".html,.htm" id="twup" style="display:none"></label></div>
+      ${b?`<div style="font-size:12.5px;color:var(--sub);margin-top:6px">${esc(b.title)} · Three.js ${esc(b.three)} · 장비 ${b.equipment} · 랙 ${b.racks.map(r=>`${esc(r.id)}(${r.dir}, 케이블 단 EL ${r.cable_el} m)`).join(", ")}${b.dx_e?` · 로드 시 동쪽 이동 ${b.dx_e} m 반영`:""} · SHA-256 ${esc(b.sha256.slice(0,12))}…</div>`:""}
+      ${d.error?`<p style="color:var(--red)">${esc(d.error)}</p>`:""}</div>
+    ${f?`<div class="panel"><h2>2. 좌표 맞춤 (자동)</h2>
+      <p class="xnote">같은 장비 태그 ${f.anchors}개와 랙 중심선 ${f.rack_anchors}개로 PLOT 좌표(pt)를 모델 좌표(m)로 맞췄습니다. 두 PLOT 리비전이 달라 수 m 차이는 정상입니다. 랙 위 트레이는 모델 랙 중심선·케이블 단 EL에 붙입니다.</p>
+      <div class="kv"><span>식</span><b class="mono" style="font-size:12px">${esc(f.formula)}</b></div>
+      <div class="kv"><span>장비 잔차 중앙값 / 최대</span><b style="color:${f.median_m<=5&&f.max_m<=15?"#15ad60":"#e0002a"}">${f.median_m} m / ${f.max_m} m</b></div>
+      <table class="mini" style="margin-top:8px"><tr><th>장비</th><th>ΔX</th><th>ΔZ</th><th>거리 m</th></tr>${f.equipment.slice(0,8).map(r=>`<tr><td class="mono">${esc(r.tag)}</td><td>${r.dx}</td><td>${r.dz}</td><td><b>${r.d}</b></td></tr>`).join("")}</table>
+      <table class="mini" style="margin-top:8px"><tr><th>우리 랙</th><th>모델 랙</th><th>중심선 차이 m</th></tr>${f.racks.map(r=>`<tr><td class="mono">${esc(r.ours)}</td><td>${esc(r.model)}</td><td>${r.across_m}</td></tr>`).join("")}</table></div>`:""}
+    <div class="panel"><h2>3. 만든 인계 세트</h2>
+      ${d.sets.length?d.sets.map(st=>`<div class="kv"><span class="mono">${esc(st)}</span><span style="display:flex;gap:6px"><a class="btn sm" target="_blank" data-twopen="${esc(st)}">보강 모델 열기</a></span></div>`).join(""):`<div class="empty">아직 없음</div>`}
+      <p class="xnote">세트 폴더: <span class="mono">projects\\${esc(S.project)}\\output\\3D인계_날짜\\</span> - 보강 모델 HTML, 표준 7종, STRUCTURED_MODEL_DATA_FULL.json. 보강 모델은 원본처럼 인터넷(cdn.jsdelivr.net)에서 Three.js를 불러옵니다.</p></div>
+  </div>
+  <div class="side"><div class="panel" style="font-size:12.5px;line-height:1.6"><b>표준 인계 7종 (회사 가이드 T1-CI)</b>
+    ${files.map(([n,x])=>`<div style="margin-top:6px"><span class="mono" style="font-size:12px">${n}</span><br><span style="color:var(--sub)">${x}</span></div>`).join("")}
+    <div style="margin-top:10px"><b>+ 보강 모델 실파일</b> (SUPPLEMENTED_MODEL)<br><span style="color:var(--sub)">원본 HTML + 계장 레이어. 레이어 패널 '계장 (pid_io)', 객체 클릭 = 속성, '계장 찾기' 칸</span></div>
+    <div style="margin-top:6px"><b>+ 구조화 모델 데이터</b> (STRUCTURED_MODEL_DATA, FULL)</div>
+    <p class="xnote" style="margin-top:8px">필드 이름은 가이드 사진 기준 초안입니다. 가이드 원문(HTML)이 저장소에 오면 맞춥니다.</p></div></div>
+  </div>`;
+  $("#twup").onchange = async () => { const fl = $("#twup").files[0]; if (!fl) return;
+    try { await api(P("upload?kind=model3d"), {method:"POST", headers:{"X-Filename":encodeURIComponent(fl.name)}, body:fl}); toast("3D 모델을 올렸습니다"); renderTwin(m); } catch(e) { toast(e.message, true); } };
+  m.querySelectorAll("[data-twopen]").forEach(a => { const st = a.dataset.twopen;
+    a.href = `/api/${P("twin_set/"+encodeURIComponent(st))}`; });
+  if ($("#twmk")) $("#twmk").onclick = async () => { const bt = $("#twmk"); bt.disabled = true; bt.textContent = "만드는 중…";
+    try { const r = await post(P("twin"), {}); toast(`${r.dir} 생성 · 계기 ${r.counts.instruments} · 트레이 ${r.counts.trays} · 서포트 ${r.counts.supports} · 잔차 ${r.fit.median_m} m`); renderTwin(m); }
+    catch(e) { toast(e.message, true); if ($("#twmk")) { $("#twmk").disabled = false; $("#twmk").textContent = "보강 모델 + 인계 7종 만들기"; } } };
 }
 
 api("font").then(f => { const k = Object.keys(f.found||{}); $("#fontst").innerHTML = k.length
