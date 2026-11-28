@@ -79,7 +79,7 @@ unsafe fn paint_status(dc: HDC, g: &Geo, line: RECT, st: &StatusLine, font: HFON
     let rule = |x: i32| fill(dc, RECT { left: x, right: x + 1, top: line.top + s(6), bottom: line.bottom - s(6) }, p.line);
     if let (Some(n), Some(r)) = (&st.note, fit.note) {
         let chip = RECT { top: line.top + s(3), bottom: line.bottom - s(3), ..span(r) };
-        fill(dc, chip, blend(p.bg, accent, 0.18));
+        round_fill(dc, chip, s(3), blend(p.bg, accent, 0.18), p.bg);
         text(dc, RECT { left: chip.left + chip_pad, right: chip.right - chip_pad, ..chip }, n, font, p.text, DT_LEFT);
     }
     text(dc, span(fit.head), &st.head, font, p.sub, DT_LEFT);
@@ -319,25 +319,6 @@ pub(crate) unsafe fn set_item_bitmap(menu: HMENU, id: usize, b: HBITMAP) {
 // As Windows Terminal's tab colours, Chrome's tab groups and Office's font colour menu: the colour itself beside
 // its name, so it is picked by eye, in the shade the current theme paints.
 
-// Fraction 0..1 of pixel (x, y) inside the square [l, l + w)² with corners rounded by r: 4 × 4 samples.
-fn round_cover(x: i32, y: i32, l: f32, w: f32, r: f32) -> f32 {
-    const N: i32 = 4;
-    let mut n = 0;
-    for sy in 0..N {
-        for sx in 0..N {
-            let (u, v) = (x as f32 + (sx as f32 + 0.5) / N as f32, y as f32 + (sy as f32 + 0.5) / N as f32);
-            if u < l || v < l || u > l + w || v > l + w {
-                continue;
-            }
-            let (cu, cv) = (u.clamp(l + r, l + w - r), v.clamp(l + r, l + w - r));
-            if (u - cu).powi(2) + (v - cv).powi(2) <= r * r {
-                n += 1;
-            }
-        }
-    }
-    n as f32 / (N * N) as f32
-}
-
 /// A chip of colour `fill` (0xRRGGBB) with a rim of `edge`, centred on a px × px canvas, premultiplied: s(12) of
 /// s(16), corners rounded and smoothed. None: the rim alone (no colour).
 pub(crate) fn swatch_pix(px: i32, fill: Option<u32>, edge: u32) -> Pix {
@@ -351,11 +332,12 @@ pub(crate) fn swatch_pix(px: i32, fill: Option<u32>, edge: u32) -> Pix {
     let mut bgra = vec![0u8; (px * px * 4) as usize];
     for y in 0..px {
         for x in 0..px {
-            let outer = round_cover(x, y, o, side as f32, r);
+            let outer = round_cover(x, y, (o, o, side as f32, side as f32), r);
             if outer == 0.0 {
                 continue;
             }
-            let inner = round_cover(x, y, o + e, side as f32 - 2.0 * e, (r - e).max(0.0));
+            let inside = side as f32 - 2.0 * e;
+            let inner = round_cover(x, y, (o + e, o + e, inside, inside), (r - e).max(0.0));
             let (rim, body) = (outer - inner, if fill.is_some() { inner } else { 0.0 });
             let i = ((y * px + x) * 4) as usize;
             for (k, sh) in [0, 8, 16].into_iter().enumerate() {
@@ -945,7 +927,7 @@ pub(crate) unsafe fn paint_pane(h: HWND) {
         if let Some(i) = i.filter(|_| pg.num.right > pg.num.left) {
             let ink = match tint {
                 Some(t) => {
-                    fill(dc, pg.num, t);
+                    round_fill(dc, pg.num, s(3), t, head);
                     on_color(t)
                 }
                 None if active => ink,
@@ -953,11 +935,22 @@ pub(crate) unsafe fn paint_pane(h: HWND) {
             };
             text(dc, pg.num, &(i + 1).to_string(), small_font, ink, DT_CENTER);
         }
-        // a folded field is zero wide: no pill, no ring
+        // the icon opens the file-type menu: under the mouse its slot is shaded (inside the pill and its focus frame),
+        // a ring round the filter badge, whose own colour stays.
+        // A narrow pane's filter field can be under s(24) wide: the shade, icon and badge all stay inside the icon slot
+        let kind_hot = hot_head == Some(HeadHot::Kind);
+        let slot = filter_icon_rect(pg.filt, s(24));
+        let shade = blend(pal().pill, pal().text, press_tint(false, filtered));
+        // a folded field is zero wide: no pill, no ring. Windows 11: rounded s(4), as Explorer's address bar
         for (p, on) in [(pg.addr, addr_on), (pg.filt, filt_on)].into_iter().filter(|(p, _)| p.right > p.left) {
-            fill(dc, p, pal().pill);
+            round_fill(dc, p, s(4), pal().pill, head);
+            // the shade goes under the focus ring: drawn after it, its corner pixels would cut the ring's inner curve.
+            // It sits 1 px inside the pill, so its corners 1 px tighter keep to the pill's (and its ring's) curve
+            if let (Some(slot), true, true) = (slot, kind_hot, p == pg.filt) {
+                round_fill(dc, RECT { left: slot.left + 1, top: slot.top + 1, right: slot.right, bottom: slot.bottom - 1 }, s(4) - 1, shade, pal().pill);
+            }
             if on {
-                frame(dc, p, 1, if active { ink } else { accent });
+                round_ring(dc, p, 1, s(4), if active { ink } else { accent }, head, pal().pill);
             }
         }
         if let (Some(il), Some(r), true) = (&ilist, addr_icon(pg.addr, dpi), folder >= 0) {
@@ -969,9 +962,9 @@ pub(crate) unsafe fn paint_pane(h: HWND) {
             for (k, (r, label, c)) in crumb_layout(dc, font, i, crumb_field(pg.addr, dpi)).into_iter().enumerate() {
                 let wait = matches!(&c, Crumb::Kids(d, _) if waiting.as_ref() == Some(d));
                 if wait {
-                    fill(dc, r, blend(pal().pill, accent, 0.25));
+                    round_fill(dc, r, s(3), blend(pal().pill, accent, 0.25), pal().pill);
                 } else if hot == Some(k) {
-                    fill(dc, r, blend(pal().pill, pal().text, 0.08));
+                    round_fill(dc, r, s(3), blend(pal().pill, pal().text, 0.08), pal().pill);
                 }
                 if matches!(c, Crumb::Kids(..)) {
                     // '…' is a little wider than the '›' slot: let it reach into the neighbours' padding
@@ -991,15 +984,7 @@ pub(crate) unsafe fn paint_pane(h: HWND) {
             let c = if tabs.is_some() || !active { focus_c } else { ink };
             fill(dc, RECT { left: pg.view.left + l, top: pg.view.top - s(2), right: pg.view.left + r, bottom: pg.view.top }, c);
         }
-        // the icon opens the file-type menu: under the mouse its slot is shaded (inside the pill and its focus frame),
-        // a ring round the filter badge, whose own colour stays
-        let kind_hot = hot_head == Some(HeadHot::Kind);
-        // a narrow pane's filter field can be under s(24) wide: the shade, icon and badge all stay inside the icon slot
-        if let Some(slot) = filter_icon_rect(pg.filt, s(24)) {
-            if kind_hot {
-                let shade = blend(pal().pill, pal().text, press_tint(false, filtered));
-                fill(dc, RECT { left: slot.left + 1, top: slot.top + 1, right: slot.right, bottom: slot.bottom - 1 }, shade);
-            }
+        if let Some(slot) = slot {
             if filtered {
                 // filter applied: accent chip left of the edit (which starts at filt.left + s(24))
                 let chip = RECT {
@@ -1009,7 +994,7 @@ pub(crate) unsafe fn paint_pane(h: HWND) {
                     bottom: pg.filt.bottom - s(3),
                 };
                 if chip.right > chip.left {
-                    fill(dc, chip, accent);
+                    round_fill(dc, chip, s(3), accent, if kind_hot { shade } else { pal().pill });
                     text(dc, chip, ICON_FILTER, icon_font, on_color(accent), DT_CENTER);
                 }
             } else {

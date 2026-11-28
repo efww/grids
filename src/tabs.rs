@@ -473,7 +473,7 @@ pub(crate) unsafe fn paint_tabs(
     // a hot × / '+': a square centred on the glyph, shaded as a pressed header button
     let square = |c: RECT, under: u32| {
         let (d, x, y) = (s(16), (c.left + c.right) / 2 - s(8), (c.top + c.bottom) / 2 - s(8));
-        fill(dc, RECT { left: x, top: y, right: x + d, bottom: y + d }, blend(under, pal().text, press_tint(false, true)));
+        round_fill(dc, RECT { left: x, top: y, right: x + d, bottom: y + d }, s(3), blend(under, pal().text, press_tint(false, true)), under);
     };
     let lit = |k: usize| k != cur && hot == Some(HeadHot::Tab(k)); // hot may be stale (k >= n): then nothing matches
     for (k, (r, path)) in rects.iter().zip(tabs).enumerate() {

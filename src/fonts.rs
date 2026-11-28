@@ -76,7 +76,9 @@ pub(crate) unsafe fn apply_font() {
     let n = GetTextFaceW(dc, Some(&mut face)).clamp(0, face.len() as i32) as usize;
     SelectObject(dc, old); // deselect before deleting, or the delete fails and leaks on every DPI change
     ReleaseDC(None, dc);
-    let icon_font = if icon_face(&String::from_utf16_lossy(&face[..n])) == FLUENT_ICONS {
+    let is_fluent = icon_face(&String::from_utf16_lossy(&face[..n])) == FLUENT_ICONS;
+    FLUENT_ON.store(is_fluent, Ordering::Relaxed); // Windows 11: the chrome's shapes round to match (draw::rounded)
+    let icon_font = if is_fluent {
         fluent
     } else {
         if !fluent.is_invalid() {

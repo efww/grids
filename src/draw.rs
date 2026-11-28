@@ -1,7 +1,7 @@
 use crate::*;
 use windows::Win32::UI::Controls::ODS_FOCUS;
 
-// ---------- drawing (plain GDI: square shapes need no anti-aliasing, and fills are cheap) ----------
+// ---------- drawing (plain GDI fills; the few rounded shapes smooth their corner pixels themselves) ----------
 
 pub(crate) fn cref(rgb: u32) -> COLORREF {
     COLORREF((rgb & 0xFF) << 16 | (rgb & 0xFF00) | (rgb >> 16 & 0xFF))
@@ -16,6 +16,130 @@ pub(crate) unsafe fn frame(dc: HDC, r: RECT, w: i32, rgb: u32) {
     let sides = [RECT { bottom: r.top + w, ..r }, RECT { top: r.bottom - w, ..r }, RECT { right: r.left + w, ..r }, RECT { left: r.right - w, ..r }];
     for side in sides {
         fill(dc, side, rgb);
+    }
+}
+
+// Windows 11 (the icon font came out Segoe Fluent Icons, apply_font) rounds the fields, chips and hover shades
+// as Explorer and Settings do, so they match its icons; Windows 10 and high contrast keep them square, pixel for
+// pixel as before. High contrast comes and goes without apply_font, so it is asked at every paint.
+pub(crate) static FLUENT_ON: AtomicBool = AtomicBool::new(false);
+pub(crate) fn rounded() -> bool {
+    FLUENT_ON.load(Ordering::Relaxed) && !HC_ON.load(Ordering::Relaxed)
+}
+
+/// Fraction 0..1 of pixel (x, y) inside the rectangle (l, t, w, h) with corners rounded by r (cut to fit): 4 × 4 samples.
+pub(crate) fn round_cover(x: i32, y: i32, (l, t, w, h): (f32, f32, f32, f32), r: f32) -> f32 {
+    const N: i32 = 4;
+    if w <= 0.0 || h <= 0.0 {
+        return 0.0;
+    }
+    let r = r.min(w / 2.0).min(h / 2.0).max(0.0);
+    let mut n = 0;
+    for sy in 0..N {
+        for sx in 0..N {
+            let (u, v) = (x as f32 + (sx as f32 + 0.5) / N as f32, y as f32 + (sy as f32 + 0.5) / N as f32);
+            if u < l || v < t || u > l + w || v > t + h {
+                continue;
+            }
+            let (cu, cv) = (u.clamp(l + r, l + w - r), v.clamp(t + r, t + h - r));
+            if (u - cu).powi(2) + (v - cv).powi(2) <= r * r {
+                n += 1;
+            }
+        }
+    }
+    n as f32 / (N * N) as f32
+}
+
+/// A w × h shape with corners rounded by `radius`, cut to half its shorter side: how far in from each corner its
+/// plain cross starts (0: a plain rectangle), and the corner pixels it covers as (x, y, cover) from its top-left,
+/// cover in (0, 1]. Pixels it doesn't touch are left out, so they keep what is under them.
+pub(crate) fn round_corners(w: i32, h: i32, radius: i32) -> (i32, Vec<(i32, i32, f32)>) {
+    let k = radius.min(w / 2).min(h / 2);
+    if k <= 0 {
+        return (0, Vec::new());
+    }
+    let shape = (0.0, 0.0, w as f32, h as f32);
+    let mut out = Vec::with_capacity((4 * k * k) as usize);
+    for j in 0..k {
+        for i in 0..k {
+            let c = round_cover(i, j, shape, k as f32);
+            if c > 0.0 {
+                out.extend([(i, j), (w - 1 - i, j), (i, h - 1 - j), (w - 1 - i, h - 1 - j)].map(|(x, y)| (x, y, c)));
+            }
+        }
+    }
+    (k, out)
+}
+
+/// A `width` px ring round a w × h shape with corners rounded by `radius` (inside it, radius − width): how far in
+/// its straight sides start (0: square, frame's), and the corner pixels it touches as (x, y, ring, inside), each
+/// the share of the pixel the ring and the space within it cover.
+pub(crate) fn ring_corners(w: i32, h: i32, width: i32, radius: i32) -> (i32, Vec<(i32, i32, f32, f32)>) {
+    let k = radius.min(w / 2).min(h / 2);
+    if k <= 0 || width <= 0 {
+        return (0, Vec::new());
+    }
+    let (outer, inner) = ((0.0, 0.0, w as f32, h as f32), (width as f32, width as f32, (w - 2 * width) as f32, (h - 2 * width) as f32));
+    let mut out = Vec::with_capacity((4 * k * k) as usize);
+    for j in 0..k {
+        for i in 0..k {
+            let (o, n) = (round_cover(i, j, outer, k as f32), round_cover(i, j, inner, (k - width).max(0) as f32));
+            if o > n {
+                out.extend([(i, j), (w - 1 - i, j), (i, h - 1 - j), (w - 1 - i, h - 1 - j)].map(|(x, y)| (x, y, o - n, n)));
+            }
+        }
+    }
+    (k, out)
+}
+
+// Colours mixed by share (shares adding up to 1).
+fn mix(parts: [(u32, f32); 3]) -> u32 {
+    let ch = |sh: u32| (parts.iter().map(|&(c, t)| (c >> sh & 0xFF) as f32 * t).sum::<f32>().round().clamp(0.0, 255.0) as u32) << sh;
+    ch(16) | ch(8) | ch(0)
+}
+
+/// fill() with corners rounded by `radius` (Windows 11, rounded()), their edge pixels smoothed toward `under`, the
+/// colour the shape lies on; elsewhere, or with no room to round, fill() itself. An empty rectangle draws nothing.
+pub(crate) unsafe fn round_fill(dc: HDC, r: RECT, radius: i32, rgb: u32, under: u32) {
+    let (w, h) = (r.right - r.left, r.bottom - r.top);
+    if w <= 0 || h <= 0 {
+        return;
+    }
+    let (k, px) = if rounded() { round_corners(w, h, radius) } else { (0, Vec::new()) };
+    if k == 0 {
+        return fill(dc, r, rgb);
+    }
+    fill(dc, RECT { left: r.left + k, right: r.right - k, ..r }, rgb);
+    fill(dc, RECT { top: r.top + k, right: r.left + k, bottom: r.bottom - k, ..r }, rgb);
+    fill(dc, RECT { left: r.right - k, top: r.top + k, bottom: r.bottom - k, ..r }, rgb);
+    for (x, y, c) in px {
+        _ = SetPixelV(dc, r.left + x, r.top + y, cref(blend(under, rgb, c)));
+    }
+}
+
+/// frame() with corners rounded by `radius` where round_fill rounds: only the ring is drawn, its corner pixels
+/// mixed with `outside` (what lies round it) and `inside` (what lies within it). Elsewhere frame() itself.
+pub(crate) unsafe fn round_ring(dc: HDC, r: RECT, width: i32, radius: i32, ring: u32, outside: u32, inside: u32) {
+    let (w, h) = (r.right - r.left, r.bottom - r.top);
+    if w <= 0 || h <= 0 {
+        return;
+    }
+    let (k, px) = if rounded() { ring_corners(w, h, width, radius) } else { (0, Vec::new()) };
+    if k == 0 {
+        return frame(dc, r, width, ring);
+    }
+    let (l, t) = (r.left + k, r.top + k);
+    let (rr, b) = (r.right - k, r.bottom - k);
+    for side in [
+        RECT { left: l, right: rr, bottom: r.top + width, ..r },
+        RECT { left: l, right: rr, top: r.bottom - width, ..r },
+        RECT { top: t, bottom: b, right: r.left + width, ..r },
+        RECT { top: t, bottom: b, left: r.right - width, ..r },
+    ] {
+        fill(dc, side, ring);
+    }
+    for (x, y, on, within) in px {
+        _ = SetPixelV(dc, r.left + x, r.top + y, cref(mix([(outside, 1.0 - on - within), (ring, on), (inside, within)])));
     }
 }
 
@@ -118,25 +242,59 @@ pub(crate) unsafe fn draw_button(d: &DRAWITEMSTRUCT) {
     if tour_target() == d.hwndItem || keyed {
         let (accent, dpi) = app(|a| (a.s.accent_now(), a.dpi));
         let ring = if parent == main { accent } else { header_colors(parent).1 };
-        frame(d.hDC, d.rcItem, (2 * dpi / 96).max(2), ring);
+        // rounded round the hover shade (s(2) in, s(4) round), so it hugs it; the blue Update button stays square
+        let f = face_state(d);
+        let inside = if f.hot || f.pressed { blend(f.bg, f.ink, press_tint(f.tinted, f.pressed)) } else { f.bg };
+        let radius = if d.CtlID as i32 == ID_TB_UPDATE { 0 } else { 6 * dpi / 96 };
+        round_ring(d.hDC, d.rcItem, (2 * dpi / 96).max(2), radius, ring, f.bg, inside);
+    }
+}
+
+// What an owner-drawn button looks like now: its background and ink, and whether it is tinted, hot, pressed, faint.
+struct Face {
+    bg: u32,
+    ink: u32,
+    tinted: bool,
+    hot: bool,
+    pressed: bool,
+    faint: bool,
+}
+
+unsafe fn face_state(d: &DRAWITEMSTRUCT) -> Face {
+    let (hover, main) = app(|a| (a.hover, a.main));
+    let parent = GetParent(d.hwndItem).unwrap_or_default();
+    let on_main = parent == main;
+    // files dragged over a drive / Recycle Bin button press it, as a click would
+    let pressed = d.itemState.0 & ODS_SELECTED.0 != 0 || DROP_BTN.load(Ordering::Relaxed) == d.hwndItem.0 as usize;
+    // a pane's ← / → / ↑ with nowhere to go (nav.rs): faint, and no hover shade; pressed still shades, as it may be wrong
+    let faint = !on_main && nav_dim_of(parent, d.CtlID as i32);
+    let hot = (hover == d.hwndItem && !faint) || tour_target() == d.hwndItem;
+    let (bg, ink) = if on_main { (pal().bg, pal().text) } else { header_colors(parent) };
+    let tinted = bg != pal().bg && bg != pal().card;
+    Face { bg, ink, tinted, hot, pressed, faint }
+}
+
+// A hot or pressed button's shade: on Windows 11 a rounded tile s(2) inside the button, as Explorer's command bar;
+// elsewhere the whole button, as before.
+unsafe fn hot_shade(dc: HDC, rc: RECT, bg: u32, shade: u32, dpi: i32) {
+    let s = |v: i32| v * dpi / 96;
+    if rounded() {
+        round_fill(dc, RECT { left: rc.left + s(2), top: rc.top + s(2), right: rc.right - s(2), bottom: rc.bottom - s(2) }, s(4), shade, bg);
+    } else {
+        fill(dc, rc, shade);
     }
 }
 
 unsafe fn draw_button_face(d: &DRAWITEMSTRUCT) {
-    let (hover, dpi, font, icon_font, main) = app(|a| (a.hover, a.dpi, a.font, a.icon_font, a.main));
+    let (dpi, font, icon_font, main) = app(|a| (a.dpi, a.font, a.icon_font, a.main));
     let parent = GetParent(d.hwndItem).unwrap_or_default();
     let on_main = parent == main;
     let (dc, rc, id) = (d.hDC, d.rcItem, d.CtlID as i32);
-    // files dragged over a drive / Recycle Bin button press it, as a click would
-    let pressed = d.itemState.0 & ODS_SELECTED.0 != 0 || DROP_BTN.load(Ordering::Relaxed) == d.hwndItem.0 as usize;
-    // a pane's ← / → / ↑ with nowhere to go (nav.rs): faint, and no hover shade; pressed still shades, as it may be wrong
-    let faint = !on_main && nav_dim_of(parent, id);
-    let hot = (hover == d.hwndItem && !faint) || tour_target() == d.hwndItem;
-    let (bg, ink) = if on_main { (pal().bg, pal().text) } else { header_colors(parent) };
-    let tinted = bg != pal().bg && bg != pal().card;
+    let Face { bg, ink, tinted, hot, pressed, faint } = face_state(d);
+    let shade = (pressed || hot).then(|| blend(bg, ink, press_tint(tinted, pressed)));
     fill(dc, rc, bg);
-    if pressed || hot {
-        fill(dc, rc, blend(bg, ink, press_tint(tinted, pressed)));
+    if let Some(c) = shade {
+        hot_shade(dc, rc, bg, c, dpi);
     }
     let fg = if tinted || hot || pressed { ink } else { pal().sub };
     if id == ID_FAV {
@@ -150,8 +308,7 @@ unsafe fn draw_button_face(d: &DRAWITEMSTRUCT) {
     }
     if !on_main {
         if let Some(turn) = (id == ID_UP).then(|| spin_turn(parent)).flatten() {
-            let back = if pressed || hot { blend(bg, ink, press_tint(tinted, pressed)) } else { bg };
-            return draw_spin(dc, rc, back, fg, dpi, turn);
+            return draw_spin(dc, rc, bg, shade, fg, dpi, turn);
         }
         let fg = if faint { faint_ink(bg, if tinted { ink } else { pal().sub }) } else { fg };
         return text(dc, rc, glyph(id), icon_font, fg, DT_CENTER);
@@ -433,7 +590,7 @@ pub(crate) fn refresh_coverage(n: i32, turn: f32) -> Vec<u8> {
     out
 }
 
-unsafe fn draw_spin(dc: HDC, rc: RECT, back: u32, ink: u32, dpi: i32, turn: f32) {
+unsafe fn draw_spin(dc: HDC, rc: RECT, bg: u32, shade: Option<u32>, ink: u32, dpi: i32, turn: f32) {
     let (w, h) = (rc.right - rc.left, rc.bottom - rc.top);
     let n = 16 * dpi / 96;
     let mut px = Vec::with_capacity((n * n * 4) as usize);
@@ -445,7 +602,12 @@ unsafe fn draw_spin(dc: HDC, rc: RECT, back: u32, ink: u32, dpi: i32, turn: f32)
     let mem = CreateCompatibleDC(Some(dc));
     let bmp = CreateCompatibleBitmap(dc, w, h);
     let old = SelectObject(mem, bmp.into());
-    fill(mem, RECT { left: 0, top: 0, right: w, bottom: h }, back);
+    // the button's face as draw_button_face paints it: its background, then the hover / pressed shade
+    let all = RECT { left: 0, top: 0, right: w, bottom: h };
+    fill(mem, all, bg);
+    if let Some(c) = shade {
+        hot_shade(mem, all, bg, c, dpi);
+    }
     let (x, y) = ((w - n) / 2, (h - n) / 2);
     blit_bgra(mem, RECT { left: x, top: y, right: x + n, bottom: y + n }, n, n, &px);
     _ = BitBlt(dc, rc.left, rc.top, w, h, Some(mem), 0, 0, SRCCOPY);
@@ -616,5 +778,97 @@ pub(crate) unsafe fn tip_text(btn: HWND, tip: &str, msg: u32) {
     // a toolbar button's screen reader description is its tooltip, so the keys it names are read out with it
     if ti.hwnd == main {
         a11y_desc(btn, (msg != TTM_DELTOOLW && !tip.is_empty()).then(|| tip.to_string()).as_deref());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A w × h shape as round_fill lays it on `under`: the cross in `rgb`, the corner pixels smoothed toward `under`.
+    fn laid(w: i32, h: i32, radius: i32, rgb: u32, under: u32) -> Vec<u32> {
+        let (k, corners) = round_corners(w, h, radius);
+        let mut px = vec![under; (w * h) as usize];
+        for y in 0..h {
+            for x in 0..w {
+                if (x >= k && x < w - k) || (y >= k && y < h - k) {
+                    px[(y * w + x) as usize] = rgb;
+                }
+            }
+        }
+        for (x, y, c) in corners {
+            px[(y * w + x) as usize] = blend(under, rgb, c);
+        }
+        px
+    }
+
+    // Windows 11's rounded fields, chips and hover shades at 100 / 150 / 200 %: corners on the colour beneath, the
+    // middle and the middle of each side solid, mirrored both ways, smoothed (part-covered pixels), and square
+    // (fill's pixels exactly) at radius 0.
+    #[test]
+    fn rounded_shapes() {
+        let (rgb, under) = (0x2060C0u32, 0xF0F0F0u32);
+        for dpi in [96, 144, 192] {
+            let s = |v: i32| v * dpi / 96;
+            for radius in [0, s(3), s(4)] {
+                for (w, h) in [(s(160), s(28)), (s(18), s(16)), (s(16), s(16)), (s(40), s(22))] {
+                    let px = laid(w, h, radius, rgb, under);
+                    let at = |x: i32, y: i32| px[(y * w + x) as usize];
+                    let tag = format!("dpi {dpi}, radius {radius}, {w}×{h}");
+                    if radius == 0 {
+                        assert!(px.iter().all(|&c| c == rgb), "{tag}: not fill's pixels");
+                        continue;
+                    }
+                    for (x, y) in [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)] {
+                        assert_eq!(at(x, y), under, "{tag}: corner ({x}, {y})");
+                    }
+                    for (x, y) in [(w / 2, h / 2), (w / 2, 0), (w / 2, h - 1), (0, h / 2), (w - 1, h / 2)] {
+                        assert_eq!(at(x, y), rgb, "{tag}: ({x}, {y})");
+                    }
+                    for y in 0..h {
+                        for x in 0..w {
+                            assert_eq!(at(x, y), at(w - 1 - x, y), "{tag}: ({x}, {y}) not mirrored across");
+                            assert_eq!(at(x, y), at(x, h - 1 - y), "{tag}: ({x}, {y}) not mirrored down");
+                        }
+                    }
+                    let soft = px.iter().filter(|&&c| c != rgb && c != under).count();
+                    assert!(soft >= 2, "{tag}: {soft} smoothed pixels");
+                }
+            }
+        }
+        // cut to fit: never past half the shorter side; nothing at all for an empty or folded shape
+        assert_eq!(round_corners(40, 6, 8).0, 3);
+        assert_eq!(round_corners(5, 30, 8).0, 2);
+        for (w, h) in [(0, 20), (20, 0), (-4, 20), (1, 1)] {
+            assert_eq!(round_corners(w, h, 6), (0, Vec::new()), "{w}×{h}");
+        }
+    }
+
+    // The focus ring round a rounded field / button: only corner pixels it touches, each split between the ring,
+    // the space within and (the rest) the space round it; the outermost corner left alone; square at radius 0.
+    #[test]
+    fn rounded_rings() {
+        for dpi in [96, 144, 192] {
+            let s = |v: i32| v * dpi / 96;
+            for (width, radius) in [(1, s(4)), ((2 * dpi / 96).max(2), s(6))] {
+                let (w, h) = (s(28), s(24));
+                let (k, px) = ring_corners(w, h, width, radius);
+                assert_eq!(k, radius, "dpi {dpi}");
+                assert!(px.iter().all(|&(x, y, on, within)| {
+                    on > 0.0 && within >= 0.0 && on + within <= 1.0 + 1e-6 && (x < k || x >= w - k) && (y < k || y >= h - k)
+                }));
+                assert!(!px.iter().any(|&(x, y, ..)| (x, y) == (0, 0)), "dpi {dpi}: outermost corner touched");
+                assert!(px.iter().any(|&(.., on, within)| on < 1.0 && within > 0.0), "dpi {dpi}: inner edge not smoothed");
+                assert!(px.iter().any(|&(.., on, within)| on < 1.0 && within == 0.0), "dpi {dpi}: outer edge not smoothed");
+                for &(x, y, on, within) in &px {
+                    assert!(px.contains(&(w - 1 - x, y, on, within)) && px.contains(&(x, h - 1 - y, on, within)), "dpi {dpi}: ({x}, {y})");
+                }
+            }
+        }
+        assert_eq!(ring_corners(28, 24, 1, 0), (0, Vec::new()));
+        assert_eq!(ring_corners(0, 24, 1, 4), (0, Vec::new()));
+        // shares mix by weight: all ring is the ring's colour, half and half lands between
+        assert_eq!(mix([(0x000000, 0.0), (0x2060C0, 1.0), (0xFFFFFF, 0.0)]), 0x2060C0);
+        assert_eq!(mix([(0x000000, 0.5), (0x2060C0, 0.0), (0xFFFFFF, 0.5)]), 0x808080);
     }
 }
