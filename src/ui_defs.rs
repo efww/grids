@@ -423,7 +423,7 @@ F7\tNew folder\n\
 Shift+F7\tNew text file (named, selected and ready to rename)\n\
 Ctrl+F7\tMove the selected items into a new folder named after them, ready to rename (Ctrl+Z moves them back)\n\
 Shift+F5\tCopy the selected items next to them with the date and time added: Report.docx → Report (2026-11-27 14.30).docx (Ctrl+Z removes the copies)\n\
-F6 / Shift+F6\tMove between file list, address bar, filter, folder tree and the top toolbar (on the toolbar: ←/→ pick, Enter press, Shift+F10 drive / Recycle Bin menu, Esc back to the list)\n\
+F6 / Shift+F6\tMove between file list, address bar, filter, folder tree and the top toolbar (on the toolbar: ←/→ pick a button (its name and keys show under it), Enter press, Shift+F10 drive / Recycle Bin menu, Esc back to the list)\n\
 Enter / Esc\tApply / cancel the address or filter\n\
 Ctrl+H\tShow hidden files\n\
 F3, Space\tQuick preview of the focused file: pictures, text and code, Markdown, CSV tables, Office / PDF / HTML / mail (files up to 10 MB), HWP / HWPX, ZIP contents, folders; anything else as a card of facts (arrows or the wheel: previous / next file without closing; on long text the wheel scrolls first and moves on past the end; PgUp / PgDn: scroll; Enter on an online-only cloud file: download it and preview; Esc: close, also while it is still opening)\n\
@@ -498,7 +498,7 @@ F7\t새 폴더\n\
 Shift+F7\t새 텍스트 파일 (이름 짓기 바로 시작)\n\
 Ctrl+F7\t선택한 항목을 공통 이름의 새 폴더로 묶고 이름 짓기 바로 시작 (Ctrl+Z로 이동 되돌리기)\n\
 Shift+F5\t선택한 항목 옆에 날짜·시각을 붙인 사본 만들기: 보고서.docx → 보고서 (2026-11-27 14.30).docx (Ctrl+Z로 사본 지우기)\n\
-F6 / Shift+F6\t파일 목록·주소창·필터·폴더 트리·상단 도구줄 사이 이동 (도구줄에서 ←/→ 고르기, Enter 누르기, Shift+F10 드라이브·휴지통 메뉴, Esc 목록으로)\n\
+F6 / Shift+F6\t파일 목록·주소창·필터·폴더 트리·상단 도구줄 사이 이동 (도구줄에서 ←/→ 고르기 — 고른 버튼의 이름·단축키가 아래에 뜸, Enter 누르기, Shift+F10 드라이브·휴지통 메뉴, Esc 목록으로)\n\
 Enter / Esc\t주소창·필터 적용 / 취소\n\
 Ctrl+H\t숨김 파일 표시\n\
 F3, Space\t포커스한 파일 빠른 미리보기: 사진, 텍스트·코드, 마크다운, CSV 표, Office·PDF·HTML·메일(10 MB까지), HWP·HWPX, ZIP 목록, 폴더. 나머지는 정보 카드 (방향키·휠: 닫지 않고 이전·다음 파일, 긴 텍스트에서는 휠이 먼저 스크롤하고 끝에서 넘어감, PgUp/PgDn: 스크롤, 온라인 전용 클라우드 파일에서 Enter: 내려받아 미리보기, Esc: 닫기, 여는 중에도 바로)\n\

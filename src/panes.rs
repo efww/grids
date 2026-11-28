@@ -385,6 +385,7 @@ pub(crate) unsafe fn layout_pane(h: HWND) {
 
 pub(crate) unsafe fn relayout() {
     ctrl_hint_off(); // Ctrl-held keycaps were placed for the old layout
+    kbd_tip_hide(); // so was a toolbar button's tooltip (drive / update buttons come and go, the buttons move)
     flash_off(); // so was the ring round a pane just picked
     // a pending Ctrl+Alt+arrow lands with this layout (key release, zoom, a session, DPI ...): its guide bar goes
     if let Some(bars) = app(|a| a.nudge.take().map(|_| a.bars)) {
@@ -1149,7 +1150,7 @@ pub(crate) unsafe fn apply_theme() {
 
 // Everything but the panes' Explorer lists: tooltips, app mode (menus, scrollbars), title bar, tree, accent.
 pub(crate) unsafe fn theme_chrome() {
-    let (main, dark, tree, accent, tip) = app(|a| (a.main, shown_dark(a.s.dark), a.tree_hwnd, a.s.accent_now(), a.tip));
+    let (main, dark, tree, accent, tip, kbd_tip) = app(|a| (a.main, shown_dark(a.s.dark), a.tree_hwnd, a.s.accent_now(), a.tip, a.kbd_tip));
     // tooltips: dark on dark, back to the default on light (these windows outlive the theme switch)
     let tip_theme = |t: HWND| {
         if !t.0.is_null() {
@@ -1157,6 +1158,7 @@ pub(crate) unsafe fn theme_chrome() {
         }
     };
     tip_theme(tip);
+    tip_theme(kbd_tip);
     DARK_ON.store(dark, Ordering::Relaxed);
     if let Some(f) = uxtheme(135) {
         let set_preferred_app_mode: unsafe extern "system" fn(i32) -> i32 = std::mem::transmute(f);

@@ -1,5 +1,8 @@
 use crate::*;
 use windows::Win32::System::Threading::GetCurrentProcessId;
+use windows::Win32::UI::Controls::{
+    TTF_ABSOLUTE, TTF_TRACK, TTF_TRANSPARENT, TTM_GETBUBBLESIZE, TTM_GETTEXTW, TTM_SETMAXTIPWIDTH, TTM_TRACKACTIVATE, TTM_TRACKPOSITION,
+};
 use windows::Win32::UI::HiDpi::{GetDpiForMonitor, GetSystemMetricsForDpi, MDT_EFFECTIVE_DPI};
 
 // ---------- window procs ----------
@@ -601,9 +604,13 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 _ = PostMessageW(Some(h), WM_OPEN_ARGS, WPARAM(0), LPARAM(0));
                 return LRESULT(1);
             }
-            WM_MOVE => ctrl_hint_off(), // moved by a program (a second start's load, a monitor change): keycaps off
+            WM_MOVE => {
+                ctrl_hint_off(); // moved by a program (a second start's load, a monitor change): keycaps off
+                kbd_tip_hide(); // and a toolbar button's tooltip, left behind where the button was
+            }
             WM_DPICHANGED => {
                 ctrl_hint_off();
+                kbd_tip_hide();
                 kids_cancel();
                 close_tour(false); // measured for the old DPI
                 let dpi = (wp.0 & 0xffff) as i32;
@@ -1290,11 +1297,13 @@ pub(crate) unsafe fn focus_toolbar() {
     let last = app(|a| a.tb_last);
     if let Some(&b) = bs.iter().find(|&&b| GetDlgCtrlID(b) == last).or(bs.first()) {
         toolbar_focus(b);
+        kbd_tip_show(b);
     }
 }
 
 // The ring off (a mouse press, or the keys leaving the toolbar), the focused button repainted without it.
 pub(crate) unsafe fn toolbar_ring_off() {
+    kbd_tip_hide();
     if app(|a| std::mem::take(&mut a.tb_kbd)) {
         let f = GetFocus();
         if is_toolbar_button(f) {
@@ -1321,6 +1330,7 @@ pub(crate) unsafe fn toolbar_key(m: &MSG) -> Option<bool> {
             let cur = bs.iter().position(|&b| b == m.hwnd).unwrap_or(0);
             if let Some(&b) = bs.get(toolbar_step(bs.len().max(1), cur, vk)) {
                 toolbar_focus(b);
+                kbd_tip_show(b);
             }
         }
         VK_RETURN => {
@@ -1346,6 +1356,7 @@ pub(crate) unsafe fn toolbar_key(m: &MSG) -> Option<bool> {
 // Still on a button, it stays: restore_focus comes back to that button.
 pub(crate) unsafe fn toolbar_away() {
     TB_ENTER.set(None);
+    kbd_tip_hide(); // always: the focus stays on the button over an Alt+Tab, and the tooltip is topmost
     if !is_toolbar_button(GetFocus()) {
         app(|a| a.tb_kbd = false);
     }
@@ -1358,12 +1369,130 @@ pub(crate) unsafe fn toolbar_enter_up(m: &MSG) -> bool {
     if b != m.hwnd || GetFocus() != b || !is_toolbar_button(b) {
         return false;
     }
+    kbd_tip_hide(); // not over the menu or box the press opens
     if GetDlgCtrlID(b) == ID_TB_VIEW {
         view_menu_key();
     } else {
         SendMessageW(b, BM_CLICK, None, None);
     }
     true
+}
+
+// ---------- the picked toolbar button's tooltip (as WinUI's tooltips on keyboard focus, Office's ScreenTips) ----------
+
+thread_local! {
+    // the button the keyboard tooltip is up under, if it is up
+    static KBD_TIP_AT: Cell<Option<HWND>> = const { Cell::new(None) };
+}
+
+// The keyboard tooltip's one tool: placed by Grids (track, absolute), see-through to clicks.
+fn kbd_tool(main: HWND, text: PWSTR) -> TTTOOLINFOW {
+    TTTOOLINFOW {
+        cbSize: size_of::<TTTOOLINFOW>() as u32,
+        uFlags: TTF_TRACK | TTF_ABSOLUTE | TTF_TRANSPARENT,
+        hwnd: main,
+        uId: 1,
+        lpszText: text,
+        ..Default::default()
+    }
+}
+
+// Made once with main, styled as the mouse's tooltip but shown at once (no animation, no fade). None: no tooltip.
+pub(crate) unsafe fn make_kbd_tip(main: HWND) -> HWND {
+    let style = WS_POPUP | WINDOW_STYLE(0x01 | 0x02 | 0x10 | 0x20); // TTS_ALWAYSTIP | TTS_NOPREFIX | TTS_NOANIMATE | TTS_NOFADE
+    let Ok(t) = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, None, style, 0, 0, 0, 0, Some(main), None, None, None) else {
+        return HWND::default();
+    };
+    let ti = kbd_tool(main, PWSTR(w!("").0 as *mut u16));
+    SendMessageW(t, TTM_ADDTOOLW, None, Some(LPARAM(&ti as *const _ as isize)));
+    t
+}
+
+/// Where the tooltip goes (its top-left, screen): centred under the button, above it when there is no room
+/// below, kept inside the work area left to right. `size` is the tooltip's (w, h).
+pub(crate) fn kbd_tip_place(btn: RECT, size: (i32, i32), work: RECT, gap: i32) -> (i32, i32) {
+    let (w, h) = size;
+    let x = ((btn.left + btn.right) / 2 - w / 2).min(work.right - w).max(work.left);
+    let below = btn.bottom + gap;
+    let y = if below + h <= work.bottom { below } else { (btn.top - gap - h).max(work.top) };
+    (x, y)
+}
+
+// The tooltip under toolbar button `b`, saying what the mouse's tooltip says on it now (session name, unsaved,
+// drive kind, bin contents, update): nothing is shown when that says nothing.
+pub(crate) unsafe fn kbd_tip_show(b: HWND) {
+    let (main, tips, kt, dpi) = app(|a| (a.main, a.tip, a.kbd_tip, a.dpi));
+    if kt.0.is_null() || tips.0.is_null() {
+        return;
+    }
+    let mut buf = vec![0u16; 1024];
+    let mut q = TTTOOLINFOW {
+        cbSize: size_of::<TTTOOLINFOW>() as u32,
+        uFlags: TTF_IDISHWND,
+        hwnd: main,
+        uId: b.0 as usize,
+        lpszText: PWSTR(buf.as_mut_ptr()),
+        ..Default::default()
+    };
+    SendMessageW(tips, TTM_GETTEXTW, Some(WPARAM(buf.len())), Some(LPARAM(&mut q as *mut _ as isize)));
+    if buf[0] == 0 {
+        kbd_tip_hide();
+        return;
+    }
+    let mut rc = RECT::default();
+    _ = GetWindowRect(b, &mut rc);
+    // the work area of the monitor the button is on, not the primary one
+    let mut mi = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
+    let work = if GetMonitorInfoW(MonitorFromRect(&rc, MONITOR_DEFAULTTONEAREST), &mut mi).as_bool() && mi.rcWork.right > mi.rcWork.left {
+        mi.rcWork
+    } else {
+        RECT { left: i32::MIN / 2, top: i32::MIN / 2, right: i32::MAX / 2, bottom: i32::MAX / 2 }
+    };
+    // long drive / bin lines wrap instead of running off the screen
+    let max_w = (480 * dpi / 96).min((work.right - work.left) / 10 * 9).max(1);
+    SendMessageW(kt, TTM_SETMAXTIPWIDTH, None, Some(LPARAM(max_w as isize)));
+    let ti = kbd_tool(main, PWSTR(buf.as_mut_ptr()));
+    let tl = Some(LPARAM(&ti as *const _ as isize));
+    SendMessageW(kt, TTM_UPDATETIPTEXTW, None, tl);
+    let gap = 4 * dpi / 96;
+    let track = |size: (i32, i32)| {
+        let (x, y) = kbd_tip_place(rc, size, work, gap);
+        let at = (x as u32 & 0xffff) | ((y as u32 & 0xffff) << 16);
+        SendMessageW(kt, TTM_TRACKPOSITION, None, Some(LPARAM(at as isize)));
+    };
+    let bubble = SendMessageW(kt, TTM_GETBUBBLESIZE, None, tl).0 as u32;
+    let size = ((bubble & 0xffff) as i32, (bubble >> 16 & 0xffff) as i32);
+    track(size);
+    SendMessageW(kt, TTM_TRACKACTIVATE, Some(WPARAM(1)), tl);
+    KBD_TIP_AT.set(Some(b));
+    // no size before it was shown: measured on screen, then put in its place
+    if size.0 == 0 || size.1 == 0 {
+        let mut tr = RECT::default();
+        if GetWindowRect(kt, &mut tr).is_ok() {
+            track((tr.right - tr.left, tr.bottom - tr.top));
+        }
+    }
+}
+
+// The keyboard tooltip gone, if it is up.
+pub(crate) unsafe fn kbd_tip_hide() {
+    if KBD_TIP_AT.take().is_none() {
+        return;
+    }
+    let (main, kt) = app(|a| (a.main, a.kbd_tip));
+    if !kt.0.is_null() {
+        let ti = kbd_tool(main, PWSTR::null());
+        SendMessageW(kt, TTM_TRACKACTIVATE, Some(WPARAM(0)), Some(LPARAM(&ti as *const _ as isize)));
+    }
+}
+
+// A key going down: the tooltip stays only for ←/→, Home / End on a toolbar button with no modifier (those
+// move it to the next button); any other key hides it, Space, Shift+F10 and the menu key included (their menu
+// opens right under the button), as do Ctrl+L, Ctrl+1, Alt / F10 and Ctrl's keycaps.
+pub(crate) unsafe fn kbd_tip_key(m: &MSG, vk: VIRTUAL_KEY, no_mods: bool) {
+    if KBD_TIP_AT.get().is_some() && !(no_mods && matches!(vk, VK_LEFT | VK_RIGHT | VK_HOME | VK_END) && is_toolbar_button(m.hwnd)) {
+        kbd_tip_hide();
+    }
 }
 
 // What a screen reader calls the layout button: "Layout 2×2", not the bare grid its face shows.

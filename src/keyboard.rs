@@ -917,6 +917,7 @@ pub(crate) unsafe fn pre_translate(m: &MSG) -> bool {
         MENU_ARM.set(None);
         DIFF_KEY.set(None);
         ctrl_hint_off(); // Ctrl+click, Ctrl+drag, Ctrl+wheel: no keycaps, and the input goes on as ever
+        kbd_tip_hide(); // nor the tooltip of a toolbar button picked from the keys
     }
     if matches!(m.message, WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN | WM_XBUTTONDOWN) {
         let t = in_tree();
@@ -959,6 +960,7 @@ pub(crate) unsafe fn pre_translate(m: &MSG) -> bool {
             let held = |k: VIRTUAL_KEY| GetKeyState(k.0 as i32) < 0;
             let mods = [held(VK_CONTROL), held(VK_SHIFT), held(VK_MENU), held(VK_LWIN) || held(VK_RWIN)];
             let in_main = m.hwnd == main || IsChild(main, m.hwnd).as_bool();
+            kbd_tip_key(m, VIRTUAL_KEY(vk), mods == [false; 4]);
             // Shift+F2's pane list waits for F2 and Shift to be let go; any other key (or Shift pressed anew) drops it,
             // and so does a fresh F2 without Shift (a missed key-up must not turn a rename into the compare list)
             if !((vk == VK_F2.0 && (repeat || mods[1])) || (vk == VK_SHIFT.0 && repeat)) {

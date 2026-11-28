@@ -126,6 +126,7 @@ pub(crate) struct App {
     pub(crate) cards: Vec<(PathBuf, Session, String)>,
     pub(crate) hover: HWND, // owner-drawn button under the mouse
     pub(crate) tip: HWND,
+    pub(crate) kbd_tip: HWND, // the tooltip of the toolbar button picked from the keys, under it (kbd_tip_show)
     pub(crate) bars: [HWND; 2], // splitter guide bars (vertical, horizontal)
     pub(crate) flash: HWND,     // the ring round a pane just picked from the keyboard (flash_pane)
     pub(crate) grid: HWND,      // layout picker popup while open
@@ -256,6 +257,7 @@ thread_local! {
         cards: Vec::new(),
         hover: HWND::default(),
         tip: HWND::default(),
+        kbd_tip: HWND::default(),
         bars: [HWND::default(); 2],
         flash: HWND::default(),
         grid: HWND::default(),

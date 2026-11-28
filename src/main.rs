@@ -428,7 +428,8 @@ fn main() -> Result<()> {
         let win = pick_place(&s.places, sig.as_deref(), s.win);
         let tip_style = WS_POPUP | WINDOW_STYLE(0x01 | 0x02); // TTS_ALWAYSTIP | TTS_NOPREFIX
         let tip = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, None, tip_style, 0, 0, 0, 0, Some(main), None, None, None)?;
-        app(|a| (a.s, a.main, a.dpi, a.view_menu, a.tip) = (s, main, dpi, view_menu, tip));
+        let kbd_tip = make_kbd_tip(main); // the toolbar's tooltip from the keys (F6, ←/→)
+        app(|a| (a.s, a.main, a.dpi, a.view_menu, a.tip, a.kbd_tip) = (s, main, dpi, view_menu, tip, kbd_tip));
         // Grids places the window itself below, so the first save is not a setup change to hold for
         app(|a| a.place_sig = sig.unwrap_or_default());
         if startup {
@@ -1266,6 +1267,22 @@ mod tests {
         assert_eq!([0, 1, 4].map(|c| toolbar_step(5, c, VK_LEFT)), [4, 0, 3]);
         assert_eq!((toolbar_step(5, 3, VK_HOME), toolbar_step(5, 1, VK_END)), (0, 4));
         assert_eq!(toolbar_step(1, 0, VK_RIGHT), 0);
+    }
+
+    #[test]
+    fn kbd_tip_places() {
+        let r = |left, top, right, bottom| RECT { left, top, right, bottom };
+        let work = r(0, 0, 1920, 1040);
+        // centred under the button, the gap below it
+        assert_eq!(kbd_tip_place(r(100, 10, 140, 40), (200, 30), work, 4), (20, 44));
+        // at the screen's right end: kept inside, its right edge on the work area's
+        assert_eq!(kbd_tip_place(r(1880, 10, 1920, 40), (200, 30), work, 4), (1720, 44));
+        // at the left end of a monitor to the right of the primary one: not left of it
+        assert_eq!(kbd_tip_place(r(1920, 10, 1960, 40), (200, 30), r(1920, 0, 3840, 1040), 4), (1920, 44));
+        // no room below (a window at the bottom of the screen): above the button
+        assert_eq!(kbd_tip_place(r(100, 1000, 140, 1030), (200, 30), work, 4), (20, 966));
+        // a work area too small either way: its top-left corner, never off it
+        assert_eq!(kbd_tip_place(r(10, 10, 50, 40), (300, 60), r(0, 0, 200, 80), 4), (0, 0));
     }
 
     #[test]
