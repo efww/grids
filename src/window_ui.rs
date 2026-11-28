@@ -2377,41 +2377,52 @@ pub(crate) unsafe fn set_language(ko: bool) {
 // The view menu's plain items, in menu order: (command, English, Korean). VIEW_TOP comes before the
 // Selection colour submenu, VIEW_END after the language item. The README test (view_menu_names_in_readmes)
 // and the WM_COMMAND collision test read these, so a new item is checked against both READMEs.
+// Each has one underlined letter ('&'; Korean in a "(&X)" tail before the tab, the same letter), so Alt or F10
+// and then that letter picks it: the view_menu_letters test keeps them apart (see there for the shared ones).
 pub(crate) const VIEW_TOP: [(usize, &str, &str); 17] = [
-    (ID_TREE, "Folder tree\tCtrl+Shift+E", "폴더 트리\tCtrl+Shift+E"),
-    (ID_TREE_QUICK, "Show Explorer Quick access in the folder tree", "폴더 트리에 탐색기 빠른 액세스 표시"),
-    (ID_TABS, "Tabs in panes", "패널 탭"),
-    (ID_HIDDEN, "Show hidden files\tCtrl+H", "숨김 파일 표시\tCtrl+H"),
-    (ID_GATHER, "Open folders from Explorer windows\tCtrl+Shift+O", "탐색기 창의 폴더 가져오기\tCtrl+Shift+O"),
-    (ID_EXT, "Show file name extensions", "파일 확장명 표시"),
-    (ID_DBLUP, "Double-click empty space: parent folder", "빈 곳 더블클릭: 위 폴더로"),
-    (ID_HOTKEY, "Bring Grids to front from anywhere\tWin+Alt+E", "어디서나 Grids 불러오기\tWin+Alt+E"),
-    (ID_BRING_HERE, "Bring Grids to the desktop I'm using", "Grids를 지금 쓰는 데스크톱으로 불러오기"),
-    (ID_TO_MOUSE, "Win+Alt+E brings Grids to the monitor with the mouse", "Win+Alt+E로 부르면 마우스가 있는 모니터로"),
-    (ID_AUTOSTART, "Start with Windows (minimized)", "Windows 시작 시 실행 (최소화)"),
-    (ID_TRAY, "Minimize to the notification area", "최소화하면 알림 영역으로"),
-    (ID_DLGJUMP, "Jump to Grids folders from file dialogs\tCtrl+Alt+G", "파일 대화 상자에서 Grids 폴더로 이동\tCtrl+Alt+G"),
-    (ID_CTXMENU, "Add \"Open in Grids\" to Explorer's right-click menu", "탐색기 오른쪽 클릭 메뉴에 \"Grids에서 열기\" 추가"),
-    (ID_DEFOPEN, "Open folders in Grids instead of Explorer", "폴더를 탐색기 대신 Grids로 열기"),
-    (ID_ASSOC, "Open session files (.grids) with Grids", "세션 파일(.grids)을 Grids로 열기"),
-    (ID_FOLLOW, "Follow Windows light/dark", "Windows 라이트·다크 따르기"),
+    (ID_TREE, "Folder &tree\tCtrl+Shift+E", "폴더 트리(&T)\tCtrl+Shift+E"),
+    (ID_TREE_QUICK, "Show Explorer &Quick access in the folder tree", "폴더 트리에 탐색기 빠른 액세스 표시(&Q)"),
+    (ID_TABS, "Tabs in &panes", "패널 탭(&P)"),
+    (ID_HIDDEN, "Show &hidden files\tCtrl+H", "숨김 파일 표시(&H)\tCtrl+H"),
+    (ID_GATHER, "&Open folders from Explorer windows\tCtrl+Shift+O", "탐색기 창의 폴더 가져오기(&O)\tCtrl+Shift+O"),
+    (ID_EXT, "Show file name e&xtensions", "파일 확장명 표시(&X)"),
+    (ID_DBLUP, "Double-click &empty space: parent folder", "빈 곳 더블클릭: 위 폴더로(&E)"),
+    (ID_HOTKEY, "Bring Grids to &front from anywhere\tWin+Alt+E", "어디서나 Grids 불러오기(&F)\tWin+Alt+E"),
+    (ID_BRING_HERE, "&Bring Grids to the desktop I'm using", "Grids를 지금 쓰는 데스크톱으로 불러오기(&B)"),
+    (ID_TO_MOUSE, "Win+Alt+E brings Grids to the &monitor with the mouse", "Win+Alt+E로 부르면 마우스가 있는 모니터로(&M)"),
+    (ID_AUTOSTART, "&Start with Windows (minimized)", "Windows 시작 시 실행 (최소화)(&S)"),
+    (ID_TRAY, "Minimize to the &notification area", "최소화하면 알림 영역으로(&N)"),
+    (ID_DLGJUMP, "&Jump to Grids folders from file dialogs\tCtrl+Alt+G", "파일 대화 상자에서 Grids 폴더로 이동(&J)\tCtrl+Alt+G"),
+    (ID_CTXMENU, "&Add \"Open in Grids\" to Explorer's right-click menu", "탐색기 오른쪽 클릭 메뉴에 \"Grids에서 열기\" 추가(&A)"),
+    (ID_DEFOPEN, "Open folders in Grids &instead of Explorer", "폴더를 탐색기 대신 Grids로 열기(&I)"),
+    (ID_ASSOC, "Open session &files (.grids) with Grids", "세션 파일(.grids)을 Grids로 열기(&F)"),
+    (ID_FOLLOW, "Follow &Windows light/dark", "Windows 라이트·다크 따르기(&W)"),
 ];
 // Toolbar buttons also on the view menu, so the keyboard (Alt / F10) reaches them: the buttons' own commands.
 // Change layout comes first, the theme just above Follow Windows light/dark.
 pub(crate) const VIEW_BUTTONS: [(usize, &str, &str); 2] = [
-    (ID_TB_LAYOUT as usize, "Change layout…", "레이아웃 바꾸기…"),
-    (ID_TB_THEME as usize, "Light / dark theme", "라이트/다크 테마"),
+    (ID_TB_LAYOUT as usize, "Change &layout…", "레이아웃 바꾸기(&L)…"),
+    (ID_TB_THEME as usize, "Light / &dark theme", "라이트/다크 테마(&D)"),
 ];
 pub(crate) const VIEW_END: [(usize, &str, &str); 8] = [
-    (ID_TOUR, "Getting started tour", "처음 사용 안내"),
-    (ID_KEY_TIPS, "Show shortcut tips on the status line", "상태줄에 단축키 팁 표시"),
-    (ID_CTRL_HINTS, "Hold Ctrl to show shortcut hints", "Ctrl을 길게 눌러 단축키 보기"),
-    (ID_KEYS, "Keyboard shortcuts\tCtrl+/", "단축키\tCtrl+/"),
-    (ID_HELP, "Help (online)\tF1", "도움말 (온라인)\tF1"),
-    (ID_UPDATES, "Check for updates", "업데이트 확인"),
-    (ID_ABOUT, "About Grids", "Grids 정보"),
-    (ID_STAR, "★ Star Grids on GitHub", "★ GitHub에 별 주기"),
+    (ID_TOUR, "&Getting started tour", "처음 사용 안내(&G)"),
+    (ID_KEY_TIPS, "Show shortcut &tips on the status line", "상태줄에 단축키 팁 표시(&T)"),
+    (ID_CTRL_HINTS, "Hold &Ctrl to show shortcut hints", "Ctrl을 길게 눌러 단축키 보기(&C)"),
+    (ID_KEYS, "Ke&yboard shortcuts\tCtrl+/", "단축키(&Y)\tCtrl+/"),
+    (ID_HELP, "Help (&online)\tF1", "도움말 (온라인)(&O)\tF1"),
+    (ID_UPDATES, "Check for &updates", "업데이트 확인(&U)"),
+    (ID_ABOUT, "&About Grids", "Grids 정보(&A)"),
+    (ID_STAR, "★ Sta&r Grids on GitHub", "★ GitHub에 별 주기(&R)"),
 ];
+// The rest of the view menu as make_menus puts it up, letters and all: the Selection colour heading, the
+// language item (one line for both languages), and the submenu's Windows accent / Custom items and presets.
+// The presets' names stay plain in ACCENT_EN and the palettes (pane colour labels use them); these add the letter.
+pub(crate) const VIEW_COLOUR: (&str, &str) = ("Selection &colour", "선택 색(&C)");
+pub(crate) const VIEW_LANG: &str = "한국어 (&Korean)";
+pub(crate) const ACCENT_SYS_ITEM: (&str, &str) = ("&Windows accent colour", "Windows 강조 색(&W)");
+pub(crate) const ACCENT_PICK_ITEM: (&str, &str) = ("&Custom...", "직접 선택(&C)...");
+pub(crate) const ACCENT_ITEMS: [(&str, &str); 6] =
+    [("&Sky", "하늘(&S)"), ("&Gray", "그레이(&G)"), ("&Lavender", "라벤더(&L)"), ("S&age", "세이지(&A)"), ("&Peach", "피치(&P)"), ("&Rose", "로즈(&R)")];
 
 // The selection colour submenu opening: each preset's chip in the theme's shade (the colours its ticks compare),
 // and Windows' accent colour's when known. The view menu is kept, so every item is set again each time (no chip
@@ -2446,16 +2457,16 @@ pub(crate) unsafe fn make_menus() -> Result<HMENU> {
         item(view, MF_STRING, id, tr(en, ko))?;
     }
     let colors = CreatePopupMenu()?;
-    item(colors, MF_STRING, ID_ACCENT_SYS, tr("Windows accent colour", "Windows 강조 색"))?;
+    item(colors, MF_STRING, ID_ACCENT_SYS, tr(ACCENT_SYS_ITEM.0, ACCENT_SYS_ITEM.1))?;
     AppendMenuW(colors, MF_SEPARATOR, 0, PCWSTR::null())?;
-    for (k, (name, _)) in LIGHT.accents.iter().enumerate() {
-        item(colors, MF_STRING, ID_ACCENT + k, tr(ACCENT_EN[k], name))?;
+    for (k, (en, ko)) in ACCENT_ITEMS.iter().enumerate() {
+        item(colors, MF_STRING, ID_ACCENT + k, tr(en, ko))?;
     }
     AppendMenuW(colors, MF_SEPARATOR, 0, PCWSTR::null())?;
-    item(colors, MF_STRING, ID_ACCENT_PICK, tr("Custom...", "직접 선택..."))?;
-    item(view, MF_POPUP, colors.0 as usize, tr("Selection colour", "선택 색"))?;
+    item(colors, MF_STRING, ID_ACCENT_PICK, tr(ACCENT_PICK_ITEM.0, ACCENT_PICK_ITEM.1))?;
+    item(view, MF_POPUP, colors.0 as usize, tr(VIEW_COLOUR.0, VIEW_COLOUR.1))?;
     AppendMenuW(view, MF_SEPARATOR, 0, PCWSTR::null())?;
-    item(view, MF_STRING, ID_LANG, "한국어 (Korean)")?;
+    item(view, MF_STRING, ID_LANG, VIEW_LANG)?;
     AppendMenuW(view, MF_SEPARATOR, 0, PCWSTR::null())?;
     for (id, en, ko) in VIEW_END {
         item(view, MF_STRING, id, tr(en, ko))?;

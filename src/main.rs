@@ -3367,19 +3367,79 @@ mod tests {
         // The language item ("한국어 (Korean)") is not in these tables; the READMEs name it as English or Korean.
         let skip = [ID_HELP, ID_ABOUT];
         let mut names: Vec<(&str, &str)> = VIEW_TOP.iter().chain(&VIEW_END).chain(&VIEW_BUTTONS).filter(|v| !skip.contains(&v.0)).map(|v| (v.1, v.2)).collect();
-        names.push(("Selection colour", "선택 색"));
-        let name = |s: &'static str| s.split('\t').next().unwrap();
+        names.push(VIEW_COLOUR);
         let missing: Vec<String> = names
             .iter()
             .flat_map(|&(en, ko)| {
-                let en = format!("View > {}", name(en));
-                let ko = format!("보기 > {}", name(ko));
+                let en = format!("View > {}", menu_shown(en));
+                let ko = format!("보기 > {}", menu_shown(ko));
                 [(md, en, "README.md"), (md_ko, ko, "README.ko.md")]
             })
             .filter(|(doc, want, _)| !doc.contains(want.as_str()))
             .map(|(_, want, file)| format!("{file}: {want:?}"))
             .collect();
         assert!(missing.is_empty(), "view menu items the READMEs don't name as on the menu:\n{}", missing.join("\n"));
+    }
+
+    // The view menu's underlined letters (Alt or F10, let go, then the letter): one '&' per item, the same letter
+    // in English and Korean (Korean in a "(&X)" tail before the key). Windows picks an item whose letter is its own
+    // at once and only steps between items sharing one (Enter picks), so no letter is shared by three and the
+    // everyday settings have theirs alone. The Selection colour submenu's letters are all its own.
+    #[test]
+    fn view_menu_letters() {
+        let letter = |en: &str, ko: &str| -> char {
+            assert_eq!((en.matches('&').count(), ko.matches('&').count()), (1, 1), "{en} / {ko}");
+            let c = mnemonic(en).unwrap_or_else(|| panic!("no letter: {en}"));
+            assert!(c.is_ascii_uppercase(), "{en}");
+            assert_eq!(mnemonic(ko), Some(c), "{en} / {ko}");
+            // the language item is one line for both languages
+            assert!(ko == en || ko.split('\t').next().unwrap().contains(&format!("(&{c})")), "{ko}");
+            c
+        };
+        // the top level as make_menus puts it up (Selection colour's heading as 0)
+        let mut top = vec![VIEW_BUTTONS[0]];
+        for v in VIEW_TOP {
+            if v.0 == ID_FOLLOW {
+                top.push(VIEW_BUTTONS[1]);
+            }
+            top.push(v);
+        }
+        top.extend([(0, VIEW_COLOUR.0, VIEW_COLOUR.1), (ID_LANG, VIEW_LANG, VIEW_LANG)]);
+        top.extend(VIEW_END);
+        let of: std::collections::HashMap<usize, char> = top.iter().map(|&(id, en, ko)| (id, letter(en, ko))).collect();
+        assert_eq!(of.len(), top.len());
+        let users = |c: char| of.values().filter(|&&l| l == c).count();
+        for (id, en, _) in &top {
+            assert!(users(of[id]) <= 2, "{} is shared by three or more ({en})", of[id]);
+        }
+        for id in [ID_TB_LAYOUT as usize, ID_HIDDEN, ID_EXT, ID_TB_THEME as usize, ID_LANG, ID_TOUR, ID_KEYS, ID_TABS, ID_TRAY, ID_AUTOSTART] {
+            assert_eq!(users(of[&id]), 1, "{id}: its letter {} is shared", of[&id]);
+        }
+        // the letters the READMEs name (X, K, L) and H
+        assert_eq!((of[&ID_EXT], of[&ID_HIDDEN], of[&ID_LANG], of[&(ID_TB_LAYOUT as usize)]), ('X', 'H', 'K', 'L'));
+        assert_eq!(menu_shown(VIEW_LANG), "한국어 (Korean)");
+        // the Selection colour submenu: its own letters; the presets' names as the pane colour labels have them
+        let mut sub = vec![letter(ACCENT_SYS_ITEM.0, ACCENT_SYS_ITEM.1), letter(ACCENT_PICK_ITEM.0, ACCENT_PICK_ITEM.1)];
+        for (k, (en, ko)) in ACCENT_ITEMS.iter().enumerate() {
+            sub.push(letter(en, ko));
+            assert_eq!((menu_shown(en), menu_shown(ko)), (ACCENT_EN[k].to_string(), LIGHT.accents[k].0.to_string()));
+        }
+        let n = sub.len();
+        sub.sort();
+        sub.dedup();
+        assert_eq!(sub.len(), n, "a Selection colour letter is used twice");
+        // the shortcut window's and both READMEs' Alt / F10 row give an example that picks at once: X
+        let ext = VIEW_TOP.iter().find(|v| v.0 == ID_EXT).unwrap();
+        let docs = [
+            (KEYS_EN, "Alt / F10\t", menu_shown(ext.1)),
+            (KEYS_KO, "Alt / F10\t", menu_shown(ext.2)),
+            (include_str!("../README.md"), "| Alt / F10 |", menu_shown(ext.1)),
+            (include_str!("../README.ko.md"), "| Alt / F10 |", menu_shown(ext.2)),
+        ];
+        for (text, start, name) in docs {
+            let row = text.lines().find(|l| l.starts_with(start)).unwrap_or_else(|| panic!("no {start:?} row"));
+            assert!(row.contains(&format!("X: {name}")), "{row}");
+        }
     }
 
     // Menu help on the status line: every view menu item and every fixed ⇄ menu command (and each of their
