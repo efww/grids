@@ -668,6 +668,11 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 tray_remove(h, false); // before the loop ends: no icon left behind
                 PostQuitMessage(0);
             }
+            // the view menu's lit item: its help on the status line (not the drive / Recycle Bin shell menus')
+            WM_MENUSELECT => {
+                menu_select(wp, lp);
+                return DefWindowProcW(h, msg, wp, lp);
+            }
             _ => return DefWindowProcW(h, msg, wp, lp),
         }
         LRESULT(0)
@@ -906,6 +911,11 @@ pub(crate) extern "system" fn pane_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             },
             // Ctrl+G's menu: Ctrl+letter picks as the letter does
             WM_MENUCHAR => return go_menu_char(wp, lp).unwrap_or_else(|| DefWindowProcW(h, msg, wp, lp)),
+            // the ⇄ menu's lit item: its help on the status line (Ctrl+G, recent folders and filter kinds say nothing)
+            WM_MENUSELECT => {
+                menu_select(wp, lp);
+                return DefWindowProcW(h, msg, wp, lp);
+            }
             _ => return DefWindowProcW(h, msg, wp, lp),
         }
         LRESULT(0)
@@ -2338,5 +2348,6 @@ pub(crate) unsafe fn popup_menu(menu: HMENU, id: i32) {
     if let Ok(b) = GetDlgItem(Some(main), id) {
         _ = GetWindowRect(b, &mut rc);
     }
-    _ = TrackPopupMenu(menu, TPM_LEFTALIGN | TPM_TOPALIGN, rc.left, rc.bottom + 4, None, main, None);
+    // its picks come as WM_COMMAND; the lit item's help shows on the status line meanwhile
+    _ = with_menu_help(HelpMenu::View, || TrackPopupMenu(menu, TPM_LEFTALIGN | TPM_TOPALIGN, rc.left, rc.bottom + 4, None, main, None));
 }

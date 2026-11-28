@@ -1078,6 +1078,10 @@ pub(crate) unsafe fn open_in_menu(h: HWND, src: usize) {
         for (k, disp, _, t) in &items {
             _ = AppendMenuW(sub, MF_STRING, ID_SWAP_TO + k, &label(*k, *t, disp));
         }
+        if items.is_empty() {
+            // a grey filler row (the heading is grey, so it never shows) lets the status line tell what this is
+            _ = AppendMenuW(sub, MF_STRING | MF_GRAYED, ID_SWAP_TO + src, &HSTRING::from(tr2(M_SWAP)));
+        }
         let flags = if items.is_empty() { MF_POPUP | MF_GRAYED } else { MF_POPUP };
         _ = AppendMenuW(menu, flags, sub.0 as usize, &HSTRING::from(tr2(M_SWAP)));
     }
@@ -1142,7 +1146,8 @@ pub(crate) unsafe fn open_in_menu(h: HWND, src: usize) {
     if let Some(b) = pane_ctl(src, ID_OPEN_IN) {
         _ = GetWindowRect(b, &mut rc);
     }
-    let pick = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN, rc.left, rc.bottom, None, h, None).0;
+    // the lit item's help on the status line while it's up (Ctrl+M opens it here too)
+    let pick = with_menu_help(HelpMenu::OpenIn, || TrackPopupMenu(menu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN, rc.left, rc.bottom, None, h, None).0);
     // picked with Enter: its auto-repeats would open a file in the list that gets the focus next
     if GetKeyState(VK_RETURN.0 as i32) < 0 {
         app(|a| a.held = Some(VK_RETURN.0));

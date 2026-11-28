@@ -1285,6 +1285,10 @@ pub(crate) unsafe fn shell_menu(menu: HMENU, src: usize, picked: &std::result::R
                     let flags = if here && is_fs(path) { MF_STRING } else { MF_STRING | MF_GRAYED };
                     _ = AppendMenuW(sub, flags, ID_WM_PANE + k, label);
                 }
+                if others.is_empty() {
+                    // a grey filler row (the heading is grey, so it never shows) lets the status line tell what this is
+                    _ = AppendMenuW(sub, MF_STRING | MF_GRAYED, ID_WM_PANE + src, &HSTRING::from(tr2(M_WM_PANE)));
+                }
                 let flags = if others.is_empty() { MF_POPUP | MF_GRAYED } else { MF_POPUP };
                 _ = AppendMenuW(menu, flags, sub.0 as usize, &HSTRING::from(tr2(M_WM_PANE)));
             }

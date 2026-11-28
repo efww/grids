@@ -715,7 +715,10 @@ pub(crate) unsafe fn update_status() {
             a.lost = 0;
         }
         // every zone's value (the note, the size progress, raw free/total bytes) takes part in the compare
-        let line = StatusLine { note: a.note.as_ref().map(|(s, _)| s.clone()), head: format!("{head}{size}"), mid: mid.clone(), drive: drive.clone() };
+        // a lit menu item's help (with_menu_help) stands in the note's place while its menu is up; the note itself,
+        // and whether it was read out, stay as they are
+        let note = a.menu_help.map(str::to_string).or_else(|| a.note.as_ref().map(|(s, _)| s.clone()));
+        let line = StatusLine { note, head: format!("{head}{size}"), mid: mid.clone(), drive: drive.clone() };
         // each note set anew (its own end time) is read out once, the same words too; expiry, counts and size don't
         let fresh = a.note.as_ref().filter(|n| a.said != Some(n.1)).map(|(s, t)| (s.clone(), *t));
         if let Some((_, t)) = &fresh {
@@ -1025,6 +1028,152 @@ pub(crate) unsafe fn status_base(i: usize, path: &str, main: HWND, fv: &IFolderV
     }
     app(|a| a.status_base = (head, size, parts, disk));
     settled
+}
+
+// ---------- menu help on the status line ----------
+
+// The lit item of the view menu or the ⇄ menu says what it does in the note's place on the status line, as old
+// Explorer, Office and MFC apps did ("Displays items by using large icons") and Directory Opus' command
+// descriptions do. Only those two menus: drive and Recycle Bin shell menus, Ctrl+G, recent folders and the
+// filter kinds say nothing. No '&' (drawn with DT_NOPREFIX) and no {n}; short enough for the note's chip.
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum HelpMenu {
+    View,
+    OpenIn,
+}
+
+thread_local! {
+    // the menu whose WM_MENUSELECTs are read: set only while its TrackPopupMenu runs (with_menu_help)
+    static HELP_MENU: Cell<Option<HelpMenu>> = const { Cell::new(None) };
+}
+
+// The view menu: each item by its command, the Selection colour submenu's heading by its first item (`head`).
+pub(crate) fn view_help(id: usize, head: bool, ko: bool) -> Option<&'static str> {
+    let (en, k) = match id {
+        _ if head && (id == ID_ACCENT_SYS || (ID_ACCENT..ID_ACCENT + LIGHT.accents.len()).contains(&id) || id == ID_ACCENT_PICK) => {
+            ("The colour of selected items and the active pane's outline", "선택한 항목과 지금 패널 테두리의 색")
+        }
+        id if id == ID_TB_LAYOUT as usize => ("Pick how many panes there are and how they're laid out", "패널 개수와 배치를 고릅니다"),
+        id if id == ID_TB_THEME as usize => ("Switches between light and dark colours", "밝은 색과 어두운 색을 오갑니다"),
+        ID_TREE => ("The folder tree on the left; pick again to hide it", "왼쪽 폴더 트리를 켜고 끕니다"),
+        ID_TREE_QUICK => ("Explorer's Quick access (pinned folders) at the top of the tree", "트리 맨 위에 탐색기 빠른 액세스(고정 폴더)를 둡니다"),
+        ID_TABS => ("A tab strip on each pane, for several folders in one", "패널마다 탭 줄을 달아 폴더 여러 개를 엽니다"),
+        ID_HIDDEN => ("Hidden files show; a Windows setting, so Explorer too", "숨김 파일을 보입니다 (Windows 설정이라 탐색기도 같이)"),
+        ID_GATHER => ("The folders of open Explorer windows open in panes, from this one on", "열린 탐색기 창의 폴더를 지금 패널부터 차례로 엽니다"),
+        ID_EXT => ("Names end in .txt, .jpg …; a Windows setting, so Explorer too", "이름 뒤에 .txt·.jpg 같은 확장명을 보입니다 (탐색기도 같이)"),
+        ID_DBLUP => ("Double-click an empty part of a file list to go up a folder", "파일 목록 빈 곳을 더블클릭하면 위 폴더로 갑니다"),
+        ID_HOTKEY => ("Win+Alt+E brings Grids to the front from any app", "다른 앱을 쓰다가도 Win+Alt+E로 Grids를 앞으로 부릅니다"),
+        ID_BRING_HERE => ("Called up, Grids comes to the virtual desktop you're on", "불러내면 Grids가 지금 쓰는 가상 데스크톱으로 옵니다"),
+        ID_TO_MOUSE => ("Win+Alt+E moves Grids to the monitor the mouse is on", "Win+Alt+E로 부르면 마우스가 있는 모니터로 옮깁니다"),
+        ID_AUTOSTART => ("Grids starts minimized when you sign in to Windows", "Windows에 로그인하면 Grids가 최소화된 채 켜집니다"),
+        ID_TRAY => ("Minimized, Grids goes by the clock instead of the taskbar", "최소화하면 작업 표시줄 대신 시계 옆 아이콘으로 갑니다"),
+        ID_DLGJUMP => ("Other apps' Open and Save dialogs jump to a folder open in Grids", "다른 앱의 열기·저장 창에서 Grids의 폴더로 바로 갑니다"),
+        ID_CTXMENU => ("Explorer's right-click menu gets \"Open in Grids\"; pick again to remove", "탐색기 오른쪽 클릭 메뉴에 \"Grids에서 열기\"를 넣습니다 (다시 누르면 뺌)"),
+        ID_DEFOPEN => ("Folders opened anywhere in Windows open in Grids; pick again to undo", "Windows 어디서 연 폴더든 Grids로 열립니다 (다시 누르면 원래대로)"),
+        ID_FOLLOW => ("Light or dark changes along with Windows' setting", "Windows 설정에 맞춰 라이트·다크가 바뀝니다"),
+        ID_ACCENT_SYS => ("Selections take Windows' accent colour and follow its changes", "Windows 강조 색을 쓰고, 바뀌면 같이 바뀝니다"),
+        ID_ACCENT_PICK => ("Pick any colour for selections", "선택 색을 직접 고릅니다"),
+        id if (ID_ACCENT..ID_ACCENT + LIGHT.accents.len()).contains(&id) => ("This colour for selections and the active pane's outline", "선택과 지금 패널 테두리를 이 색으로"),
+        ID_LANG => ("Menus and messages in Korean; pick again for English", "메뉴와 알림을 한국어로 (다시 누르면 영어)"),
+        ID_TOUR => ("A short walk through Grids' main parts", "Grids의 주요 부분을 짧게 둘러봅니다"),
+        ID_KEY_TIPS => ("When the mouse does what a key also does, the key shows here", "마우스로 한 일에 단축키가 있으면 여기 알려 줍니다"),
+        ID_CTRL_HINTS => ("Holding Ctrl about a second shows each button's shortcut", "Ctrl을 1초쯤 누르고 있으면 버튼마다 단축키를 보입니다"),
+        ID_KEYS => ("Every keyboard shortcut in one window", "모든 단축키를 한 창에 보여 줍니다"),
+        ID_HELP => ("Grids' help page in your web browser", "웹 브라우저에서 Grids 도움말을 엽니다"),
+        ID_UPDATES => ("Looks for a newer Grids on GitHub; off, Grids uses no network", "GitHub에서 새 버전을 찾습니다 (끄면 네트워크를 안 씀)"),
+        ID_ABOUT => ("Grids' version and license", "Grids 버전과 라이선스"),
+        ID_STAR => ("Stars Grids on GitHub, or opens its page to do it", "GitHub에서 Grids에 별을 주거나 그 페이지를 엽니다"),
+        _ => return None,
+    };
+    Some(if ko { k } else { en })
+}
+
+// The ⇄ menu: told apart in open_in_pick's order (its pane rows and folder numbers share ranges with the shell
+// helpers). `head`: a submenu's heading, by its first item; grey there means it can't open, so it says when it can.
+pub(crate) fn open_in_help(id: usize, head: bool, ko: bool) -> Option<&'static str> {
+    let send = |mv: bool| match (mv, head) {
+        (false, true) => ("Copies the selected items to another pane's folder or a saved one", "선택한 항목을 다른 패널·즐겨찾기·최근 폴더로 복사합니다"),
+        (true, true) => ("Moves the selected items to another pane's folder or a saved one", "선택한 항목을 다른 패널·즐겨찾기·최근 폴더로 옮깁니다"),
+        (false, false) => ("Copies the selected items into that folder (grey: can't go there)", "선택한 항목을 그 폴더로 복사합니다 (회색: 보낼 수 없는 곳)"),
+        (true, false) => ("Moves the selected items into that folder (grey: can't go there)", "선택한 항목을 그 폴더로 옮깁니다 (회색: 보낼 수 없는 곳)"),
+    };
+    let (en, k) = match open_in_pick(id) {
+        OpenPick::Open(_) => ("Opens the selected folder, or this one, in that pane", "선택한 폴더(없으면 지금 폴더)를 그 패널에서 엽니다"),
+        OpenPick::Swap(_) if head => ("Trades places with another pane (needs 2 or more panes)", "다른 패널과 자리를 맞바꿉니다 (패널이 2개 이상일 때)"),
+        OpenPick::Swap(_) => ("This pane and that one trade places in the grid", "이 패널과 고른 패널의 자리를 맞바꿉니다"),
+        OpenPick::Diff(_) if head => ("Selects files only on one side or newer there (folders on disk)", "한쪽에만 있거나 더 새 파일을 선택합니다 (디스크의 폴더끼리)"),
+        OpenPick::Diff(_) => ("Selects, in both panes, files only on one side or newer there", "두 패널에서 한쪽에만 있거나 더 새 파일을 선택합니다"),
+        OpenPick::Send { mv, .. } => send(mv),
+        OpenPick::Elsewhere => match send_pick(id) {
+            Some(SendPick::Choose(false)) if !head => ("Copies the selected items to a folder you pick", "선택한 항목을 직접 고른 폴더로 복사합니다"),
+            Some(SendPick::Choose(true)) if !head => ("Moves the selected items to a folder you pick", "선택한 항목을 직접 고른 폴더로 옮깁니다"),
+            Some(SendPick::Choose(mv) | SendPick::To(mv, _)) => send(mv),
+            None => return None,
+        },
+        OpenPick::Shell => match id {
+            ID_INUSE => ("Shows which programs hold the selected files open", "선택한 파일을 열고 있는 프로그램을 보여 줍니다"),
+            ID_WM_PAIR => ("Compares the 2 selected items side by side in WinMerge", "선택한 2개를 WinMerge로 나란히 비교합니다"),
+            ID_HASH => ("SHA-256 of up to 50 selected files, no folders; again stops it", "파일 50개까지 SHA-256 (폴더 제외, 다시 누르면 중지)"),
+            ID_GROUP => ("Puts the selected items in a new folder to name; Ctrl+Z undoes it", "선택한 항목을 새 폴더에 넣고 이름을 정합니다 (Ctrl+Z로 되돌림)"),
+            ID_STAMP => ("Copies with the date and time in the name; Ctrl+Z removes them", "이름에 날짜·시각을 붙인 사본을 만듭니다 (Ctrl+Z로 지움)"),
+            ID_EMPTY => ("Empty subfolders here go to the Recycle Bin after asking; Ctrl+Z", "하위의 빈 폴더를 물어본 뒤 휴지통으로 보냅니다 (Ctrl+Z로 되돌림)"),
+            ID_DUPES => ("Selects all but one of each set of same-content files; again stops", "내용이 같은 파일을 하나씩만 남기고 선택합니다 (다시 누르면 중지)"),
+            ID_USAGE => ("What takes up the most space in this folder", "이 폴더에서 무엇이 용량을 많이 차지하는지 봅니다"),
+            ID_LIST => ("Names, sizes and dates as a table, to paste into Excel", "이름·크기·날짜를 표로 복사해 엑셀에 붙여 넣게 합니다"),
+            ID_CLIPADD => ("Adds the selection to what's already copied, for one paste", "이미 복사한 것에 선택을 더해 한 번에 붙여 넣게 합니다"),
+            ID_RESTORE => ("Selects again what was selected in this folder before", "이 폴더에서 전에 고른 항목을 다시 선택합니다"),
+            ID_EXPLORER => ("This folder in an Explorer window, with the selection if it can", "이 폴더를 탐색기 창으로 엽니다 (되면 선택도 그대로)"),
+            p if is_org_pick(p) => ("Moves the selected files, not folders, into year, month or day folders", "선택한 파일을 연·월·일 폴더로 옮깁니다 (파일만, 폴더 제외)"),
+            p if is_photo_pick(p) => ("Smaller copies of the selected photos beside them; originals stay", "선택한 사진의 작은 사본을 옆에 만듭니다 (원본은 그대로)"),
+            p if (ID_WM_PANE..ID_WM_PANE + MAXP).contains(&p) => ("Compares this folder with that pane's in WinMerge", "이 폴더와 그 패널 폴더를 WinMerge로 비교합니다"),
+            _ => return None,
+        },
+        OpenPick::Nothing | OpenPick::Unknown => return None,
+    };
+    Some(if ko { k } else { en })
+}
+
+// Runs `track` (the menu's TrackPopupMenu, which returns when the menu closes) with that menu's WM_MENUSELECTs
+// read; the help goes as soon as it returns, whatever closed the menu.
+pub(crate) unsafe fn with_menu_help<R>(which: HelpMenu, track: impl FnOnce() -> R) -> R {
+    let before = HELP_MENU.with(|c| c.replace(Some(which)));
+    let r = track();
+    HELP_MENU.with(|c| c.set(before));
+    show_menu_help(None);
+    r
+}
+
+unsafe fn show_menu_help(text: Option<&'static str>) {
+    if app(|a| std::mem::replace(&mut a.menu_help, text) != text) {
+        update_status(); // at once: the 0.3 s timer may wait while the menu loop runs
+    }
+}
+
+// WM_MENUSELECT (main_proc's view menu, pane_proc's ⇄ menu): LOWORD(wParam) the item's command, or its place
+// when it opens a submenu; HIWORD the flags; lParam the menu. Nothing while no menu of ours is up.
+pub(crate) unsafe fn menu_select(wp: WPARAM, lp: LPARAM) {
+    let Some(which) = HELP_MENU.with(|c| c.get()) else { return };
+    let (item, flags) = ((wp.0 & 0xffff) as u32, ((wp.0 >> 16) & 0xffff) as u32);
+    let menu = HMENU(lp.0 as _);
+    let help = |id: usize, head: bool| {
+        let ko = KO.load(Ordering::Relaxed);
+        match which {
+            HelpMenu::View => view_help(id, head, ko),
+            HelpMenu::OpenIn => open_in_help(id, head, ko),
+        }
+    };
+    let text = if menu.is_invalid() || flags == 0xffff || flags & MF_SEPARATOR.0 != 0 {
+        None // closing, or a separator
+    } else if flags & MF_POPUP.0 != 0 {
+        // a submenu's heading (grey ones never open): its first item with a command says what it is
+        let sub = GetSubMenu(menu, item as i32);
+        let n = GetMenuItemCount(Some(sub)).max(0);
+        (0..n).map(|k| GetMenuItemID(sub, k)).find(|&id| id != 0 && id != u32::MAX).and_then(|id| help(id as usize, true))
+    } else {
+        help(item as usize, false) // a title row (command 0) says nothing
+    };
+    show_menu_help(text);
 }
 
 #[cfg(test)]

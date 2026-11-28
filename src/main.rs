@@ -3265,6 +3265,66 @@ mod tests {
         assert!(missing.is_empty(), "view menu items the READMEs don't name as on the menu:\n{}", missing.join("\n"));
     }
 
+    // Menu help on the status line: every view menu item and every fixed ⇄ menu command (and each of their
+    // submenu headings) has an English and a Korean line, short enough for the note's chip, with no '&' (drawn
+    // with DT_NOPREFIX) or {n}; a key it names (Ctrl+Z, Windows' undo, aside) is the menu item's own. The two menus
+    // are checked apart: their numbers overlap (201, 205 …).
+    #[test]
+    fn menu_help_lines() {
+        let wide = |s: &str| s.chars().map(|c| if c.is_ascii() { 1 } else { 2 }).sum::<usize>();
+        let check = |what: String, label: (&str, &str), help: &dyn Fn(bool) -> Option<&'static str>| {
+            let (en, ko) = (help(false).unwrap_or_else(|| panic!("{what}: no English help")), help(true).unwrap_or_else(|| panic!("{what}: no Korean help")));
+            assert_ne!(en, ko, "{what}");
+            assert!(ko.chars().any(hangul), "{what}: {ko}");
+            for (text, label) in [(en, label.0), (ko, label.1)] {
+                assert!(!text.contains(['&', '{', '\t']), "{what}: {text}");
+                assert!(wide(text) <= 80, "{what}: too long for the note's chip ({}): {text}", wide(text));
+                let keys = |s: &str| key_words(s).into_iter().collect::<std::collections::BTreeSet<_>>();
+                let mut said = keys(text);
+                said.remove("Ctrl+Z");
+                assert!(said.is_empty() || said == keys(label), "{what}: {text:?} names other keys than {label:?}");
+            }
+        };
+        // the view menu, as make_menus puts it up, and the Selection colour heading (its first item)
+        let mut view: Vec<(usize, &str, &str)> = VIEW_TOP.iter().chain(&VIEW_END).chain(&VIEW_BUTTONS).copied().collect();
+        view.push((ID_LANG, "", ""));
+        view.extend([(ID_ACCENT_SYS, "", ""), (ID_ACCENT_PICK, "", "")]);
+        view.extend((0..LIGHT.accents.len()).map(|k| (ID_ACCENT + k, "", "")));
+        for (id, en, ko) in view {
+            check(format!("view {id}"), (en, ko), &|ko| view_help(id, false, ko));
+        }
+        check("view: Selection colour".into(), ("", ""), &|ko| view_help(ID_ACCENT_SYS, true, ko));
+        assert_eq!(view_help(0, false, false), None);
+        // the ⇄ menu: pane rows, other folders, the shell helpers; (number, label, also a submenu's first item)
+        let mut open: Vec<(usize, (&str, &str), bool)> = vec![];
+        for k in [0, MAXP - 1] {
+            open.extend([(ID_OPEN_TO + k, ("", ""), false), (ID_SWAP_TO + k, M_SWAP, true), (ID_COPY_TO + k, M_COPY, true), (ID_MOVE_TO + k, M_MOVE, true)]);
+            open.extend([(ID_DIFF_TO + k, M_DIFF, true), (ID_WM_PANE + k, M_WM_PANE, true)]);
+        }
+        for n in [0, SEND_SLOTS - 1] {
+            open.extend([(ID_SEND_COPY + n, M_COPY, true), (ID_SEND_MOVE + n, M_MOVE, true)]);
+        }
+        open.extend([(ID_CHOOSE_COPY, M_CHOOSE, true), (ID_CHOOSE_MOVE, M_CHOOSE, true)]);
+        let shell = [
+            (ID_INUSE, M_INUSE), (ID_WM_PAIR, M_WM_PAIR), (ID_HASH, M_HASH), (ID_HASH, M_HASH_STOP), (ID_GROUP, M_GROUP), (ID_GROUP, M_GROUP_N),
+            (ID_STAMP, M_STAMP), (ID_STAMP, M_STAMP_N), (ID_EMPTY, M_EMPTY), (ID_DUPES, M_DUPES), (ID_DUPES, M_DUPES_STOP), (ID_USAGE, M_USAGE),
+            (ID_LIST, M_LIST), (ID_LIST, M_LIST_N), (ID_CLIPADD, M_CLIPADD), (ID_CLIPADD, M_CLIPADD_N), (ID_RESTORE, M_RESTORE),
+            (ID_EXPLORER, M_EXPLORER), (ID_EXPLORER, M_EXPLORER_SEL),
+        ];
+        open.extend(shell.map(|(id, l)| (id, l, false)));
+        open.extend((0..3).flat_map(|k| [(ID_ORG + k, M_ORG, true), (ID_PHOTO + k, M_PHOTO, true)]));
+        for (id, label, sub) in open {
+            check(format!("⇄ {id}"), label, &|ko| open_in_help(id, false, ko));
+            if sub {
+                check(format!("⇄ {id} heading"), label, &|ko| open_in_help(id, true, ko));
+            }
+        }
+        // title rows and numbers the menu never puts up say nothing
+        for p in [0, 17, 441, 1138, 5000] {
+            assert_eq!(open_in_help(p, false, false), None, "{p}");
+        }
+    }
+
     // A menu item's name as the menu shows it: no key after a tab or in a "  (Ctrl+…)" tail, no Korean "(&X)"
     // wherever it is, no '&' mark ("&&" is a plain '&'); a count {n} reads "N".
     fn menu_shown(s: &str) -> String {

@@ -656,6 +656,10 @@ pub(crate) unsafe fn diff_submenu(menu: HMENU, src: usize, others: &[(usize, HST
     let here = app(|a| a.s.paths[src].clone());
     let Ok(sub) = CreatePopupMenu() else { return };
     diff_rows(sub, &here, others);
+    if others.is_empty() {
+        // a grey filler row (the heading is grey, so it never shows) lets the status line tell what this is
+        _ = AppendMenuW(sub, MF_STRING | MF_GRAYED, ID_DIFF_TO + src, &HSTRING::from(tr2(M_DIFF)));
+    }
     let flags = if others.iter().any(|(_, _, p)| diff_ok(&here, p)) { MF_POPUP } else { MF_POPUP | MF_GRAYED };
     _ = AppendMenuW(menu, flags, sub.0 as usize, &HSTRING::from(tr2(M_DIFF)));
 }
