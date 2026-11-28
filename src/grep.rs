@@ -539,4 +539,95 @@ mod tests {
         assert_eq!(gr_line(&hit, false), "a.rs · line 12 · x TODO y · 2 more · src");
         assert_eq!(gr_line(&GrHit { line: None, more: 0, rel: String::new(), ..hit }, true), "a.rs · x TODO y");
     }
+
+    // The walk itself, on a real folder: one test, in order, as GR_GEN and GR_JOB are the process's own
+    // (two tests walking at once would cancel each other). Each walk gets a new generation and a fresh job, as gr_start does.
+    #[test]
+    fn grep_walks_a_real_folder() {
+        let run = |root: &Path, hidden: bool| {
+            let g = GR_GEN.fetch_add(1, Ordering::Relaxed) + 1;
+            job(|j| *j = Job { gen: g, ..Job::default() });
+            gr_walk(root.to_path_buf(), "needle".into(), hidden, g);
+            job(|j| (j.hits.clone(), j.n, j.end))
+        };
+        let attrib_h = |p: &Path| {
+            let o = std::process::Command::new("cmd").args(["/c", "attrib", "+h"]).arg(p).output();
+            assert!(o.is_ok_and(|o| o.status.success()) && std::fs::metadata(p).unwrap().file_attributes() & 0x2 != 0);
+        };
+        let root = std::env::temp_dir().join(format!("grids-test-{}-grep", std::process::id()));
+        let flat = std::env::temp_dir().join(format!("grids-test-{}-grep-cap", std::process::id()));
+        _ = std::fs::remove_dir_all(&root);
+        _ = std::fs::remove_dir_all(&flat);
+        let put = |rel: &str, b: &[u8]| {
+            let p = root.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, b).unwrap();
+        };
+        put("a.txt", b"one\nneedle here\nNEEDLE again");
+        let mut u16le = vec![0xFF, 0xFE];
+        u16le.extend("x Needle".encode_utf16().flat_map(u16::to_le_bytes));
+        put(r"sub\b.md", &u16le);
+        put(r"sub\c.txt", b"\xB9\xD9\xB4\xC3 needle"); // CP949 "바늘 needle"
+        put("tool.exe", b"needle"); // known binaries: never opened
+        put("x.pdf", b"needle");
+        put("bin.dat", b"needle\0\0\0"); // a NUL: opened, then left out
+        put(r".git\config", b"needle"); // never entered
+        put(r"hid\d.txt", b"needle");
+        put(".env", b"needle");
+        attrib_h(&root.join("hid"));
+        attrib_h(&root.join(".env"));
+        std::fs::File::create(root.join("big.log")).unwrap().set_len(GR_FILE_MAX + 1).unwrap(); // counted, not read
+        // a junction back to the top: never followed, so nothing shows twice
+        let made = std::process::Command::new("cmd").args(["/c", "mklink", "/J"]).arg(root.join(r"sub\loop")).arg(&root).output();
+        assert!(made.is_ok_and(|o| o.status.success()) && root.join(r"sub\loop\a.txt").exists());
+
+        // the folder's own files come before any subfolder's; inside a folder, the listing's order (sorted here)
+        let names = |hits: &[GrHit]| {
+            let top = hits.iter().take_while(|h| h.rel.is_empty()).count();
+            assert!(hits[top..].iter().all(|h| !h.rel.is_empty()), "the top folder's files first");
+            let mut v: Vec<(String, String)> = hits.iter().map(|h| (h.rel.clone(), h.name.clone())).collect();
+            v.sort();
+            v
+        };
+        let pair = |rel: &str, name: &str| (rel.to_string(), name.to_string());
+        let (hits, n, end) = run(&root, false);
+        assert_eq!(names(&hits), [pair("", "a.txt"), pair("sub", "b.md"), pair("sub", "c.txt")]);
+        assert_eq!((n, end), ([8, 1, 0], Some(GrState::Done))); // .env, a.txt, big.log, bin.dat, tool.exe, x.pdf, b.md, c.txt
+        let a = hits.iter().find(|h| h.name == "a.txt").unwrap();
+        assert_eq!((a.line, a.cut[1].as_str(), a.more, a.dir.as_str()), (Some(2), "needle", 1, root.to_str().unwrap()));
+        let b = hits.iter().find(|h| h.name == "b.md").unwrap();
+        assert_eq!((b.line, b.cut[1].as_str(), b.dir.as_str()), (Some(1), "Needle", root.join("sub").to_str().unwrap()));
+        let c = hits.iter().find(|h| h.name == "c.txt").unwrap();
+        assert_eq!((c.cut[0].as_str(), c.cut[1].as_str()), ("바늘 ", "needle"));
+        assert!(gr_status(GrState::Done, n, hits.len(), false).contains("skipped: 1 large"));
+
+        // hidden items shown: the hidden file and folder join in
+        let (hits, n, end) = run(&root, true);
+        assert_eq!(names(&hits), [pair("", ".env"), pair("", "a.txt"), pair("hid", "d.txt"), pair("sub", "b.md"), pair("sub", "c.txt")]);
+        assert_eq!((n, end), ([9, 1, 0], Some(GrState::Done)));
+
+        // a newer search (or the popup closing) stops a walk at once, and an old walk's rows go nowhere
+        let g = GR_GEN.fetch_add(1, Ordering::Relaxed) + 1;
+        job(|j| *j = Job { gen: g, ..Job::default() });
+        GR_GEN.fetch_add(1, Ordering::Relaxed);
+        gr_walk(root.clone(), "needle".into(), false, g);
+        assert_eq!(job(|j| (j.hits.len(), j.end)), (0, None));
+        let g = GR_GEN.fetch_add(1, Ordering::Relaxed) + 1;
+        job(|j| *j = Job { gen: g + 1, ..Job::default() });
+        gr_walk(root.clone(), "needle".into(), false, g);
+        assert_eq!(job(|j| (j.hits.len(), j.end)), (0, None));
+
+        // 501 matching files: stops at 500, marked as cut short
+        std::fs::create_dir_all(&flat).unwrap();
+        for k in 0..=GR_HITS_MAX {
+            std::fs::write(flat.join(format!("f{k}.txt")), b"needle").unwrap();
+        }
+        let (hits, _, end) = run(&flat, false);
+        assert_eq!((hits.len(), end), (GR_HITS_MAX, Some(GrState::Capped)));
+
+        job(|j| *j = Job::default());
+        _ = std::fs::remove_dir(root.join(r"sub\loop"));
+        _ = std::fs::remove_dir_all(&root);
+        _ = std::fs::remove_dir_all(&flat);
+    }
 }
