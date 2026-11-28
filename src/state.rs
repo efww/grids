@@ -33,6 +33,18 @@ pub(crate) struct Pane {
     pub(crate) lock_hold: Option<(String, String)>,
 }
 
+// A folder moved to in the active pane, read out (dir_speech) once its item count holds still (status.rs say_dir_tick).
+// Runtime only.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct SayDir {
+    pub(crate) pane: usize,
+    pub(crate) path: String,
+    pub(crate) n: Option<i32>,        // the count last seen (None: no list yet)
+    pub(crate) steady: Instant,       // when that count was first seen
+    pub(crate) start: Instant,        // the move's end (on_nav): past DIR_GIVE_UP, the name alone
+    pub(crate) said: Option<Instant>, // a.said then: a note read out since (missing folder, drive gone …) says enough
+}
+
 // Two panes navigating together (Ctrl+Shift+Y, nav.rs lock_follow): their slots, and the folders each showed when they
 // were last in step. A move in one opens, in the other, its own starting folder moved the same way. Runtime only.
 #[derive(Clone, Debug, PartialEq)]
@@ -175,6 +187,7 @@ pub(crate) struct App {
     pub(crate) status_hwnd: HWND,               // the status line control (screen readers); null = the main window paints it
     pub(crate) note_hwnd: HWND,                 // the note's live region (zero size, nothing drawn); null = no announcements
     pub(crate) say_nav: Option<usize>,          // pane read out once its folder opens (a tab key that browses; runtime only)
+    pub(crate) say_dir: Option<SayDir>,         // folder name and count to read out once the count settles (runtime only)
     pub(crate) prev_active: Option<usize>,      // the pane active before this one, for Ctrl+` (runtime only)
     pub(crate) lock: Option<Lock>,              // two panes navigating together (Ctrl+Shift+Y; runtime only)
     pub(crate) drop_hover: HWND,                         // pane whose top bar something openable is being dragged over
@@ -309,6 +322,7 @@ thread_local! {
         status_hwnd: HWND::default(),
         note_hwnd: HWND::default(),
         say_nav: None,
+        say_dir: None,
         prev_active: None,
         lock: None,
         drop_hover: HWND::default(),

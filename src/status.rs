@@ -674,10 +674,12 @@ pub(crate) unsafe fn update_status() {
     relay_tick();
     let (i, path, main) = app(|a| (a.s.active, a.s.paths[a.s.active].clone(), a.main));
     // no list yet (a folder still opening): the counts wait, a new note still shows and is read out
+    let mut seen = None; // the list's count and whether the name filter is on, for say_dir_tick
     if let Some(fv) = view_of::<IFolderView2>(i) {
         let n = fv.ItemCount(SVGIO_ALLVIEW).unwrap_or(0);
         let sel = fv.ItemCount(SVGIO_SELECTION).unwrap_or(0);
         let spec = filter_of(i);
+        seen = Some((n, !spec.is_empty()));
         // while a background copy runs, the disk is left alone (size and free space come back after)
         let busy = COPYING.load(Ordering::Relaxed) > 0;
         let awake = AWAKE.load(Ordering::Relaxed);
@@ -749,6 +751,88 @@ pub(crate) unsafe fn update_status() {
     if let Some((note, live)) = fresh.filter(|(_, h)| !h.0.is_null()) {
         _ = SetWindowTextW(live, &HSTRING::from(note));
         NotifyWinEvent(EVENT_OBJECT_LIVEREGIONCHANGED, live, OBJID_CLIENT.0, CHILDID_SELF as i32);
+    }
+    // after the note: one read out just now (a.said moved) drops the folder's words
+    say_dir_tick(i, &path, seen, focus);
+}
+
+// How long an item count must stay the same before it is read out, and how long a folder may take before only its
+// name is (a slow network share or a huge folder still counting: a short count would mislead). Under the 300ms
+// poll, so a count held over two looks counts even when a look runs a few ms early. No items holds longer: a slow
+// network folder shows 0 for a while before its first items (and the move's loading mark is already gone by then).
+pub(crate) const DIR_STEADY: Duration = Duration::from_millis(250);
+pub(crate) const DIR_EMPTY_STEADY: Duration = Duration::from_secs(1);
+pub(crate) const DIR_GIVE_UP: Duration = Duration::from_secs(3);
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum DirSay {
+    Wait,
+    Count,
+    NameOnly,
+}
+
+// Whether a folder just moved to is read out now: its count (n, None while there is no list) was the same as the last
+// look's (prev) for DIR_STEADY (DIR_EMPTY_STEADY for 0; steady: since prev was first seen) and the move is over;
+// past DIR_GIVE_UP without that, the name alone.
+pub(crate) fn dir_say_ready(prev: Option<i32>, n: Option<i32>, loading: bool, steady: Duration, elapsed: Duration) -> DirSay {
+    let hold = if n == Some(0) { DIR_EMPTY_STEADY } else { DIR_STEADY };
+    if n.is_some() && prev == n && !loading && steady >= hold {
+        DirSay::Count
+    } else if elapsed >= DIR_GIVE_UP {
+        DirSay::NameOnly
+    } else {
+        DirSay::Wait
+    }
+}
+
+// What a screen reader hears on moving to a folder, as a browser reads a new page's title: "Downloads · 23 items".
+// n None: the name alone; no name: the count alone. With the name filter on, the count is of the items shown.
+pub(crate) fn dir_speech(ko: bool, name: &str, n: Option<i32>, filtered: bool) -> String {
+    let pick = |en: &str, k: &str| if ko { k } else { en }.to_string();
+    let count = n.map(|n| {
+        let words = match (n, filtered) {
+            (0, false) => pick("empty folder", "빈 폴더"),
+            (1, false) => pick("1 item", "항목 1개"),
+            (_, false) => pick("{n} items", "항목 {n}개"),
+            (0, true) => pick("nothing matches the name filter", "이름 필터에 맞는 항목 없음"),
+            (1, true) => pick("1 item shown · name filter on", "항목 1개 표시 · 이름 필터 켜짐"),
+            (_, true) => pick("{n} items shown · name filter on", "항목 {n}개 표시 · 이름 필터 켜짐"),
+        };
+        words.replace("{n}", &n.to_string())
+    });
+    [Some(name.to_string()).filter(|s| !s.is_empty()), count].into_iter().flatten().collect::<Vec<_>>().join(" · ")
+}
+
+// update_status's look at a folder moved to (on_nav set a.say_dir): read out once, or dropped without a word when the
+// pane is no longer the active one or shows another folder, a note was read out since, or (when it is time to speak)
+// the keyboard is not in that pane (another app, a dialog, the tree). seen: the active list's count and filter, if any.
+unsafe fn say_dir_tick(i: usize, path: &str, seen: Option<(i32, bool)>, focus: HWND) {
+    let now = Instant::now();
+    let Some((say, pane)) = app(|a| {
+        let d = a.say_dir.as_mut()?;
+        let p = a.panes.get(i).and_then(|p| p.as_ref());
+        if d.pane != i || d.path != path || d.said != a.said || p.is_none() {
+            a.say_dir = None;
+            return None;
+        }
+        let n = seen.map(|s| s.0);
+        let say = dir_say_ready(d.n, n, p.is_some_and(|p| p.loading.is_some()), now - d.steady, now - d.start);
+        if d.n != n {
+            (d.n, d.steady) = (n, now);
+        }
+        if say == DirSay::Wait {
+            return None;
+        }
+        let d = a.say_dir.take()?;
+        let n = (say == DirSay::Count).then_some(d.n).flatten();
+        let words = dir_speech(KO.load(Ordering::Relaxed), &place_label(&d.path), n, seen.is_some_and(|s| s.1));
+        Some((words, p.map(|p| p.hwnd)?))
+    }) else {
+        return;
+    };
+    // the list, the address or the filter edit of that pane: anything else would read a folder out of nowhere
+    if !focus.0.is_null() && IsChild(pane, focus).as_bool() {
+        say_only(&say);
     }
 }
 
@@ -1240,6 +1324,64 @@ mod tests {
         for p in [r"\\srv\share", r"\\?\C:\x", THIS_PC, r"1:\", r"가:\", "", "C"] {
             assert_eq!(drive(p), None, "{p}");
         }
+    }
+
+    // What a screen reader hears on moving to a folder (on_nav → say_dir_tick)
+    #[test]
+    fn dir_speech_words() {
+        let rows: [(bool, &str, Option<i32>, bool, &str); 16] = [
+            (false, "Downloads", Some(23), false, "Downloads · 23 items"),
+            (true, "다운로드", Some(23), false, "다운로드 · 항목 23개"),
+            (false, "Downloads", Some(1), false, "Downloads · 1 item"),
+            (true, "다운로드", Some(1), false, "다운로드 · 항목 1개"),
+            (false, "New folder", Some(0), false, "New folder · empty folder"),
+            (true, "새 폴더", Some(0), false, "새 폴더 · 빈 폴더"),
+            (false, "Docs", Some(12), true, "Docs · 12 items shown · name filter on"),
+            (true, "문서", Some(12), true, "문서 · 항목 12개 표시 · 이름 필터 켜짐"),
+            (false, "Docs", Some(1), true, "Docs · 1 item shown · name filter on"),
+            (true, "문서", Some(1), true, "문서 · 항목 1개 표시 · 이름 필터 켜짐"),
+            (false, "Docs", Some(0), true, "Docs · nothing matches the name filter"),
+            (true, "문서", Some(0), true, "문서 · 이름 필터에 맞는 항목 없음"),
+            // still counting after DIR_GIVE_UP: the name alone
+            (false, "Share", None, true, "Share"),
+            (true, "공유", None, false, "공유"),
+            // no name: the count alone
+            (false, "", Some(5), false, "5 items"),
+            (true, "", Some(0), false, "빈 폴더"),
+        ];
+        for (ko, name, n, filtered, want) in rows {
+            assert_eq!(dir_speech(ko, name, n, filtered), want);
+        }
+        assert_eq!(dir_speech(false, "", None, false), "");
+        // shell places by their names, not "::{GUID}"
+        let bin = "::{645FF040-5081-101B-9F08-00AA002F954E}";
+        assert_eq!(dir_speech(true, &shell_place(bin, true).unwrap(), Some(3), false), "휴지통 · 항목 3개");
+        assert_eq!(dir_speech(false, &short_name("C:\\"), Some(7), false), "C: · 7 items");
+    }
+
+    #[test]
+    fn dir_say_when_the_count_holds() {
+        let ms = Duration::from_millis;
+        let (now, late) = (ms(400), ms(3000));
+        // the same count for DIR_STEADY, the move over: read out with it
+        assert_eq!(dir_say_ready(Some(23), Some(23), false, ms(250), now), DirSay::Count);
+        // a look a few ms short of the 300ms poll still counts
+        assert_eq!(dir_say_ready(Some(23), Some(23), false, ms(296), now), DirSay::Count);
+        // no items holds DIR_EMPTY_STEADY (a slow share shows 0 before its first items)
+        assert_eq!(dir_say_ready(Some(0), Some(0), false, ms(1000), ms(1100)), DirSay::Count);
+        assert_eq!(dir_say_ready(Some(0), Some(0), false, ms(999), ms(1100)), DirSay::Wait);
+        assert_eq!(dir_say_ready(Some(0), Some(0), false, ms(300), now), DirSay::Wait);
+        // held too briefly, still changing, no list yet, or still loading: wait
+        assert_eq!(dir_say_ready(Some(23), Some(23), false, ms(249), now), DirSay::Wait);
+        assert_eq!(dir_say_ready(Some(10), Some(23), false, ms(900), now), DirSay::Wait);
+        assert_eq!(dir_say_ready(None, Some(23), false, ms(900), now), DirSay::Wait);
+        assert_eq!(dir_say_ready(None, None, false, ms(900), now), DirSay::Wait);
+        assert_eq!(dir_say_ready(Some(23), Some(23), true, ms(900), now), DirSay::Wait);
+        // past DIR_GIVE_UP without a steady count: the name alone; a steady one still counts
+        assert_eq!(dir_say_ready(Some(10), Some(23), false, ms(0), late), DirSay::NameOnly);
+        assert_eq!(dir_say_ready(Some(23), Some(23), true, ms(2000), late), DirSay::NameOnly);
+        assert_eq!(dir_say_ready(None, None, false, late, late), DirSay::NameOnly);
+        assert_eq!(dir_say_ready(Some(23), Some(23), false, ms(2000), late), DirSay::Count);
     }
 
     fn nop(_: usize) {}

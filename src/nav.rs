@@ -2100,9 +2100,11 @@ pub(crate) unsafe fn on_nav(i: usize, pidl: *const ITEMIDLIST) {
     let parse = name(pidl, SIGDN_DESKTOPABSOLUTEPARSING);
     let disp = name(pidl, SIGDN_DESKTOPABSOLUTEEDITING);
     let mut pass_on = None;
+    let mut moved = false;
     let res = app(|a| {
         let fs = is_fs(&parse);
         let old = std::mem::replace(&mut a.s.paths[i], parse.clone());
+        moved = old != parse; // not F5 or the name filter reading the same folder again
         if let Some(p) = a.panes[i].as_mut() {
             unplug_step(&mut p.unplugged, Nav::Complete, &parse);
         }
@@ -2201,8 +2203,25 @@ pub(crate) unsafe fn on_nav(i: usize, pidl: *const ITEMIDLIST) {
     }
     // a tab key that browsed (keyboard.rs tab_said): read out now that the new view has the focus, so the
     // focus change doesn't cut it off. Only while that pane is still the active one; otherwise just drop it.
-    if app(|a| a.say_nav == Some(i) && a.say_nav.take().is_some() && a.s.active == i) {
+    let (tab_key, said) = app(|a| {
+        let t = a.say_nav == Some(i);
+        if t {
+            a.say_nav = None;
+        }
+        (t, t && a.s.active == i)
+    });
+    if said {
         say_pane(i);
+    }
+    // any other move of the active pane's (Enter, Backspace, Alt+↑, the address bar, favourites, Ctrl+G …): its folder
+    // name and item count, once the count holds still (status.rs say_dir_tick checks the focus is in the pane then)
+    if moved && !tab_key {
+        app(|a| {
+            if a.s.active == i {
+                let now = Instant::now();
+                a.say_dir = Some(SayDir { pane: i, path: parse.clone(), n: None, steady: now, start: now, said: a.said });
+            }
+        });
     }
 }
 

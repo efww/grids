@@ -1830,6 +1830,9 @@ pub(crate) unsafe fn swap_panes(i: usize, j: usize) {
         if let Some(p) = a.say_nav.as_mut() {
             to(p);
         }
+        if let Some(d) = a.say_dir.as_mut() {
+            to(&mut d.pane);
+        }
         if let Some(p) = a.prev_active.as_mut() {
             to(p);
         }
@@ -1957,6 +1960,9 @@ pub(crate) unsafe fn set_layout(h: Vec<usize>) {
         to(&mut a.peek_pane);
         if let Some(p) = a.say_nav.as_mut() {
             to(p);
+        }
+        if let Some(d) = a.say_dir.as_mut() {
+            to(&mut d.pane);
         }
         for c in &mut a.closed_tabs {
             to(&mut c.pane); // Ctrl+Shift+T puts it back at its place in the pane it went with
