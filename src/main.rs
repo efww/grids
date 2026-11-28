@@ -552,6 +552,7 @@ fn main() -> Result<()> {
         }
         SetTimer(Some(main), TIMER_STATUS, TICK_FAST, None); // a minimized start slows it on its first tick
         watch_folders(main); // folders renamed / removed elsewhere (shell_change)
+        recover_at_start(main); // a batch rename cut off last time (power gone, drive pulled): finished on a worker
         watch_bin(main); // the Recycle Bin button's icon follows the bin (bin_change)
         // taken by another app: the menu shows it off, s.hotkey stays on so the next start tries again
         if app(|a| a.s.hotkey) {
@@ -694,6 +695,7 @@ mod tests {
             WM_NARROW_AGAIN, WM_DROP_OPEN, WM_PEEK_DONE, WM_PANE_ICON, WM_DRIVES, WM_KIDS, WM_THEME_SYNC, WM_PEEK_LOST, WM_PEEK_HOSTED,
             WM_HASH, WM_SHELL_CHANGE, WM_GROUPED, WM_TOUR, WM_TRAY, WM_COPY_DONE, WM_USAGE, WM_FONT_SYNC, WM_BIN_COUNT, WM_BIN_CHANGE,
             WM_STAMPED, WM_SIZE_DONE, WM_DISK_DONE, WM_EDITED, WM_OPEN_ARGS, WM_UPDATE, WM_STAR, WM_DUPES, WM_DEVICES, WM_LOCK_GO,
+            WM_MENDED,
         ];
         distinct("main WM_APP messages", &msgs.map(|m| m as usize));
     }

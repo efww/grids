@@ -523,6 +523,7 @@ pub(crate) unsafe fn open_rename(i: usize) {
         }
         return;
     }
+    recover(app(|a| a.main)); // an earlier batch cut off, its drive back since: finished first
     let Some((dirs, items)) = gather(i) else {
         _ = MessageBeep(MB_ICONWARNING);
         return;
@@ -1195,18 +1196,26 @@ pub(crate) fn api_path(dir: &str, name: &str) -> String {
     }
 }
 
+// One rename in a folder, never over another file.
+unsafe fn move_in(dir: &str, from: &str, to: &str) -> std::result::Result<(), String> {
+    MoveFileExW(&HSTRING::from(api_path(dir, from)), &HSTRING::from(api_path(dir, to)), MOVE_FILE_FLAGS(0)).map_err(|e| e.message())
+}
+
 // The steps in order; if one fails, the ones done are moved back (newest first), so a batch is all or nothing.
-unsafe fn run_steps(dirs: &[String], steps: &[Move], done: &AtomicUsize) -> std::result::Result<(), (String, String)> {
-    for (k, (d, from, to)) in steps.iter().enumerate() {
-        done.fetch_add(1, Ordering::Relaxed);
-        if let Err(e) = MoveFileExW(&HSTRING::from(api_path(&dirs[*d], from)), &HSTRING::from(api_path(&dirs[*d], to)), MOVE_FILE_FLAGS(0)) {
-            for (d, from, to) in steps[..k].iter().rev() {
-                _ = MoveFileExW(&HSTRING::from(api_path(&dirs[*d], to)), &HSTRING::from(api_path(&dirs[*d], from)), MOVE_FILE_FLAGS(0));
-            }
-            return Err((from.clone(), e.message()));
+// A move back that fails is tried once more a moment later (a file held for an instant). With a journal it then
+// stops there: Err's count is the steps still done, whose temporary names Grids tidies later (recover).
+// Without one the rest are still moved back: Err's count is the files left under their new or temporary name.
+unsafe fn run_steps(dirs: &[String], steps: &[Move], journal: bool, done: &AtomicUsize) -> std::result::Result<(), (String, String, usize)> {
+    run_steps_with(steps, journal, &mut |(d, from, to), back| {
+        if !back {
+            done.fetch_add(1, Ordering::Relaxed);
+            return move_in(&dirs[*d], from, to);
         }
-    }
-    Ok(())
+        move_in(&dirs[*d], to, from).or_else(|_| {
+            std::thread::sleep(Duration::from_millis(300));
+            move_in(&dirs[*d], to, from)
+        })
+    })
 }
 
 // Lets the panes show the new names now rather than when the folder watcher gets to it.
@@ -1216,10 +1225,6 @@ unsafe fn notify(dirs: &[String], moves: &[Move], items: &[(usize, Src)]) {
         let (a, b) = (HSTRING::from(join_path(&dirs[*d], old)), HSTRING::from(join_path(&dirs[*d], new)));
         SHChangeNotify(if dir { SHCNE_RENAMEFOLDER } else { SHCNE_RENAMEITEM }, SHCNF_PATHW, Some(a.as_ptr() as _), Some(b.as_ptr() as _));
     }
-}
-
-fn tmp_name(nonce: u128) -> impl Fn(usize) -> String {
-    move |k| format!("~grids-rename-{nonce}-{k}.tmp")
 }
 
 fn nonce() -> u128 {
@@ -1260,9 +1265,10 @@ unsafe fn do_rename(h: HWND) {
         _ = MessageBeep(MB_ICONWARNING);
         return;
     }
-    let steps = plan(&moves, &tmp_name(nonce()));
+    let nonce = nonce();
+    let steps = plan(&moves, &tmp_name(nonce));
     let total = moves.len() + steps.len(); // the in-use checks, then the steps
-    start(h, Job::Rename { dirs, moves, steps }, total, Vec::new());
+    start(h, Job::Rename { dirs, moves, steps, nonce }, total, Vec::new());
 }
 
 // Last batch back to the old names (what is skipped and why: run_job).
@@ -1298,13 +1304,15 @@ struct Run {
 }
 
 enum Job {
-    Rename { dirs: Vec<String>, moves: Vec<Move>, steps: Vec<Move> },
+    Rename { dirs: Vec<String>, moves: Vec<Move>, steps: Vec<Move>, nonce: u128 },
     Undo(Vec<(String, String, String)>),
 }
 
 enum Outcome {
-    InUse(Vec<String>),     // nothing moved: these can't be renamed now
-    Failed(String, String), // a step failed (name, why): the ones done were put back
+    InUse(Vec<String>),            // nothing moved: these can't be renamed now
+    // a step failed (name, why): the ones done were put back, but for this many files; true: those are under
+    // temporary names a journal tidies later, false: no journal, they stay under their new or temporary name
+    Failed(String, String, usize, bool),
     Done { dirs: Vec<String>, moves: Vec<Move>, skipped: Vec<String>, existing: Vec<HashSet<String>> },
 }
 
@@ -1368,8 +1376,8 @@ unsafe fn run_job(job: Job, items: &[(usize, Src)], wdirs: &[String], p: &Prog) 
         p.done.fetch_add(1, Ordering::Relaxed);
     };
     let busy = |dirs: &[String], (d, o, _): &Move| in_use(&api_path(&dirs[*d], o)).map(|e| format!("{o}: {}", e.trim()));
-    let (dirs, moves, steps, skipped) = match job {
-        Job::Rename { dirs, moves, steps } => {
+    let (dirs, moves, steps, skipped, nonce) = match job {
+        Job::Rename { dirs, moves, steps, nonce } => {
             let held: Vec<String> = moves
                 .iter()
                 .filter_map(|m| {
@@ -1380,7 +1388,7 @@ unsafe fn run_job(job: Job, items: &[(usize, Src)], wdirs: &[String], p: &Prog) 
             if !held.is_empty() {
                 return Outcome::InUse(held);
             }
-            (dirs, moves, steps, Vec::new())
+            (dirs, moves, steps, Vec::new(), nonce)
         }
         // Items renamed or removed since are skipped and listed, as are old names another file has taken.
         Job::Undo(undo) => {
@@ -1409,7 +1417,8 @@ unsafe fn run_job(job: Job, items: &[(usize, Src)], wdirs: &[String], p: &Prog) 
                     ok.push(m);
                 }
             }
-            let steps = plan(&ok, &tmp_name(nonce()));
+            let nonce = nonce();
+            let steps = plan(&ok, &tmp_name(nonce));
             p.total.fetch_add(ok.len() + steps.len(), Ordering::Relaxed);
             for m in &ok {
                 tick();
@@ -1417,11 +1426,32 @@ unsafe fn run_job(job: Job, items: &[(usize, Src)], wdirs: &[String], p: &Prog) 
                     return Outcome::InUse(vec![b]);
                 }
             }
-            (dirs, ok, steps, skipped)
+            (dirs, ok, steps, skipped, nonce)
         }
     };
-    if let Err((name, e)) = run_steps(&dirs, &steps, &p.done) {
-        return Outcome::Failed(name, e);
+    // only a batch with temporary names (steps beyond one per file) can leave odd names behind
+    // names never move in a batch and a tidy-up (recover) at once: a batch started meanwhile waits here
+    let moving = MOVES.lock().unwrap_or_else(|e| e.into_inner());
+    let journal = if steps.len() > moves.len() { write_journal(nonce, &dirs, &steps) } else { None };
+    let ran = run_steps(&dirs, &steps, journal.is_some(), &p.done);
+    let journaled = journal.is_some();
+    if let Some((f, path)) = journal {
+        drop(f);
+        if matches!(ran, Err((_, _, left)) if left > 0) {
+            PENDING.store(true, Ordering::Relaxed);
+        } else {
+            _ = std::fs::remove_file(path);
+        }
+    }
+    drop(moving);
+    if let Err((name, e, left)) = ran {
+        if !journaled {
+            return Outcome::Failed(name, e, left, false); // files not put back, nothing to tidy them later
+        }
+        // files still under a temporary name: moved aside and not yet on
+        let pre = format!("~grids-rename-{nonce}-");
+        let odd: isize = steps[..left].iter().map(|(_, f, t)| t.starts_with(&pre) as isize - f.starts_with(&pre) as isize).sum();
+        return Outcome::Failed(name, e, odd.max(0) as usize, true);
     }
     notify(&dirs, &moves, items);
     Outcome::Done { existing: wdirs.iter().map(|d| folder_names(d)).collect(), dirs, moves, skipped }
@@ -1511,14 +1541,21 @@ unsafe fn finished(h: HWND, id: usize) {
             let head = if ko { format!("아무것도 바꾸지 않았음: 지금 바꿀 수 없는 파일 {}개", busy.len()) } else { format!("Nothing renamed: can't rename {} of the files now", busy.len()) };
             report(h, head.clone(), Some(listing(&head, &busy)))
         }
-        Some(Outcome::Failed(name, e)) => {
+        Some(Outcome::Failed(name, e, left, journaled)) => {
             let line = format!("{name}: {}", e.trim());
-            let head = match (run.undo, ko) {
-                (true, _) => put_back.to_string(),
-                (false, true) => "아무것도 바꾸지 않았음 (모두 원래대로)".to_string(),
-                (false, false) => "Nothing renamed (all put back)".to_string(),
+            let head = match (run.undo, ko, left, journaled) {
+                (true, _, 0, _) => put_back.to_string(),
+                (false, true, 0, _) => "아무것도 바꾸지 않았음 (모두 원래대로)".to_string(),
+                (false, false, 0, _) => "Nothing renamed (all put back)".to_string(),
+                (_, true, n, true) => format!("실패: 파일 {n}개가 임시 이름으로 남음 — 드라이브가 다시 연결되면 Grids가 정리합니다"),
+                (_, false, n, true) => format!("Failed: {n} files left with temporary names — Grids tidies them once the drive is back"),
+                (_, true, n, false) => format!("실패: 파일 {n}개를 원래 이름으로 되돌리지 못함"),
+                (_, false, n, false) => format!("Failed: {n} files couldn't be put back to their old names"),
             };
-            report(h, format!("{head}: {line}"), Some(listing(&head, &[line])))
+            report(h, format!("{head}: {line}"), Some(listing(&head, &[line])));
+            if left > 0 && journaled {
+                recover(app(|a| a.main)); // the folder may still be there (a file held a while): tidied now
+            }
         }
         Some(Outcome::Done { dirs, moves, skipped, existing }) => {
             // the window's files follow: each looked up once, by the name it had when the batch started
@@ -1549,6 +1586,156 @@ unsafe fn finished(h: HWND, id: usize) {
             let details = (!skipped.is_empty()).then(|| listing(&note, &skipped));
             report(h, note, details);
         }
+    }
+}
+
+// ---------- a batch cut off half-way (drive pulled, power gone, Grids killed): finished on the next chance ----------
+// Like a database journal: a batch with temporary names writes its steps next to grids.ini first
+// (grids-rename-journal-<nonce>.txt, rename_rules::journal_text) and removes them once it is over.
+
+// A journal may be there (left by a batch, or not looked for yet this run): the next recover looks.
+static PENDING: AtomicBool = AtomicBool::new(false);
+// A tidy-up thread is running: no second one starts meanwhile.
+static MENDING: AtomicBool = AtomicBool::new(false);
+// Held while names move, by a batch (run_job) or a tidy-up, so the two never move at once. A tidy-up takes it
+// only once its folders answered: a batch doesn't wait on a share that went away, only on the moves themselves.
+static MOVES: Mutex<()> = Mutex::new(());
+// A journal whose folders stay away this long (a drive never back) is dropped, not looked at forever.
+const JOURNAL_DAYS: u64 = 30;
+// What it did, for the main window: the status line note and the names it had to leave (temporary ← old).
+static MENDED: Mutex<Option<(String, Vec<String>)>> = Mutex::new(None);
+pub(crate) const WM_MENDED: u32 = WM_APP + 71; // to main: a tidy-up is over, its outcome is in MENDED
+
+// Written whole and flushed before the first step, and held unshared while the batch runs, so a tidy-up here or
+// in another Grids can't open it meanwhile. None: the settings folder takes no new file, the batch runs without.
+fn write_journal(nonce: u128, dirs: &[String], steps: &[Move]) -> Option<(std::fs::File, PathBuf)> {
+    use std::io::Write;
+    use std::os::windows::fs::OpenOptionsExt;
+    let path = ini_path().with_file_name(format!("grids-rename-journal-{nonce}.txt"));
+    let mut f = std::fs::OpenOptions::new().write(true).create_new(true).share_mode(0).open(&path).ok()?;
+    if f.write_all(journal_text(nonce, dirs, steps).as_bytes()).and_then(|_| f.sync_all()).is_err() {
+        drop(f);
+        _ = std::fs::remove_file(&path);
+        return None;
+    }
+    Some((f, path))
+}
+
+// Once at start, after the first panes are up.
+pub(crate) unsafe fn recover_at_start(main: HWND) {
+    PENDING.store(true, Ordering::Relaxed);
+    recover(main);
+}
+
+// Also when a drive arrives and when the rename window opens: only if a journal may be there and no batch runs.
+// Not a JOBS job: closing Grids doesn't wait on a share that went away; a tidy-up cut off is done again next time.
+pub(crate) unsafe fn recover(main: HWND) {
+    if !PENDING.load(Ordering::Relaxed) || rn(|r| r.running.is_some()) || MENDING.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    PENDING.store(false, Ordering::Relaxed);
+    let hw = main.0 as isize;
+    let spawned = std::thread::Builder::new().spawn(move || {
+        let out = mend_journals();
+        MENDING.store(false, Ordering::Relaxed);
+        if out.is_some() {
+            *MENDED.lock().unwrap_or_else(|e| e.into_inner()) = out;
+            _ = PostMessageW(Some(HWND(hw as _)), WM_MENDED, WPARAM(0), LPARAM(0));
+        }
+    });
+    if spawned.is_err() {
+        MENDING.store(false, Ordering::Relaxed);
+        PENDING.store(true, Ordering::Relaxed);
+    }
+}
+
+// Every journal next to grids.ini. One whose folders aren't all there (drive still out) stays for the next chance;
+// the others are tidied (recover_plan) and removed, also when some names had to stay: those are listed once.
+unsafe fn mend_journals() -> Option<(String, Vec<String>)> {
+    use std::io::Read;
+    use std::os::windows::fs::OpenOptionsExt;
+    let ko = ko_now();
+    let (mut notes, mut left) = (Vec::new(), Vec::new());
+    for e in std::fs::read_dir(ini_path().parent()?).ok()?.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if !name.starts_with("grids-rename-journal-") || !name.ends_with(".txt") {
+            continue;
+        }
+        // a batch still running (here or in another Grids) holds it: not touched
+        let Ok(mut f) = std::fs::OpenOptions::new().read(true).share_mode(0).open(e.path()) else { continue };
+        let mut t = String::new();
+        let Some((nonce, dirs, steps)) = f.read_to_string(&mut t).ok().and_then(|_| parse_journal(&t)) else { continue };
+        let used: HashSet<usize> = steps.iter().map(|s| s.0).collect();
+        let all_there = || used.iter().all(|&d| Path::new(&dirs[d]).is_dir());
+        if !all_there() {
+            let age = f.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok());
+            if age.is_some_and(|a| a > Duration::from_secs(JOURNAL_DAYS * 24 * 3600)) {
+                drop(f);
+                _ = std::fs::remove_file(e.path());
+            } else {
+                PENDING.store(true, Ordering::Relaxed);
+            }
+            continue;
+        }
+        let moving = MOVES.lock().unwrap_or_else(|e| e.into_inner());
+        // only "not found" is absent: any other failure (the drive going mid-look) leaves the journal for later
+        let unsure = std::cell::Cell::new(false);
+        let there = |d: usize, n: &str| match std::fs::symlink_metadata(api_path(&dirs[d], n)) {
+            Ok(_) => true,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+            Err(_) => {
+                unsure.set(true);
+                true
+            }
+        };
+        let Some((mend, moves, mut stuck)) = recover_plan(&steps, nonce, &there) else { continue };
+        // a folder gone while looked in also reads as "not found": looked at again next time
+        if unsure.get() || !all_there() {
+            PENDING.store(true, Ordering::Relaxed);
+            continue;
+        }
+        let busy = Busy::new(); // only while names move: a restart waits for this, not for the look above
+        let mut done = Vec::new();
+        for m in moves {
+            if move_in(&dirs[m.0], &m.1, &m.2).is_ok() {
+                done.push(m);
+            } else if m.1.starts_with("~grids-rename-") {
+                stuck.push(m);
+            }
+        }
+        drop(busy);
+        notify(&dirs, &done, &[]);
+        drop(f);
+        _ = std::fs::remove_file(e.path());
+        drop(moving);
+        let (n, k) = (done.len(), stuck.len());
+        let mut note = match (mend, ko) {
+            (None, _) => continue,
+            (Some(Mend::Forward), true) => format!("중단됐던 일괄 이름 바꾸기를 마저 끝냄: 파일 {n}개"),
+            (Some(Mend::Forward), false) => format!("Finished an interrupted batch rename: {n} files"),
+            (Some(Mend::Back), true) => format!("중단됐던 일괄 이름 바꾸기를 되돌림: 파일 {n}개"),
+            (Some(Mend::Back), false) => format!("Put back an interrupted batch rename: {n} files"),
+        };
+        if k > 0 {
+            note += &if ko { format!(", {k}개는 이름이 이미 쓰여 남겨 둠") } else { format!(", {k} left: the name is taken") };
+        }
+        notes.push(note);
+        for (d, tmp, _) in stuck {
+            let old = steps.iter().find(|s| s.0 == d && s.2 == tmp).map_or("", |s| s.1.as_str());
+            left.push(format!("{} ← {old}", join_path(&dirs[d], &tmp)));
+        }
+    }
+    (!notes.is_empty()).then(|| (notes.join(" · "), left))
+}
+
+// WM_MENDED on the main window.
+pub(crate) unsafe fn mended() {
+    let Some((note, left)) = MENDED.lock().unwrap_or_else(|e| e.into_inner()).take() else { return };
+    set_note(note.clone());
+    if !left.is_empty() {
+        let head = tr("Kept under a temporary name (temporary ← old name):", "임시 이름으로 남겨 둔 파일 (임시 이름 ← 원래 이름):");
+        let text = HSTRING::from(listing(&format!("{note}\n\n{head}"), &left));
+        MessageBoxW(Some(app(|a| a.main)), &text, &HSTRING::from(tr("Batch rename", "일괄 이름 바꾸기")), MB_OK | MB_ICONWARNING);
     }
 }
 
@@ -1952,7 +2139,7 @@ mod tests {
         // the outcome: only the waited-for run's is applied, a stale one is dropped
         let mut done = Some((2, Outcome::InUse(vec!["a".into()])));
         assert!(take_outcome(&mut done, 3).is_none() && done.is_none());
-        let mut done = Some((3, Outcome::Failed("a".into(), "x".into())));
+        let mut done = Some((3, Outcome::Failed("a".into(), "x".into(), 0, false)));
         assert!(matches!(take_outcome(&mut done, 3), Some(Outcome::Failed(..))) && done.is_none());
     }
 

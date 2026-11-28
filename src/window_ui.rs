@@ -249,6 +249,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             WM_TIMER if wp.0 == TIMER_DEVICES || wp.0 == TIMER_DEVICES_AGAIN => {
                 _ = KillTimer(Some(h), wp.0);
                 find_devices();
+                recover(h); // a drive back that a batch rename was cut off on: finished now (only if one was)
             }
             // mid-drag or mid-resize, end_drag / WM_EXITSIZEMOVE pick it up instead
             WM_DEVICES => {
@@ -337,6 +338,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             WM_DISK_DONE => disk_done(),
             WM_OPEN_ARGS => open_queued(true),
             WM_LOCK_GO => lock_follow(wp.0),
+            WM_MENDED => mended(),
             // mid-drag or mid-resize, end_drag / WM_EXITSIZEMOVE pick it up instead
             WM_DRIVES => {
                 bin_count(); // also when Grids comes to the front (WM_ACTIVATEAPP posts this)

@@ -319,6 +319,116 @@ pub(crate) fn plan(items: &[Move], tmp: &dyn Fn(usize) -> String) -> Vec<Move> {
     first.into_iter().chain(direct).chain(last).collect()
 }
 
+/// The temporary names of one batch: `nonce` keeps them apart from any other batch's.
+pub(crate) fn tmp_name(nonce: u128) -> impl Fn(usize) -> String {
+    move |k| format!("~grids-rename-{nonce}-{k}.tmp")
+}
+
+/// Runs `steps` in order through `mv(step, back)`. When one fails, the ones done are moved back, newest first.
+/// With a journal (`stop`) that ends at the first move back that fails too, so the disk is always "the first k
+/// steps done" (what recover_plan reads); without one every move back is still tried, as nothing tidies later.
+/// Err: the step that failed, why, and how many are not put back (0: all were; with `stop` the first that many).
+pub(crate) fn run_steps_with(steps: &[Move], stop: bool, mv: &mut dyn FnMut(&Move, bool) -> Result<(), String>) -> Result<(), (String, String, usize)> {
+    for (k, m) in steps.iter().enumerate() {
+        if let Err(e) = mv(m, false) {
+            let left = if stop {
+                steps[..k].iter().rposition(|s| mv(s, true).is_err()).map_or(0, |j| j + 1)
+            } else {
+                steps[..k].iter().rev().filter(|s| mv(s, true).is_err()).count()
+            };
+            return Err((m.1.clone(), e, left));
+        }
+    }
+    Ok(())
+}
+
+// ---------- a batch cut off half-way (drive pulled, power gone): its journal and how to finish it ----------
+// Written next to grids.ini before a batch that uses temporary names, removed once it is over.
+
+/// Journal text: a version line with the nonce, the folders, the steps, and an end line (a cut-off write has none).
+/// Tabs and line breaks can't be in a Windows name or path, so they separate safely.
+pub(crate) fn journal_text(nonce: u128, dirs: &[String], steps: &[Move]) -> String {
+    let mut t = format!("grids-rename 1 {nonce}\n");
+    for d in dirs {
+        t += &format!("D\t{d}\n");
+    }
+    for (d, from, to) in steps {
+        t += &format!("S\t{d}\t{from}\t{to}\n");
+    }
+    t + "E\n"
+}
+
+/// None for anything not whole and of this version: such a file is left alone.
+pub(crate) fn parse_journal(t: &str) -> Option<(u128, Vec<String>, Vec<Move>)> {
+    let mut lines = t.strip_suffix("E\n")?.lines();
+    let nonce = lines.next()?.strip_prefix("grids-rename 1 ")?.parse().ok()?;
+    let (mut dirs, mut steps) = (Vec::new(), Vec::new());
+    for l in lines {
+        match l.split('\t').collect::<Vec<_>>()[..] {
+            ["D", d] if steps.is_empty() && !d.is_empty() => dirs.push(d.to_string()),
+            ["S", d, from, to] if !from.is_empty() && !to.is_empty() => {
+                steps.push((d.parse().ok().filter(|&d: &usize| d < dirs.len())?, from.to_string(), to.to_string()))
+            }
+            _ => return None,
+        }
+    }
+    Some((nonce, dirs, steps))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Mend {
+    Back,    // cut off while moving aside: the temporary names go back to the old ones, nothing else was touched
+    Forward, // later: the batch is finished
+}
+
+/// What to do about a journal's batch, with the disk as it is now (exists: a name in a folder, any case).
+/// The temporary names there tell how far it got: only the first ones = moving aside, only the last ones = the
+/// final moves, all = in between. Moving aside is put back; later the rest runs, the direct renames only if it
+/// got no further (once the final moves began they are done, and doing one again could move another file).
+/// A move runs only if its file is there and its target free; a temporary name whose target is taken is left
+/// (`stuck`). None: not steps this module plans (left alone). Mend None: no temporary name is there.
+pub(crate) fn recover_plan(steps: &[Move], nonce: u128, exists: &dyn Fn(usize, &str) -> bool) -> Option<(Option<Mend>, Vec<Move>, Vec<Move>)> {
+    let pre = format!("~grids-rename-{nonce}-");
+    let is_tmp = |n: &str| n.starts_with(&pre) && n.ends_with(".tmp");
+    let p = steps.iter().take_while(|(_, _, to)| is_tmp(to)).count();
+    if p == 0 || steps.len() < 2 * p {
+        return None;
+    }
+    let (first, rest) = steps.split_at(p);
+    let (direct, last) = rest.split_at(rest.len() - p);
+    let paired = first.iter().zip(last).all(|(a, b)| a.0 == b.0 && a.2 == b.1 && !is_tmp(&a.1) && !is_tmp(&b.2));
+    if !paired || direct.iter().any(|(_, f, t)| is_tmp(f) || is_tmp(t)) {
+        return None;
+    }
+    let has: Vec<bool> = first.iter().map(|(d, _, t)| exists(*d, t)).collect();
+    let (mend, todo): (Mend, Vec<Move>) = match (has[0], has[p - 1]) {
+        _ if !has.contains(&true) => return Some((None, Vec::new(), Vec::new())),
+        (true, false) => (Mend::Back, first.iter().rev().map(|(d, o, t)| (*d, t.clone(), o.clone())).collect()),
+        (true, true) => (Mend::Forward, direct.iter().chain(last).cloned().collect()),
+        _ => (Mend::Forward, last.to_vec()),
+    };
+    let mut disk: HashMap<(usize, String), bool> = HashMap::new();
+    let (mut moves, mut stuck) = (Vec::new(), Vec::new());
+    for m in todo {
+        let (d, from, to) = &m;
+        let mut here = |n: &str| *disk.entry(key(*d, n)).or_insert_with(|| exists(*d, n));
+        if !here(from) {
+            continue; // done already
+        }
+        // a case-only rename (k -> K) finds its own file under the target: run anyway (done already, it changes nothing)
+        if key(*d, from) != key(*d, to) && here(to) {
+            if is_tmp(from) {
+                stuck.push(m);
+            }
+            continue;
+        }
+        disk.insert(key(*d, from), false);
+        disk.insert(key(*d, to), true);
+        moves.push(m);
+    }
+    Some((Some(mend), moves, stuck))
+}
+
 // ---------- presets: one grids.ini line each, rename_preset=name|ext|rule|rule ... ----------
 
 /// Also writes whitespace at either end of a field as %XX (per UTF-8 byte): grids.ini values are trimmed on
@@ -527,6 +637,133 @@ mod tests {
         // numbering a whole folder in place: 1..3 -> shifted
         let p = plan(&m(&[("01", "02"), ("02", "03"), ("03", "04")]), &tmp);
         assert_eq!(simulate(&["01", "02", "03"], &p), ["02", "03", "04"]);
+    }
+
+    // A disk of (folder, lowercased name) -> file id; a move onto a name already there is a bug.
+    fn apply(disk: &mut HashMap<(usize, String), usize>, (d, from, to): &Move) {
+        let f = disk.remove(&key(*d, from)).unwrap_or_else(|| panic!("{from} missing"));
+        assert!(disk.insert(key(*d, to), f).is_none(), "{to} taken");
+    }
+
+    // Every point a batch can stop at (the first k steps done) comes back to the old names or the new ones.
+    fn mend_all(items: &[Move], others: &[(usize, &str)]) {
+        let nonce = 4242;
+        let steps = plan(items, &tmp_name(nonce));
+        let parked = steps.len() - items.iter().filter(|(_, o, n)| o != n).count();
+        let mut start: HashMap<(usize, String), usize> = items.iter().enumerate().map(|(i, (d, o, _))| (key(*d, o), i)).collect();
+        start.extend(others.iter().enumerate().map(|(i, (d, n))| (key(*d, n), 1000 + i)));
+        let mut end = start.clone();
+        end.retain(|_, f| *f >= 1000);
+        end.extend(items.iter().enumerate().map(|(i, (d, _, n))| (key(*d, n), i)));
+        if parked == 0 {
+            assert_eq!(recover_plan(&steps, nonce, &|_, _| true), None);
+            return;
+        }
+        for k in 0..=steps.len() {
+            let mut disk = start.clone();
+            steps[..k].iter().for_each(|s| apply(&mut disk, s));
+            let snap = disk.clone();
+            let (mend, moves, stuck) = recover_plan(&steps, nonce, &|d, n| snap.contains_key(&key(d, n))).unwrap();
+            moves.iter().for_each(|m| apply(&mut disk, m));
+            assert!(stuck.is_empty(), "{k} {items:?}");
+            assert!(!disk.keys().any(|(_, n)| n.starts_with("~grids-rename-")), "{k} {items:?}");
+            // nothing done yet (k = 0) stays as it was, with nothing to mend
+            let want = if k < parked { (&start, if k == 0 { None } else { Some(Mend::Back) }) } else { (&end, if k == steps.len() { None } else { Some(Mend::Forward) }) };
+            assert_eq!((&disk, mend), want, "{k} {items:?}");
+        }
+    }
+
+    #[test]
+    fn journal_mends_every_stop() {
+        let m = |v: &[(usize, &str, &str)]| v.iter().map(|(d, o, n)| (*d, o.to_string(), n.to_string())).collect::<Vec<Move>>();
+        // swap, 3-cycle, chain, parked and direct mixed, two folders, nothing parked
+        mend_all(&m(&[(0, "a", "b"), (0, "b", "a")]), &[]);
+        mend_all(&m(&[(0, "1", "2"), (0, "2", "3"), (0, "3", "1")]), &[(0, "x")]);
+        mend_all(&m(&[(0, "a", "b"), (0, "b", "c"), (0, "c", "d")]), &[]);
+        mend_all(&m(&[(0, "a", "b"), (0, "b", "a"), (0, "k", "K"), (0, "p", "q"), (1, "a", "b"), (1, "b", "z")]), &[(1, "y")]);
+        mend_all(&m(&[(0, "a", "x"), (1, "b", "y")]), &[]);
+        // random batches: names drawn from a small pool per folder, so swaps, cycles and chains come up
+        let mut seed = 0x9E37_79B9_7F4A_7C15u64;
+        let mut next = |n: u64| {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((seed >> 33) % n) as usize
+        };
+        for _ in 0..300 {
+            let mut items = Vec::new();
+            for d in 0..1 + next(2) {
+                let mut pool: Vec<String> = (0..8).map(|k| format!("f{k}")).collect();
+                let count = 1 + next(6);
+                let mut targets = pool.clone();
+                for _ in 0..count {
+                    let o = pool.remove(next(pool.len() as u64));
+                    let n = targets.remove(next(targets.len() as u64));
+                    items.push((d, o, n));
+                }
+            }
+            mend_all(&items, &[]);
+        }
+    }
+
+    #[test]
+    fn journal_mend_leaves_taken_names() {
+        let steps = plan(&[(0, "a".into(), "b".into()), (0, "b".into(), "a".into())], &tmp_name(7));
+        // all parked, "a" moved on, then some other file took "b": that temporary name stays, listed
+        let there = ["~grids-rename-7-0.tmp", "~grids-rename-7-1.tmp", "b"];
+        let (mend, moves, stuck) = recover_plan(&steps, 7, &|_, n| there.contains(&n)).unwrap();
+        assert_eq!(mend, Some(Mend::Forward));
+        assert_eq!(moves, [(0, "~grids-rename-7-1.tmp".to_string(), "a".to_string())]);
+        assert_eq!(stuck, [(0, "~grids-rename-7-0.tmp".to_string(), "b".to_string())]);
+        // cut off after moving aside: the case-only rename (k -> K) still runs, though "K" is found (it is "k")
+        let steps = plan(&[(0, "a".into(), "b".into()), (0, "b".into(), "a".into()), (0, "k".into(), "K".into())], &tmp_name(7));
+        let there = ["~grids-rename-7-0.tmp", "~grids-rename-7-1.tmp", "k"];
+        let (_, moves, stuck) = recover_plan(&steps, 7, &|_, n| there.iter().any(|t| t.eq_ignore_ascii_case(n))).unwrap();
+        assert!(moves.contains(&(0, "k".to_string(), "K".to_string())) && stuck.is_empty());
+        // another batch's names, or steps not of this shape: not touched
+        assert_eq!(recover_plan(&steps, 8, &|_, _| true), None);
+        assert_eq!(recover_plan(&steps[1..], 7, &|_, _| true), None);
+        assert_eq!(recover_plan(&[(0, "a".into(), "b".into())], 7, &|_, _| true), None);
+    }
+
+    #[test]
+    fn journal_round_trip() {
+        let dirs = vec![r"C:\My files\a.b".to_string(), r"\\srv\공유 폴더\사진".to_string(), r"D:\".to_string()];
+        let steps: Vec<Move> = vec![(0, "x y.txt".into(), "~grids-rename-5-0.tmp".into()), (1, "사진 .jpg".into(), "..a".into()), (2, "~grids-rename-5-0.tmp".into(), "é b".into())];
+        let t = journal_text(5, &dirs, &steps);
+        assert_eq!(parse_journal(&t), Some((5, dirs.clone(), steps.clone())));
+        // cut off, another version, a step in a folder not listed, junk: none of them read
+        assert_eq!(parse_journal(&t[..t.len() - 2]), None);
+        assert_eq!(parse_journal(&t.replace("grids-rename 1 ", "grids-rename 2 ")), None);
+        assert_eq!(parse_journal("grids-rename 1 5\nS\t0\ta\tb\nE\n"), None);
+        assert_eq!(parse_journal("grids-rename 1 5\nD\tC:\\\nX\nE\n"), None);
+        assert_eq!(parse_journal(""), None);
+    }
+
+    #[test]
+    fn put_back_stops_at_first_failure() {
+        let steps: Vec<Move> = (0..5).map(|k| (0, format!("s{k}"), format!("t{k}"))).collect();
+        let mut seen = Vec::new();
+        // step 3 fails; putting back step 1 fails: steps 0 and 1 stay done, step 0 is not tried
+        let r = run_steps_with(&steps, true, &mut |m, back| {
+            seen.push((m.1.clone(), back));
+            if (m.1 == "s3" && !back) || (m.1 == "s1" && back) { Err("no".into()) } else { Ok(()) }
+        });
+        assert_eq!(r, Err(("s3".to_string(), "no".to_string(), 2)));
+        assert_eq!(seen.last(), Some(&("s1".to_string(), true)));
+        assert!(!seen.contains(&("s0".to_string(), true)));
+        // everything put back: 0 left; no failure: Ok
+        // without a journal every move back is tried: steps 2..0, only step 1 not put back
+        seen.clear();
+        let r = run_steps_with(&steps, false, &mut |m, back| {
+            seen.push((m.1.clone(), back));
+            if (m.1 == "s3" && !back) || (m.1 == "s1" && back) { Err("no".into()) } else { Ok(()) }
+        });
+        assert_eq!(r, Err(("s3".to_string(), "no".to_string(), 1)));
+        assert_eq!(seen.last(), Some(&("s0".to_string(), true)));
+        // everything put back: 0 left; no failure: Ok
+        for stop in [true, false] {
+            assert_eq!(run_steps_with(&steps, stop, &mut |m, back| if m.1 == "s2" && !back { Err("x".into()) } else { Ok(()) }), Err(("s2".into(), "x".into(), 0)));
+            assert_eq!(run_steps_with(&steps, stop, &mut |_, _| Ok(())), Ok(()));
+        }
     }
 
     #[test]
