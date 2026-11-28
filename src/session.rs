@@ -937,12 +937,13 @@ pub(crate) fn apply_args(s: &mut Session, args: Vec<String>) {
 }
 
 // The first start's command line. A lone session file brings its layout and becomes the file Ctrl+S saves to,
-// as when a running Grids is handed one (load_session_file). One that can't be read changes nothing: false.
+// as when a running Grids is handed one (load_session_file). One that can't be read, or isn't a Grids session
+// (an empty file, Q-Dir's own .qdr: no layout line, looks_like_session), changes nothing: false.
 // A file to show selected (file_args) opens its folder; that file comes back to be picked once the pane is up.
 pub(crate) fn startup_args(s: &mut Session, mut args: Vec<String>, read: impl Fn(&str) -> Option<String>) -> (bool, Option<(String, String)>) {
     let folders = take_folder_flag(&mut args); // a jump-list folder link: folders only, even one named like a session file
     if let Some(f) = session_arg(&args).filter(|_| !folders) {
-        let Some(t) = read(f) else {
+        let Some(t) = read(f).filter(|t| looks_like_session(t)) else {
             return (false, None);
         };
         s.take_layout(&Session::parse(&t));
@@ -1719,6 +1720,19 @@ mod tests {
         let mut s = ini.clone();
         assert!(!startup_args(&mut s, strs(&[r"F:\s\gone.grids"]), read).0);
         assert_eq!(s, ini);
+        // ③b read, but not a Grids session (empty, Q-Dir's .qdr, no layout line): the same, nothing taken
+        for t in ["", "[Settings]\nQDir=1", "xcols=2"] {
+            let mut s = ini.clone();
+            assert_eq!(startup_args(&mut s, strs(&[r"F:\s\old.qdr"]), |_| Some(t.to_string())), (false, None));
+            assert_eq!((&s.paths, &s.heights, &s.file), (&ini.paths, &ini.heights, &ini.file));
+            assert_eq!(s, ini);
+        }
+        // a Grids session, the old grid= form included: taken, the save target
+        for t in ["cols=1\np0=C:\\", "grid=2,2"] {
+            let mut s = ini.clone();
+            assert_eq!(startup_args(&mut s, vec![work.clone()], |_| Some(t.to_string())), (true, None));
+            assert_eq!(s.file, work);
+        }
 
         // ④ a jump-list folder link: a folder even when named like a session file
         let mut s = ini.clone();

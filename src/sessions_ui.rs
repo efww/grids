@@ -435,20 +435,42 @@ pub(crate) fn session_unread_note(ko: bool, path: &Path, missing: bool) -> Strin
     (if ko { kr } else { en }).replace("{name}", &name)
 }
 
+/// The status-line note for a .grids / .qdr file that reads but isn't a Grids session (an empty file, Q-Dir's own
+/// session: no layout line, looks_like_session): left as it is, the panes too.
+pub(crate) fn session_foreign_note(ko: bool, path: &Path) -> String {
+    let name = path.file_name().map_or_else(|| path.to_string_lossy(), |n| n.to_string_lossy());
+    let (en, kr) = ("“{name}” isn't a Grids session file — nothing changed", "“{name}”은(는) Grids 세션 파일이 아님 — 아무것도 바꾸지 않음");
+    (if ko { kr } else { en }).replace("{name}", &name)
+}
+
+/// A session file named at start (main) that wasn't taken: there but not a session, else not there / unreadable.
+pub(crate) fn session_unopened_note(ko: bool, path: &Path) -> String {
+    match std::fs::read_to_string(path) {
+        Ok(t) if !looks_like_session(&t) => session_foreign_note(ko, path),
+        _ => session_unread_note(ko, path, std::fs::metadata(path).is_err_and(|e| not_found(&e))),
+    }
+}
+
 pub(crate) fn not_found(e: &std::io::Error) -> bool {
     e.kind() == std::io::ErrorKind::NotFound
 }
 
-pub(crate) unsafe fn load_session_file(path: &Path) {
+/// Opens a session file in place of the panes. False when it can't be read or isn't a Grids session: then nothing
+/// changes (panes, the save target, unsaved state), a beep and a note on the status line say why.
+pub(crate) unsafe fn load_session_file(path: &Path) -> bool {
+    let ko = KO.load(Ordering::Relaxed);
+    let refuse = |note: String| {
+        _ = MessageBeep(MB_ICONWARNING);
+        app(|a| a.note = Some((note, Instant::now() + Duration::from_secs(5))));
+        update_status();
+        false
+    };
     let text = match std::fs::read_to_string(path) {
-        Ok(t) => t,
-        Err(e) => {
-            _ = MessageBeep(MB_ICONWARNING);
-            let note = session_unread_note(KO.load(Ordering::Relaxed), path, not_found(&e));
-            app(|a| a.note = Some((note, Instant::now() + Duration::from_secs(5))));
-            update_status();
-            return;
-        }
+        Ok(t) if looks_like_session(&t) => t,
+        // an empty file or another program's .qdr: no layout line, so loading it would wipe the panes for a
+        // default layout and make it the file Ctrl+S overwrites
+        Ok(_) => return refuse(session_foreign_note(ko, path)),
+        Err(e) => return refuse(session_unread_note(ko, path, not_found(&e))),
     };
     if app(|a| a.drag.is_some()) {
         // a splitter held (Ctrl+O mid-drag): let go first, so the drag can't reach a column or row the session drops
@@ -472,6 +494,7 @@ pub(crate) unsafe fn load_session_file(path: &Path) {
     relayout();
     redraw_all();
     focus_view(app(|a| a.s.active));
+    true
 }
 
 // Posted to main by WM_COPYDATA: open what a second instance handed over (open_queued), unless something is up.
@@ -537,8 +560,10 @@ pub(crate) unsafe fn open_queued(posted: bool) {
 pub(crate) unsafe fn open_args(mut args: Vec<String>) {
     let folders = take_folder_flag(&mut args); // a jump-list folder link or Explorer's "Open in Grids"
     if let Some(f) = session_arg(&args).filter(|_| !folders) {
-        app(|x| (x.late.clear(), x.menu_burst = None)); // another session's folders now
-        return load_session_file(Path::new(f));
+        if load_session_file(Path::new(f)) {
+            app(|x| (x.late.clear(), x.menu_burst = None)); // another session's folders now
+        }
+        return;
     }
     if app(|x| x.zoom.take()).is_some() {
         relayout();
@@ -1139,6 +1164,19 @@ mod tests {
         assert_eq!(session_unread_note(true, p, true), "찾을 수 없는 세션: \"업무\" — 이름이 바뀌었거나 지워짐");
         assert_eq!(session_unread_note(false, p, false), "Couldn't open session file: 업무.grids");
         assert_eq!(session_unread_note(true, p, false), "세션 파일을 열지 못했습니다: 업무.grids");
+        let q = Path::new(r"C:\Q-Dir\옛날.qdr");
+        assert_eq!(session_foreign_note(false, q), "“옛날.qdr” isn't a Grids session file — nothing changed");
+        assert_eq!(session_foreign_note(true, q), "“옛날.qdr”은(는) Grids 세션 파일이 아님 — 아무것도 바꾸지 않음");
+        // at start: a file there but not a session names that, one that isn't there stays "not found"
+        let dir = std::env::temp_dir().join("grids-foreign-session-note");
+        _ = std::fs::create_dir_all(&dir);
+        let f = dir.join("빈.qdr");
+        std::fs::write(&f, "[Settings]\nQDir=1").unwrap();
+        assert_eq!(session_unopened_note(false, &f), "“빈.qdr” isn't a Grids session file — nothing changed");
+        std::fs::write(&f, "cols=1\np0=C:\\").unwrap();
+        assert_eq!(session_unopened_note(false, &f), "Couldn't open session file: 빈.qdr");
+        _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(session_unopened_note(true, &f), "찾을 수 없는 세션: \"빈\" — 이름이 바뀌었거나 지워짐");
         let gone = std::fs::read_to_string(std::env::temp_dir().join("grids-no-such-session.grids")).unwrap_err();
         assert!(not_found(&gone));
     }

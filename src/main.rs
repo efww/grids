@@ -260,7 +260,7 @@ fn main() -> Result<()> {
         }
         refresh_sys_accent(); // Windows' accent colour, when followed, from the first paint
         let bare = args.is_empty(); // no folder or session given
-        // a session file becomes the save target; one that can't be read is named on the status line once the window is up
+        // a session file becomes the save target; one that can't be read or isn't a session is named on the status line once the window is up
         let named = session_arg(&args).map(PathBuf::from);
         // folders from "Open in Grids" fill panes 1.. (apply_args); more selected folders, each its own start, go on after them
         let burst = Some(args.len().saturating_sub(1).min(MAXP)).filter(|&k| k > 0 && args[0] == FOLDER_FLAG);
@@ -543,8 +543,8 @@ fn main() -> Result<()> {
         app(|a| a.base = Some(startup_base(&a.s, saved.as_deref())));
         refresh_save_button();
         if let Some(path) = unread {
-            let missing = std::fs::metadata(&path).is_err_and(|e| not_found(&e));
-            let text = session_unread_note(KO.load(Ordering::Relaxed), &path, missing);
+            // not there, locked, or there but not a Grids session (startup_args left grids.ini's state for it)
+            let text = session_unopened_note(KO.load(Ordering::Relaxed), &path);
             app(|a| a.note = Some((text, Instant::now() + Duration::from_secs(5))));
             _ = MessageBeep(MB_ICONWARNING);
         }
