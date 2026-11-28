@@ -25,7 +25,7 @@ use windows::Win32::System::Threading::{CreateEventW, CreateMutexW, ReleaseMutex
 use windows::Win32::System::Variant::{VariantClear, VARIANT, VT_I4};
 use windows::Win32::UI::Accessibility::{
     AccessibleObjectFromPoint, LiveSetting_Property_GUID, NotifyWinEvent, Polite, CLSID_AccPropServices, IAccPropServices, IAccessible, PROPID_ACC_DESCRIPTION, PROPID_ACC_NAME, PROPID_ACC_ROLE,
-    ROLE_SYSTEM_DIALOG, ROLE_SYSTEM_LIST, ROLE_SYSTEM_LISTITEM, ROLE_SYSTEM_STATUSBAR,
+    ROLE_SYSTEM_DIALOG, ROLE_SYSTEM_LIST, ROLE_SYSTEM_STATUSBAR,
 };
 use windows::Win32::UI::Controls::Dialogs::{ChooseColorW, CC_FULLOPEN, CC_RGBINIT, CHOOSECOLORW};
 use windows::Win32::UI::Controls::{
@@ -577,18 +577,12 @@ fn main() -> Result<()> {
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
             if !pre_translate(&msg) {
-                let up = up_candidate(&msg);
+                // empty space is told after the press: nothing got selected
+                let press = press_before(&msg);
                 _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
-                if let Some((i, g, svh)) = up {
-                    let query = || {
-                        let view = view_of::<IShellView>(i).and_then(|v| v.GetWindow().ok()).map(|h| h.0 as isize);
-                        let sel = view_of::<IFolderView2>(i).and_then(|fv| fv.ItemCount(SVGIO_SELECTION).ok()).map(|n| n as u32);
-                        (view, sel)
-                    };
-                    if confirm((g, svh), query, gen) {
-                        browse(i, SBSP_PARENT);
-                    }
+                if let Some(i) = press.and_then(|p| press_after(p)) {
+                    browse(i, SBSP_PARENT);
                 }
             }
         }
@@ -1525,8 +1519,24 @@ mod tests {
         assert!(!next(p, Click { gen: 2, ..c(200, 10, 10) }, true).1);
 
         assert!(bg_role(33, 917, 917) && bg_role(34, 19, 917));
-        assert!([20, 43, 25, 3, 62].iter().all(|&r| !bg_role(r, 917, 917)));
+        assert!([20, 43, 25, 3, 62, 64, 21, 44].iter().all(|&r| !bg_role(r, 917, 917)));
         assert!(!bg_role(33, 25, 917)); // the column header bar (its dividers and gaps)
+        assert!(bg_role(33, 0, 917)); // a list of unknown height is not taken for the header bar
+        // client, pane, static text (what else Windows may call the space under the rows): background
+        assert!([10, 16, 41].iter().all(|&r| bg_role(r, 917, 917)));
+
+        // one generation per pane: another pane opening a folder keeps the pair, this pane's own move drops it
+        let p = Some(Click { gen: pane_gen(3), ..c(100, 10, 10) });
+        bump_pane(5);
+        bump_pane(MAXP); // out of range: nothing
+        assert!(next(p, Click { gen: pane_gen(3), ..c(200, 10, 10) }, true).1);
+        bump_pane(3);
+        assert!(!next(p, Click { gen: pane_gen(3), ..c(200, 10, 10) }, true).1);
+        // ... and after the press: nothing selected, same view, this pane not moved
+        let g0 = pane_gen(6);
+        bump_pane(7);
+        assert!(confirm((g0, 9), || (Some(9), Some(0)), || pane_gen(6)));
+        assert!(!confirm((g0, 9), || { bump_pane(6); (Some(9), Some(0)) }, || pane_gen(6)));
 
         // a navigation during the probe voids it; g0 is the value before
         let g = Cell::new(5);

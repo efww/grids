@@ -132,6 +132,7 @@ pub(crate) unsafe extern "system" fn filter_hint_proc(h: HWND, msg: u32, wp: WPA
 
 pub(crate) unsafe fn destroy_pane(i: usize) {
     NAV_GEN.fetch_add(1, Ordering::SeqCst);
+    bump_pane(i);
     save_view(i);
     let (p, queued) = app(|a| {
         let p = a.panes[i].take();
@@ -1338,6 +1339,20 @@ pub(crate) fn gen() -> usize {
     NAV_GEN.load(Ordering::SeqCst)
 }
 
+// The same per pane slot, for the double-click pair: another pane opening a folder between the two presses
+// (several panes loading one after another) leaves this pane's pair alone.
+pub(crate) static PANE_GEN: [AtomicUsize; MAXP] = [const { AtomicUsize::new(0) }; MAXP];
+
+pub(crate) fn bump_pane(i: usize) {
+    if let Some(g) = PANE_GEN.get(i) {
+        g.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+pub(crate) fn pane_gen(i: usize) -> usize {
+    PANE_GEN.get(i).map_or(0, |g| g.load(Ordering::SeqCst))
+}
+
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) struct Click {
     pub(crate) win: isize,
@@ -1371,14 +1386,16 @@ pub(crate) fn next_click(prev: Option<Click>, now: Click, bg: bool, ms: u32, cx:
     }
 }
 
-// The list itself is background, and so may a row be: a row reports ROLE_SYSTEM_LISTITEM across all its columns,
-// yet without full-row select only the name is the item, so its date and size cells are empty space. confirm()
-// tells them apart after the click: a press on the name selects or opens it. Group headers, collapse buttons and
-// column headers are never background. The column header bar is a list too, a strip along the top: its gaps and
-// the dividers between columns (double-click: fit the width) report it, so a list counts only when it is most of
-// the window (`h` its height, `list_h` the window's).
+// Roles that are never empty space: group box, column header, separator, push / check / split / collapse buttons,
+// scroll bar. Anything else counts (the list, a row's date and size cells, whatever Windows 11 calls the space
+// under the rows): confirm() tells empty space from an item after the press, as a press on a name selects it.
+// The column header bar is a list too, a strip along the top: its gaps and the dividers between columns
+// (double-click: fit the width) report it, so a list that is a strip (`h` its height, 0 when unknown; `list_h`
+// the window's) is no background.
+const NOT_BG: [u32; 8] = [20, 25, 21, 43, 44, 62, 64, 3];
+
 pub(crate) fn bg_role(role: u32, h: i32, list_h: i32) -> bool {
-    role == ROLE_SYSTEM_LISTITEM || role == ROLE_SYSTEM_LIST && h * 2 > list_h
+    !NOT_BG.contains(&role) && !(role == ROLE_SYSTEM_LIST && h > 0 && h * 2 <= list_h)
 }
 
 // The generation is read before the probe and again after it: a navigation during the probe voids it.
@@ -1395,26 +1412,30 @@ pub(crate) fn confirm(cand: (usize, isize), query: impl FnOnce() -> (Option<isiz
     view == Some(cand.1) && sel == Some(0) && gen() == cand.0
 }
 
-// Same-thread window, so WM_GETOBJECT runs inline; call outside app().
-pub(crate) unsafe fn on_background(m: &MSG) -> bool {
-    if WindowFromPoint(m.pt) != m.hwnd {
+// Whether the press may be on empty space, asked before it is handled. Same-thread window, so WM_GETOBJECT runs
+// inline; call outside app(). No answer from accessibility counts as background: confirm() has the last word.
+pub(crate) unsafe fn on_background(i: usize, m: &MSG) -> bool {
+    let mut win = RECT::default();
+    _ = GetWindowRect(m.hwnd, &mut win);
+    // Details: the column headers are drawn in this same window, along its top (sort, fit a column on a divider)
+    let details = view_of::<IFolderView2>(i).and_then(|fv| fv.GetCurrentViewMode().ok()).is_some_and(|v| v == FVM_DETAILS.0 as u32);
+    if details && m.pt.y < win.top + 32 * GetDpiForWindow(m.hwnd).max(96) as i32 / 96 {
         return false;
     }
     let mut acc: Option<IAccessible> = None;
     let mut child = VARIANT::default();
     if AccessibleObjectFromPoint(m.pt, &mut acc, &mut child).is_err() {
-        return false;
+        return true;
     }
-    let mut win = RECT::default();
-    _ = GetWindowRect(m.hwnd, &mut win);
-    let bg = acc.and_then(|a| {
+    let role = acc.and_then(|a| {
         let (mut l, mut t, mut w, mut h) = (0, 0, 0, 0);
-        _ = a.accLocation(&mut l, &mut t, &mut w, &mut h, &child);
-        Some((a.get_accRole(&child).ok()?, h))
+        // only a strip at the window's top with the press inside it has its height looked at
+        let strip = a.accLocation(&mut l, &mut t, &mut w, &mut h, &child).is_ok() && t - win.top < h && (t..t + h).contains(&m.pt.y);
+        Some((a.get_accRole(&child).ok()?, if strip { h } else { 0 }))
     });
-    let bg = bg.is_some_and(|(mut role, h)| {
+    let bg = role.is_none_or(|(mut role, h)| {
         let r = &role.Anonymous.Anonymous;
-        let bg = r.vt == VT_I4 && bg_role(r.Anonymous.lVal as u32, h, win.bottom - win.top);
+        let bg = r.vt != VT_I4 || bg_role(r.Anonymous.lVal as u32, h, win.bottom - win.top);
         _ = VariantClear(&mut role);
         bg
     });
@@ -1422,28 +1443,49 @@ pub(crate) unsafe fn on_background(m: &MSG) -> bool {
     bg
 }
 
-// A double-click on empty space in a list goes up a folder: (pane, generation, view window) when this press
-// completes a background pair.
-pub(crate) unsafe fn up_candidate(m: &MSG) -> Option<(usize, usize, isize)> {
+// A left press in a pane's list, noted before it is handled.
+#[derive(Clone, Copy)]
+pub(crate) struct Press {
+    i: usize,
+    view: isize,
+    click: Click,
+    ok: bool, // in the list, no Ctrl / Shift, not on a column header, button or scroll bar
+}
+
+pub(crate) unsafe fn press_before(m: &MSG) -> Option<Press> {
     if !matches!(m.message, WM_LBUTTONDOWN | WM_LBUTTONDBLCLK) || !app(|a| a.s.dblup) {
         return None;
     }
     let i = pane_of(m.hwnd)?;
     let svh = Cell::new(HWND::default());
-    let (g0, bg) = bg_probe(gen, || {
-        let Some(h) = view_of::<IShellView>(i).and_then(|v| v.GetWindow().ok()) else {
-            return false;
-        };
-        svh.set(h);
-        in_view_list(h, m.hwnd)
-            && m.wParam.0 & (MK_CONTROL.0 | MK_SHIFT.0) as usize == 0
-            && on_background(m)
-    });
-    let now = Click { win: m.hwnd.0 as isize, gen: g0, time: m.time, x: m.pt.x, y: m.pt.y };
+    let (g0, ok) = bg_probe(
+        || pane_gen(i),
+        || {
+            let Some(h) = view_of::<IShellView>(i).and_then(|v| v.GetWindow().ok()) else {
+                return false;
+            };
+            svh.set(h);
+            in_view_list(h, m.hwnd) && m.wParam.0 & (MK_CONTROL.0 | MK_SHIFT.0) as usize == 0 && on_background(i, m)
+        },
+    );
+    let click = Click { win: m.hwnd.0 as isize, gen: g0, time: m.time, x: m.pt.x, y: m.pt.y };
+    Some(Press { i, view: svh.get().0 as isize, click, ok })
+}
+
+// Once handled, the press was on empty space if nothing is selected in the same view and this pane hasn't moved
+// (a press on a name selects it). A double-click on empty space goes up a folder: the pane, when this press
+// completes such a pair.
+pub(crate) unsafe fn press_after(p: Press) -> Option<usize> {
+    let query = || {
+        let view = view_of::<IShellView>(p.i).and_then(|v| v.GetWindow().ok()).map(|h| h.0 as isize);
+        let sel = view_of::<IFolderView2>(p.i).and_then(|fv| fv.ItemCount(SVGIO_SELECTION).ok()).map(|n| n as u32);
+        (view, sel)
+    };
+    let bg = p.ok && confirm((p.click.gen, p.view), query, || pane_gen(p.i));
     let (cx, cy) = (GetSystemMetrics(SM_CXDOUBLECLK), GetSystemMetrics(SM_CYDOUBLECLK));
-    let (next, up) = next_click(LAST_CLICK.get(), now, bg, GetDoubleClickTime(), cx, cy);
+    let (next, up) = next_click(LAST_CLICK.get(), p.click, bg, GetDoubleClickTime(), cx, cy);
     LAST_CLICK.set(next);
-    up.then(|| (i, g0, svh.get().0 as isize))
+    up.then_some(p.i)
 }
 
 // What a screen reader hears on moving to a pane or tab by key, as Windows Terminal / VS Code read "tab 2 of 3":
@@ -1585,6 +1627,8 @@ pub(crate) unsafe fn swap_panes(i: usize, j: usize) {
         }
     }
     NAV_GEN.fetch_add(1, Ordering::SeqCst); // a double-click pair that spans the move is dropped
+    bump_pane(i);
+    bump_pane(j);
     relayout();
     redraw_all();
     refresh_save_button();
@@ -1709,6 +1753,7 @@ pub(crate) unsafe fn set_layout(h: Vec<usize>) {
         }
     }
     NAV_GEN.fetch_add(1, Ordering::SeqCst); // a double-click pair that spans the move is dropped
+    (0..MAXP).for_each(bump_pane); // panes changed cells all over
     relayout();
     redraw_all();
     if gone {

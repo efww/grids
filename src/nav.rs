@@ -2252,6 +2252,7 @@ impl IExplorerBrowserEvents_Impl for Events_Impl {
     fn OnNavigationPending(&self, pidl: *const ITEMIDLIST) -> Result<()> {
         NAV_GEN.fetch_add(1, Ordering::SeqCst);
         let i = self.0.load(Ordering::SeqCst);
+        bump_pane(i); // this pane's double-click pair only
         // this move's kind for the faint ← / → (nav_counted): browse()'s back or forward, else a new folder
         app(|a| a.panes.get_mut(i).and_then(|p| p.as_mut()).map(|p| p.moving = Some(p.going.take().unwrap_or(Go::New))));
         unsafe {
@@ -2274,6 +2275,7 @@ impl IExplorerBrowserEvents_Impl for Events_Impl {
     fn OnNavigationComplete(&self, pidl: *const ITEMIDLIST) -> Result<()> {
         NAV_GEN.fetch_add(1, Ordering::SeqCst);
         let i = self.0.load(Ordering::SeqCst);
+        bump_pane(i);
         load_timed(i);
         unsafe {
             load_end(i, None); // here, not in on_nav, which returns early without its pane
@@ -2284,6 +2286,7 @@ impl IExplorerBrowserEvents_Impl for Events_Impl {
     fn OnNavigationFailed(&self, pidl: *const ITEMIDLIST) -> Result<()> {
         NAV_GEN.fetch_add(1, Ordering::SeqCst);
         let i = self.0.load(Ordering::SeqCst);
+        bump_pane(i);
         unsafe {
             load_end(i, None);
             rec_event(i, Nav::Failed, pidl)
