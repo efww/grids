@@ -44,8 +44,8 @@ const VIDEOS: &[&str] = &["mp4", "m4v", "mov", "avi", "wmv", "mkv", "webm", "mpg
 const AUDIO: &[&str] = &["mp3", "wav", "flac", "m4a", "aac", "wma", "ogg", "opus", "aiff", "aif", "mid", "midi"];
 // shown by the Windows preview handler when there is one (Office, Outlook, the browser engine, fonts, a PDF reader)
 const HANDLED: &[&str] = &[
-    "doc", "docx", "docm", "dot", "dotx", "rtf", "odt", "xls", "xlsx", "xlsm", "xlsb", "ods", "ppt", "pptx", "pptm", "pps", "ppsx",
-    "odp", "vsd", "vsdx", "msg", "html", "htm", "mht", "mhtml", "xps", "oxps", "ttf", "otf", "ttc", "fon",
+    "doc", "docx", "docm", "dot", "dotx", "rtf", "odt", "xls", "xlsx", "xlsm", "xlsb", "xltx", "ods", "ppt", "pptx", "pptm", "pps", "ppsx",
+    "potx", "odp", "vsd", "vsdx", "msg", "html", "htm", "mht", "mhtml", "xps", "oxps", "ttf", "otf", "ttc", "fon",
 ];
 const CODE: &[&str] = &[
     "json", "jsonc", "json5", "ndjson", "geojson", "xml", "xaml", "xsd", "xsl", "xslt", "svg", "plist", "yaml", "yml", "toml", "ini", "cfg", "conf",
@@ -68,17 +68,111 @@ pub(crate) fn ext_of(path: &str) -> String {
     }
 }
 
-// The registered preview handler of an extension; macro-enabled and show variants borrow their plain twin's.
-pub(crate) fn handler_for(ext: &str) -> Option<GUID> {
-    const PREVIEW: PCWSTR = w!("{8895b1c6-b41f-4c1c-a562-0d564250836f}");
-    let twin = match ext {
+// Whose preview handler an extension borrows when it has none of its own: macro-enabled, template and show
+// variants take their plain twin's. Every extension here and its twin are in HANDLED (a test holds it).
+fn handler_twin(ext: &str) -> &str {
+    match ext {
         "xlsm" | "xltx" | "xlsb" => "xlsx",
         "docm" | "dotx" => "docx",
         "pptm" | "ppsx" | "potx" | "pps" => "pptx",
         "mhtml" => "mht",
         "oxps" => "xps",
         e => e,
+    }
+}
+
+// How F3 tries to show a file of an extension, in content_of's order: thumbnail, music card, the 10 MB skip,
+// a preview handler, its own reader, then any thumbnail, text, or the card. Only the tables above, no file.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Thumb {
+    Fit,  // a picture: its thumbnail, or Windows makes one
+    Only, // a video: only a thumbnail it already has (a .ts without one goes on as TypeScript)
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Handler {
+    No,
+    First, // before the reader (Office, HTML, fonts)
+    After, // only when the reader shows nothing (PDF: its pages first)
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Reader {
+    Pdf,
+    Table,
+    Markdown,
+    Plain,
+    Code,
+    Html,
+    Eml,
+    Url,
+    Lnk,
+    Hwp,
+    Hwpx,
+    Office,
+    Zip,
+    Program,
+    Psd,
+    None,
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+struct Plan {
+    thumb: Option<Thumb>,
+    audio: bool,         // the music card, nothing else
+    heavy: bool,         // larger than HEAVY_MAX: the card, not opened
+    handler: Handler,    // skipped for F3's "show as text"
+    reader: Reader,      // the first match, in this order
+    text_fallback: bool, // no reader, no thumbnail: shown as text if it reads as text
+}
+
+fn plan_of(e: &str) -> Plan {
+    let thumb = if PICS.contains(&e) {
+        Some(Thumb::Fit)
+    } else if VIDEOS.contains(&e) {
+        Some(Thumb::Only)
+    } else {
+        None
     };
+    let handler = if HANDLED.contains(&e) {
+        Handler::First
+    } else if e == "pdf" {
+        Handler::After
+    } else {
+        Handler::No
+    };
+    let reader = match e {
+        "pdf" => Reader::Pdf,
+        "csv" | "tsv" => Reader::Table,
+        "md" | "markdown" | "mdown" | "mkd" => Reader::Markdown,
+        e if PLAIN.contains(&e) => Reader::Plain,
+        e if CODE.contains(&e) => Reader::Code,
+        "html" | "htm" | "xhtml" => Reader::Html,
+        "eml" => Reader::Eml,
+        "url" | "website" => Reader::Url,
+        "lnk" => Reader::Lnk,
+        "hwp" => Reader::Hwp,
+        "hwpx" | "hwpt" => Reader::Hwpx,
+        e if OFFICE_ZIP.contains(&e) => Reader::Office,
+        e if ZIPS.contains(&e) => Reader::Zip,
+        e if PROGRAMS.contains(&e) => Reader::Program,
+        "psd" | "psb" => Reader::Psd,
+        _ => Reader::None,
+    };
+    Plan {
+        thumb,
+        audio: AUDIO.contains(&e),
+        heavy: HANDLED.contains(&e) || OFFICE_ZIP.contains(&e) || matches!(e, "pdf" | "eml" | "hwp" | "hwpx" | "hwpt" | "psd" | "psb"),
+        handler,
+        reader,
+        text_fallback: !PROGRAMS.contains(&e),
+    }
+}
+
+// The registered preview handler of an extension, else its twin's.
+pub(crate) fn handler_for(ext: &str) -> Option<GUID> {
+    const PREVIEW: PCWSTR = w!("{8895b1c6-b41f-4c1c-a562-0d564250836f}");
+    let twin = handler_twin(ext);
     for e in [ext, twin] {
         let mut buf = [0u16; 64];
         let mut n = buf.len() as u32;
@@ -267,22 +361,22 @@ pub(crate) unsafe fn content_of(req: &PeekReq, online: Option<&WIN32_FIND_DATAW>
     }
     let ext = ext_of(path);
     let e = ext.as_str();
+    let plan = plan_of(e);
     let pic = |flags| shell_pic(path, req.w, req.h, flags);
-    if PICS.contains(&e) {
-        if let Some(p) = pic(SIIGBF_RESIZETOFIT) {
+    // no thumbnail: on to the rest
+    if let Some(t) = plan.thumb {
+        let flags = match t {
+            Thumb::Fit => SIIGBF_RESIZETOFIT,
+            Thumb::Only => SIIGBF_RESIZETOFIT | SIIGBF_THUMBNAILONLY,
+        };
+        if let Some(p) = pic(flags) {
             return Body::Pic(p);
         }
     }
-    if VIDEOS.contains(&e) {
-        if let Some(p) = pic(SIIGBF_RESIZETOFIT | SIIGBF_THUMBNAILONLY) {
-            return Body::Pic(p);
-        }
-    }
-    if AUDIO.contains(&e) {
+    if plan.audio {
         return card(path, &[]);
     }
-    let heavy = HANDLED.contains(&e) || OFFICE_ZIP.contains(&e) || matches!(e, "pdf" | "eml" | "hwp" | "hwpx" | "hwpt" | "psd" | "psb");
-    if heavy && meta.as_ref().is_some_and(|m| m.len() > HEAVY_MAX) {
+    if plan.heavy && meta.as_ref().is_some_and(|m| m.len() > HEAVY_MAX) {
         let skipped = tr("Skipped: larger than 10 MB", "10 MB보다 커서 생략");
         // still only in the cloud (Enter asked for it): the full card's thumbnail and properties would download it
         if let Some(d) = listed_online(path) {
@@ -290,34 +384,37 @@ pub(crate) unsafe fn content_of(req: &PeekReq, online: Option<&WIN32_FIND_DATAW>
         }
         return card(path, &[(tr("Preview", "미리보기").to_string(), skipped.to_string())]);
     }
-    if !req.plain && HANDLED.contains(&e) {
-        if let Some(g) = handler_for(e) {
-            return Body::Handler(g);
+    // F3's "show as text" skips the handler
+    let handled = || if req.plain { None } else { handler_for(e).map(Body::Handler) };
+    if plan.handler == Handler::First {
+        if let Some(b) = handled() {
+            return b;
         }
     }
-    let found = match e {
-        "pdf" => pdf_first(path, req).or_else(|| (!req.plain).then(|| handler_for(e).map(Body::Handler)).flatten()),
-        "csv" | "tsv" => read_head(path, TEXT_MAX).filter(|(b, _)| looks_text(b)).map(|(b, cut)| {
+    let found = match plan.reader {
+        Reader::Pdf => pdf_first(path, req),
+        Reader::Table => read_head(path, TEXT_MAX).filter(|(b, _)| looks_text(b)).map(|(b, cut)| {
             let text = decode_text(&b);
             let sep = if e == "tsv" { '\t' } else { csv_sep(&text) };
             let (rows, more) = csv_rows(&text, sep, 2000);
             Body::Table { rows, cut: cut || more }
         }),
-        "md" | "markdown" | "mdown" | "mkd" => text_body(path, TextKind::Markdown),
-        e if PLAIN.contains(&e) => text_body(path, TextKind::Plain),
-        e if CODE.contains(&e) => text_body(path, TextKind::Code),
-        "html" | "htm" | "xhtml" => read_head(path, TEXT_MAX).map(|(b, cut)| Body::Text { text: html_text(&decode_text(&b)), kind: TextKind::Plain, cut }),
-        "eml" => read_head(path, 4 << 20).map(|(b, cut)| Body::Text { text: eml_text(&b, KO.load(Ordering::Relaxed)), kind: TextKind::Plain, cut }),
-        "url" | "website" => url_card(path),
-        "lnk" => Some(lnk_card(path)),
-        "hwp" => hwp_pages(path, req).or_else(|| hwp_preview(path, req)),
-        "hwpx" | "hwpt" => hwp_pages(path, req).or_else(|| hwpx_preview(path, req)),
-        e if OFFICE_ZIP.contains(&e) => office_text(path, e),
-        e if ZIPS.contains(&e) => zip_list(path),
-        e if PROGRAMS.contains(&e) => Some(card(path, &version_rows(path))),
-        "psd" | "psb" => psd_thumb(path, req).map(Body::Pic),
-        _ => None,
+        Reader::Markdown => text_body(path, TextKind::Markdown),
+        Reader::Plain => text_body(path, TextKind::Plain),
+        Reader::Code => text_body(path, TextKind::Code),
+        Reader::Html => read_head(path, TEXT_MAX).map(|(b, cut)| Body::Text { text: html_text(&decode_text(&b)), kind: TextKind::Plain, cut }),
+        Reader::Eml => read_head(path, 4 << 20).map(|(b, cut)| Body::Text { text: eml_text(&b, KO.load(Ordering::Relaxed)), kind: TextKind::Plain, cut }),
+        Reader::Url => url_card(path),
+        Reader::Lnk => Some(lnk_card(path)),
+        Reader::Hwp => hwp_pages(path, req).or_else(|| hwp_preview(path, req)),
+        Reader::Hwpx => hwp_pages(path, req).or_else(|| hwpx_preview(path, req)),
+        Reader::Office => office_text(path, e),
+        Reader::Zip => zip_list(path),
+        Reader::Program => Some(card(path, &version_rows(path))),
+        Reader::Psd => psd_thumb(path, req).map(Body::Pic),
+        Reader::None => None,
     };
+    let found = found.or_else(|| if plan.handler == Handler::After { handled() } else { None });
     if let Some(b) = found {
         return b;
     }
@@ -325,7 +422,7 @@ pub(crate) unsafe fn content_of(req: &PeekReq, online: Option<&WIN32_FIND_DATAW>
     if let Some(p) = pic(SIIGBF_RESIZETOFIT | SIIGBF_THUMBNAILONLY) {
         return Body::Pic(p);
     }
-    if !PROGRAMS.contains(&e) && meta.as_ref().is_some_and(|m| m.len() > 0) {
+    if plan.text_fallback && meta.as_ref().is_some_and(|m| m.len() > 0) {
         if let Some(b) = text_body(path, TextKind::Plain) {
             return b;
         }
@@ -1033,6 +1130,115 @@ mod tests {
         for ft in [134_129_520_000_000_000u64, 134_285_904_000_000_000] {
             // 2026-01-15 and 2026-07-15 12:00 UTC: one in each season
             assert_eq!(when_ft(ft), Some(date_min(local_date(ft))));
+        }
+    }
+
+    const TABLES: &[(&str, &[&str])] = &[
+        ("PICS", PICS),
+        ("VIDEOS", VIDEOS),
+        ("AUDIO", AUDIO),
+        ("HANDLED", HANDLED),
+        ("CODE", CODE),
+        ("PLAIN", PLAIN),
+        ("ZIPS", ZIPS),
+        ("OFFICE_ZIP", OFFICE_ZIP),
+        ("PROGRAMS", PROGRAMS),
+    ];
+
+    // What F3 tries for each kind of file, in order. The extension comes from the file name the way content_of
+    // takes it: ".gitignore" stays ".gitignore", so it is no CODE entry and goes on to the plain-text fallback.
+    #[test]
+    fn preview_plan_by_extension() {
+        let plan = |thumb, audio, heavy, handler, reader, text_fallback| Plan { thumb, audio, heavy, handler, reader, text_fallback };
+        let shown = |thumb| plan(thumb, false, false, Handler::No, Reader::None, true);
+        let read = |reader| plan(None, false, false, Handler::No, reader, true);
+        let office = |reader| plan(None, false, true, Handler::First, reader, true);
+        let want = [
+            ("a.jpg", shown(Some(Thumb::Fit))),
+            ("a.HEIC", shown(Some(Thumb::Fit))),
+            ("a.mp4", shown(Some(Thumb::Only))),
+            // a video's thumbnail first; none (TypeScript) goes on to the code reader
+            ("a.ts", plan(Some(Thumb::Only), false, false, Handler::No, Reader::Code, true)),
+            ("a.mp3", plan(None, true, false, Handler::No, Reader::None, true)),
+            ("a.pdf", plan(None, false, true, Handler::After, Reader::Pdf, true)),
+            ("a.docx", office(Reader::Office)),
+            ("a.xlsm", office(Reader::Office)),
+            ("a.xltx", office(Reader::Office)),
+            ("a.potx", office(Reader::Office)),
+            ("a.xlsb", office(Reader::None)),
+            ("a.html", office(Reader::Html)),
+            ("a.xhtml", read(Reader::Html)),
+            ("a.eml", plan(None, false, true, Handler::No, Reader::Eml, true)),
+            ("a.csv", read(Reader::Table)),
+            ("a.tsv", read(Reader::Table)),
+            ("a.md", read(Reader::Markdown)),
+            ("a.txt", read(Reader::Plain)),
+            ("a.rs", read(Reader::Code)),
+            (r"C:\src\Makefile", read(Reader::Code)),
+            (r"C:\src\.gitignore", read(Reader::None)),
+            ("a.zip", read(Reader::Zip)),
+            ("a.epub", read(Reader::Zip)),
+            ("a.exe", plan(None, false, false, Handler::No, Reader::Program, false)),
+            ("a.dll", plan(None, false, false, Handler::No, Reader::Program, false)),
+            ("a.hwp", plan(None, false, true, Handler::No, Reader::Hwp, true)),
+            ("a.hwpx", plan(None, false, true, Handler::No, Reader::Hwpx, true)),
+            ("a.psd", plan(None, false, true, Handler::No, Reader::Psd, true)),
+            ("a.url", read(Reader::Url)),
+            ("a.lnk", read(Reader::Lnk)),
+            ("a.xyz", read(Reader::None)),
+        ];
+        for (path, want) in want {
+            assert_eq!(plan_of(&ext_of(path)), want, "{path}");
+        }
+    }
+
+    // Table entries are what ext_of gives (lower case, no dot) once each; an extension in two tables is only
+    // .ts (video, else TypeScript) and the Office documents (handler, else read here).
+    #[test]
+    fn preview_tables_are_clean() {
+        for (i, (name, t)) in TABLES.iter().enumerate() {
+            for (j, e) in t.iter().enumerate() {
+                assert!(!e.is_empty() && !e.contains('.') && *e == e.to_ascii_lowercase(), "{name}: {e}");
+                assert!(!t[..j].contains(e), "{name}: {e} twice");
+                for (other, u) in &TABLES[i + 1..] {
+                    if u.contains(e) {
+                        let pair = (*name, *other);
+                        let allowed = pair == ("HANDLED", "OFFICE_ZIP") || (pair == ("VIDEOS", "CODE") && *e == "ts");
+                        assert!(allowed, "{e} in {name} and {other}");
+                    }
+                }
+            }
+        }
+    }
+
+    // An extension that borrows another's preview handler gets to the handler at all (it is in HANDLED), and so
+    // does what it borrows. .xltx and .potx used to miss it and showed their text only.
+    #[test]
+    fn preview_handler_twins_are_handled() {
+        let mut twins = 0;
+        for e in TABLES.iter().flat_map(|(_, t)| t.iter()) {
+            let twin = handler_twin(e);
+            if twin != *e {
+                twins += 1;
+                assert!(HANDLED.contains(e), "{e} borrows {twin}'s handler but is not in HANDLED");
+                assert!(HANDLED.contains(&twin), "{e} borrows {twin}, not in HANDLED");
+                assert_eq!(plan_of(e).handler, Handler::First, "{e}");
+            }
+        }
+        assert!(twins >= 11, "{twins}");
+    }
+
+    // Programs never show as text; whatever opens the whole file is skipped past 10 MB.
+    #[test]
+    fn preview_programs_and_heavy() {
+        for e in PROGRAMS {
+            assert!(!plan_of(e).text_fallback, "{e}");
+        }
+        for e in HANDLED.iter().chain(OFFICE_ZIP).chain(&["pdf", "eml", "hwp", "hwpx", "hwpt", "psd", "psb"]) {
+            assert!(plan_of(e).heavy, "{e}");
+        }
+        for e in ["jpg", "mp4", "txt", "rs", "zip", "csv", "exe", "xhtml"] {
+            assert!(!plan_of(e).heavy, "{e}");
         }
     }
 
