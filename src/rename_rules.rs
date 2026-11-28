@@ -317,12 +317,19 @@ pub(crate) fn plan(items: &[Move], tmp: &dyn Fn(usize) -> String) -> Vec<Move> {
 
 // ---------- presets: one grids.ini line each, rename_preset=name|ext|rule|rule ... ----------
 
+/// Also writes whitespace at either end of a field as %XX (per UTF-8 byte): grids.ini values are trimmed on
+/// load, so a numbering separator like " " in the last field would otherwise be lost. Inner spaces stay readable.
 fn esc(s: &str) -> String {
+    let lead = s.len() - s.trim_start().len();
+    let tail = s.trim_end().len().max(lead);
     let mut o = String::new();
-    for c in s.chars() {
-        match c {
-            '%' | '|' | ',' | '\n' | '\r' => o += &format!("%{:02X}", c as u32),
-            c => o.push(c),
+    for (i, c) in s.char_indices() {
+        if matches!(c, '%' | '|' | ',' | '\n' | '\r') || (c.is_whitespace() && (i < lead || i >= tail)) {
+            for b in c.encode_utf8(&mut [0; 4]).bytes() {
+                o += &format!("%{b:02X}");
+            }
+        } else {
+            o.push(c);
         }
     }
     o
@@ -520,5 +527,39 @@ mod tests {
         let s = crate::Session { rn_presets: vec![t.clone()], ..Default::default() };
         assert_eq!(crate::Session::parse(&s.to_ini()).rn_presets, [t]);
         assert!(!s.snapshot().contains("rename_preset"));
+    }
+
+    // Through grids.ini and back, as on the next start: values there are trimmed on load.
+    fn reload(t: &str) -> Option<(String, bool, Vec<Rule>)> {
+        let s = crate::Session { rn_presets: vec![t.to_string()], ..Default::default() };
+        let back = crate::Session::parse(&s.to_ini()).rn_presets;
+        assert_eq!(back, [t]);
+        parse_preset(&back[0])
+    }
+
+    #[test]
+    fn presets_keep_edge_spaces() {
+        // a space-like separator in the last field (numbering last) survives a restart
+        for sep in [" ", " - ", "\u{3000}", "\t", " \t"] {
+            let rules = vec![rule(Kind::Number, ["1", "1", "2", sep], 1)];
+            let t = preset_text("p", false, &rules);
+            assert_eq!(t, t.trim(), "{sep:?}");
+            let (_, _, back) = reload(&t).unwrap();
+            assert_eq!(back, rules, "{sep:?}");
+            assert_eq!(run(&back, false, &["Photo"]), [format!("Photo{sep}01")]);
+        }
+        // leading text of an insert, a lone space to replace with, a space in the name's inner part
+        let rules = vec![rule(Kind::Insert, [" (copy)", "", "", ""], 1), rule(Kind::Replace, ["_", " ", "", ""], 0)];
+        assert_eq!(reload(&preset_text("a b", true, &rules)), Some(("a b".into(), true, rules)));
+        // fields without edge spaces are written exactly as before, so older lines and files match
+        let r = vec![rule(Kind::Replace, ["IMG_", "P_", "", ""], 0)];
+        assert_eq!(preset_text("사진 정리", false, &r), "사진 정리|0|replace,1,0,0,0,IMG_,P_,,");
+        assert_eq!(preset_text("x", false, &[rule(Kind::Replace, ["a b", "c d", "", ""], 0)]), "x|0|replace,1,0,0,0,a b,c d,,");
+        // lines written by older versions read the same
+        assert_eq!(reload("x|0|number,1,1,0,0,1,1,,_"), Some(("x".into(), false, vec![rule(Kind::Number, ["1", "1", "", "_"], 1)])));
+        assert_eq!(reload("x|0|replace,1,0,0,0,a b,c d,,"), Some(("x".into(), false, vec![rule(Kind::Replace, ["a b", "c d", "", ""], 0)])));
+        // multi-byte spaces go per UTF-8 byte
+        assert_eq!(esc("\u{3000}a\u{3000}b\u{3000}"), "%E3%80%80a\u{3000}b%E3%80%80");
+        assert_eq!(unesc(&esc(" \u{a0} ")), " \u{a0} ");
     }
 }
