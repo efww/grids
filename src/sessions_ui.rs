@@ -539,11 +539,16 @@ pub(crate) unsafe fn open_args(mut args: Vec<String>) {
     }
     let (a, n) = app(|x| (x.s.active, x.s.panes()));
     if !folders {
+        // a file to show selected (file_args) opens its folder; the first argument's file is selected in pane a
+        let mut pick = take_pick(&mut args);
         app(|x| x.menu_burst = None);
         // panes given a folder here no longer wait for a sign-in retry
         app(|x| x.late.retain(|(i, _)| (0..args.len().min(n)).all(|k| (a + k) % n != *i)));
         for (k, p) in args.iter().take(n).enumerate() {
-            go_near((a + k) % n, p);
+            match pick.take().filter(|_| k == 0) {
+                Some((dir, name)) => show_in_pane(a, dir, Some(name)),
+                None => _ = go_near((a + k) % n, p),
+            }
         }
         return focus_view(a);
     }

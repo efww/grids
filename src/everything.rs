@@ -730,9 +730,15 @@ pub(crate) unsafe fn show_in_pane(i: usize, to: String, name: Option<String>) {
     }
     focus_view(i);
     if let Some(name) = name {
-        ev(|e| e.pick = Some(EvPick { pane: i, dir: to, name, until: Instant::now() + Duration::from_secs(5) }));
-        SetTimer(Some(main), TIMER_EV_SELECT, 50, None);
+        pick_later(main, i, to, name, Duration::from_secs(5));
     }
+}
+
+// Selects `name` in pane i (TIMER_EV_SELECT) once the pane shows `dir` and its list has it, trying for `wait`.
+// One at a time: a later pick replaces it. Also a file given on the command line at start (main).
+pub(crate) unsafe fn pick_later(main: HWND, i: usize, dir: String, name: String, wait: Duration) {
+    ev(|e| e.pick = Some(EvPick { pane: i, dir, name, until: Instant::now() + wait }));
+    SetTimer(Some(main), TIMER_EV_SELECT, 50, None);
 }
 
 // TIMER_EV_SELECT: once the pane shows the folder and its list has the item, select it. Gives up after a while

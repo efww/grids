@@ -828,12 +828,90 @@ pub(crate) fn is_session_file(p: &Path) -> bool {
     p.extension().is_some_and(|x| x.eq_ignore_ascii_case("grids") || x.eq_ignore_ascii_case("qdr"))
 }
 
-// A lone session-file argument means "load this session".
+// A lone session-file argument means "load this session" (a file to show selected never does: `/select,x.grids`).
 pub(crate) fn session_arg(args: &[String]) -> Option<&str> {
     match args {
-        [f] if is_session_file(Path::new(f)) => Some(f),
+        [f] if is_session_file(Path::new(f)) && strip_ci(f, SELECT).is_none() => Some(f),
         _ => None,
     }
+}
+
+/// Explorer's "show this file selected in its folder" (`explorer.exe /select,C:\a\b.txt`). Also the mark the
+/// starting grids.exe puts on such a file before handing it on, so the window that opens it never looks at the disk.
+pub(crate) const SELECT: &str = "/select,";
+
+/// Files Explorer browses into like folders: given plain (not `/select,`) they open as before, not selected.
+const OPENS_AS_FOLDER: [&str; 7] = ["zip", "cab", "7z", "rar", "tar", "search-ms", "library-ms"];
+
+/// `s` without the leading `pre`, compared without case.
+pub(crate) fn strip_ci<'a>(s: &'a str, pre: &str) -> Option<&'a str> {
+    s.get(..pre.len()).filter(|h| h.eq_ignore_ascii_case(pre)).map(|_| &s[pre.len()..])
+}
+
+/// The command line as grids.exe was started with it → what it hands on (to itself, or to the running window):
+/// full paths (as resolve), and a file to show selected as `/select,<full path>`. Takes Explorer's
+/// `/select,X` and `/select, X`, drops its `/n,` and `/e,`; a plain file path is shown selected too (a file dropped
+/// on a Grids shortcut, a launcher's "open containing folder"), except a session file (loads, alone) and a file
+/// the shell browses like a folder (OPENS_AS_FOLDER: archives, saved searches, libraries). A `/select,` path that isn't there is handed on plain: its nearest folder above opens.
+/// Files in one folder share one pane. Folder-link arguments (FOLDER_FLAG) are folders only, as before.
+/// look(path) = (full path, Some(is folder) or None when not there).
+pub(crate) fn file_args(args: Vec<String>, look: impl Fn(&str) -> (String, Option<bool>)) -> Vec<String> {
+    if args.first().is_some_and(|a| a == FOLDER_FLAG) {
+        return args.into_iter().map(|a| if a == FOLDER_FLAG { a } else { look(&a).0 }).collect();
+    }
+    let mut out: Vec<String> = Vec::new();
+    let mut it = args.into_iter();
+    while let Some(mut a) = it.next() {
+        while let Some(r) = strip_ci(&a, "/n,").or_else(|| strip_ci(&a, "/e,")) {
+            a = r.trim_start().to_string();
+        }
+        if a.is_empty() || a.eq_ignore_ascii_case("/n") || a.eq_ignore_ascii_case("/e") {
+            continue;
+        }
+        let (p, sel) = match strip_ci(&a, SELECT) {
+            Some(r) if r.trim().is_empty() => match it.next() {
+                Some(n) => (n, true),
+                None => break,
+            },
+            Some(r) => (r.to_string(), true),
+            None => (a, false),
+        };
+        let (path, kind) = look(p.trim().trim_matches('"'));
+        let ext = |x: &str| Path::new(&path).extension().is_some_and(|e| e.eq_ignore_ascii_case(x));
+        let mark = match (sel, kind) {
+            (true, k) => k.is_some(), // Explorer shows a folder, too, selected in the one above it
+            (false, Some(false)) => !is_session_file(Path::new(&path)) && !OPENS_AS_FOLDER.iter().any(|x| ext(x)),
+            (false, _) => false,
+        };
+        let Some((dir, _)) = split_file(&path).filter(|_| mark) else {
+            out.push(path);
+            continue;
+        };
+        if !out.iter().any(|o| strip_ci(o, SELECT).and_then(split_file).is_some_and(|(d, _)| same_dir(&d, &dir))) {
+            out.push(format!("{SELECT}{path}"));
+        }
+    }
+    out
+}
+
+/// The window's side of file_args: each `/select,` file becomes its folder (what the pane opens), and the first
+/// argument's file is returned as (folder, name) to select there. Only that one: a pane at a time is picked
+/// (show_in_pane), and the first argument's pane keeps the focus. No disk access.
+pub(crate) fn take_pick(args: &mut [String]) -> Option<(String, String)> {
+    let mut pick = None;
+    for (k, a) in args.iter_mut().enumerate() {
+        let Some(p) = strip_ci(a, SELECT).map(str::to_string) else { continue };
+        match split_file(&p) {
+            Some((dir, name)) => {
+                if k == 0 {
+                    pick = Some((dir.clone(), name));
+                }
+                *a = dir;
+            }
+            None => *a = p,
+        }
+    }
+    pick
 }
 
 // `grids.exe A B C` opens the paths in pane order, growing the grid if needed.
@@ -854,18 +932,20 @@ pub(crate) fn apply_args(s: &mut Session, args: Vec<String>) {
 
 // The first start's command line. A lone session file brings its layout and becomes the file Ctrl+S saves to,
 // as when a running Grids is handed one (load_session_file). One that can't be read changes nothing: false.
-pub(crate) fn startup_args(s: &mut Session, mut args: Vec<String>, read: impl Fn(&str) -> Option<String>) -> bool {
+// A file to show selected (file_args) opens its folder; that file comes back to be picked once the pane is up.
+pub(crate) fn startup_args(s: &mut Session, mut args: Vec<String>, read: impl Fn(&str) -> Option<String>) -> (bool, Option<(String, String)>) {
     let folders = take_folder_flag(&mut args); // a jump-list folder link: folders only, even one named like a session file
     if let Some(f) = session_arg(&args).filter(|_| !folders) {
         let Some(t) = read(f) else {
-            return false;
+            return (false, None);
         };
         s.take_layout(&Session::parse(&t));
         s.file = f.to_string();
-        return true;
+        return (true, None);
     }
+    let pick = take_pick(&mut args);
     apply_args(s, args);
-    true
+    (true, pick)
 }
 
 // The theme to switch to when following Windows: only when on, Windows says, and it differs from now.
@@ -1616,7 +1696,7 @@ mod tests {
 
         // ① the session given becomes the save target; favourites, recent, window and theme stay grids.ini's
         let mut s = ini.clone();
-        assert!(startup_args(&mut s, vec![work.clone()], read));
+        assert_eq!(startup_args(&mut s, vec![work.clone()], read), (true, None));
         assert_eq!(s, layout(&work));
         // ② the green dot's baseline is that file: nothing unsaved on opening
         let base = startup_base(&s, read(&s.file).as_deref());
@@ -1624,19 +1704,19 @@ mod tests {
 
         // ⑥ the session grids.ini already points at: the same, panes back in their own slots
         let mut s = Session { file: work.clone(), ..ini.clone() };
-        assert!(startup_args(&mut s, vec![work.clone()], read));
+        assert!(startup_args(&mut s, vec![work.clone()], read).0);
         assert_eq!(s, layout(&work));
         let base = startup_base(&s, read(&s.file).as_deref());
         assert!(!session_dirty(&s, Some(&base)));
 
         // ③ unreadable (deleted, locked): grids.ini's state untouched, no session path as pane 1's folder
         let mut s = ini.clone();
-        assert!(!startup_args(&mut s, strs(&[r"F:\s\gone.grids"]), read));
+        assert!(!startup_args(&mut s, strs(&[r"F:\s\gone.grids"]), read).0);
         assert_eq!(s, ini);
 
         // ④ a jump-list folder link: a folder even when named like a session file
         let mut s = ini.clone();
-        assert!(startup_args(&mut s, vec![FOLDER_FLAG.into(), work.clone()], |_| unreachable!()));
+        assert!(startup_args(&mut s, vec![FOLDER_FLAG.into(), work.clone()], |_| unreachable!()).0);
         let mut want = ini.clone();
         apply_args(&mut want, vec![work.clone()]);
         assert_eq!((&s, s.paths[0].as_str(), s.file.as_str()), (&want, work.as_str(), home.as_str()));
@@ -1644,13 +1724,69 @@ mod tests {
         // ⑤ several folders: as before
         let many = strs(&[r"F:\a", r"F:\b.grids", r"F:\c"]);
         let mut s = ini.clone();
-        assert!(startup_args(&mut s, many.clone(), |_| unreachable!()));
+        assert!(startup_args(&mut s, many.clone(), |_| unreachable!()).0);
         let mut want = ini.clone();
         apply_args(&mut want, many);
         assert_eq!(s, want);
         // no arguments: grids.ini as it is
         let mut s = ini.clone();
-        assert!(startup_args(&mut s, Vec::new(), |_| unreachable!()));
+        assert!(startup_args(&mut s, Vec::new(), |_| unreachable!()).0);
         assert_eq!(s, ini);
+
+        // ⑦ a file to show selected: pane 1 gets its folder (never the file), the file comes back to pick
+        let mut s = ini.clone();
+        let got = startup_args(&mut s, strs(&[r"/select,F:\d\a.grids", r"F:\e"]), |_| unreachable!());
+        assert_eq!(got, (true, Some((r"F:\d".to_string(), "a.grids".to_string()))));
+        let mut want = ini.clone();
+        apply_args(&mut want, strs(&[r"F:\d", r"F:\e"]));
+        assert_eq!(s, want);
+    }
+
+    // The command line → what is handed on (file_args), and the window's side of it (take_pick).
+    #[test]
+    fn file_and_select_args() {
+        // a fake disk: C:\d\ and C:\d e\ are folders, *.txt / *.grids / *.zip in them are files; cwd C:\w
+        let look = |p: &str| {
+            let full = if p.get(1..3) == Some(":\\") { p.to_string() } else { format!(r"C:\w\{p}") };
+            let kind = match full.as_str() {
+                r"C:\d" | r"C:\d e" | r"C:\w" | r"C:\" | r"C:\w\sub" => Some(true),
+                f if f.ends_with(".txt") && !f.contains("gone") || f.ends_with(".grids") || f.ends_with(".zip") => Some(false),
+                _ => None,
+            };
+            (full, kind)
+        };
+        let run = |a: &[&str]| file_args(strs(a), look);
+        // Explorer's /select, in one word or two (a launcher's `/select, "%f"`), any case
+        assert_eq!(run(&[r"/select,C:\d\a.txt"]), [r"/select,C:\d\a.txt"]);
+        assert_eq!(run(&["/select,", r"C:\d e\b c.txt"]), [r"/select,C:\d e\b c.txt"]);
+        assert_eq!(run(&[r#"/SELECT,"C:\d e\b c.txt""#]), [r"/select,C:\d e\b c.txt"]);
+        // /n, and /e, in front are dropped, alone or in the same word
+        assert_eq!(run(&["/n,", r"/select,C:\d\a.txt"]), [r"/select,C:\d\a.txt"]);
+        assert_eq!(run(&[r"/e,/select,C:\d\a.txt"]), [r"/select,C:\d\a.txt"]);
+        assert_eq!(run(&["/n,"]), Vec::<String>::new());
+        // a plain file is shown selected; relative paths become full ones
+        assert_eq!(run(&["a.txt", "sub"]), [r"/select,C:\w\a.txt", r"C:\w\sub"]);
+        // a lone session file stays a session; .zip opens as a folder; a session file to /select is a file
+        assert_eq!(run(&[r"C:\d\s.grids"]), [r"C:\d\s.grids"]);
+        assert_eq!(run(&[r"C:\d\z.zip"]), [r"C:\d\z.zip"]);
+        let marked = run(&[r"/select,C:\d\s.grids"]);
+        assert_eq!(session_arg(&marked), None);
+        // a folder to /select is shown selected in its parent (as Explorer); a drive root just opens
+        assert_eq!(run(&[r"/select,C:\d"]), [r"/select,C:\d"]);
+        assert_eq!(run(&[r"/select,C:\"]), [r"C:\"]);
+        // not there: handed on plain, so the nearest folder above opens
+        assert_eq!(run(&[r"/select,C:\d\gone.txt"]), [r"C:\d\gone.txt"]);
+        // folders and files mixed, files of one folder in one pane (the first selected)
+        assert_eq!(run(&[r"C:\d", r"C:\d\a.txt", r"C:\D\b.txt", r"C:\d e\c.txt"]), [r"C:\d", r"/select,C:\d\a.txt", r"/select,C:\d e\c.txt"]);
+        // a folder link: folders only, as before
+        assert_eq!(file_args(strs(&[FOLDER_FLAG, r"C:\d\a.txt"]), look), [FOLDER_FLAG, r"C:\d\a.txt"]);
+
+        // the window: folders to open, the first argument's file to pick
+        let mut a = strs(&[r"/select,C:\d e\b c.txt", r"C:\x", r"/select,C:\a.txt"]);
+        assert_eq!(take_pick(&mut a), Some((r"C:\d e".to_string(), "b c.txt".to_string())));
+        assert_eq!(a, [r"C:\d e", r"C:\x", r"C:\"]);
+        let mut a = strs(&[r"C:\x", r"/select,C:\d\a.txt"]);
+        assert_eq!(take_pick(&mut a), None);
+        assert_eq!(a, [r"C:\x", r"C:\d"]);
     }
 }

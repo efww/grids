@@ -157,7 +157,12 @@ fn main() -> Result<()> {
     unsafe {
         let mut raw: Vec<String> = std::env::args().skip(1).collect();
         let startup = take_startup_flag(&mut raw); // the Run value at sign-in: minimized, no focus taken
-        let args: Vec<String> = menu_args(raw).into_iter().map(resolve).collect();
+        // full paths; a file (dropped on a shortcut, Explorer's /select,) marked to show selected in its folder
+        let args = file_args(menu_args(raw), |p| {
+            let full = resolve(p.to_string());
+            let kind = std::fs::metadata(&full).ok().map(|m| m.is_dir());
+            (full, kind)
+        });
         // One start at a time, held until the message loop runs (released there, or on any early return).
         let Some(mut start) = StartLock::take() else {
             // another start has held it for 10 s (slow drive, a dialog): going on would open a second window.
@@ -205,7 +210,7 @@ fn main() -> Result<()> {
                 let sent = SendMessageTimeoutW(prev, WM_COPYDATA, WPARAM(0), lp, SMTO_ABORTIFHUNG, 5000, Some(&mut reply));
                 // the window answers 1 once it has the paths; a hung or busy Grids must not lose them silently
                 if sent.0 == 0 || reply != 1 {
-                    let shown = args.iter().filter(|a| *a != FOLDER_FLAG).cloned().collect::<Vec<_>>().join("\n");
+                    let shown = args.iter().filter(|a| *a != FOLDER_FLAG).map(|a| strip_ci(a, SELECT).unwrap_or(a)).collect::<Vec<_>>().join("\n");
                     let text = HSTRING::from(format!(
                         "Grids is running but answered late, so this may not have opened:\n{shown}\n\n\
                          Grids가 실행 중이지만 응답이 늦어 다음이 열리지 않았을 수 있습니다:\n{shown}"
@@ -257,7 +262,7 @@ fn main() -> Result<()> {
         let named = session_arg(&args).map(PathBuf::from);
         // folders from "Open in Grids" fill panes 1.. (apply_args); more selected folders, each its own start, go on after them
         let burst = Some(args.len().saturating_sub(1).min(MAXP)).filter(|&k| k > 0 && args[0] == FOLDER_FLAG);
-        let opened = startup_args(&mut s, args, |f| std::fs::read_to_string(f).ok());
+        let (opened, pick) = startup_args(&mut s, args, |f| std::fs::read_to_string(f).ok());
         let unread = named.filter(|_| !opened);
 
         _ = BufferedPaintInit();
@@ -523,6 +528,11 @@ fn main() -> Result<()> {
             let text = session_unread_note(KO.load(Ordering::Relaxed), &path, missing);
             app(|a| a.note = Some((text, Instant::now() + Duration::from_secs(5))));
             _ = MessageBeep(MB_ICONWARNING);
+        }
+        // a file given to show selected: picked in the active pane (its folder, from apply_args) once the list has it;
+        // longer than a search result's wait, as the panes open one by one at start
+        if let Some((dir, name)) = pick {
+            pick_later(main, app(|a| a.s.active), dir, name, Duration::from_secs(15));
         }
         if exe_in_temp() {
             app(|a| a.ini_nag.queue(IniWarn::Temp)); // shown by the status tick once the tour and notes are gone
