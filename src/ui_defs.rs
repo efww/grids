@@ -74,6 +74,7 @@ pub(crate) const TIMER_FOCUS: usize = 5; // after a click brought Grids back: th
 pub(crate) const TIMER_LOAD: usize = 8; // on a pane: a slow folder's bar shows, then its next frame
 pub(crate) const TIMER_TREE_SYNC: usize = 7; // on main: the folder tree follows the active pane's folder, once moves pause
 pub(crate) const TIMER_PANE_LOAD: usize = 9; // on main: the next new pane waiting its turn opens its first folder
+pub(crate) const TIMER_PANE_FX: usize = 1170; // on main: next frame of the ring gliding to a zoomed / swapped pane
 // tree-view messages (the sidebar's SysTreeView32)
 pub(crate) const TVM_GETNEXTITEM: u32 = 0x110A;
 pub(crate) const TVM_ENSUREVISIBLE: u32 = 0x1114;

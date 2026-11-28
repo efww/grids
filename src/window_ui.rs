@@ -222,6 +222,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             }
             WM_TIMER if wp.0 == TIMER_TREE_SYNC => tree_sync_tick(h),
             WM_TIMER if wp.0 == TIMER_PANE_LOAD => pane_load_tick(h),
+            WM_TIMER if wp.0 == TIMER_PANE_FX => pane_fx_tick(),
             WM_TIMER if wp.0 == TIMER_REVEAL => {
                 _ = KillTimer(Some(h), TIMER_REVEAL);
                 reveal_tree_selection();
@@ -261,6 +262,9 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 // the active pane's header, border and tab edge go quiet while another app has the keyboard
                 // (Grids' own popups share this thread and send nothing here); repainted only on a change
                 let away = wp.0 == 0;
+                if away {
+                    pane_fx_off(); // an owned popup would show over the app now in front
+                }
                 let pane = app(|a| {
                     let was = std::mem::replace(&mut a.app_away, away);
                     a.panes.get(a.s.active).and_then(|p| p.as_ref()).map(|p| p.hwnd).filter(|_| was != away)
@@ -607,6 +611,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             WM_MOVE => {
                 ctrl_hint_off(); // moved by a program (a second start's load, a monitor change): keycaps off
                 kbd_tip_hide(); // and a toolbar button's tooltip, left behind where the button was
+                pane_fx_off(); // and a gliding ring, in screen coordinates of where the window was
             }
             WM_DPICHANGED => {
                 ctrl_hint_off();

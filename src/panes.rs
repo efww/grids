@@ -387,6 +387,7 @@ pub(crate) unsafe fn relayout() {
     ctrl_hint_off(); // Ctrl-held keycaps were placed for the old layout
     kbd_tip_hide(); // so was a toolbar button's tooltip (drive / update buttons come and go, the buttons move)
     flash_off(); // so was the ring round a pane just picked
+    pane_fx_off(); // and a ring gliding to a zoomed / swapped pane (started again after the layout that moved it)
     // a pending Ctrl+Alt+arrow lands with this layout (key release, zoom, a session, DPI ...): its guide bar goes
     if let Some(bars) = app(|a| a.nudge.take().map(|_| a.bars)) {
         for b in bars {
@@ -650,6 +651,137 @@ pub(crate) extern "system" fn flash_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPAR
             _ => return DefWindowProcW(h, msg, wp, lp),
         }
         LRESULT(0)
+    }
+}
+
+// ---------- a ring gliding from a pane's old cell to its new one ----------
+// Like Windows' maximize / snap animation or macOS's window zoom: zooming a pane in or out, or swapping two, changes
+// the whole grid in one frame, so among 9 or 16 panes it is easy to lose which went where. A ring in the selection
+// colour glides from the old cell to the new one (two crossing rings for a swap), then fades. Drawn over the finished
+// layout only: focus, zoom and the session are as before, and nothing waits on it. Two more GridsFlash windows (no
+// clicks, no focus); timed by the clock, not by ticks, as views repainting after a zoom can hold timer messages back.
+
+thread_local! {
+    // the glide on screen: when the layout landed, and per ring window the pane it follows, its from and to (screen)
+    static FX: Cell<Option<(Instant, [Option<(HWND, RECT, RECT)>; 2])>> = const { Cell::new(None) };
+}
+
+const FX_MOVE_MS: u64 = 160;
+const FX_FADE_MS: u64 = 60;
+const FX_ALPHA: u8 = 230;
+
+/// The ring's rect at `t` (0 = from, 1 = to, clamped outside), eased out: fast first, settling into place.
+pub(crate) fn pane_fx_rect(from: RECT, to: RECT, t: f64) -> RECT {
+    let e = 1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(3);
+    let at = |a: i32, b: i32| a + ((b - a) as f64 * e).round() as i32;
+    let (left, top) = (at(from.left, to.left), at(from.top, to.top));
+    RECT { left, top, right: at(from.right, to.right).max(left), bottom: at(from.bottom, to.bottom).max(top) }
+}
+
+/// The rings' opacity `ms` after the layout landed: full while they glide, then fading out; None once gone.
+pub(crate) fn pane_fx_alpha(ms: u64) -> Option<u8> {
+    if ms < FX_MOVE_MS {
+        return Some(FX_ALPHA);
+    }
+    let left = 1.0 - (ms - FX_MOVE_MS) as f64 / FX_FADE_MS as f64;
+    (left > 0.0).then(|| (FX_ALPHA as f64 * left).round() as u8)
+}
+
+/// Pane window `h`'s rect on screen, if it shows.
+pub(crate) unsafe fn shown_rect(h: HWND) -> Option<RECT> {
+    let mut r = RECT::default();
+    (IsWindowVisible(h).as_bool() && GetWindowRect(h, &mut r).is_ok()).then_some(r)
+}
+
+/// Where the ring following pane `h` is on screen now, mid-glide: a second zoom goes on from there.
+pub(crate) fn pane_fx_now(h: HWND) -> Option<RECT> {
+    let (t0, rings) = FX.get()?;
+    let (_, from, to) = rings.into_iter().flatten().find(|r| r.0 == h)?;
+    Some(pane_fx_rect(from, to, t0.elapsed().as_millis() as f64 / FX_MOVE_MS as f64))
+}
+
+// Ring window w shaped to a `t`-thick ring round r and painted; hidden when r is too small to ring.
+unsafe fn fx_place(w: HWND, r: RECT, t: i32) -> bool {
+    let (cw, ch) = (r.right - r.left, r.bottom - r.top);
+    let Some(hole) = ring_hole(cw, ch, t) else {
+        _ = ShowWindow(w, SW_HIDE);
+        return false;
+    };
+    let rgn = CreateRectRgn(0, 0, cw, ch);
+    let inner = CreateRectRgn(hole.left, hole.top, hole.right, hole.bottom);
+    CombineRgn(Some(rgn), Some(rgn), Some(inner), RGN_DIFF);
+    _ = DeleteObject(inner.into());
+    SetWindowRgn(w, Some(rgn), false); // the system owns the region from here
+    _ = SetWindowPos(w, None, r.left, r.top, cw, ch, SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    _ = InvalidateRect(Some(w), None, false); // in the selection colour of now (flash_proc paints it)
+    _ = UpdateWindow(w);
+    true
+}
+
+/// Ring k glides for pane `.0` from `.1` to `.2` (screen rects), the first frame at once. Called once the layout, the
+/// active pane and the focus have landed. Not with Windows' animation effects off, Grids minimized or hidden or not
+/// in front, mid-drag, or when nothing moved.
+pub(crate) unsafe fn pane_fx_start(rings: [Option<(HWND, RECT, RECT)>; 2]) {
+    pane_fx_off();
+    let rings = rings.map(|r| r.filter(|r| r.1 != r.2));
+    let (fx, main, dpi, drag) = app(|a| (a.fx, a.main, a.dpi, a.drag.is_some()));
+    if rings.iter().all(Option::is_none)
+        || drag
+        || fx.iter().any(|w| w.is_invalid())
+        || !IsWindowVisible(main).as_bool()
+        || IsIconic(main).as_bool()
+        || !app_in_front()
+        || !load_animate()
+    {
+        return;
+    }
+    // placed and painted while still see-through (alpha 0 from pane_fx_off, or never set), only then shown: there is
+    // no background brush, so a black or old-colour frame would show first otherwise
+    for (w, r) in fx.into_iter().zip(rings) {
+        if let Some((_, from, _)) = r {
+            if fx_place(w, from, 3 * dpi / 96) {
+                _ = SetLayeredWindowAttributes(w, COLORREF(0), FX_ALPHA, LWA_ALPHA);
+            }
+        }
+    }
+    FX.set(Some((Instant::now(), rings)));
+    SetTimer(Some(main), TIMER_PANE_FX, 15, None);
+}
+
+/// The rings go at once: the glide ended, or what it showed changed (a new layout, the window moved, another app).
+pub(crate) unsafe fn pane_fx_off() {
+    if FX.take().is_none() {
+        return;
+    }
+    let (main, fx) = app(|a| (a.main, a.fx));
+    _ = KillTimer(Some(main), TIMER_PANE_FX);
+    for w in fx {
+        _ = SetLayeredWindowAttributes(w, COLORREF(0), 0, LWA_ALPHA);
+        _ = ShowWindow(w, SW_HIDE); // hidden, not left see-through: a still screen is as without the glide
+    }
+}
+
+/// TIMER_PANE_FX: the next frame, by the time since the layout landed.
+pub(crate) unsafe fn pane_fx_tick() {
+    let (main, fx, dpi) = app(|a| (a.main, a.fx, a.dpi));
+    let Some((t0, rings)) = FX.get() else {
+        _ = KillTimer(Some(main), TIMER_PANE_FX);
+        return;
+    };
+    let ms = t0.elapsed().as_millis() as u64;
+    let shown = IsWindowVisible(main).as_bool() && !IsIconic(main).as_bool() && app_in_front();
+    let Some(alpha) = pane_fx_alpha(ms).filter(|_| shown) else {
+        pane_fx_off();
+        return;
+    };
+    for (w, r) in fx.into_iter().zip(rings) {
+        let Some((_, from, to)) = r else { continue };
+        let at = pane_fx_rect(from, to, ms as f64 / FX_MOVE_MS as f64);
+        let mut now = RECT::default();
+        // landed: only the fade from here
+        if (GetWindowRect(w, &mut now).is_ok() && now == at && IsWindowVisible(w).as_bool()) || fx_place(w, at, 3 * dpi / 96) {
+            _ = SetLayeredWindowAttributes(w, COLORREF(0), alpha, LWA_ALPHA);
+        }
     }
 }
 
@@ -1408,6 +1540,9 @@ pub(crate) unsafe fn swap_panes(i: usize, j: usize) {
     }) else {
         return;
     };
+    // each pane's cell before the move, for the two crossing rings; none out of a zoom (the swap unzooms too)
+    let old = app(|a| a.zoom.is_none().then(|| [i, j].map(|k| a.panes[k].as_ref().map(|p| p.hwnd))))
+        .and_then(|[hi, hj]| Some([(hi?, shown_rect(hi?)?), (hj?, shown_rect(hj?)?)]));
     {
         // filters and slots together: IncludeObject on a view thread sees both before or both after
         let mut f = FILTERS.lock().unwrap_or_else(|e| e.into_inner());
@@ -1455,6 +1590,10 @@ pub(crate) unsafe fn swap_panes(i: usize, j: usize) {
     refresh_save_button();
     set_active(j); // the pane that was at i
     focus_view(j);
+    if let Some(old) = old {
+        // ring 0 follows the pane now active (a zoom right after goes on from where it is)
+        pane_fx_start(old.map(|(h, from)| shown_rect(h).map(|to| (h, from, to))));
+    }
 }
 
 // Like tmux's pane zoom: the active pane takes the whole grid until toggled back or another pane is picked.
@@ -1462,6 +1601,9 @@ pub(crate) unsafe fn toggle_zoom() {
     if app(|a| a.drag.is_some() || a.s.panes() <= 1) {
         return;
     }
+    // where its ring starts: the cell (or the whole grid) it is in now, or where a glide still going has got to
+    let pane = app(|a| a.panes.get(a.s.active).and_then(|p| p.as_ref()).map(|p| p.hwnd));
+    let from = pane.and_then(|h| pane_fx_now(h).or_else(|| shown_rect(h)));
     let i = app(|a| {
         a.zoom = if a.zoom.is_some() { None } else { Some(a.s.active) };
         a.s.active
@@ -1469,6 +1611,11 @@ pub(crate) unsafe fn toggle_zoom() {
     relayout();
     redraw_all();
     focus_view(i);
+    if let (Some(h), Some(from)) = (pane, from) {
+        if let Some(to) = shown_rect(h) {
+            pane_fx_start([Some((h, from, to)), None]); // into the whole grid, or back to its cell
+        }
+    }
 }
 
 // Like Explorer's navigation pane toggle: the grid takes the sidebar's room; its width is kept for when it comes back.
@@ -1616,6 +1763,50 @@ pub(crate) unsafe fn toggle_extensions() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pane_fx_glides_from_old_cell_to_new_one() {
+        let cell = RECT { left: 410, top: 300, right: 800, bottom: 590 };
+        let full = RECT { left: 10, top: 40, right: 1600, bottom: 900 };
+        for (from, to) in [(cell, full), (full, cell), (cell, RECT { left: 10, top: 40, right: 400, bottom: 290 })] {
+            assert_eq!(pane_fx_rect(from, to, 0.0), from);
+            assert_eq!(pane_fx_rect(from, to, 1.0), to);
+            assert_eq!(pane_fx_rect(from, to, -0.5), from); // clamped either side
+            assert_eq!(pane_fx_rect(from, to, 7.0), to);
+            let mut was = from;
+            for k in 1..=40 {
+                let r = pane_fx_rect(from, to, k as f64 / 40.0);
+                assert!(r.right >= r.left && r.bottom >= r.top, "{k}");
+                // each edge only ever heads for its target, never back nor past it
+                let steady = |a: i32, b: i32, s: i32, e: i32| (b - a) * (e - s) >= 0 && (e - b) * (e - s) >= 0;
+                assert!(steady(was.left, r.left, from.left, to.left), "{k}");
+                assert!(steady(was.top, r.top, from.top, to.top), "{k}");
+                assert!(steady(was.right, r.right, from.right, to.right), "{k}");
+                assert!(steady(was.bottom, r.bottom, from.bottom, to.bottom), "{k}");
+                was = r;
+            }
+        }
+        // eased out: past halfway at half the time
+        let mid = pane_fx_rect(cell, full, 0.5);
+        assert!(cell.left - mid.left > (cell.left - full.left) / 2);
+        // a degenerate pair never yields a negative size
+        let r = pane_fx_rect(RECT { left: 100, top: 100, right: 100, bottom: 100 }, RECT { left: 50, top: 50, right: 50, bottom: 50 }, 0.3);
+        assert!(r.right >= r.left && r.bottom >= r.top);
+    }
+
+    #[test]
+    fn pane_fx_holds_while_gliding_then_fades_then_goes() {
+        assert_eq!(pane_fx_alpha(0), Some(230));
+        assert_eq!(pane_fx_alpha(159), Some(230));
+        let mut was = 230;
+        for ms in 160..220 {
+            let a = pane_fx_alpha(ms).expect("still fading before 220 ms");
+            assert!(a <= was, "{ms}");
+            was = a;
+        }
+        assert_eq!(pane_fx_alpha(220), None);
+        assert_eq!(pane_fx_alpha(10_000), None);
+    }
 
     #[test]
     fn flash_holds_then_fades_out_then_goes() {

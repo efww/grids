@@ -141,6 +141,7 @@ pub(crate) struct App {
     pub(crate) kbd_tip: HWND, // the tooltip of the toolbar button picked from the keys, under it (kbd_tip_show)
     pub(crate) bars: [HWND; 2], // splitter guide bars (vertical, horizontal)
     pub(crate) flash: HWND,     // the ring round a pane just picked from the keyboard (flash_pane)
+    pub(crate) fx: [HWND; 2],   // the rings gliding from a pane's old cell to its new one (pane_fx_start)
     pub(crate) grid: HWND,      // layout picker popup while open
     pub(crate) reveal_tries: u8, // sidebar reveal passes left
     pub(crate) grid_preview: Vec<usize>,       // layout shown in the picker
@@ -272,6 +273,7 @@ thread_local! {
         kbd_tip: HWND::default(),
         bars: [HWND::default(); 2],
         flash: HWND::default(),
+        fx: [HWND::default(); 2],
         grid: HWND::default(),
         reveal_tries: 0,
         grid_preview: Vec::new(),

@@ -454,7 +454,9 @@ fn main() -> Result<()> {
         }
         // the ring flash_pane puts round a pane picked from the keyboard: see-through, as the bars; none, no ring
         let flash = CreateWindowExW(bar_ex, w!("GridsFlash"), w!(""), WS_POPUP, 0, 0, 0, 0, Some(main), None, None, None).unwrap_or_default();
-        app(|a| (a.bars, a.flash) = (bars, flash));
+        // two more of them glide from a zoomed or swapped pane's old cell to its new one (pane_fx_start)
+        let fx = [(); 2].map(|_| CreateWindowExW(bar_ex, w!("GridsFlash"), w!(""), WS_POPUP, 0, 0, 0, 0, Some(main), None, None, None).unwrap_or_default());
+        app(|a| (a.bars, a.flash, a.fx) = (bars, flash, fx));
         for (id, label, hint) in toolbar_tips() {
             add_tip(child(main, w!("BUTTON"), PCWSTR(HSTRING::from(label).as_ptr()), BS_OWNERDRAW as u32, WINDOW_EX_STYLE(0), id, HFONT::default()), hint);
         }
@@ -689,7 +691,7 @@ mod tests {
         // the view menu's copies of toolbar buttons send those buttons' commands, already counted once above
         assert!(VIEW_BUTTONS.iter().all(|v| main.iter().filter(|&&id| id == v.0).count() == 1));
         // (c) timers, per window: SetTimer with a number already running replaces that timer
-        distinct("main timers", &[TIMER_STATUS, TIMER_REVEAL, TIMER_FOCUS, dialog_jump::TIMER_DLG_RETRY, dialog_jump::TIMER_DLG_RESTORE, TIMER_SHELL, TIMER_EV_SELECT, TIMER_BIN, TIMER_TREE_SYNC, TIMER_PANE_LOAD, TIMER_CTRL_HINT, TIMER_DEVICES, TIMER_DEVICES_AGAIN]);
+        distinct("main timers", &[TIMER_STATUS, TIMER_REVEAL, TIMER_FOCUS, dialog_jump::TIMER_DLG_RETRY, dialog_jump::TIMER_DLG_RESTORE, TIMER_SHELL, TIMER_EV_SELECT, TIMER_BIN, TIMER_TREE_SYNC, TIMER_PANE_LOAD, TIMER_CTRL_HINT, TIMER_DEVICES, TIMER_DEVICES_AGAIN, TIMER_PANE_FX]);
         distinct("pane timers", &[TIMER_FILTER, TIMER_SETTLE, TIMER_SPIN, TIMER_LOAD]);
         // (d) WM_APP messages main_proc handles (not other windows' own: WM_TOUR_END, WM_RENAMED, the switcher's)
         let msgs = [
