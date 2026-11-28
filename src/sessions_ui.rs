@@ -696,9 +696,60 @@ pub(crate) unsafe fn gather_explorer() {
     GATHERING.store(false, Ordering::Relaxed);
 }
 
+// This exe as started (lowercase) and in its one full spelling (None: could not be resolved). Worked out once,
+// so the window search, ending a hung Grids and the start lock all go by the same paths.
+pub(crate) struct MyExe {
+    raw: String,
+    canon: Option<String>,
+}
+
+pub(crate) fn my_exe() -> Option<&'static MyExe> {
+    static ME: OnceLock<Option<MyExe>> = OnceLock::new();
+    ME.get_or_init(|| {
+        // Resolved as written: lowercasing first can name another file to NTFS (İ, the Kelvin sign).
+        let exe = std::env::current_exe().ok()?.to_string_lossy().into_owned();
+        Some(MyExe { canon: canon_path(&exe), raw: exe.to_lowercase() })
+    })
+    .as_ref()
+}
+
+// One spelling for a file however it was named: subst and mapped drives, short 8.3 names and junctions resolved
+// (lowercase, \\?\ kept: both sides get it alike). Give it the path as written, not lowercased.
+fn canon_path(p: &str) -> Option<String> {
+    std::fs::canonicalize(p).ok().map(|c| c.to_string_lossy().to_lowercase())
+}
+
+// canon_path, each path worked out once per start (a share that no longer answers is waited on only once,
+// though ask_restart looks for the running Grids again).
+fn canon_seen(p: &str) -> Option<String> {
+    static SEEN: Mutex<Vec<(String, Option<String>)>> = Mutex::new(Vec::new());
+    if let Some((_, c)) = lock(&SEEN).iter().find(|(k, _)| k == p) {
+        return c.clone();
+    }
+    let c = canon_path(p);
+    lock(&SEEN).push((p.to_string(), c.clone()));
+    c
+}
+
+// The other Grids runs this same exe. The paths as written (lowercase) match as before; else both resolved
+// must match: started as S:\grids.exe (subst), C:\PROGRA~1\…, Z:\… (a mapped drive) or through a junction,
+// Windows may name the running one differently. Resolved only when the text differs, and never a network path
+// while this exe is on a local drive (they cannot be the same file, and a share gone away would stall the start).
+// A copy in another folder (even a hard link) resolves to its own folder, with its own grids.ini: kept separate.
+pub(crate) fn same_grids(me_raw: &str, me_canon: Option<&str>, other_raw: &str, other_canon: impl FnOnce() -> Option<String>) -> bool {
+    if me_raw == other_raw {
+        return true;
+    }
+    let Some(me) = me_canon else { return false };
+    if !me.starts_with(r"\\?\unc\") && other_raw.starts_with(r"\\") {
+        return false;
+    }
+    other_canon().is_some_and(|o| o == me)
+}
+
 // Window of a running copy of this same exe. Portable copies elsewhere have their own ini and stay separate.
 pub(crate) unsafe fn running_instance() -> Option<HWND> {
-    let me = std::env::current_exe().ok()?.to_string_lossy().to_lowercase();
+    let me = my_exe()?;
     let mut h = None;
     loop {
         let w = FindWindowExW(None, h, w!("GridsMain"), PCWSTR::null()).ok()?;
@@ -706,7 +757,7 @@ pub(crate) unsafe fn running_instance() -> Option<HWND> {
         let mut pid = 0;
         GetWindowThreadProcessId(w, Some(&mut pid));
         let Ok(p) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else { continue };
-        let same = same_exe(p, &me);
+        let same = same_exe(p, me);
         _ = CloseHandle(p);
         if same {
             return Some(w);
@@ -714,11 +765,14 @@ pub(crate) unsafe fn running_instance() -> Option<HWND> {
     }
 }
 
-// The process behind the handle runs this exe (me: its path, lowercase).
-unsafe fn same_exe(p: HANDLE, me: &str) -> bool {
+// The process behind the handle runs this exe.
+unsafe fn same_exe(p: HANDLE, me: &MyExe) -> bool {
     let (mut buf, mut n) = ([0u16; 1024], 1024u32);
-    QueryFullProcessImageNameW(p, PROCESS_NAME_WIN32, PWSTR(buf.as_mut_ptr()), &mut n).is_ok()
-        && String::from_utf16_lossy(&buf[..n as usize]).to_lowercase() == me
+    if QueryFullProcessImageNameW(p, PROCESS_NAME_WIN32, PWSTR(buf.as_mut_ptr()), &mut n).is_err() {
+        return false;
+    }
+    let other = String::from_utf16_lossy(&buf[..n as usize]);
+    same_grids(&me.raw, me.canon.as_deref(), &other.to_lowercase(), || canon_seen(&other))
 }
 
 // ---------- a running Grids that no longer answers ----------
@@ -809,8 +863,7 @@ pub(crate) unsafe fn ask_restart(found: HWND) -> Restart {
 // Not gone in time (a thread stuck in network I/O ends late) counts as not ended: two Grids at once would
 // overwrite each other's grids.ini.
 unsafe fn end_instance(w: HWND) -> bool {
-    let Ok(exe) = std::env::current_exe() else { return false };
-    let me = exe.to_string_lossy().to_lowercase();
+    let Some(me) = my_exe() else { return false };
     let mut pid = 0;
     GetWindowThreadProcessId(w, Some(&mut pid));
     if pid == 0 || pid == GetCurrentProcessId() {
@@ -818,7 +871,7 @@ unsafe fn end_instance(w: HWND) -> bool {
     }
     let access = PROCESS_TERMINATE | PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION;
     let Ok(p) = OpenProcess(access, false, pid) else { return false };
-    let ended = same_exe(p, &me) && TerminateProcess(p, 1).is_ok() && WaitForSingleObject(p, 5000) == WAIT_OBJECT_0;
+    let ended = same_exe(p, me) && TerminateProcess(p, 1).is_ok() && WaitForSingleObject(p, 5000) == WAIT_OBJECT_0;
     _ = CloseHandle(p);
     ended
 }
@@ -826,7 +879,8 @@ unsafe fn end_instance(w: HWND) -> bool {
 // Start lock: two starts at once (several .grids files opened together, a double click on the taskbar)
 // would both find no window and open two Grids that overwrite each other's grids.ini. One start at a time:
 // the next one checks for a window only after this one has its panes and its message loop.
-// Per exe path, like running_instance; FNV-1a of the lowercase path, as a name may hold no '\'.
+// Per exe, like running_instance (its full spelling when known, so S:\grids.exe and C:\Tools\grids.exe share one);
+// FNV-1a of the lowercase path, as a name may hold no '\'.
 pub(crate) fn start_lock_name(exe: &str) -> String {
     let h = exe.to_lowercase().bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x0100_0000_01b3));
     format!("Local\\Grids.Start.{h:016x}")
@@ -855,8 +909,8 @@ impl StartLock {
     // as going on would open a second window. A lock that cannot be opened or waited on (a name an elevated
     // Grids owns) starts as before, unlocked.
     pub(crate) unsafe fn take() -> Option<StartLock> {
-        let Ok(exe) = std::env::current_exe() else { return Some(StartLock(None)) };
-        let name = HSTRING::from(start_lock_name(&exe.to_string_lossy()));
+        let Some(me) = my_exe() else { return Some(StartLock(None)) };
+        let name = HSTRING::from(start_lock_name(me.canon.as_deref().unwrap_or(&me.raw)));
         let Ok(h) = CreateMutexW(None, false, &name) else { return Some(StartLock(None)) };
         let turn = start_turn(WaitForSingleObject(h, 10_000));
         if turn == StartTurn::Ours {
@@ -967,6 +1021,54 @@ pub(crate) fn tick_plan(iconic: bool, active: bool, tick_no: u32, slow: bool) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn same_grids_by_text_then_full_path() {
+        let full = r"\\?\c:\tools\grids\grids.exe";
+        let none = || -> Option<String> { panic!("resolved although not needed") };
+        // same text: same, nothing resolved (as before)
+        assert!(same_grids(r"c:\tools\grids\grids.exe", Some(full), r"c:\tools\grids\grids.exe", none));
+        assert!(same_grids(r"s:\grids.exe", None, r"s:\grids.exe", none));
+        // other text, same file (subst, 8.3): same
+        assert!(same_grids(r"s:\grids.exe", Some(full), r"c:\tools\grids\grids.exe", || Some(full.into())));
+        assert!(same_grids(r"c:\tools\grids~1\grids.exe", Some(full), r"c:\tools\grids\grids.exe", || Some(full.into())));
+        // other file, or either side not resolved: not the same
+        assert!(!same_grids(r"s:\grids.exe", Some(full), r"d:\portable\grids.exe", || Some(r"\\?\d:\portable\grids.exe".into())));
+        assert!(!same_grids(r"s:\grids.exe", Some(full), r"c:\tools\grids\grids.exe", || None));
+        assert!(!same_grids(r"s:\grids.exe", None, r"c:\tools\grids\grids.exe", none));
+        // local exe, the other on a share: never opened
+        assert!(!same_grids(r"c:\tools\grids\grids.exe", Some(full), r"\\nas\tools\grids.exe", none));
+        // mapped drive: both on the share, resolved
+        let unc = r"\\?\unc\nas\tools\grids.exe";
+        assert!(same_grids(r"z:\grids.exe", Some(unc), r"\\nas\tools\grids.exe", || Some(unc.into())));
+        // a hard link in another folder resolves to its own folder: kept separate
+        assert!(!same_grids(r"c:\a\grids.exe", Some(r"\\?\c:\a\grids.exe"), r"c:\b\grids.exe", || Some(r"\\?\c:\b\grids.exe".into())));
+    }
+
+    #[test]
+    fn canon_path_one_spelling_per_file() {
+        let dir = std::env::temp_dir().join(format!("grids-canon-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("Long Folder Name")).unwrap();
+        let (a, b) = (dir.join("Long Folder Name").join("grids.exe"), dir.join("other.exe"));
+        std::fs::write(&a, b"x").unwrap();
+        std::fs::write(&b, b"y").unwrap();
+        let s = |p: &std::path::Path| p.to_string_lossy().into_owned();
+        let me = canon_path(&s(&a)).expect("resolves");
+        assert_eq!(canon_path(&format!(r"\\?\{}", s(&a))), Some(me.clone()));
+        assert_eq!(canon_path(&s(&a).to_uppercase()), Some(me.clone()));
+        assert_ne!(canon_path(&s(&b)), Some(me.clone()));
+        assert_eq!(canon_path(&s(&dir.join("gone.exe"))), None);
+        // the short 8.3 spelling (skipped where 8.3 names are off)
+        let wide = HSTRING::from(a.as_os_str());
+        let mut buf = [0u16; 1024];
+        let n = unsafe { windows::Win32::Storage::FileSystem::GetShortPathNameW(&wide, Some(&mut buf)) } as usize;
+        let short = String::from_utf16_lossy(&buf[..n.min(buf.len())]);
+        if n > 0 && !short.eq_ignore_ascii_case(&s(&a)) {
+            assert_eq!(canon_path(&short), Some(me.clone()));
+            assert!(same_grids(&short.to_lowercase(), canon_path(&short).as_deref(), &s(&a).to_lowercase(), || canon_path(&s(&a))));
+        }
+        _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn menu_bursts_fill_panes_in_turn() {
