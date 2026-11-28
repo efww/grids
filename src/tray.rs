@@ -14,6 +14,10 @@ const TRAY_OPEN: u32 = 1;
 const TRAY_QUIT: u32 = 2;
 const TRAY_FAV: u32 = 100; // + favourite index
 pub(crate) const TRAY_FAVS: usize = 15;
+// the menu's words (English, Korean); README.md / README.ko.md name them word for word
+pub(crate) const TRAY_OPEN_ITEM: (&str, &str) = ("Open Grids", "Grids 열기");
+pub(crate) const TRAY_FAVS_ITEM: (&str, &str) = ("Favourites", "즐겨찾기");
+pub(crate) const TRAY_QUIT_ITEM: (&str, &str) = ("Exit", "끝내기");
 
 // "TaskbarCreated": Explorer (re)started and has none of the old icons
 static TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
@@ -195,7 +199,7 @@ pub(crate) unsafe fn tray_msg(main: HWND, wp: WPARAM, lp: LPARAM) {
 unsafe fn tray_menu(main: HWND, at: POINT) {
     let Ok(menu) = CreatePopupMenu() else { return };
     let item = |m: HMENU, id: u32, text: &str| AppendMenuW(m, MF_STRING, id as usize, &HSTRING::from(text));
-    _ = item(menu, TRAY_OPEN, tr("Open Grids", "Grids 열기"));
+    _ = item(menu, TRAY_OPEN, tr(TRAY_OPEN_ITEM.0, TRAY_OPEN_ITEM.1));
     _ = SetMenuDefaultItem(menu, TRAY_OPEN, 0); // bold: what a click on the icon does
     let favs: Vec<String> = app(|a| a.s.favs.iter().take(TRAY_FAVS).cloned().collect());
     if !favs.is_empty() {
@@ -203,11 +207,11 @@ unsafe fn tray_menu(main: HWND, at: POINT) {
             for (k, f) in favs.iter().enumerate() {
                 _ = item(sub, TRAY_FAV + k as u32, &short_name(f).replace('&', "&&"));
             }
-            _ = AppendMenuW(menu, MF_POPUP, sub.0 as usize, &HSTRING::from(tr("Favourites", "즐겨찾기")));
+            _ = AppendMenuW(menu, MF_POPUP, sub.0 as usize, &HSTRING::from(tr(TRAY_FAVS_ITEM.0, TRAY_FAVS_ITEM.1)));
         }
     }
     _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
-    _ = item(menu, TRAY_QUIT, tr("Exit", "끝내기"));
+    _ = item(menu, TRAY_QUIT, tr(TRAY_QUIT_ITEM.0, TRAY_QUIT_ITEM.1));
     // foreground first, or the menu stays open when the user clicks elsewhere; WM_NULL after, as documented.
     // Grids shown on another virtual desktop comes here before that, or Windows would switch to it.
     come_here(main);

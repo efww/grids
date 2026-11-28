@@ -3695,6 +3695,50 @@ mod tests {
         assert!(missing.is_empty(), "menu items the READMEs don't name as on the menu:\n{}", missing.join("\n"));
     }
 
+    // The other menus Grids builds itself are named in the READMEs word for word too: every Ctrl+G place in the
+    // Ctrl+G row, the filter's kind menu in the name filter part of the toolbar line (not the whole line, where
+    // the screen reader example says "Documents" anyway), and the notification area icon's menu, quoted, in its
+    // feature line.
+    #[test]
+    fn more_menu_names_in_readmes() {
+        assert_eq!(menu_shown("홈(&H)"), "홈");
+        assert_eq!(menu_shown("&Temporary folder"), "Temporary folder");
+        let (md, md_ko) = (include_str!("../README.md"), include_str!("../README.ko.md"));
+        let line = |doc: &'static str, start: &str| -> &'static str { doc.lines().find(|l| l.starts_with(start)).unwrap_or_else(|| panic!("no line starting {start:?}")) };
+        let part = |l: &'static str, from: &str, to: &str| -> &'static str {
+            let rest = &l[l.find(from).unwrap_or_else(|| panic!("no {from:?} in the toolbar line"))..];
+            &rest[..rest.find(to).unwrap_or_else(|| panic!("no {to:?} after {from:?}"))]
+        };
+        let pair = |r: Option<(&'static str, GoTarget)>, k: Option<(&'static str, GoTarget)>| Some((r?.0, k?.0));
+        let go: Vec<(&str, &str)> = go_targets(false).into_iter().zip(go_targets(true)).filter_map(|(e, k)| pair(e, k)).collect();
+        assert_eq!(go.len(), 12);
+        let mut kinds: Vec<(&str, &str)> = FILE_KINDS.iter().map(|k| (k.0, k.1)).collect();
+        kinds.extend([SAME_TYPE_ITEM, CLEAR_FILTER_ITEM]);
+        let toolbar = (line(md, "- **Per-pane toolbar**"), line(md_ko, "- **패널별 도구줄**"));
+        let groups = [
+            ("Ctrl+G menu", go, line(md, "| Ctrl+G |"), line(md_ko, "| Ctrl+G |"), ("", "")),
+            ("filter kind menu", kinds, part(toolbar.0, "name filter (", ", open the selected folder"), part(toolbar.1, "이름 필터(", ", 선택한 폴더를 다른 패널에서 열기"), ("", "")),
+            (
+                "notification area icon menu",
+                vec![TRAY_OPEN_ITEM, TRAY_FAVS_ITEM, TRAY_QUIT_ITEM],
+                line(md, "- **Minimize to the notification area**"),
+                line(md_ko, "- **최소화하면 알림 영역으로**"),
+                ("\"", "'"),
+            ),
+        ];
+        let mut missing = Vec::new();
+        for (what, items, en_doc, ko_doc, (q_en, q_ko)) in &groups {
+            for (en, ko) in items {
+                for (doc, name, file) in [(en_doc, format!("{q_en}{}{q_en}", menu_shown(en)), "README.md"), (ko_doc, format!("{q_ko}{}{q_ko}", menu_shown(ko)), "README.ko.md")] {
+                    if !doc.contains(name.as_str()) {
+                        missing.push(format!("{file}, {what}: {name}"));
+                    }
+                }
+            }
+        }
+        assert!(missing.is_empty(), "menu items the READMEs don't name as on the menu:\n{}", missing.join("\n"));
+    }
+
     // README.md's and README.ko.md's feature lists ("- **" lines) pair up line for line: as many on each side, and
     // each pair names the same keys, so a line added on one side only, or out of order, shows up here.
     #[test]

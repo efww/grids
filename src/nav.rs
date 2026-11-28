@@ -1764,6 +1764,10 @@ pub(crate) unsafe fn set_empty_text(fv: &IFolderView2, spec: &str) {
     }
 }
 
+// The kind menu's own items after FILE_KINDS (English, Korean); README.md / README.ko.md name them word for word.
+pub(crate) const SAME_TYPE_ITEM: (&str, &str) = ("Same type as the selected file", "선택한 파일과 같은 형식");
+pub(crate) const CLEAR_FILTER_ITEM: (&str, &str) = ("Clear filter", "필터 지우기");
+
 // Filter icon or Alt+↓ in the filter: show only one kind of file (folders stay), like Explorer's search "Kind".
 pub(crate) unsafe fn kind_menu(i: usize) {
     let (Some(h), Some(f)) = (app(|a| a.panes[i].as_ref().map(|p| p.hwnd)), pane_ctl(i, ID_FILTER)) else { return };
@@ -1782,13 +1786,13 @@ pub(crate) unsafe fn kind_menu(i: usize) {
         _ = AppendMenuW(menu, flags, k + 1, &HSTRING::from(format!("{}\t{shown}, …", tr(en, ko))));
     }
     _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
-    let same_label = tr("Same type as the selected file", "선택한 파일과 같은 형식");
+    let same_label = tr(SAME_TYPE_ITEM.0, SAME_TYPE_ITEM.1);
     match &same {
         Some(s) => _ = AppendMenuW(menu, MF_STRING, 100, &HSTRING::from(format!("{same_label} ({})", s.replace('&', "&&")))),
         None => _ = AppendMenuW(menu, MF_STRING | MF_GRAYED, 100, &HSTRING::from(same_label)),
     }
     let clear = if cur.is_empty() && text_of(f).is_empty() { MF_STRING | MF_GRAYED } else { MF_STRING };
-    _ = AppendMenuW(menu, clear, 101, &HSTRING::from(tr("Clear filter", "필터 지우기")));
+    _ = AppendMenuW(menu, clear, 101, &HSTRING::from(tr(CLEAR_FILTER_ITEM.0, CLEAR_FILTER_ITEM.1)));
     let pg = pane_geo_of(h, app(|a| a.dpi));
     let mut at = POINT { x: pg.filt.left, y: pg.filt.bottom };
     _ = ClientToScreen(h, &mut at);

@@ -393,7 +393,7 @@ Alt+← / Alt+→\tBack / forward\n\
 Alt+↑\tParent folder\n\
 Alt+PgDn / Alt+PgUp\tNext / previous folder in the same parent folder (Explorer's order; the status line shows which one, e.g. Folder 4/12)\n\
 Alt+↓\tRecent folders (all panes, newest first; right-click ← / → too)\n\
-Ctrl+G\tGo to a Windows folder in the active pane: Home, Desktop, Documents, Downloads, Pictures, Music, Videos, This PC, Recycle Bin, Temp, AppData, or Recent files: files other apps opened lately, shown selected in their folder (then its underlined letter, e.g. L for Downloads, F for Recent files; not Ctrl+Alt+G, the file dialog jump)\n\
+Ctrl+G\tGo to a Windows folder in the active pane: Home, Desktop, Documents, Downloads, Pictures, Music, Videos, This PC, Recycle Bin, Temporary folder, AppData, or Recent files: files other apps opened lately, shown selected in their folder (then its underlined letter, e.g. L for Downloads, F for Recent files; not Ctrl+Alt+G, the file dialog jump)\n\
 Ctrl+L, Alt+D, F4\tAddress bar: also .. or a subfolder name, a file to open, or a command such as cmd, wt, powershell (runs in this pane's folder), or part of a recent or favourite folder's name; Ctrl+Shift+Enter runs it as administrator, and on a folder opens an administrator terminal there\n\
 Ctrl+B\tFavourites list (↑/↓ or Home/End to choose, Enter to open, 1 … 9 opens the numbered row at once, Del to remove, Alt+↑/↓ or drag to reorder)\n\
 Ctrl+Shift+B\tAdd the active pane's folder to favourites, or remove it if it is one (as ☆+ in its header)\n\
