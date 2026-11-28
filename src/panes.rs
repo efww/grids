@@ -53,11 +53,16 @@ pub(crate) unsafe fn create_pane(i: usize) -> Result<Pane> {
     Ok(Pane { hwnd: h, eb, cookie, disp: String::new(), pending, settle: None, recover: None, follow: None, unplugged: None, icon: -1, ticket: 0, slot, spin: None, loading: None, load_framed: false, hist: None, root: false, going: None, moving: None, wait_first: false, pace: FilterPace::default(), lock_hold: None })
 }
 
-// Screen readers otherwise just say "edit", with no word on which of up to 16 panes; redone when a pane changes slot.
-unsafe fn name_fields(h: HWND, i: usize) {
+// Screen readers otherwise just say "edit", with no word on which of up to 16 panes; redone when a pane changes slot
+// and when the language changes. After the name, what the edit takes (field_desc).
+pub(crate) unsafe fn name_fields(h: HWND, i: usize) {
     let pane = format!("{} {}", tr("Pane", "패널"), i + 1);
-    a11y_name(GetDlgItem(Some(h), ID_EDIT).unwrap_or_default(), Some(&format!("{pane} {}", tr("address", "주소"))));
-    a11y_name(GetDlgItem(Some(h), ID_FILTER).unwrap_or_default(), Some(&format!("{pane} {}", tr("name filter (Ctrl+F)", "이름 필터 (Ctrl+F)"))));
+    let ko = KO.load(Ordering::Relaxed);
+    for (id, what) in [(ID_EDIT, tr("address", "주소")), (ID_FILTER, tr("name filter (Ctrl+F)", "이름 필터 (Ctrl+F)"))] {
+        let e = GetDlgItem(Some(h), id).unwrap_or_default();
+        a11y_name(e, Some(&format!("{pane} {what}")));
+        a11y_desc(e, Some(field_desc(id, ko)));
+    }
 }
 
 // The name a screen reader reads for a control (Dynamic Annotation); None takes it off before the window goes.
@@ -157,7 +162,7 @@ pub(crate) unsafe fn destroy_pane(i: usize) {
         _ = IUnknown_SetSite(&p.eb, None);
         _ = p.eb.Destroy();
         for id in [ID_EDIT, ID_FILTER] {
-            a11y_name(GetDlgItem(Some(p.hwnd), id).unwrap_or_default(), None);
+            a11y_clear(GetDlgItem(Some(p.hwnd), id).unwrap_or_default()); // name and description
         }
         _ = DestroyWindow(p.hwnd);
         let waiting = unqueue(&mut icon_q(), p.hwnd.0 as isize);

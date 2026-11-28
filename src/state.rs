@@ -170,6 +170,7 @@ pub(crate) struct App {
     pub(crate) tips_now: u16,                   // shortcut tips (bit = TIP_* action) already shown since Grids started (runtime only)
     pub(crate) said: Option<Instant>,           // the note (by its end time) last handed to screen readers
     pub(crate) menu_help: Option<&'static str>, // the lit view / ⇄ menu item's help, in the note's place while it's up
+    pub(crate) field_help: Option<(HWND, i32)>, // the address / filter edit (and its ID) being typed in: its hint after the note
     pub(crate) ini_nag: IniNag,                 // "settings won't be kept" warnings waiting / shown (runtime only)
     pub(crate) status_hwnd: HWND,               // the status line control (screen readers); null = the main window paints it
     pub(crate) note_hwnd: HWND,                 // the note's live region (zero size, nothing drawn); null = no announcements
@@ -303,6 +304,7 @@ thread_local! {
         lost: 0,
         said: None,
         menu_help: None,
+        field_help: None,
         ini_nag: IniNag::default(),
         status_hwnd: HWND::default(),
         note_hwnd: HWND::default(),

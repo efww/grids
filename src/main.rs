@@ -2776,12 +2776,19 @@ mod tests {
         assert_eq!(status_fit(0, 1000, 12, 60, None, 2000, Some(100), &[]), StatusFit { note: None, head: (0, 1000), mid: None, drive: None });
         // a short items text never pushes the drive into a smaller form
         assert_eq!(status_fit(0, 300, 12, 60, None, 40, None, &[248]).drive, Some((52, 300, 0)));
+        // an edit's hint gets only what the items, middle and full drive zones leave: 1000 - 12 - (200 + 162 + 262)
+        let room = hint_room(0, 1000, 12, 200, Some(150), Some(250));
+        assert_eq!(room, 364);
+        let f = fit(1000, Some(room), Some(150));
+        assert_eq!((f.head.1 - f.head.0, f.mid.map(|m| m.1 - m.0), f.drive.map(|d| d.2)), (200, Some(150), Some(0)), "nothing cut");
+        assert_eq!(hint_room(0, 400, 12, 200, Some(150), Some(250)), 0); // no room: no hint
     }
 
     #[test]
     fn status_line_for_screen_readers() {
         let st = StatusLine {
             note: Some("No match: *.tmp".into()),
+            hint: false,
             head: format!("12 items{ZONE_DOT}3 selected"),
             mid: vec!["Filter pdf".into()],
             drive: Some(("C:".into(), 1 << 30, 4 << 30)),
@@ -3528,6 +3535,40 @@ mod tests {
         for p in [0, 17, 441, 1138, 5000] {
             assert_eq!(open_in_help(p, false, false), None, "{p}");
         }
+    }
+
+    // The address / filter edit's hint (status line) and description (screen readers): English and Korean name the
+    // same keys and commands, and each key is in its own row of both READMEs' shortcut table.
+    #[test]
+    fn field_help_lines() {
+        let (md, md_ko) = (include_str!("../README.md"), include_str!("../README.ko.md"));
+        let row = |text: &str, start: &str| text.lines().find(|l| l.starts_with(start)).unwrap_or_else(|| panic!("no {start:?} row")).to_string();
+        let (go, addr) = (("| Enter / Esc |", "| Enter / Esc |"), ("| Ctrl+L, Alt+D, F4 |", "| Ctrl+L, Alt+D, F4 |"));
+        let kinds = ("| Alt+↓ (in the filter) |", "| Alt+↓ (필터 칸에서) |");
+        let fields = [
+            (ID_EDIT, vec![("Enter", go), ("Esc", go), ("Ctrl+Shift+Enter", addr), ("cmd", addr), ("wt", addr), ("powershell", addr)]),
+            (ID_FILTER, vec![("Enter", go), ("Esc", go), ("Alt+↓", kinds)]),
+        ];
+        for (id, keys) in fields {
+            for ko in [false, true] {
+                let (help, desc) = (field_help_text(id, ko), field_desc(id, ko));
+                assert_eq!(ko, help.chars().any(hangul), "{help}");
+                assert_eq!(ko, desc.chars().any(hangul), "{desc}");
+                for (key, rows) in &keys {
+                    assert!(help.contains(key), "{id}: {help:?} lacks {key}");
+                    assert!(desc.contains(key), "{id}: {desc:?} lacks {key}");
+                    let r = if ko { row(md_ko, rows.1) } else { row(md, rows.0) };
+                    assert!(r.contains(key), "README row {r:?} lacks {key}");
+                }
+            }
+            // the filter's example pattern in both languages
+            if id == ID_FILTER {
+                assert!(field_help_text(id, false).contains("*.pdf;*.txt") && field_help_text(id, true).contains("*.pdf;*.txt"));
+            }
+        }
+        // both READMEs say the hint shows and is read out
+        assert!(row(md, "| Ctrl+L, Alt+D, F4 |").contains("status line shows what it takes"));
+        assert!(row(md_ko, "| Ctrl+L, Alt+D, F4 |").contains("상태줄에 칠 수 있는 것"));
     }
 
     // A menu item's name as the menu shows it: no key after a tab or in a "  (Ctrl+…)" tail, no Korean "(&X)"

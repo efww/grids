@@ -66,16 +66,13 @@ unsafe fn paint_status(dc: HDC, g: &Geo, line: RECT, st: &StatusLine, font: HFON
         (label, lw, usage, forms)
     });
     let widths: Vec<i32> = drive.as_ref().map(|d| d.3.iter().map(|f| f.2).collect()).unwrap_or_default();
-    let fit = status_fit(
-        left,
-        right,
-        gap,
-        s(60),
-        st.note.as_ref().map(|n| w(n) + 2 * chip_pad),
-        w(&st.head),
-        (!mid.is_empty()).then(|| w(&mid)),
-        &widths,
-    );
+    let (head_w, mid_w) = (w(&st.head), (!mid.is_empty()).then(|| w(&mid)));
+    // an edit's hint only takes what nothing else needs (cut short there); too little room for a few words: none
+    let note_w = st.note.as_ref().map(|n| w(n) + 2 * chip_pad).and_then(|nw| match st.hint {
+        false => Some(nw),
+        true => Some(nw.min(hint_room(left, right, gap, head_w, mid_w, widths.first().copied()))).filter(|&r| r >= s(96)),
+    });
+    let fit = status_fit(left, right, gap, s(60), note_w, head_w, mid_w, &widths);
     let rule = |x: i32| fill(dc, RECT { left: x, right: x + 1, top: line.top + s(6), bottom: line.bottom - s(6) }, p.line);
     if let (Some(n), Some(r)) = (&st.note, fit.note) {
         let chip = RECT { top: line.top + s(3), bottom: line.bottom - s(3), ..span(r) };

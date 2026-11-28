@@ -702,6 +702,7 @@ pub(crate) unsafe fn update_status() {
     // one item still being counted: its last full count, looked up after the job's lock is let go
     let last = one.and_then(|p| size_memo().get(&p)).map(|(b, _)| b);
     let ko = KO.load(Ordering::Relaxed);
+    let focus = GetFocus();
     let (changed, fresh, ctl) = app(|a| {
         let (head, size, mid, drive) = &a.status_base;
         let size = size.map(|p| size_text(ko, job, p, last, cloud)).unwrap_or_default();
@@ -716,9 +717,15 @@ pub(crate) unsafe fn update_status() {
         }
         // every zone's value (the note, the size progress, raw free/total bytes) takes part in the compare
         // a lit menu item's help (with_menu_help) stands in the note's place while its menu is up; the note itself,
-        // and whether it was read out, stay as they are
+        // and whether it was read out, stay as they are. With neither, the address / filter edit being typed in says
+        // what it takes (only while it really has the focus: a hidden pane or another app sends no EN_KILLFOCUS)
+        let hint = a.field_help.filter(|&(e, _)| e == focus).map(|(_, id)| field_help_text(id, ko));
         let note = a.menu_help.map(str::to_string).or_else(|| a.note.as_ref().map(|(s, _)| s.clone()));
-        let line = StatusLine { note, head: format!("{head}{size}"), mid: mid.clone(), drive: drive.clone() };
+        let (note, hint) = match note {
+            Some(n) => (Some(n), false),
+            None => (hint.map(str::to_string), hint.is_some()),
+        };
+        let line = StatusLine { note, hint, head: format!("{head}{size}"), mid: mid.clone(), drive: drive.clone() };
         // each note set anew (its own end time) is read out once, the same words too; expiry, counts and size don't
         let fresh = a.note.as_ref().filter(|n| a.said != Some(n.1)).map(|(s, t)| (s.clone(), *t));
         if let Some((_, t)) = &fresh {
@@ -858,6 +865,7 @@ pub(crate) fn status_speech(st: &StatusLine) -> String {
 #[derive(Clone, Default, PartialEq)]
 pub(crate) struct StatusLine {
     pub(crate) note: Option<String>,
+    pub(crate) hint: bool, // the note is an edit's hint (field_help_text): it only takes room nothing else needs
     pub(crate) head: String,
     pub(crate) mid: Vec<String>,
     pub(crate) drive: Option<(String, u64, u64)>, // label, free and total bytes
@@ -916,6 +924,13 @@ pub(crate) fn status_fit(left: i32, right: i32, gap: i32, min_head: i32, note: O
     let mx = head.1 + gap;
     let mid = mid.map(|w| (mx, (mx + w).min(end))).filter(|&(l, r)| r - l >= 3 * gap);
     StatusFit { note, head, mid, drive }
+}
+
+// The most an edit's hint may take in front: what the items, the middle zone and the full drive zone leave over,
+// so typing a filter never cuts the counts or the filter zone (the hint is cut short instead). 0 = no room.
+pub(crate) fn hint_room(left: i32, right: i32, gap: i32, head: i32, mid: Option<i32>, drive: Option<i32>) -> i32 {
+    let used = head + mid.map_or(0, |w| gap + w) + drive.map_or(0, |w| gap + w);
+    (right - left - gap - used).max(0)
 }
 
 // The middle zone during a background job; "sleep held off" only while the power request is really set.
@@ -1136,6 +1151,40 @@ pub(crate) fn open_in_help(id: usize, head: bool, ko: bool) -> Option<&'static s
         OpenPick::Nothing | OpenPick::Unknown => return None,
     };
     Some(if ko { k } else { en })
+}
+
+// What a pane's address (ID_EDIT) or name filter (ID_FILTER) takes, on the status line while it is typed in
+// (Chrome's "Search or type URL", VS Code's quick open): the ways in that the edit itself doesn't show.
+pub(crate) fn field_help_text(id: i32, ko: bool) -> &'static str {
+    match (id == ID_EDIT, ko) {
+        (true, false) => "Enter go  ·  part of a folder name: recent or favourite  ·  cmd, wt, powershell: run here  ·  Ctrl+Shift+Enter as administrator  ·  Esc cancel",
+        (true, true) => "Enter 이동  ·  폴더 이름 일부 = 최근·즐겨찾기  ·  cmd·wt·powershell = 이 폴더에서 실행  ·  Ctrl+Shift+Enter 관리자  ·  Esc 취소",
+        (false, false) => "*.pdf;*.txt or part of a name  ·  Alt+↓ file types  ·  Enter apply now  ·  Esc clear",
+        (false, true) => "*.pdf;*.txt 또는 이름 일부  ·  Alt+↓ 파일 종류  ·  Enter 바로 적용  ·  Esc 지우기",
+    }
+}
+
+// The same for screen readers, read after the edit's name each time it takes the focus, so kept shorter.
+pub(crate) fn field_desc(id: i32, ko: bool) -> &'static str {
+    match (id == ID_EDIT, ko) {
+        (true, false) => "A path, part of a recent or favourite folder's name, or cmd, wt, powershell to run here. Ctrl+Shift+Enter runs as administrator, Esc cancels",
+        (true, true) => "경로, 최근·즐겨찾기 폴더 이름 일부, 또는 이 폴더에서 실행할 cmd·wt·powershell. Ctrl+Shift+Enter 관리자로 실행, Esc 취소",
+        (false, false) => "Names like *.pdf;*.txt or part of a name. Alt+↓ file types, Enter applies now, Esc clears",
+        (false, true) => "*.pdf;*.txt 같은 이름이나 이름 일부. Alt+↓ 파일 종류, Enter 바로 적용, Esc 지우기",
+    }
+}
+
+// EN_SETFOCUS / EN_KILLFOCUS of a pane's address or filter edit (`e`, `id`): its hint comes or goes, at once and
+// only when it changes. No pane lookup: EN_KILLFOCUS also comes while a closing pane's window goes.
+pub(crate) unsafe fn show_field_help(e: HWND, id: i32, on: bool) {
+    let changed = app(|a| {
+        // leaving one edit takes off only its own hint
+        let want = if on { Some((e, id)) } else { a.field_help.filter(|&(x, _)| x != e) };
+        std::mem::replace(&mut a.field_help, want) != want
+    });
+    if changed {
+        update_status();
+    }
 }
 
 // Runs `track` (the menu's TrackPopupMenu, which returns when the menu closes) with that menu's WM_MENUSELECTs

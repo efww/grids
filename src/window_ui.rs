@@ -866,7 +866,11 @@ pub(crate) extern "system" fn pane_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             WM_CTLCOLOREDIT => return edit_colors(wp),
             WM_COMMAND => match ((wp.0 & 0xffff) as i32, ((wp.0 >> 16) & 0xffff) as u32) {
                 // pill gets an accent outline while its edit has focus; a folded one spreads out meanwhile
-                (id @ (ID_EDIT | ID_FILTER), EN_SETFOCUS | EN_KILLFOCUS) => field_focus(h, id),
+                // and the status line says what the edit takes while it's typed in
+                (id @ (ID_EDIT | ID_FILTER), code @ (EN_SETFOCUS | EN_KILLFOCUS)) => {
+                    field_focus(h, id);
+                    show_field_help(HWND(lp.0 as _), id, code == EN_SETFOCUS);
+                }
                 // the buttons only: the mouse's side buttons (WM_APPCOMMAND) share nav but are a shortcut already
                 (ID_BACK, _) => {
                     if nav(SBSP_NAVIGATEBACK) {
@@ -2433,6 +2437,10 @@ pub(crate) unsafe fn set_language(ko: bool) {
         tip_text(h, &device_tip(&name), TTM_UPDATETIPTEXTW);
     }
     bin_relabel(main);
+    // the address and filter edits' names and descriptions for screen readers, in the new language
+    for (i, h) in app(|a| a.panes.iter().enumerate().filter_map(|(i, p)| p.as_ref().map(|p| (i, p.hwnd))).collect::<Vec<_>>()) {
+        name_fields(h, i);
+    }
     // a filtered pane's empty-list words follow the new language now, not at the next browse
     for i in 0..MAXP {
         let spec = filter_of(i);
