@@ -173,17 +173,28 @@ fn main() -> Result<()> {
             );
             return Ok(());
         };
-        // Single instance: hand the arguments to the running window and leave.
-        if let Some(prev) = running_instance() {
+        // Single instance: hand the arguments to the running window and leave. A running Grids that no longer
+        // answers is asked about first (end it and start afresh?); the start lock stays held while asking.
+        let quiet = startup && args.is_empty();
+        let prev = match running_instance() {
+            None => None,
+            Some(found) => match hang_plan(quiet, || probe_hung(found)) {
+                Handoff::Leave => return Ok(()), // sign-in start with Grids already open: leave it where it is
+                Handoff::Send => Some(found),
+                Handoff::AskRestart => match ask_restart(found) {
+                    Restart::HandOver(w) => Some(w),
+                    Restart::Ended => None, // gone: this start goes on as the Grids that stays, its arguments opened below
+                    Restart::Quit => return Ok(()),
+                },
+            },
+        };
+        if let Some(prev) = prev {
             start.release();
             // Grids on another virtual desktop comes to this one (only its own process can move it): asked before
-            // the paths, which may focus a pane or open a dialog. Not at sign-in with nothing to open.
-            let quiet = startup && args.is_empty();
+            // the paths, which may focus a pane or open a dialog. (Not at sign-in with nothing to open: left above.)
             let follow = || {
-                if !quiet {
-                    let mut r = 0usize;
-                    _ = SendMessageTimeoutW(prev, follow_msg(), WPARAM(0), LPARAM(0), SMTO_ABORTIFHUNG, 2000, Some(&mut r));
-                }
+                let mut r = 0usize;
+                _ = SendMessageTimeoutW(prev, follow_msg(), WPARAM(0), LPARAM(0), SMTO_ABORTIFHUNG, 2000, Some(&mut r));
             };
             follow();
             if !args.is_empty() {
@@ -201,9 +212,6 @@ fn main() -> Result<()> {
                     ));
                     MessageBoxW(None, &text, w!("Grids"), MB_OK | MB_ICONWARNING);
                 }
-            }
-            if quiet {
-                return Ok(()); // sign-in start with Grids already open: leave it where it is
             }
             if IsIconic(prev).as_bool() {
                 _ = ShowWindow(prev, SW_RESTORE);
@@ -748,6 +756,22 @@ mod tests {
         assert_eq!(start_turn(WAIT_ABANDONED), StartTurn::Ours); // the last owner died holding it
         assert_eq!(start_turn(WAIT_TIMEOUT), StartTurn::Busy); // told and quits
         assert_eq!(start_turn(WAIT_FAILED), StartTurn::Failed); // starts unlocked, as before
+    }
+
+    #[test]
+    fn hung_grids_asked_only_when_hung() {
+        // sign-in start with nothing to open: never probes, asks or ends anything
+        assert_eq!(hang_plan(true, || panic!("probed at sign-in")), Handoff::Leave);
+        assert_eq!(hang_plan(false, || false), Handoff::Send); // answers: hand over as always
+        assert_eq!(hang_plan(false, || true), Handoff::AskRestart);
+        // only running out of time (or the system's own hung mark) is a hang
+        assert!(!hung_reply(true, ERROR_SUCCESS, false)); // answered
+        assert!(!hung_reply(true, ERROR_TIMEOUT, true)); // answered after all: a stale error or mark means nothing
+        assert!(hung_reply(false, ERROR_TIMEOUT, false)); // 5 s without an answer
+        assert!(hung_reply(false, ERROR_SUCCESS, true)); // ABORTIFHUNG gave up on a window marked hung
+        assert!(!hung_reply(false, ERROR_ACCESS_DENIED, false)); // UIPI: a Grids run as administrator, not hung
+        assert!(!hung_reply(false, ERROR_ACCESS_DENIED, true));
+        assert!(!hung_reply(false, ERROR_INVALID_WINDOW_HANDLE, false)); // closed in between: left to the hand-over
     }
 
     /// The error mode is process-wide, so the check runs in a child copy of this test binary

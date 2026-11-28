@@ -1,5 +1,5 @@
 use crate::*;
-use windows::Win32::System::Threading::GetCurrentThreadId;
+use windows::Win32::System::Threading::{GetCurrentProcessId, GetCurrentThreadId, TerminateProcess, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE};
 
 // ---------- sessions ----------
 
@@ -694,13 +694,121 @@ pub(crate) unsafe fn running_instance() -> Option<HWND> {
         let mut pid = 0;
         GetWindowThreadProcessId(w, Some(&mut pid));
         let Ok(p) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else { continue };
-        let (mut buf, mut n) = ([0u16; 1024], 1024u32);
-        let ok = QueryFullProcessImageNameW(p, PROCESS_NAME_WIN32, PWSTR(buf.as_mut_ptr()), &mut n).is_ok();
+        let same = same_exe(p, &me);
         _ = CloseHandle(p);
-        if ok && String::from_utf16_lossy(&buf[..n as usize]).to_lowercase() == me {
+        if same {
             return Some(w);
         }
     }
+}
+
+// The process behind the handle runs this exe (me: its path, lowercase).
+unsafe fn same_exe(p: HANDLE, me: &str) -> bool {
+    let (mut buf, mut n) = ([0u16; 1024], 1024u32);
+    QueryFullProcessImageNameW(p, PROCESS_NAME_WIN32, PWSTR(buf.as_mut_ptr()), &mut n).is_ok()
+        && String::from_utf16_lossy(&buf[..n as usize]).to_lowercase() == me
+}
+
+// ---------- a running Grids that no longer answers ----------
+// Started again while the open Grids hangs (a slow network folder, a stuck shell extension), the hand-over
+// below could only time out: nothing opened, and a Grids hidden in the notification area had no window to close.
+// Now the start asks whether to end it and open a new one (Firefox' "already running, not responding",
+// Chrome's and VS Code's "wait / reopen").
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Handoff {
+    Send,       // it answers: hand the arguments over as always
+    AskRestart, // hung: ask whether to end it and start afresh
+    Leave,      // sign-in start with nothing to open: leave it be, no box, nothing ended
+}
+
+// quiet: the sign-in start with nothing to open; it never probes, asks or ends anything.
+// hung: probes the open Grids (only called when not quiet).
+pub(crate) fn hang_plan(quiet: bool, hung: impl FnOnce() -> bool) -> Handoff {
+    match () {
+        _ if quiet => Handoff::Leave,
+        _ if hung() => Handoff::AskRestart,
+        _ => Handoff::Send,
+    }
+}
+
+// The probe's reply as "hung". Only running out of time counts (or the system already marking the window hung):
+// a message UIPI turned away at once (a Grids run as administrator) is no hang, and a window gone in between
+// (or any other failure) is left to the hand-over, as before.
+pub(crate) fn hung_reply(sent: bool, err: WIN32_ERROR, flagged: bool) -> bool {
+    !sent && err != ERROR_ACCESS_DENIED && (err == ERROR_TIMEOUT || flagged)
+}
+
+// As long as the hand-over waits for the paths (5 s), so a Grids just busy for a moment is not asked about.
+const PROBE_MS: u32 = 5000;
+
+pub(crate) unsafe fn probe_hung(w: HWND) -> bool {
+    let mut r = 0usize;
+    SetLastError(ERROR_SUCCESS);
+    let sent = SendMessageTimeoutW(w, WM_NULL, WPARAM(0), LPARAM(0), SMTO_ABORTIFHUNG, PROBE_MS, Some(&mut r)).0 != 0;
+    let err = GetLastError();
+    hung_reply(sent, err, !sent && IsHungAppWindow(w).as_bool())
+}
+
+pub(crate) enum Restart {
+    Ended,          // the hung Grids is gone: this start goes on as the one that stays (start lock still held)
+    HandOver(HWND), // No, or it answers again: hand over as always
+    Quit,           // could not end it: told, this start leaves
+}
+
+// Asked before the language is known, so both, in one box (like the other start-up boxes).
+pub(crate) unsafe fn ask_restart(found: HWND) -> Restart {
+    let ask = MessageBoxW(
+        None,
+        w!("Grids is not responding.\n\nEnd it and open a new Grids with the panes as last saved? \
+            Anything it is still doing (copying, moving, batch rename, organizing by date) stops.\n\n\
+            Yes: end it and reopen    No: keep waiting\n\n\
+            Grids가 응답하지 않습니다.\n\n끝내고 마지막으로 저장된 패널로 새로 열까요? \
+            진행 중인 복사·이동·일괄 이름 바꾸기·날짜별 정리는 중단됩니다.\n\n\
+            예: 끝내고 새로 열기    아니요: 계속 기다리기"),
+        w!("Grids"),
+        MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2 | MB_SETFOREGROUND,
+    );
+    if ask != IDYES {
+        return Restart::HandOver(found);
+    }
+    // It may have come back (or closed) while the box was up: look again before ending anything.
+    let Some(w) = running_instance() else { return Restart::Ended };
+    if !probe_hung(w) {
+        return Restart::HandOver(w);
+    }
+    if end_instance(w) {
+        return Restart::Ended;
+    }
+    MessageBoxW(
+        None,
+        w!("Grids could not be ended (it may run as administrator, or still be closing). \
+            End Grids in Task Manager, then start it again.\n\n\
+            Grids를 끝내지 못했습니다(관리자 권한으로 실행 중이거나 아직 닫히는 중일 수 있습니다). \
+            작업 관리자에서 Grids를 끝낸 뒤 다시 실행해 주세요."),
+        w!("Grids"),
+        MB_OK | MB_ICONWARNING | MB_SETFOREGROUND,
+    );
+    Restart::Quit
+}
+
+// Ends the Grids behind the window and waits until it is gone (5 s). The process is opened from the window as it
+// is now and checked to run this exe through that same handle, so a reused process id is never ended.
+// Not gone in time (a thread stuck in network I/O ends late) counts as not ended: two Grids at once would
+// overwrite each other's grids.ini.
+unsafe fn end_instance(w: HWND) -> bool {
+    let Ok(exe) = std::env::current_exe() else { return false };
+    let me = exe.to_string_lossy().to_lowercase();
+    let mut pid = 0;
+    GetWindowThreadProcessId(w, Some(&mut pid));
+    if pid == 0 || pid == GetCurrentProcessId() {
+        return false;
+    }
+    let access = PROCESS_TERMINATE | PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION;
+    let Ok(p) = OpenProcess(access, false, pid) else { return false };
+    let ended = same_exe(p, &me) && TerminateProcess(p, 1).is_ok() && WaitForSingleObject(p, 5000) == WAIT_OBJECT_0;
+    _ = CloseHandle(p);
+    ended
 }
 
 // Start lock: two starts at once (several .grids files opened together, a double click on the taskbar)
