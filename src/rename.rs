@@ -57,13 +57,15 @@ struct Rn {
     running: Option<Run>,           // a batch (or its undo) on the worker thread: the window is locked
     desc: String,                   // the counts line as last given to screen readers (Rename's, the preview's description)
     said: String,                   // the one last read out (or not to be: at opening, after an outcome)
+    taken_read: bool,               // this batch's dates taken are read, or being read (once per batch: start_taken)
+    reading: Option<(usize, usize)>, // dates taken being read: files done, of; Rename and Undo stay off meanwhile
 }
 
 thread_local! {
     static RN: RefCell<Rn> = RefCell::new(Rn {
         h: HWND::default(), pane: 0, rules: vec![Rule::new(Kind::Replace)], cur: 0, ext: false, dirs: Vec::new(), items: Vec::new(),
         existing: Vec::new(), rows: Vec::new(), err: None, note: String::new(), undo: Vec::new(), loading: false, focus: HWND::default(),
-        running: None, desc: String::new(), said: String::new(),
+        running: None, desc: String::new(), said: String::new(), taken_read: false, reading: None,
     });
 }
 
@@ -146,7 +148,8 @@ fn spec_in(k: Kind, ko: bool) -> Spec {
             fields: [tr("Pattern", "형식"), tr("Separator", "구분자"), "", ""],
             mode: tr("Place", "자리"),
             modes: place(),
-            hint: tr("Modified date: yyyy yy MM dd HH mm ss", "수정한 날짜: yyyy yy MM dd HH mm ss"),
+            flags: [tr("Photos: date taken (else modified)", "사진은 찍은 날짜 (없으면 수정한 날짜)"), ""],
+            hint: tr("Date: yyyy yy MM dd HH mm ss", "날짜: yyyy yy MM dd HH mm ss"),
             ..none
         },
         Kind::Case => Spec { mode: tr("Case", "대소문자"), modes: vec!["lowercase", "UPPERCASE", "Title Case"], ..none },
@@ -177,6 +180,8 @@ fn summary_in(r: &Rule, ko: bool) -> String {
         Kind::Insert => format!("\"{}\" · {mode}", r.f[0]),
         Kind::Remove => format!("{} · {mode} {}", r.f[0].trim(), r.f[1].trim()),
         Kind::Number => format!("{}, {} … · {mode}", number_text(r, 0, 2), number_text(r, 1, 2)),
+        // words only: this line is what screen readers read for the row (rule_speech)
+        Kind::Date if r.x => format!("{} · {mode} · {}", r.f[0], lang(ko, "date taken", "찍은 날짜")),
         Kind::Date => format!("{} · {mode}", r.f[0]),
         Kind::Case => mode.to_string(),
         Kind::Trim => String::new(),
@@ -279,11 +284,13 @@ struct Geo {
     note: RECT,
     pname: RECT,
     lists: [RECT; 2], // frames around the rule list and the preview
+    x_row: RECT,      // the first check box of a date rule: the third field row, which that rule leaves empty (place_x)
 }
 
 // Left: rule list (takes the height that is left, 70..170 DIP), its buttons, the rule's fields, presets.
 // Right: the preview. Bottom: extension option, result line, Undo / Rename / Close.
-// A kind has a mode or the two check boxes, never both, so they share a row.
+// A kind has a mode or the two check boxes, never both, so they share a row; the date rule has both, so its
+// check box goes to the third field row instead (x_row, place_x).
 fn geo(w: i32, h: i32, dpi: i32, fh: i32) -> Geo {
     let s = |v: i32| v * dpi / 96;
     let th = fh + s(4);
@@ -349,7 +356,18 @@ fn geo(w: i32, h: i32, dpi: i32, fh: i32) -> Geo {
     ctl.push((ID_LIST, lv));
     let summary = RECT { left: xp + s(80), ..t_prev };
     let out = |rc: RECT| r(rc.left - 1, rc.top - 1, rc.right + 1, rc.bottom + 1);
-    Geo { ctl, titles: [t_rules, t_edit, t_prev], summary, labels, fields, hint, note, pname, lists: [out(lb), out(lv)] }
+    let x_row = r(x0, labels[2].top, x1, labels[2].bottom);
+    Geo { ctl, titles: [t_rules, t_edit, t_prev], summary, labels, fields, hint, note, pname, lists: [out(lb), out(lv)], x_row }
+}
+
+// Where the first check box goes: a date rule has a mode (its Place button fills the mode row), so its box takes
+// the third field row it leaves empty; every other kind keeps it in the mode row. The tab order follows the place.
+unsafe fn place_x(h: HWND, g: &Geo) {
+    let date = rn(|r| r.rules.get(r.cur).is_some_and(|x| x.kind == Kind::Date));
+    let Some(&(_, row)) = g.ctl.iter().find(|(id, _)| *id == ID_FX) else { return };
+    let rc = if date { g.x_row } else { row };
+    let after = item(h, if date { ID_F0 + 1 } else { ID_MODE });
+    _ = SetWindowPos(item(h, ID_FX), Some(after), rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top, SWP_NOACTIVATE);
 }
 
 unsafe fn geo_now(h: HWND) -> Geo {
@@ -422,9 +440,11 @@ unsafe fn item(h: HWND, id: i32) -> HWND {
 }
 
 unsafe fn layout(h: HWND) {
-    for (id, r) in geo_now(h).ctl {
-        _ = MoveWindow(item(h, id), r.left, r.top, r.right - r.left, r.bottom - r.top, false);
+    let g = geo_now(h);
+    for (id, r) in &g.ctl {
+        _ = MoveWindow(item(h, *id), r.left, r.top, r.right - r.left, r.bottom - r.top, false);
     }
+    place_x(h, &g);
     _ = InvalidateRect(Some(h), None, false);
 }
 
@@ -490,7 +510,7 @@ unsafe fn gather(i: usize) -> Option<(Vec<String>, Vec<(usize, Src)>)> {
             dirs.push(dir);
             dirs.len() - 1
         });
-        items.push((d, Src { name: name.to_string_lossy().into_owned(), is_dir, date: file_date(&path) }));
+        items.push((d, Src { name: name.to_string_lossy().into_owned(), is_dir, date: file_date(&path), taken: None }));
     }
     Some((dirs, items))
 }
@@ -516,6 +536,7 @@ pub(crate) unsafe fn open_rename(i: usize) {
     let title = HSTRING::from(format!("{} - {}", tr("Batch rename", "일괄 이름 바꾸기"), short_name(&dirs[0])));
     let open = rn(|r| {
         (r.pane, r.dirs, r.items, r.existing, r.note) = (i, dirs, items, existing, String::new());
+        new_batch(r);
         r.h
     });
     if !open.0.is_null() {
@@ -679,7 +700,11 @@ unsafe fn name_summary(h: HWND, settle: bool) {
     let ko = ko_now();
     let (sum, fresh, quiet) = rn(|r| {
         let (n, changed, bad) = counts(r);
-        let s = sum_text(n, changed, bad, r.err.as_deref(), ko);
+        // while dates taken are read, that is why Rename is off: said instead of the counts
+        let s = match r.reading {
+            Some((done, total)) => taken_text(done, total, ko),
+            None => sum_text(n, changed, bad, r.err.as_deref(), ko),
+        };
         let fresh = r.desc != s;
         r.desc = s.clone();
         if settle {
@@ -783,6 +808,7 @@ unsafe fn load_editor() {
     show(ID_MODE, sp.as_ref().is_some_and(|s| !s.modes.is_empty()));
     show(ID_FX, sp.as_ref().is_some_and(|s| !s.flags[0].is_empty()));
     show(ID_FY, sp.as_ref().is_some_and(|s| !s.flags[1].is_empty()));
+    place_x(h, &geo_now(h));
     let any = rule.is_some();
     for id in [ID_DEL, ID_RUP, ID_RDOWN, ID_ONOFF] {
         _ = EnableWindow(item(h, id), any);
@@ -794,6 +820,7 @@ unsafe fn load_editor() {
 
 // New names and their checks for every item; the Rename button is only on when all of them are fine.
 unsafe fn update_preview() {
+    start_taken();
     let (h, n, go, undo) = rn(|r| {
         let srcs: Vec<Src> = r.items.iter().map(|(_, s)| s.clone()).collect();
         match new_names(&r.rules, r.ext, &srcs) {
@@ -810,7 +837,9 @@ unsafe fn update_preview() {
             }
         }
         let ok = r.err.is_none() && !r.rows.iter().any(|(_, s)| s.blocks()) && r.rows.iter().any(|(_, s)| *s == Status::Ok);
-        let idle = r.running.is_none(); // both stay off while a batch runs, whoever calls this
+        // both stay off while a batch runs, whoever calls this, and while dates taken are read (the names wait for
+        // them; a file renamed meanwhile would lose its date taken)
+        let idle = r.running.is_none() && r.reading.is_none();
         (r.h, r.rows.len(), ok && idle, !r.undo.is_empty() && idle)
     });
     let lv = item(h, ID_LIST);
@@ -821,6 +850,128 @@ unsafe fn update_preview() {
     _ = EnableWindow(item(h, ID_UNDO), undo);
     _ = InvalidateRect(Some(h), None, false); // summary line
     name_summary(h, false);
+}
+
+// ---------- dates taken: read on a worker thread, once per batch, only when a date rule asks for them ----------
+// Not when the window opens: most batches have no use for them, and a NAS full of photos takes a while.
+// Only reading, so no Busy: closing Grids doesn't wait for it, and closing the window stops it at the next file.
+
+const WM_TAKEN: u32 = WM_APP + 69; // to the rename window: wParam = gen; lParam = files read so far, or -1 when over
+static TAKEN_GEN: AtomicUsize = AtomicUsize::new(0); // up with every new batch (or none): a reading of another stops
+static TAKEN: Mutex<Option<(usize, Vec<(usize, [u16; 6])>)>> = Mutex::new(None); // gen, (item, date taken)
+
+// The window's files were replaced (or let go), or a reading is no longer wanted: what was read for the old ones
+// is dropped, a reading stops.
+fn new_batch(r: &mut Rn) {
+    TAKEN_GEN.fetch_add(1, Ordering::SeqCst);
+    (r.taken_read, r.reading) = (false, None);
+}
+
+// A date rule that is on with "Photos: date taken" ticked.
+fn wants_taken(rules: &[Rule]) -> bool {
+    rules.iter().any(|r| r.on && r.kind == Kind::Date && r.x)
+}
+
+fn taken_text(done: usize, total: usize, ko: bool) -> String {
+    let (d, t) = (group_digits(done.min(total) as u64), group_digits(total as u64));
+    if ko { format!("찍은 날짜 읽는 중… {d} / {t}") } else { format!("Reading dates taken… {d} / {t}") }
+}
+
+// Over (also after a panic): the window always hears it and switches Rename back on.
+struct TakenPost(isize, usize);
+
+impl Drop for TakenPost {
+    fn drop(&mut self) {
+        unsafe {
+            _ = PostMessageW(Some(HWND(self.0 as _)), WM_TAKEN, WPARAM(self.1), LPARAM(-1));
+        }
+    }
+}
+
+// The one place that decides (from update_preview, so a tick, a preset, a rule switched on again, a reopened
+// window and a new batch all come here): a date rule wants the dates taken and this batch's aren't read yet.
+// Photos only (by extension, not folders); an online-only file keeps its date modified, as nothing is downloaded.
+unsafe fn start_taken() {
+    let job = rn(|r| {
+        // unticked (or the rule off or gone) while reading: the reading stops, so Rename isn't held off for a
+        // NAS full of photos nobody asks the dates of any more; ticking again reads afresh
+        if r.reading.is_some() && !wants_taken(&r.rules) {
+            new_batch(r);
+        }
+        if r.taken_read || r.running.is_some() || r.h.0.is_null() || !wants_taken(&r.rules) {
+            return None;
+        }
+        r.taken_read = true;
+        let dirs = &r.dirs;
+        let files: Vec<(usize, String)> = r
+            .items
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, s))| !s.is_dir && photo_ext(&s.name))
+            .filter_map(|(k, (d, s))| Some((k, join_path(dirs.get(*d)?, &s.name))))
+            .collect();
+        if files.is_empty() {
+            return None;
+        }
+        r.reading = Some((0, files.len()));
+        Some((r.h.0 as isize, TAKEN_GEN.load(Ordering::SeqCst), files))
+    });
+    let Some((hw, gen, files)) = job else { return };
+    let spawned = std::thread::Builder::new().spawn(move || {
+        let _post = TakenPost(hw, gen);
+        let com = CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok();
+        let mut got = Vec::new();
+        for (n, (k, path)) in files.iter().enumerate() {
+            if TAKEN_GEN.load(Ordering::SeqCst) != gen {
+                break; // the window closed or took other files
+            }
+            let photo = std::fs::metadata(path).is_ok_and(|m| !m.is_dir() && !cloud_only(m.file_attributes()));
+            if let Some(d) = photo.then(|| date_taken(path)).flatten() {
+                got.push((*k, d));
+            }
+            if n % 16 == 15 {
+                _ = PostMessageW(Some(HWND(hw as _)), WM_TAKEN, WPARAM(gen), LPARAM(n as isize + 1));
+            }
+        }
+        if TAKEN_GEN.load(Ordering::SeqCst) == gen {
+            *TAKEN.lock().unwrap_or_else(|e| e.into_inner()) = Some((gen, got));
+        }
+        if com {
+            CoUninitialize();
+        }
+    });
+    if spawned.is_err() {
+        rn(|r| r.reading = None); // no thread: the dates modified stand in
+    }
+}
+
+// WM_TAKEN: progress, or the dates for this batch (by item, which a rename meanwhile can't reorder).
+unsafe fn taken_msg(h: HWND, gen: usize, l: isize) {
+    if gen != TAKEN_GEN.load(Ordering::SeqCst) {
+        return; // another batch's, or the window's before it closed
+    }
+    if l >= 0 {
+        rn(|r| {
+            if let Some(p) = r.reading.as_mut() {
+                p.0 = l as usize;
+            }
+        });
+        _ = InvalidateRect(Some(h), None, false);
+        return;
+    }
+    let got = match TAKEN.lock().unwrap_or_else(|e| e.into_inner()).take() {
+        Some((g, v)) if g == gen => v,
+        _ => Vec::new(),
+    };
+    rn(|r| {
+        for (k, d) in got {
+            if let Some((_, s)) = r.items.get_mut(k) {
+                s.taken = Some(d);
+            }
+        }
+        r.reading = None;
+    });
+    update_preview();
 }
 
 fn counts(r: &Rn) -> (usize, usize, usize) {
@@ -836,6 +987,7 @@ unsafe fn paint(h: HWND) {
     let (font, small) = app(|a| (a.font, a.small_font));
     let (rule, (n, changed, bad), err, note) = rn(|r| (r.rules.get(r.cur).cloned(), counts(r), r.err.clone(), r.note.clone()));
     let run = rn(|r| r.running.as_ref().map(|x| (x.undo, x.prog.done.load(Ordering::Relaxed), x.prog.total.load(Ordering::Relaxed))));
+    let reading = rn(|r| r.reading);
     let ko = KO.load(Ordering::Relaxed);
     buffered(h, |dc, rc| {
         fill(dc, rc, pal().card);
@@ -844,11 +996,12 @@ unsafe fn paint(h: HWND) {
         for (k, t) in titles.iter().enumerate() {
             text(dc, g.titles[k], if k == 1 { edit_title.as_str() } else { *t }, small, pal().sub, DT_LEFT);
         }
-        let sum = match run {
-            Some((undo, done, total)) => progress_text(undo, done, total, ko),
-            None => sum_text(n, changed, bad, err.as_deref(), ko),
+        let sum = match (run, reading) {
+            (Some((undo, done, total)), _) => progress_text(undo, done, total, ko),
+            (None, Some((done, total))) => taken_text(done, total, ko),
+            (None, None) => sum_text(n, changed, bad, err.as_deref(), ko),
         };
-        let warn = run.is_none() && (err.is_some() || bad > 0);
+        let warn = run.is_none() && reading.is_none() && (err.is_some() || bad > 0);
         text(dc, g.summary, &sum, small, if warn { red() } else { pal().sub }, DT_RIGHT);
         for r in g.lists {
             frame(dc, r, 1, pal().line);
@@ -1098,7 +1251,7 @@ unsafe fn report(h: HWND, note: String, details: Option<String>) {
 
 unsafe fn do_rename(h: HWND) {
     update_preview();
-    let ready = rn(|r| r.err.is_none() && !r.rows.iter().any(|(_, s)| s.blocks()));
+    let ready = rn(|r| r.err.is_none() && !r.rows.iter().any(|(_, s)| s.blocks()) && r.reading.is_none());
     let (dirs, moves) = rn(|r| {
         let m: Vec<Move> = r.items.iter().zip(&r.rows).filter(|(_, (_, s))| *s == Status::Ok).map(|((d, s), (n, _))| (*d, s.name.clone(), n.clone())).collect();
         (r.dirs.clone(), m)
@@ -1114,7 +1267,8 @@ unsafe fn do_rename(h: HWND) {
 
 // Last batch back to the old names (what is skipped and why: run_job).
 unsafe fn do_undo(h: HWND) {
-    let undo = rn(|r| std::mem::take(&mut r.undo));
+    // not while dates taken are read: a file renamed meanwhile would lose its date taken
+    let undo = rn(|r| if r.reading.is_some() { Vec::new() } else { std::mem::take(&mut r.undo) });
     if undo.is_empty() {
         _ = MessageBeep(MB_ICONWARNING);
         return;
@@ -1703,6 +1857,7 @@ pub(crate) extern "system" fn rename_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPA
             WM_TIMER if wp.0 == TIMER_RUN => _ = InvalidateRect(Some(h), None, false),
             WM_TIMER if wp.0 == TIMER_SAY => say_summary(h),
             WM_RENAMED => finished(h, wp.0),
+            WM_TAKEN => taken_msg(h, wp.0, lp.0),
             WM_CTLCOLORSTATIC => return edit_colors(wp), // a field switched off while a batch runs
             WM_DESTROY => {
                 _ = KillTimer(Some(h), TIMER_RUN);
@@ -1718,6 +1873,7 @@ pub(crate) extern "system" fn rename_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPA
                     (r.h, r.focus) = (HWND::default(), HWND::default());
                     r.running = None; // Grids is closing: the outcome has no window left to go to
                     (r.items, r.rows, r.existing) = (Vec::new(), Vec::new(), Vec::new());
+                    new_batch(r); // a reading under way stops; the next opening reads again if the rule asks
                     r.pane
                 });
                 let main = app(|a| a.main);
@@ -1817,6 +1973,29 @@ mod tests {
         assert_eq!(progress_text(false, 1234, 5000, true), "이름 바꾸는 중… 1,234 / 5,000");
         assert_eq!(progress_text(true, 0, 12, false), "Putting back… 0 / 12");
         assert_eq!(progress_text(true, 9, 3, true), "되돌리는 중… 3 / 3");
+        assert_eq!(taken_text(16, 1200, false), "Reading dates taken… 16 / 1,200");
+        assert_eq!(taken_text(5, 3, true), "찍은 날짜 읽는 중… 3 / 3");
+    }
+
+    #[test]
+    fn rename_date_taken_option() {
+        // only a date rule that is on, with the box ticked, asks for the dates taken
+        let date = Rule::new(Kind::Date);
+        let ticked = Rule { x: true, ..date.clone() };
+        assert!(!wants_taken(&[date.clone(), Rule { x: true, ..Rule::new(Kind::Replace) }]));
+        assert!(wants_taken(&[date.clone(), ticked.clone()]));
+        assert!(!wants_taken(&[Rule { on: false, ..ticked.clone() }]));
+        // its box, the row's words (no picture glyph: screen readers read them) and the hint, in both languages
+        for ko in [false, true] {
+            assert!(!spec_in(Kind::Date, ko).flags[0].is_empty() && spec_in(Kind::Date, ko).flags[1].is_empty());
+            assert!(!spec_in(Kind::Date, ko).hint.contains(lang(ko, "Modified", "수정한")));
+            assert_eq!(check_name(ID_FY, Some(&ticked), false, ko), None);
+        }
+        assert_eq!(check_name(ID_FX, Some(&ticked), false, false).as_deref(), Some("Photos: date taken (else modified): on"));
+        assert_eq!(check_name(ID_FX, Some(&date), false, true).as_deref(), Some("사진은 찍은 날짜 (없으면 수정한 날짜): 끔"));
+        assert_eq!(summary_in(&date, false), "Date: yyyyMMdd · Before the name");
+        assert_eq!(summary_in(&ticked, false), "Date: yyyyMMdd · Before the name · date taken");
+        assert_eq!(summary_in(&ticked, true), "날짜: yyyyMMdd · 이름 앞 · 찍은 날짜");
     }
 
     #[test]
@@ -1832,12 +2011,21 @@ mod tests {
             }
             assert!(g.note.right - g.note.left > 60 * dpi / 96 && g.hint.bottom <= g.ctl.iter().find(|(id, _)| *id == ID_PNAME).unwrap().1.top);
             for (a, ra) in &g.ctl {
-                // the mode button shares its row with the two check boxes (never shown together)
+                // the mode button shares its row with the two check boxes (never shown together there: the date
+                // rule, which has both, shows its check box in the third field row, checked below)
                 for (b, rb) in g.ctl.iter().filter(|(b, _)| b > a && !(*a == ID_MODE && (*b == ID_FX || *b == ID_FY))) {
                     let apart = ra.right <= rb.left || rb.right <= ra.left || ra.bottom <= rb.top || rb.bottom <= ra.top;
                     assert!(apart, "{a} and {b} overlap at {dpi}");
                 }
             }
+            // a date rule's check box in the third field row: inside, wide enough for its label, on top of nothing but
+            // that row's field (a date rule hides it) and its own place in the mode row (place_x moves it from there)
+            assert!(inside(&g.x_row) && g.x_row.right - g.x_row.left >= 300 * dpi / 96, "date check box at {dpi}");
+            for (b, rb) in g.ctl.iter().filter(|(b, _)| *b != ID_F0 + 2 && *b != ID_FX) {
+                let apart = g.x_row.right <= rb.left || rb.right <= g.x_row.left || g.x_row.bottom <= rb.top || rb.bottom <= g.x_row.top;
+                assert!(apart, "date check box and {b} overlap at {dpi}");
+            }
+            assert!(g.x_row.bottom <= g.fields[4].top && g.x_row.top >= g.fields[1].bottom);
             let lb = g.ctl.iter().find(|(id, _)| *id == ID_RULES).unwrap().1;
             assert!(lb.bottom - lb.top >= 40 * dpi / 96);
         }

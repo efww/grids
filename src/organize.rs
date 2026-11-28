@@ -442,8 +442,9 @@ unsafe fn delete_dirs(dirs: &[(PathBuf, usize)]) -> Result<IFileOperation> {
     Ok(op)
 }
 
-// The photo's date taken (EXIF), as a local date; None when it has none.
-unsafe fn date_taken(path: &str) -> Option<[u16; 6]> {
+// The photo's date taken (EXIF), as a local date; None when it has none. COM must be on in the calling thread
+// (also batch rename's date rule, rename.rs read_taken).
+pub(crate) unsafe fn date_taken(path: &str) -> Option<[u16; 6]> {
     let item: IShellItem2 = SHCreateItemFromParsingName(&HSTRING::from(path), None).ok()?;
     let ft = item.GetFileTime(&PKEY_Photo_DateTaken).ok()?;
     let ft = (ft.dwHighDateTime as u64) << 32 | ft.dwLowDateTime as u64;

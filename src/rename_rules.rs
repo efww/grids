@@ -9,7 +9,7 @@ pub(crate) enum Kind {
     Insert,  // f0 text, f1 position; mode start / end / at position
     Remove,  // f0 count, f1 position; mode counted from start / from end
     Number,  // f0 start, f1 step, f2 digits (empty: as many as the count needs), f3 separator; mode before / after / instead of the name
-    Date,    // f0 pattern (yyyy yy MM dd HH mm ss), f1 separator; mode as Number
+    Date,    // f0 pattern (yyyy yy MM dd HH mm ss), f1 separator; mode as Number; x photos by their date taken
     Case,    // mode lower / UPPER / Title
     Trim,    // spaces at both ends and doubled ones
 }
@@ -49,6 +49,7 @@ pub(crate) struct Src {
     pub(crate) name: String,
     pub(crate) is_dir: bool,
     pub(crate) date: [u16; 6], // modified, local: year, month, day, hour, minute, second
+    pub(crate) taken: Option<[u16; 6]>, // a photo's date taken, once read (only when a date rule asks for it)
 }
 
 fn num<T: std::str::FromStr + Default>(s: &str) -> T {
@@ -177,7 +178,10 @@ fn apply_one(r: &Rule, re: Option<&regex_lite::Regex>, s: &str, src: &Src, k: us
             format!("{}{}", &s[..chars_at(s, from)], &s[chars_at(s, to)..])
         }
         Kind::Number => place(s, &number_text(r, k, count), &r.f[3], r.mode),
-        Kind::Date => place(s, &format_date(&r.f[0], src.date), &r.f[1], r.mode),
+        Kind::Date => {
+            let d = if r.x { crate::organize::pick_date(src.taken, src.date) } else { src.date };
+            place(s, &format_date(&r.f[0], d), &r.f[1], r.mode)
+        }
         Kind::Case => match r.mode {
             0 => s.to_lowercase(),
             1 => s.to_uppercase(),
@@ -390,7 +394,7 @@ mod tests {
     use super::*;
 
     fn src(n: &str) -> Src {
-        Src { name: n.into(), is_dir: false, date: [2024, 3, 7, 9, 5, 2] }
+        Src { name: n.into(), is_dir: false, date: [2024, 3, 7, 9, 5, 2], taken: None }
     }
     fn rule(kind: Kind, f: [&str; 4], mode: u8) -> Rule {
         Rule { kind, on: true, f: f.map(String::from), mode, x: false, y: false }
@@ -429,6 +433,19 @@ mod tests {
         // date
         assert_eq!(run(&[rule(Kind::Date, ["yyyy-MM-dd", " ", "", ""], 0)], false, &["x.jpg"]), ["2024-03-07 x.jpg"]);
         assert_eq!(format_date("yyMMdd_HHmmss é", [2024, 3, 7, 9, 5, 2]), "240307_090502 é");
+        // photos by their date taken: with one, without one (the date modified), and the option off
+        let shot = Src { taken: Some([2026, 11, 28, 14, 30, 15]), ..src("IMG_1.jpg") };
+        let blank = Src { taken: Some([0; 6]), ..src("IMG_2.jpg") };
+        let pat = rule(Kind::Date, ["yyyy-MM-dd HH.mm.ss", "", "", ""], 2);
+        let taken = Rule { x: true, ..pat.clone() };
+        let items = [shot.clone(), blank, src("a.txt")];
+        assert_eq!(new_names(&[taken.clone()], false, &items).unwrap(), ["2026-11-28 14.30.15.jpg", "2024-03-07 09.05.02.jpg", "2024-03-07 09.05.02.txt"]);
+        assert_eq!(new_names(&[pat], false, &[shot]).unwrap(), ["2024-03-07 09.05.02.jpg"]);
+        // through a preset and back (the x place every rule has); an older line (x = 0) reads as before
+        let t = preset_text("p", false, &[taken.clone()]);
+        assert_eq!(t, "p|0|date,1,2,1,0,yyyy-MM-dd HH.mm.ss,,,");
+        assert_eq!(parse_preset(&t), Some(("p".into(), false, vec![taken])));
+        assert_eq!(parse_preset("p|0|date,1,0,0,0,yyyyMMdd,_,,"), Some(("p".into(), false, vec![Rule::new(Kind::Date)])));
         // folders and dotfiles keep their whole name as the stem
         assert_eq!(split_ext("v1.2", true), ("v1.2", ""));
         assert_eq!(split_ext(".gitignore", false), (".gitignore", ""));
