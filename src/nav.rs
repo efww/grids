@@ -1224,24 +1224,35 @@ pub(crate) unsafe fn open_in_menu(h: HWND, src: usize) {
 
 // Right-click on a pane header: colour label from the selection colour presets, saved with the session.
 pub(crate) unsafe fn tint_menu(h: HWND, i: usize, at: POINT) {
-    let (cur, dpi) = app(|a| (a.s.tints[i], a.dpi));
+    let dpi = app(|a| a.dpi);
     let mut chips = MenuSwatches::new(dpi); // dropped after DestroyMenu
     let Ok(menu) = CreatePopupMenu() else { return };
     _ = AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, &HSTRING::from(tr("Pane colour", "패널 색")));
     _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
-    for k in 0..=6u8 {
-        let flags = if k == cur { MF_STRING | MF_CHECKED } else { MF_STRING };
-        let name = if k == 0 { tr("None", "없음") } else { tint_name(k) };
-        _ = AppendMenuW(menu, flags, k as usize + 1, &HSTRING::from(name));
-        chips.put(menu, k as usize + 1, tint_color(k)); // None: an empty chip
-    }
+    tint_rows(menu, &mut chips, i, 1);
     let pick = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN, at.x, at.y, None, h, None).0;
     _ = DestroyMenu(menu);
     if pick > 0 {
-        app(|a| a.s.tints[i] = pick as u8 - 1);
-        repaint_header(h);
-        check_dirty();
+        set_tint(h, i, pick as u8 - 1);
     }
+}
+
+// Pane i's colour rows (None, then the six) with their chips and the current one checked, ids base..base + 6.
+// `chips` must outlive the menu.
+pub(crate) unsafe fn tint_rows(menu: HMENU, chips: &mut MenuSwatches, i: usize, base: usize) {
+    let cur = app(|a| a.s.tints[i]);
+    for k in 0..=6u8 {
+        let flags = if k == cur { MF_STRING | MF_CHECKED } else { MF_STRING };
+        let name = if k == 0 { tr("None", "없음") } else { tint_name(k) };
+        _ = AppendMenuW(menu, flags, base + k as usize, &HSTRING::from(name));
+        chips.put(menu, base + k as usize, tint_color(k)); // None: an empty chip
+    }
+}
+
+pub(crate) unsafe fn set_tint(h: HWND, i: usize, k: u8) {
+    app(|a| a.s.tints[i] = k);
+    repaint_header(h);
+    check_dirty();
 }
 
 // Alt+↓ or right-click on ← / →: folders recently visited in any pane, opened in this one.

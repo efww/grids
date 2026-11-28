@@ -1306,6 +1306,26 @@ mod tests {
     }
 
     #[test]
+    fn addr_menu_targets() {
+        let here = r"C:\Users\Public";
+        let t = |hit: Option<Option<Crumb>>| addr_menu_target(hit.as_ref().map(|c| c.as_ref()), here);
+        let dir = |d: &str| Some(AddrMenu::Dir(d.into()));
+        // the icon and the pill's empty space (crumb_at's Some(None)), the folder's own crumb, '…': this folder
+        assert_eq!(t(Some(None)), Some(AddrMenu::Here));
+        assert_eq!(t(Some(Some(Crumb::Here))), Some(AddrMenu::Here));
+        assert_eq!(t(Some(Some(Crumb::More(vec![("C:".into(), r"C:\".into())])))), Some(AddrMenu::Here));
+        // a parent crumb, a '›' between parents: that folder
+        assert_eq!(t(Some(Some(Crumb::Go(r"C:\Users".into())))), dir(r"C:\Users"));
+        assert_eq!(t(Some(Some(Crumb::Kids(r"C:\".into(), Some("Users".into()))))), dir(r"C:\"));
+        // the '›' after this folder's own crumb is this folder (any case, a trailing slash)
+        assert_eq!(t(Some(Some(Crumb::Kids(r"c:\users\public\".into(), None)))), Some(AddrMenu::Here));
+        // edit showing or off the pill: the colour menu as before
+        assert_eq!(t(None), None);
+        // the colour rows added to a shell menu (None + six) stay past the shell's ids and within a menu id
+        assert!(SHELL_EXTRA > 0x7fff && SHELL_EXTRA + 6 <= 0xffff);
+    }
+
+    #[test]
     fn focus_rings() {
         // list → address → filter → tree → toolbar → list; Shift+F6 the other way
         let walk = |back, tree| (0..5).map(|p| focus_ring(p, back, tree)).collect::<Vec<_>>();

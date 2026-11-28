@@ -908,7 +908,8 @@ pub(crate) extern "system" fn pane_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                     recent_menu(i);
                 }
             }
-            // right-click on the header itself (not its buttons or fields): colour label; on a tab: that tab's menu
+            // right-click on the header itself (not its buttons or fields): colour label; on the address pill: that
+            // folder's Explorer menu; on a tab: that tab's menu
             WM_CONTEXTMENU if wp.0 == h.0 as usize => {
                 let mut p = POINT { x: (lp.0 & 0xffff) as i16 as i32, y: (lp.0 >> 16 & 0xffff) as i16 as i32 };
                 let screen = p;
@@ -926,7 +927,12 @@ pub(crate) extern "system" fn pane_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 };
                 match pane_of(h).filter(|_| lp.0 != -1).map(|i| (i, tab(i))) {
                     Some((i, Some(k))) => tab_menu(h, i, k, screen),
-                    Some((i, None)) if p.y < pg.view.top => tint_menu(h, i, screen),
+                    // the address pill: that folder's Explorer menu (colour rows at its bottom); else the colour menu
+                    Some((i, None)) if p.y < pg.view.top => {
+                        if !addr_menu(h, i, p, screen) {
+                            tint_menu(h, i, screen);
+                        }
+                    }
                     _ => return DefWindowProcW(h, msg, wp, lp),
                 }
             }
@@ -1630,26 +1636,38 @@ unsafe fn drop_verbs(menu: HMENU, cm: &IContextMenu, verbs: &[&str]) {
 
 // `skip`: verbs left off the menu (a cloud folder's: deleting it from a toolbar button would empty the cloud).
 unsafe fn shell_menu(parse: &str, at: POINT, skip: &[&str], on_open: impl FnOnce()) {
-    let main = app(|a| a.main);
-    let cm = SHCreateItemFromParsingName::<_, _, IShellItem>(&HSTRING::from(parse), None).and_then(|item| item.BindToHandler::<_, IContextMenu>(None, &BHID_SFUIObject));
-    let Ok(cm) = cm else {
+    let item = SHCreateItemFromParsingName::<_, _, IShellItem>(&HSTRING::from(parse), None);
+    if item.ok().and_then(|item| shell_menu_of(&item, at, skip, |_| {}, on_open)).is_none() {
         _ = MessageBeep(MB_ICONWARNING); // gone since
-        return;
-    };
-    let Ok(menu) = CreatePopupMenu() else { return };
+    }
+}
+
+// Ids of the rows a caller adds after the shell's: past its 1..0x7fff, so they never reach the shell.
+pub(crate) const SHELL_EXTRA: usize = 0x8000;
+
+// shell_menu for an item in hand. `extra` appends the caller's own rows (ids from SHELL_EXTRA) after the shell's.
+// None: no menu could be made (nothing shown); Some(Some(id)): one of the caller's rows was picked.
+unsafe fn shell_menu_of(item: &IShellItem, at: POINT, skip: &[&str], extra: impl FnOnce(HMENU), on_open: impl FnOnce()) -> Option<Option<usize>> {
+    let main = app(|a| a.main);
+    let cm = item.BindToHandler::<_, IContextMenu>(None, &BHID_SFUIObject).ok()?;
+    let menu = CreatePopupMenu().ok()?;
     // CMF_NORMAL only: Rename would need a view to rename in
     if cm.QueryContextMenu(menu, 0, 1, 0x7fff, CMF_NORMAL).is_err() {
         _ = DestroyMenu(menu);
-        _ = MessageBeep(MB_ICONWARNING);
-        return;
+        return None;
     }
     if !skip.is_empty() {
         drop_verbs(menu, &cm, skip);
     }
+    extra(menu); // after drop_verbs: its ids are no shell's to ask for verbs
     DRIVE_CM.with(|s| *s.borrow_mut() = (cm.cast().ok(), cm.cast().ok()));
     // TPM_RETURNCMD: the shell's ids 1..0x7fff must never come as WM_COMMAND (drive buttons, view menu ids)
     let pick = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_LEFTALIGN | TPM_TOPALIGN, at.x, at.y, None, main, None).0;
     DRIVE_CM.with(|s| *s.borrow_mut() = (None, None));
+    if pick as usize >= SHELL_EXTRA {
+        _ = DestroyMenu(menu);
+        return Some(Some(pick as usize));
+    }
     if pick > 0 {
         let id = pick as usize - 1;
         let open = cm_verb(&cm, id).is_some_and(|v| v.eq_ignore_ascii_case("open") || v.eq_ignore_ascii_case("explore"));
@@ -1667,6 +1685,48 @@ unsafe fn shell_menu(parse: &str, at: POINT, skip: &[&str], on_open: impl FnOnce
         }
     }
     _ = DestroyMenu(menu);
+    Some(None)
+}
+
+// Right-click on the address pill (icon, crumbs, its empty space): Explorer's menu of that folder, as XYplorer's
+// and Total Commander's path bars give, with the pane colour rows in a submenu at the bottom. Delete / Cut are left
+// off (a parent crumb's would bin the pane's folder without a word); Open / Explore stay in the pane. False: not on
+// the pill, or the shell made no menu for it (a search, some shell places): the caller shows the colour menu.
+unsafe fn addr_menu(h: HWND, i: usize, p: POINT, screen: POINT) -> bool {
+    let here = app(|a| a.s.paths[i].clone());
+    let Some(target) = addr_menu_target(crumb_at(h, i, p.x, p.y).as_ref().map(|c| c.as_ref().map(|(_, _, c)| c)), &here) else {
+        return false;
+    };
+    let item = match &target {
+        // the view's own folder: a search or shell place may have no parsing name to make it from
+        AddrMenu::Here => view_of::<IFolderView2>(i).and_then(|fv| fv.GetFolder::<IShellItem>().ok()),
+        AddrMenu::Dir(d) => SHCreateItemFromParsingName::<_, _, IShellItem>(&HSTRING::from(d.as_str()), None).ok(),
+    };
+    let Some(item) = item else { return false };
+    set_active(i);
+    let mut chips = MenuSwatches::new(app(|a| a.dpi)); // dropped after shell_menu_of's DestroyMenu
+    let mut open = false;
+    let colours = |menu: HMENU| {
+        let Ok(sub) = CreatePopupMenu() else { return };
+        tint_rows(sub, &mut chips, i, SHELL_EXTRA);
+        _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
+        _ = AppendMenuW(menu, MF_POPUP, sub.0 as usize, &HSTRING::from(tr("Pane colour", "패널 색")));
+    };
+    let shown = shell_menu_of(&item, screen, &["delete", "cut"], colours, || open = true);
+    match shown {
+        None => return false,
+        Some(Some(id)) if id - SHELL_EXTRA <= 6 => set_tint(h, i, (id - SHELL_EXTRA) as u8),
+        _ => {}
+    }
+    if open {
+        if let AddrMenu::Dir(d) = &target {
+            if !navigate(i, d) {
+                fail(Fail::FolderCantOpen, d); // gone since
+            }
+        }
+        focus_view(i);
+    }
+    true
 }
 
 // ---------- the Recycle Bin button ----------

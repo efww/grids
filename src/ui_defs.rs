@@ -451,7 +451,7 @@ Drive buttons (C, D …): open that drive in the active pane; its drive is under
 Phone / camera buttons: a phone or camera plugged in by USB (no drive letter) gets an icon button after the drive letters; click: open it in the active pane; right-click: the device menu (Import pictures and videos, Properties …)\n\
 Double-click a splitter: split evenly\n\
 Update button (blue, top right): a newer Grids is out; click to restart into it (settings, folders and sessions stay)\n\
-Pane header: right-click for a colour label (saved with the session); double-click to maximize / restore the pane; drop a folder on it to open it there (a file: its folder)\n\
+Pane header: right-click for a colour label (saved with the session); right-click the address bar's folder icon or a folder in the path for that folder's Windows menu (Pin to Quick access, Open in Terminal, Properties …; the colour label is at its bottom); double-click to maximize / restore the pane; drop a folder on it to open it there (a file: its folder)\n\
 Tabs: click to switch, × or middle-click to close, + or double-click the empty strip for a new tab, right-click to duplicate, move left / right, close or reopen a closed tab; drop files on another tab to copy / move them into its folder as in Explorer (Ctrl copies, Shift moves)\n\
 Arguments: grids.exe C:\\a D:\\b ... or grids.exe work.grids; a file (grids.exe C:\\a\\b.txt, or Explorer's grids.exe /select,C:\\a\\b.txt) opens its folder with it selected\n\
 If Grids is already running, they open in that window.";
@@ -528,7 +528,7 @@ F2\t패널에서 이름 바꾸는 중: 누를 때마다 확장명 뺀 이름 →
 휴대폰·카메라 버튼: USB로 꽂은 휴대폰·카메라(드라이브 문자 없음)는 드라이브 버튼 뒤에 아이콘 버튼으로 생김, 클릭: 지금 패널에서 열기, 오른쪽 클릭: 기기 메뉴(사진 및 동영상 가져오기·속성 …)\n\
 스플리터 더블클릭: 균등 분할\n\
 업데이트 버튼 (파란색, 오른쪽 위): 새 Grids가 나옴, 누르면 재시작해 업데이트 (설정·폴더·세션 유지)\n\
-패널 머리줄: 오른쪽 클릭 = 패널 색 라벨 (세션에 저장), 더블클릭 = 크게 보기 / 복원, 폴더를 끌어다 놓으면 그 패널에서 열기 (파일은 그 파일이 든 폴더)\n\
+패널 머리줄: 오른쪽 클릭 = 패널 색 라벨 (세션에 저장), 주소 칸 폴더 아이콘·경로 조각 오른쪽 클릭 = 그 폴더의 Windows 메뉴(빠른 액세스에 고정·터미널에서 열기·속성 …, 패널 색은 그 메뉴 맨 아래), 더블클릭 = 크게 보기 / 복원, 폴더를 끌어다 놓으면 그 패널에서 열기 (파일은 그 파일이 든 폴더)\n\
 탭: 클릭 = 전환, × 또는 가운데 클릭 = 닫기, + 또는 탭 줄 빈 곳 더블클릭 = 새 탭, 오른쪽 클릭 = 복제·왼쪽/오른쪽으로 옮기기·닫기·닫은 탭 다시 열기, 파일을 다른 탭에 끌어다 놓으면 탐색기처럼 그 탭 폴더로 복사·이동(Ctrl 복사·Shift 이동)\n\
 실행 인자: grids.exe C:\\a D:\\b ... 또는 grids.exe 작업.grids, 파일(grids.exe C:\\a\\b.txt 또는 탐색기 형식 grids.exe /select,C:\\a\\b.txt)을 주면 그 폴더를 열고 파일을 선택\n\
 이미 실행 중이면 그 창에서 엽니다.";

@@ -114,6 +114,21 @@ pub(crate) enum Crumb {
     More(Vec<(String, String)>), // folded parents, nearest first
 }
 
+// Whose shell menu a right-click on the address pill gives, from crumb_at's answer (`hit`) and the pane's folder.
+#[derive(Debug, PartialEq)]
+pub(crate) enum AddrMenu {
+    Here,        // the folder the pane shows: the icon, its own crumb, '…' or the pill's empty space
+    Dir(String), // a parent crumb, or the folder left of a '›'
+}
+
+// None: edit showing or outside the pill (crumb_at's None), the header's colour menu as before.
+pub(crate) fn addr_menu_target(hit: Option<Option<&Crumb>>, here: &str) -> Option<AddrMenu> {
+    match hit? {
+        Some(Crumb::Go(p) | Crumb::Kids(p, _)) if !same_dir(p, here) => Some(AddrMenu::Dir(p.clone())),
+        _ => Some(AddrMenu::Here),
+    }
+}
+
 // The system small icon list, loaded on first use and kept: address bar, Everything results and drive buttons.
 // Called outside app(..), since the shell may send messages back.
 pub(crate) unsafe fn small_ilist() -> Option<IImageList> {
