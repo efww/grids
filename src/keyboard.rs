@@ -248,7 +248,12 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
             }
         }
         KeyRoute::Help => open_help(),
-        KeyRoute::AddrGo => go_edit(a),
+        // held, Ctrl+Shift+Enter runs once: after it the address is this folder again, and a repeat would ask again
+        KeyRoute::AddrGo(up) => {
+            if !(up && repeat) {
+                go_edit(a, up);
+            }
+        }
         KeyRoute::FilterApply => {
             apply_filter(a);
             focus_view(a);
@@ -434,7 +439,7 @@ pub(crate) enum KeyRoute {
     Gather,
     Rename,
     Help,
-    AddrGo,
+    AddrGo(bool),
     FilterApply,
     AddrCancel,
     FilterClear,
@@ -534,7 +539,8 @@ pub(crate) fn key_route(vk: VIRTUAL_KEY, ctrl: bool, shift: bool, alt: bool, c: 
         VK_O if ctrl && shift && !alt => Gather,
         VK_R if ctrl && shift && !alt => Rename,
         VK_F1 => Help,
-        VK_RETURN if addr => AddrGo,
+        // Ctrl+Shift+Enter: as administrator (Win+R's); any other Enter as typed
+        VK_RETURN if addr => AddrGo(ctrl && shift && !alt),
         VK_RETURN if filt => FilterApply,
         VK_ESCAPE if addr => AddrCancel,
         VK_ESCAPE if filt => FilterClear,

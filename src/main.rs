@@ -1473,6 +1473,59 @@ mod tests {
         assert_eq!(find_prog(".exe", &dirs, &exts, |_| false), None);
     }
 
+    // Ctrl+Shift+Enter's shells are told the folder in their own quoting: the folder comes back whole (spaces in a
+    // row, a trailing \, & % ' ’ $ ;) and nothing in it gets out of the quotes to run as a command.
+    #[test]
+    fn elevated_shell_args() {
+        let ps = |d: &str| format!("-NoExit -Command \"Set-Location -LiteralPath '{d}'\"");
+        let table = [
+            ("cmd", r"C:\Users\Public", r#"/k pushd "C:\Users\Public""#.to_string()),
+            (r"C:\Windows\System32\cmd.exe", r"D:\", r#"/k pushd "D:\""#.to_string()),
+            ("cmd.exe", r"\\srv\share\a b", r#"/k pushd "\\srv\share\a b""#.to_string()),
+            ("CMD", r"C:\R&D %PATH% ^x", r#"/k pushd "C:\R&D %PATH% ^x""#.to_string()),
+            ("powershell", r"C:\a  b", ps(r"C:\a  b")),
+            (r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe", r"D:\", ps(r"D:\")),
+            ("powershell", r"C:\it's", ps(r"C:\it''s")),
+            ("powershell", "C:\\it\u{2019}s \u{2018}x\u{201A}\u{201B}", ps("C:\\it\u{2019}\u{2019}s \u{2018}\u{2018}x\u{201A}\u{201A}\u{201B}\u{201B}")),
+            ("powershell", r"C:\$env;`x", ps(r"C:\$env;`x")),
+            ("pwsh", r"C:\Program Files\", r#"-NoExit -WorkingDirectory "C:\Program Files\\""#.to_string()),
+            ("wt", r"D:\", r#"-d "D:\\""#.to_string()),
+            (r"C:\Users\u\AppData\Local\Microsoft\WindowsApps\wt.exe", r"C:\a b;c", r#"-d "C:\a b\;c""#.to_string()),
+        ];
+        for (prog, dir, want) in table {
+            assert_eq!(elevated_args(prog, "", Some(dir)), want, "{prog} {dir}");
+        }
+        // cmd: the folder is all there is between the only two quotes
+        for d in [r"C:\a&b", r"C:\x ^& y\", r"C:\%a%\!b!"] {
+            let a = elevated_args("cmd", "", Some(d));
+            assert_eq!((a.matches('"').count(), a.split('"').nth(1)), (2, Some(d)), "{a}");
+        }
+        // PowerShell: no lone quote mark inside the literal, and un-doubling gives the folder back
+        let q = |c: char| matches!(c, '\'' | '\u{2018}'..='\u{201B}');
+        for d in ["C:\\'; calc; '", "C:\\\u{2019}; calc #", r"C:\''"] {
+            let a = elevated_args("powershell", "", Some(d));
+            let lit = a.strip_prefix("-NoExit -Command \"Set-Location -LiteralPath '").and_then(|r| r.strip_suffix("'\"")).unwrap();
+            let cs: Vec<char> = lit.chars().collect();
+            let (mut back, mut k) = (String::new(), 0);
+            while k < cs.len() {
+                if q(cs[k]) {
+                    assert_eq!(cs.get(k + 1), Some(&cs[k]), "{a}");
+                    k += 1;
+                }
+                back.push(cs[k]);
+                k += 1;
+            }
+            assert_eq!(back, d);
+        }
+        // arguments typed, another program, or no folder (a shell place): as typed
+        assert_eq!(elevated_args("cmd", "/k ver", Some(r"C:\x")), "/k ver");
+        assert_eq!(elevated_args("wt", "-p Ubuntu", Some(r"C:\x")), "-p Ubuntu");
+        assert_eq!(elevated_args("notepad", "", Some(r"C:\x")), "");
+        assert_eq!(elevated_args("regedit.exe", "", Some(r"C:\x")), "");
+        assert_eq!(elevated_args("cmd", "", None), "");
+        assert_eq!(elevated_args("powershell", "  ", Some(r"C:\x")), ps(r"C:\x"));
+    }
+
     // "Star on GitHub" runs gh by full path from System32, Windows or PATH's absolute folders: never one next to
     // Grids or in a relative PATH entry, and nothing (the page opens) when there is none.
     #[test]
@@ -5823,6 +5876,11 @@ mod tests { tr("in", "안") }
         assert_ne!(l("Ctrl+Alt+Shift+T"), ReopenTab);
         assert_eq!(route_with("", "Ctrl+Enter", false, 9, None), Shell);
         assert_eq!((l("Ctrl+Enter"), l("Ctrl+Shift+Enter")), (OpenTabs(false), OpenTabs(true)));
+        // the address bar's Ctrl+Shift+Enter: as administrator; its other Enters as typed; the filter's stays its own
+        assert_eq!(route("addr", "Ctrl+Shift+Enter"), AddrGo(true));
+        assert_eq!((route("addr", "Enter"), route("addr", "Ctrl+Enter"), route("addr", "Shift+Enter")), (AddrGo(false), AddrGo(false), AddrGo(false)));
+        assert_eq!(route("addr", "Ctrl+Alt+Shift+Enter"), AddrGo(false));
+        assert_eq!(route("filter", "Ctrl+Shift+Enter"), FilterApply);
         assert_eq!((route_with("", "Ctrl+4", true, 4, None), route_with("", "Ctrl+5", true, 4, None)), (Pane(3), Shell));
         for k in ["Alt+PgDn", "F3", "F7", "Insert"] {
             assert_eq!(route("addr", k), BoxKey, "{k}");

@@ -126,6 +126,7 @@ pub(crate) enum Fail {
     AddrNotFound,
     AddrQuotes,
     AddrCantOpen,
+    AddrElevateCancelled,
     FolderCantOpen,
     LastTab,
     DriveCantOpen,
@@ -158,13 +159,13 @@ pub(crate) enum Fail {
 }
 
 #[cfg(test)] // every kind, for the fail_texts test
-pub(crate) const FAILS: [Fail; 32] = {
+pub(crate) const FAILS: [Fail; 33] = {
     use Fail::*;
     [
         AddrNotFound, AddrQuotes, AddrCantOpen, FolderCantOpen, LastTab, DriveCantOpen, SortHere, PaneMin, NoBorder, GroupEmpty, GroupTooMany,
         GroupCant, GroupBusy, NewFileHere, NewFolder, SendChanged, SendCant, PatternEmpty, StampEmpty, StampTooMany, StampCant, StampBusy,
         EditNone, EditOnline, DragCant, ClipNoPath, NoClosedTab, DlgBusy, ExplorerCant, PatternCond, SessionCantSave,
-        SessionKept,
+        SessionKept, AddrElevateCancelled,
     ]
 };
 
@@ -174,6 +175,7 @@ pub(crate) fn fail_pair(kind: Fail) -> (&'static str, &'static str) {
         Fail::AddrNotFound => ("No folder, file or command named '{name}' · check the spelling", "'{name}' 폴더·파일·명령을 찾을 수 없음 · 철자를 확인하세요"),
         Fail::AddrQuotes => ("The quotes in the address don't pair up", "주소의 따옴표 짝이 맞지 않음"),
         Fail::AddrCantOpen => ("Can't open '{name}'", "'{name}'을(를) 열 수 없음"),
+        Fail::AddrElevateCancelled => ("Not run: administrator permission was declined", "실행 안 함: 관리자 권한 요청을 거절함"),
         Fail::FolderCantOpen => ("Can't open {name} · it may be gone or not connected", "{name}을(를) 열 수 없음 · 없어졌거나 연결되지 않았을 수 있음"),
         Fail::LastTab => ("The last tab can't be closed", "마지막 탭은 닫을 수 없음"),
         Fail::NoClosedTab => ("No closed tab to reopen", "다시 열 닫은 탭이 없음"),

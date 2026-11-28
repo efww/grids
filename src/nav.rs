@@ -731,16 +731,45 @@ pub(crate) fn path_exts(pathext: &str) -> Vec<String> {
 /// pane's folder holds a file it would match; then None, nothing runs. Opening a file there on purpose takes its
 /// full name (cmd.exe), which the address bar opens as a file.
 pub(crate) fn addr_program(prog: &str, cur: Option<&str>) -> Option<String> {
-    let env = |k: &str| std::env::var(k).unwrap_or_default();
-    let root = Some(env("SystemRoot")).filter(|r| !r.is_empty()).unwrap_or_else(|| r"C:\Windows".into());
-    let exts = path_exts(&env("PATHEXT"));
-    // symlink_metadata: the Store's app aliases (wt.exe in WindowsApps) are reparse points metadata can't follow
-    let is_file = |p: &Path| std::fs::symlink_metadata(p).is_ok_and(|m| !m.is_dir());
-    if let Some(full) = find_prog(prog, &prog_dirs(&root, &env("PATH")), &exts, is_file) {
+    let (dirs, exts) = prog_search();
+    if let Some(full) = find_prog(prog, &dirs, &exts, prog_file) {
         return Some(full);
     }
-    let planted = cur.is_some_and(|c| find_prog(prog, &[c.to_string()], &exts, is_file).is_some());
+    let planted = cur.is_some_and(|c| find_prog(prog, &[c.to_string()], &exts, prog_file).is_some());
     (!planted).then(|| prog.to_string())
+}
+
+// prog_dirs and path_exts from this process's environment.
+fn prog_search() -> (Vec<String>, Vec<String>) {
+    let env = |k: &str| std::env::var(k).unwrap_or_default();
+    let root = Some(env("SystemRoot")).filter(|r| !r.is_empty()).unwrap_or_else(|| r"C:\Windows".into());
+    (prog_dirs(&root, &env("PATH")), path_exts(&env("PATHEXT")))
+}
+
+// symlink_metadata: the Store's app aliases (wt.exe in WindowsApps) are reparse points metadata can't follow
+fn prog_file(p: &Path) -> bool {
+    std::fs::symlink_metadata(p).is_ok_and(|m| !m.is_dir())
+}
+
+/// The arguments a program run as administrator (Ctrl+Shift+Enter) gets. An elevated program may not start in
+/// lpDirectory, so a shell typed without arguments is told the folder itself: cmd `pushd` (a \\server\share too),
+/// Windows PowerShell `Set-Location` on a literal path in single quotes (all five quote marks it reads doubled),
+/// pwsh `-WorkingDirectory`, wt `-d` (its `;` splits commands unless escaped). Anything else, or with arguments
+/// typed, or no folder: the arguments as typed. Windows folder names hold no `"`, so nothing leaves the quotes.
+pub(crate) fn elevated_args(prog: &str, args: &str, dir: Option<&str>) -> String {
+    let Some(dir) = dir.filter(|_| args.trim().is_empty()) else { return args.to_string() };
+    let base = prog.rsplit(['\\', '/']).next().unwrap_or(prog);
+    let stem = base.rsplit_once('.').map_or(base, |(s, _)| s).to_ascii_lowercase();
+    match stem.as_str() {
+        "cmd" => format!("/k pushd \"{dir}\""),
+        "powershell" => {
+            let lit: String = dir.chars().flat_map(|c| if matches!(c, '\'' | '\u{2018}'..='\u{201B}') { vec![c, c] } else { vec![c] }).collect();
+            format!("-NoExit -Command \"Set-Location -LiteralPath '{lit}'\"")
+        }
+        "pwsh" => format!("-NoExit -WorkingDirectory {}", quote_arg(dir)),
+        "wt" => format!("-d {}", quote_arg(&dir.replace(';', "\\;"))),
+        _ => args.to_string(),
+    }
 }
 
 pub(crate) fn is_rel(p: &str) -> bool {
@@ -754,10 +783,91 @@ pub(crate) unsafe fn addr_reset(i: usize, e: HWND) {
     show_path_end(e, &disp);
 }
 
+// Ctrl+Shift+Enter in the address bar, as Win+R's: a command or file runs as administrator in this pane's folder;
+// a folder (the one on display too) gets an administrator terminal there: wt, else Windows PowerShell, else cmd,
+// whichever is installed. Never a recent / favourite folder by name. Declined at the UAC prompt: nothing else is
+// tried (no second prompt), the status line says so and the address goes back to the folder.
+unsafe fn go_elevated(i: usize, e: HWND) {
+    let raw = text_of(e);
+    let Some((path, cmd)) = addr_parts(raw.trim()) else {
+        fail(Fail::AddrQuotes, "");
+        return;
+    };
+    let (cur, disp, main) =
+        app(|a| (a.s.paths[i].clone(), a.panes[i].as_ref().map(|p| p.disp.clone()).unwrap_or_default(), a.main));
+    let cur = (is_fs(&cur) && std::fs::metadata(&cur).is_ok_and(|m| m.is_dir())).then_some(cur);
+    let dir = cur.as_deref().map(HSTRING::from);
+    let runas = |file: &str, args: &str| {
+        let (verb, file, args) = (HSTRING::from("runas"), HSTRING::from(file), HSTRING::from(args));
+        let mut sei = SHELLEXECUTEINFOW {
+            cbSize: size_of::<SHELLEXECUTEINFOW>() as u32,
+            fMask: SEE_MASK_FLAG_NO_UI,
+            // owned by the main window: the UAC prompt comes up in front of Grids, not flashing on the taskbar
+            hwnd: main,
+            lpVerb: PCWSTR(verb.as_ptr()),
+            lpFile: PCWSTR(file.as_ptr()),
+            lpParameters: PCWSTR(args.as_ptr()),
+            lpDirectory: dir.as_ref().map_or(PCWSTR::null(), |d| PCWSTR(d.as_ptr())),
+            nShow: SW_SHOWNORMAL.0,
+            ..Default::default()
+        };
+        ShellExecuteExW(&mut sei).map_err(|e| e.code())
+    };
+    let name = path.unwrap_or(raw.trim()).to_string();
+    // the folder (on display, or typed) and the file typed, file system paths only
+    let unchanged = raw.trim() == disp.trim();
+    let target = path.filter(|_| !unchanged).and_then(|p| match &cur {
+        Some(c) if is_rel(p) => std::path::absolute(Path::new(c).join(p)).ok(),
+        _ => (!is_rel(p)).then(|| p.into()),
+    });
+    let meta = target.as_ref().and_then(|t| std::fs::metadata(t).ok());
+    let r = if unchanged || meta.as_ref().is_some_and(|m| m.is_dir()) {
+        let Some(folder) = (if unchanged { cur.clone() } else { target.map(|t| t.to_string_lossy().into_owned()) }) else {
+            // ZIP contents, This PC …: no folder for a terminal to start in
+            fail(Fail::AddrCantOpen, &name);
+            return;
+        };
+        let (dirs, exts) = prog_search();
+        let mut r = Err(HRESULT::from_win32(ERROR_FILE_NOT_FOUND.0));
+        // installed for real (an addr_program fallback would name wt with no wt); a failed one makes way for the next
+        for full in ["wt", "powershell", "cmd"].iter().filter_map(|t| find_prog(t, &dirs, &exts, prog_file)) {
+            r = runas(&full, &elevated_args(&full, "", Some(&folder)));
+            if r.is_ok() || r == Err(ERROR_CANCELLED.to_hresult()) {
+                break;
+            }
+        }
+        r.map_err(|c| if c == ERROR_CANCELLED.to_hresult() { c } else { E_FAIL })
+    } else if let Some(t) = target.filter(|_| meta.is_some()) {
+        // a file: its own runas verb (programs, scripts, installers); a type without one can't be opened so
+        runas(&t.to_string_lossy(), "")
+    } else if let Some((prog, args)) = cmd {
+        match addr_program(prog, cur.as_deref()) {
+            Some(full) => runas(&full, &elevated_args(&full, args, cur.as_deref())),
+            None => Err(HRESULT::from_win32(ERROR_FILE_NOT_FOUND.0)),
+        }
+    } else {
+        Err(HRESULT::from_win32(ERROR_FILE_NOT_FOUND.0))
+    };
+    match r {
+        Ok(()) => addr_reset(i, e),
+        Err(c) if c == ERROR_CANCELLED.to_hresult() => {
+            addr_reset(i, e);
+            // the user's own No: said, no warning beep
+            set_note(fail_text(Fail::AddrElevateCancelled, "", KO.load(Ordering::Relaxed)));
+        }
+        Err(c) if gone(c) => fail(Fail::AddrNotFound, &name),
+        Err(_) => fail(Fail::AddrCantOpen, &name),
+    }
+}
+
 // Enter in the address bar: a folder (relative to this pane's) is browsed to, a file opened, else a command
-// (cmd, wt, powershell ...) runs in this pane's folder.
-pub(crate) unsafe fn go_edit(i: usize) {
+// (cmd, wt, powershell ...) runs in this pane's folder. Ctrl+Shift+Enter (`elevated`): go_elevated.
+pub(crate) unsafe fn go_edit(i: usize, elevated: bool) {
     let Some(e) = pane_ctl(i, ID_EDIT) else { return };
+    if elevated {
+        go_elevated(i, e);
+        return;
+    }
     let raw = text_of(e);
     let Some((path, cmd)) = addr_parts(raw.trim()) else {
         fail(Fail::AddrQuotes, "");
