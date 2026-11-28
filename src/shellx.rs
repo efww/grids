@@ -1222,6 +1222,159 @@ pub(crate) unsafe fn toggle_default_open(owner: HWND) {
     update_status();
 }
 
+// ---------- .grids session files open with Grids ----------
+// (VS Code's .code-workspace, Directory Opus' layout files) Per user, like "Open in Grids": a ProgID of Grids' own
+// carrying CTX_MARK, and .grids pointed at it only where no other program has it (else just listed in OpenWithProgids).
+// Windows' own choice (FileExts\.grids\UserChoice) is only ever read. .qdr is not registered: panes alone open those.
+
+const ASSOC_PROGID: &str = "Grids.Session";
+const ASSOC_EXT: &str = ".grids";
+const USER_CHOICE: &str = r"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.grids\UserChoice";
+
+/// The open command: one argument and no --folder flag, so session_arg reads it as a session to load.
+pub(crate) fn session_command(exe: &str) -> String {
+    format!(r#""{exe}" "%1""#)
+}
+
+/// True = the registered command runs this exe (paths compared without case).
+pub(crate) fn assoc_owned(cmd: &str, exe: &str) -> bool {
+    cmd.trim().to_lowercase() == session_command(exe).to_lowercase()
+}
+
+/// A (Default) of .grids Grids may take: none, empty, or Grids' ProgID already. Another program's stays.
+pub(crate) fn ext_default_free(cur: Option<&str>) -> bool {
+    cur.map_or(true, |v| v.trim().is_empty() || v.trim().eq_ignore_ascii_case(ASSOC_PROGID))
+}
+
+/// Windows was told to open .grids with another app: a UserChoice ProgId that is neither Grids' ProgID nor
+/// `Applications\<this exe's name>`. None or empty: no choice made.
+pub(crate) fn user_choice_other(progid: Option<&str>, exe_name: &str) -> bool {
+    progid.map(str::trim).is_some_and(|p| !p.is_empty() && !p.eq_ignore_ascii_case(ASSOC_PROGID) && !p.eq_ignore_ascii_case(&format!(r"Applications\{exe_name}")))
+}
+
+/// Text Grids saved as a session: a layout line (cols=, or an old grid=). An empty file or another program's
+/// .qdr has none, and loading it would wipe the panes for a default layout.
+pub(crate) fn looks_like_session(text: &str) -> bool {
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    text.lines().any(|l| l.split_once('=').is_some_and(|(k, _)| k == "cols" || k == "grid"))
+}
+
+fn assoc_label() -> &'static str {
+    tr("Grids session", "Grids 세션")
+}
+
+unsafe fn assoc_on_at(base: &str, exe: &str) -> bool {
+    let pk = format!(r"{base}\{ASSOC_PROGID}");
+    reg_text(&pk, Some(CTX_MARK)).is_some()
+        && reg_text(&format!(r"{pk}\shell\open\command"), None).is_some_and(|c| assoc_owned(&c, exe))
+        && reg_text(&format!(r"{base}\{ASSOC_EXT}\OpenWithProgids"), Some(ASSOC_PROGID)).is_some()
+}
+
+unsafe fn assoc_write(base: &str, exe: &str, label: &str) -> bool {
+    let (pk, ek) = (format!(r"{base}\{ASSOC_PROGID}"), format!(r"{base}\{ASSOC_EXT}"));
+    // the mark first, so a half-written key is still Grids' to clean up
+    reg_put(&pk, Some(CTX_MARK), "1")
+        && reg_put(&pk, None, label)
+        && reg_put(&format!(r"{pk}\DefaultIcon"), None, &format!(r#""{exe}",0"#))
+        && reg_put(&format!(r"{pk}\shell\open\command"), None, &session_command(exe))
+        && reg_put(&format!(r"{ek}\OpenWithProgids"), Some(ASSOC_PROGID), "")
+        && (!ext_default_free(reg_text(&ek, None).as_deref()) || reg_put(&ek, None, ASSOC_PROGID))
+}
+
+// Grids' values only: .grids' (Default) while it names Grids, the OpenWithProgids entry, the marked ProgID.
+// A Grids.Session without the mark is another program's: nothing touched. True = none of Grids' is left.
+unsafe fn assoc_remove(base: &str) -> bool {
+    let (pk, ek) = (format!(r"{base}\{ASSOC_PROGID}"), format!(r"{base}\{ASSOC_EXT}"));
+    if reg_has(&pk) && reg_text(&pk, Some(CTX_MARK)).is_none() {
+        return true;
+    }
+    let def = !reg_text(&ek, None).is_some_and(|v| v.trim().eq_ignore_ascii_case(ASSOC_PROGID)) || reg_unset(&ek, None);
+    let list = reg_unset(&format!(r"{ek}\OpenWithProgids"), Some(ASSOC_PROGID));
+    let key = !reg_has(&pk) || RegDeleteTreeW(HKEY_CURRENT_USER, &HSTRING::from(pk.as_str())).is_ok();
+    def && list && key
+}
+
+// All or none: a failed half is undone (on: removed again; off: written back for this exe).
+unsafe fn set_assoc_at(base: &str, exe: &str, label: &str, on: bool) -> bool {
+    if on {
+        if !ctx_free(&format!(r"{base}\{ASSOC_PROGID}")) {
+            return false; // another program's Grids.Session: nothing touched
+        }
+        if assoc_write(base, exe, label) {
+            return true;
+        }
+        assoc_remove(base);
+        false
+    } else {
+        if assoc_remove(base) {
+            return true;
+        }
+        assoc_write(base, exe, label);
+        false
+    }
+}
+
+/// Checked in the View menu only when the command runs this exe: after moving Grids, one click registers the new path.
+pub(crate) unsafe fn assoc_on() -> bool {
+    this_exe().is_some_and(|e| assoc_on_at(CTX_BASE, &e))
+}
+
+/// Writes or removes the association (type name in the UI language) and tells Explorer. False = failed, nothing half-done.
+pub(crate) unsafe fn set_assoc(on: bool) -> bool {
+    let Some(exe) = this_exe() else { return false };
+    let ok = set_assoc_at(CTX_BASE, &exe, assoc_label(), on);
+    SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, None, None);
+    ok
+}
+
+/// A double-click on a .grids file still opens something else: Windows' UserChoice names another app, or another
+/// program holds .grids' (Default).
+unsafe fn assoc_elsewhere() -> bool {
+    !panes_open_sessions() || !ext_default_free(reg_text(&format!(r"{CTX_BASE}\{ASSOC_EXT}"), None).as_deref())
+}
+
+/// A pane opens a session file itself unless Windows was told to open .grids with another app (Notepad, say).
+pub(crate) unsafe fn panes_open_sessions() -> bool {
+    let name = this_exe().and_then(|e| Path::new(&e).file_name().map(|n| n.to_string_lossy().into_owned())).unwrap_or_default();
+    !user_choice_other(reg_text(USER_CHOICE, Some("ProgId")).as_deref(), &name)
+}
+
+/// Once at start: Grids' own registration whose grids.exe was moved or deleted is pointed at this exe (a copy
+/// that still exists keeps it). Failing that it is removed, never left pointing at nothing.
+pub(crate) unsafe fn repair_assoc() {
+    let Some(exe) = this_exe() else { return };
+    let pk = format!(r"{CTX_BASE}\{ASSOC_PROGID}");
+    if reg_text(&pk, Some(CTX_MARK)).is_none() || reg_text(&format!(r"{pk}\shell\open\command"), None).as_deref().and_then(command_exe).is_some_and(|p| Path::new(p).is_file()) {
+        return;
+    }
+    set_assoc_at(CTX_BASE, &exe, assoc_label(), true);
+    SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, None, None);
+}
+
+// View menu click: flips what is really registered, with a note either way.
+pub(crate) unsafe fn toggle_assoc() {
+    let on = !assoc_on();
+    let ok = set_assoc(on);
+    if !ok {
+        _ = MessageBeep(MB_ICONWARNING);
+    }
+    let text = match (ok, on) {
+        (true, true) if assoc_elsewhere() => tr(
+            "Windows already opens .grids with another app — right-click a session file > Open with > Grids",
+            "Windows에서 이미 다른 앱으로 열도록 정해 둠 — 파일 오른쪽 클릭 > 연결 프로그램에서 Grids 선택",
+        ),
+        (true, true) => tr("Session files (.grids) now open with Grids", "세션 파일(.grids)을 이제 Grids로 엽니다"),
+        (true, false) => tr("Session files (.grids) no longer open with Grids", "세션 파일(.grids)을 더 이상 Grids로 열지 않음"),
+        (false, true) => tr(
+            "Could not make .grids files open with Grids (another program may use the name)",
+            ".grids 파일을 Grids로 열도록 등록하지 못함 (다른 프로그램이 쓰고 있을 수 있음)",
+        ),
+        (false, false) => tr("Could not stop .grids files opening with Grids", ".grids 파일 연결을 풀지 못함"),
+    };
+    app(|a| a.note = Some((text.into(), Instant::now() + Duration::from_secs(5))));
+    update_status();
+}
+
 // ---------- ⇄ menu hooks ----------
 
 // Adds "Which program is using this?" and, with WinMerge found, "Compare with WinMerge" to the ⇄ menu.
@@ -1587,6 +1740,63 @@ mod tests {
             }
             assert!(!ctx_on_at(base, exe));
             _ = RegDeleteTreeW(HKEY_CURRENT_USER, &HSTRING::from(root));
+        }
+    }
+
+    #[test]
+    fn session_files_open_with_grids() {
+        // the command: one quoted argument, read back as a lone session file to load (not folder mode)
+        let exe = r"C:\Tools Dir\grids.exe";
+        assert_eq!(session_command(exe), r#""C:\Tools Dir\grids.exe" "%1""#);
+        let args = split(&session_command(exe).replace("%1", r"D:\My Sessions\work.grids"));
+        assert_eq!(session_arg(&args[1..]), Some(r"D:\My Sessions\work.grids"));
+        assert_eq!(command_exe(&session_command(exe)), Some(exe));
+        // ownership: case and spaces around do not matter, another path or a missing quote does
+        assert!(assoc_owned(&session_command(exe), exe) && assoc_owned(r#"  "c:\tools dir\GRIDS.EXE" "%1" "#, exe));
+        assert!(!assoc_owned(&session_command(r"D:\x\grids.exe"), exe) && !assoc_owned(r#"C:\Tools Dir\grids.exe "%1""#, exe));
+        assert!(!assoc_owned(&ctx_command(exe), exe));
+        // .grids' (Default): taken only when empty or Grids' own
+        assert!(ext_default_free(None) && ext_default_free(Some("")) && ext_default_free(Some(" ")) && ext_default_free(Some("grids.session")));
+        assert!(!ext_default_free(Some("txtfile")) && !ext_default_free(Some("Grids.Session.2")));
+        // Windows' own choice: another app unless it is Grids' ProgID or this exe as an application
+        assert!(!user_choice_other(None, "grids.exe") && !user_choice_other(Some(""), "grids.exe"));
+        assert!(!user_choice_other(Some("Grids.Session"), "grids.exe") && !user_choice_other(Some(r"applications\GRIDS.exe"), "grids.exe"));
+        assert!(user_choice_other(Some(r"Applications\notepad.exe"), "grids.exe") && user_choice_other(Some("txtfile"), "grids.exe"));
+        assert!(user_choice_other(Some(r"Applications\grids.exe"), "grids-1.4.exe")); // another copy's name
+        // a layout line makes a session; an empty file or another program's .qdr does not
+        assert!(looks_like_session("cols=2,2\n") && looks_like_session("\u{feff}win=0,0,1,1,0\ngrid=2,2") && looks_like_session("p0=C:\\\r\ncols=1"));
+        assert!(!looks_like_session("") && !looks_like_session("[Settings]\nQDir=1") && !looks_like_session("xcols=2") && !looks_like_session("cols"));
+        // the registry: a scratch branch of HKCU, never the real Software\Classes
+        let (root, base) = (r"Software\GridsTestAssoc", r"Software\GridsTestAssoc\Classes");
+        let (pk, ek) = (format!(r"{base}\{ASSOC_PROGID}"), format!(r"{base}\{ASSOC_EXT}"));
+        unsafe {
+            let fresh = || _ = RegDeleteTreeW(HKEY_CURRENT_USER, &HSTRING::from(root));
+            fresh();
+            assert!(!assoc_on_at(base, exe));
+            assert!(set_assoc_at(base, exe, "Grids session", true));
+            assert!(assoc_on_at(base, exe) && !assoc_on_at(base, r"D:\other\grids.exe"));
+            assert_eq!(reg_text(&pk, None).as_deref(), Some("Grids session"));
+            assert_eq!(reg_text(&format!(r"{pk}\DefaultIcon"), None).as_deref(), Some(r#""C:\Tools Dir\grids.exe",0"#));
+            assert_eq!(reg_text(&ek, None).as_deref(), Some(ASSOC_PROGID));
+            // moved exe: rewritten in place
+            assert!(set_assoc_at(base, r"D:\new\grids.exe", "Grids 세션", true));
+            assert!(assoc_on_at(base, r"D:\new\grids.exe") && !assoc_on_at(base, exe));
+            assert!(set_assoc_at(base, exe, "x", false));
+            assert!(!reg_has(&pk) && reg_text(&ek, None).is_none() && reg_text(&format!(r"{ek}\OpenWithProgids"), Some(ASSOC_PROGID)).is_none());
+            // another program's .grids: its (Default) and its own OpenWithProgids entry stay, Grids is only added beside
+            assert!(reg_put(&ek, None, "Other.Thing") && reg_put(&format!(r"{ek}\OpenWithProgids"), Some("Other.Thing"), ""));
+            assert!(set_assoc_at(base, exe, "Grids session", true) && assoc_on_at(base, exe));
+            assert_eq!(reg_text(&ek, None).as_deref(), Some("Other.Thing"));
+            assert!(set_assoc_at(base, exe, "x", false) && !reg_has(&pk));
+            assert_eq!(reg_text(&ek, None).as_deref(), Some("Other.Thing"));
+            assert!(reg_text(&format!(r"{ek}\OpenWithProgids"), Some("Other.Thing")).is_some());
+            // a Grids.Session without the mark is someone else's: not taken, not deleted
+            assert!(reg_put(&pk, None, "theirs"));
+            assert!(!set_assoc_at(base, exe, "Grids session", true));
+            assert!(set_assoc_at(base, exe, "x", false));
+            assert_eq!(reg_text(&pk, None).as_deref(), Some("theirs"));
+            assert_eq!(reg_text(&ek, None).as_deref(), Some("Other.Thing"));
+            fresh();
         }
     }
 

@@ -50,6 +50,7 @@ pub(crate) const ID_BRING_HERE: usize = 1114; // view menu: called from another 
 pub(crate) const ID_TO_MOUSE: usize = 1115; // view menu: Win+Alt+E brings Grids to the monitor with the mouse (window_ui.rs)
 pub(crate) const ID_CTRL_HINTS: usize = 1116; // view menu: Ctrl held alone shows each visible button's shortcut (keyboard.rs)
 pub(crate) const ID_DLGJUMP: usize = 1140;
+pub(crate) const ID_ASSOC: usize = 1144; // view menu: session files (.grids) open with Grids (shellx.rs)
 pub(crate) const ID_CTXMENU: usize = 1145; // view menu: "Open in Grids" in Explorer's right-click menu
 pub(crate) const ID_AUTOSTART: usize = 1146; // view menu: start with Windows, minimized
 pub(crate) const ID_DEFOPEN: usize = 1148; // view menu: folders open in Grids instead of Explorer (shellx.rs)

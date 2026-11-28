@@ -562,6 +562,7 @@ fn main() -> Result<()> {
             dialog_jump::enable(true);
         }
         repair_default_open(); // folders set to open in Grids, and Grids moved: they follow this exe
+        repair_assoc(); // the same for .grids session files
         // no taskbar yet at sign-in: s.tray stays on, a few timed retries and TaskbarCreated try again
         tray_init(main);
         if app(|a| a.s.tray) {

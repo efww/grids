@@ -1071,6 +1071,7 @@ pub(crate) fn view_help(id: usize, head: bool, ko: bool) -> Option<&'static str>
         ID_DLGJUMP => ("Other apps' Open and Save dialogs jump to a folder open in Grids", "다른 앱의 열기·저장 창에서 Grids의 폴더로 바로 갑니다"),
         ID_CTXMENU => ("Explorer's right-click menu gets \"Open in Grids\"; pick again to remove", "탐색기 오른쪽 클릭 메뉴에 \"Grids에서 열기\"를 넣습니다 (다시 누르면 뺌)"),
         ID_DEFOPEN => ("Folders opened anywhere in Windows open in Grids; pick again to undo", "Windows 어디서 연 폴더든 Grids로 열립니다 (다시 누르면 원래대로)"),
+        ID_ASSOC => ("Saved sessions get Grids' icon and open in Grids when double-clicked", "저장한 세션 파일에 Grids 아이콘을 달고 더블클릭하면 Grids로 엽니다"),
         ID_FOLLOW => ("Light or dark changes along with Windows' setting", "Windows 설정에 맞춰 라이트·다크가 바뀝니다"),
         ID_ACCENT_SYS => ("Selections take Windows' accent colour and follow its changes", "Windows 강조 색을 쓰고, 바뀌면 같이 바뀝니다"),
         ID_ACCENT_PICK => ("Pick any colour for selections", "선택 색을 직접 고릅니다"),

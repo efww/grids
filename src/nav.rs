@@ -2308,6 +2308,27 @@ unsafe fn lone_folder(sv: &IShellView) -> Option<IShellItem> {
     (real_folder(attr) && attr & SFGAO_FILESYSTEM.0 != 0).then_some(it)
 }
 
+// The selection when it is exactly one file on disk named *.grids / *.qdr holding a Grids layout, and Windows was
+// not told to open .grids with another app: its path. A folder of that name, or anything else: None (the view opens it).
+unsafe fn lone_session(sv: &IShellView) -> Option<String> {
+    let arr = sv.cast::<IFolderView2>().ok()?.GetSelection(false).ok()?;
+    if arr.GetCount().ok()? != 1 {
+        return None;
+    }
+    let it = arr.GetItemAt(0).ok()?;
+    let attr = it.GetAttributes(SFGAO_FLAGS(SFGAO_FOLDER.0 | SFGAO_STREAM.0 | SFGAO_FILESYSTEM.0)).ok()?.0;
+    if attr & SFGAO_FILESYSTEM.0 == 0 || attr & SFGAO_FOLDER.0 != 0 {
+        return None;
+    }
+    let path = pwstr(it.GetDisplayName(SIGDN_FILESYSPATH).ok()?);
+    let p = Path::new(&path);
+    // a big file is no session: not read on this thread
+    if !is_session_file(p) || std::fs::metadata(p).ok()?.len() > 1 << 20 || !panes_open_sessions() {
+        return None;
+    }
+    looks_like_session(&std::fs::read_to_string(p).ok()?).then_some(path)
+}
+
 // Site of each Explorer control. It asks the site for ICommDlgBrowser, whose IncludeObject is the name filter.
 #[implement(IServiceProvider, ICommDlgBrowser)]
 pub(crate) struct Host(pub(crate) Arc<AtomicUsize>); // the pane's slot, as in Events
@@ -2332,6 +2353,18 @@ impl ICommDlgBrowser_Impl for Host_Impl {
         // Ctrl/Shift held: the view's own variant (new window etc.) as before, not this pane.
         unsafe {
             let modded = GetKeyState(VK_CONTROL.0 as i32) < 0 || GetKeyState(VK_SHIFT.0 as i32) < 0;
+            // a session file Grids saved loads here, never inside this callback: the load destroys this view
+            if let Some(path) = (!modded).then(|| sv.ok().ok().and_then(|v| lone_session(v))).flatten() {
+                let name = Path::new(&path).file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                let note = tr("Session loaded: {name}", "세션 불러옴: {name}").replace("{name}", &name);
+                let main = app(|a| {
+                    a.open_queue.push(vec![path]);
+                    a.note = Some((note, Instant::now() + Duration::from_secs(4))); // a failed read says so instead
+                    a.main
+                });
+                _ = PostMessageW(Some(main), WM_OPEN_ARGS, WPARAM(0), LPARAM(0));
+                return Ok(());
+            }
             if !modded && default_open_on() {
                 if let Some(it) = sv.ok().ok().and_then(|v| lone_folder(v)) {
                     browse_item(self.0.load(Ordering::SeqCst), &it);

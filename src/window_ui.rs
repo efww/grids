@@ -518,6 +518,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 }
                 ID_CTXMENU => toggle_ctx_menu(),
                 ID_DEFOPEN => toggle_default_open(h),
+                ID_ASSOC => toggle_assoc(),
                 ID_AUTOSTART => toggle_autostart(),
                 ID_TRAY => toggle_tray(h),
                 ID_LANG => set_language(!KO.load(Ordering::Relaxed)),
@@ -551,6 +552,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 check(ID_DLGJUMP, jump);
                 check(ID_CTXMENU, ctx_menu_on()); // read from the registry, not a setting
                 check(ID_DEFOPEN, default_open_on()); // the same
+                check(ID_ASSOC, assoc_on()); // the same: ticked only when it runs this exe
                 check(ID_UPDATES, app(|a| a.s.updates));
                 check(ID_KEY_TIPS, app(|a| a.s.key_tips));
                 check(ID_CTRL_HINTS, app(|a| a.s.ctrl_hints));
@@ -2329,6 +2331,12 @@ pub(crate) unsafe fn set_language(ko: bool) {
         let text = tr("Could not add \"Open in Grids\" to Explorer's menu", "탐색기 메뉴에 \"Grids에서 열기\"를 등록하지 못함");
         app(|a| a.note = Some((text.into(), Instant::now() + Duration::from_secs(3))));
     }
+    // the session files' type name too, only while they are Grids'; a failed rewrite removed it (its own note)
+    if assoc_on() && !set_assoc(true) {
+        _ = MessageBeep(MB_ICONWARNING);
+        let text = tr("Could not register .grids files with Grids again", ".grids 파일 연결을 다시 등록하지 못함");
+        app(|a| a.note = Some((text.into(), Instant::now() + Duration::from_secs(3))));
+    }
     for (id, _, hint) in toolbar_tips() {
         if let Ok(b) = GetDlgItem(Some(main), id) {
             tip_text(b, hint, TTM_UPDATETIPTEXTW);
@@ -2365,7 +2373,7 @@ pub(crate) unsafe fn set_language(ko: bool) {
 // The view menu's plain items, in menu order: (command, English, Korean). VIEW_TOP comes before the
 // Selection colour submenu, VIEW_END after the language item. The README test (view_menu_names_in_readmes)
 // and the WM_COMMAND collision test read these, so a new item is checked against both READMEs.
-pub(crate) const VIEW_TOP: [(usize, &str, &str); 16] = [
+pub(crate) const VIEW_TOP: [(usize, &str, &str); 17] = [
     (ID_TREE, "Folder tree\tCtrl+Shift+E", "폴더 트리\tCtrl+Shift+E"),
     (ID_TREE_QUICK, "Show Explorer Quick access in the folder tree", "폴더 트리에 탐색기 빠른 액세스 표시"),
     (ID_TABS, "Tabs in panes", "패널 탭"),
@@ -2381,6 +2389,7 @@ pub(crate) const VIEW_TOP: [(usize, &str, &str); 16] = [
     (ID_DLGJUMP, "Jump to Grids folders from file dialogs\tCtrl+Alt+G", "파일 대화 상자에서 Grids 폴더로 이동\tCtrl+Alt+G"),
     (ID_CTXMENU, "Add \"Open in Grids\" to Explorer's right-click menu", "탐색기 오른쪽 클릭 메뉴에 \"Grids에서 열기\" 추가"),
     (ID_DEFOPEN, "Open folders in Grids instead of Explorer", "폴더를 탐색기 대신 Grids로 열기"),
+    (ID_ASSOC, "Open session files (.grids) with Grids", "세션 파일(.grids)을 Grids로 열기"),
     (ID_FOLLOW, "Follow Windows light/dark", "Windows 라이트·다크 따르기"),
 ];
 // Toolbar buttons also on the view menu, so the keyboard (Alt / F10) reaches them: the buttons' own commands.
