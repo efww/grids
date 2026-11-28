@@ -1105,6 +1105,8 @@ pub(crate) fn open_in_help(id: usize, head: bool, ko: bool) -> Option<&'static s
         OpenPick::Swap(_) => ("This pane and that one trade places in the grid", "이 패널과 고른 패널의 자리를 맞바꿉니다"),
         OpenPick::Diff(_) if head => ("Selects files only on one side or newer there (folders on disk)", "한쪽에만 있거나 더 새 파일을 선택합니다 (디스크의 폴더끼리)"),
         OpenPick::Diff(_) => ("Selects, in both panes, files only on one side or newer there", "두 패널에서 한쪽에만 있거나 더 새 파일을 선택합니다"),
+        OpenPick::Lock(_) if head => ("Browse one pane and the other follows the same way (folders on disk)", "한 패널에서 폴더를 옮기면 다른 패널도 똑같이 따라갑니다 (디스크의 폴더)"),
+        OpenPick::Lock(_) => ("Links this pane with that one; the checked one again unlinks", "이 패널과 그 패널을 묶습니다 (체크된 패널을 다시 고르면 풀기)"),
         OpenPick::Send { mv, .. } => send(mv),
         OpenPick::Elsewhere => match send_pick(id) {
             Some(SendPick::Choose(false)) if !head => ("Copies the selected items to a folder you pick", "선택한 항목을 직접 고른 폴더로 복사합니다"),

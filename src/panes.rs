@@ -50,7 +50,7 @@ pub(crate) unsafe fn create_pane(i: usize) -> Result<Pane> {
     let dt: IDropTarget = PaneDrop { slot: slot.clone(), hwnd: h, ok: Cell::new(false), helper, relay: Relay::default(), lit: Cell::new(false) }.into();
     _ = RegisterDragDrop(h, &dt);
     let pending = Some(app(|a| a.s.cols[i].clone())); // the session's, for the first folder
-    Ok(Pane { hwnd: h, eb, cookie, disp: String::new(), pending, settle: None, recover: None, follow: None, unplugged: None, icon: -1, ticket: 0, slot, spin: None, loading: None, load_framed: false, hist: None, root: false, going: None, moving: None, wait_first: false, pace: FilterPace::default() })
+    Ok(Pane { hwnd: h, eb, cookie, disp: String::new(), pending, settle: None, recover: None, follow: None, unplugged: None, icon: -1, ticket: 0, slot, spin: None, loading: None, load_framed: false, hist: None, root: false, going: None, moving: None, wait_first: false, pace: FilterPace::default(), lock_hold: None })
 }
 
 // Screen readers otherwise just say "edit", with no word on which of up to 16 panes; redone when a pane changes slot.
@@ -178,6 +178,8 @@ pub(crate) unsafe fn sync_panes() {
         return;
     }
     let mut fresh = Vec::new();
+    // a pane navigating together that the layout leaves out unlinks the pair (a theme switch's rebuilt panes keep it)
+    app(|a| a.lock = a.lock.take().filter(|l| l.panes.iter().all(|&k| k < n)));
     for i in 0..MAXP {
         let has = app(|a| a.panes[i].is_some());
         if i < n && !has {
@@ -1616,6 +1618,9 @@ pub(crate) unsafe fn swap_panes(i: usize, j: usize) {
         for c in &mut a.closed_tabs {
             to(&mut c.pane);
         }
+        if let Some(l) = a.lock.as_mut() {
+            l.panes.iter_mut().for_each(|k| to(k)); // a linked pane stays linked where it went
+        }
         a.status_key.clear();
         forget_sel(a);
         a.dirty = session_dirty(&a.s, a.base.as_ref());
@@ -1731,6 +1736,9 @@ pub(crate) unsafe fn set_layout(h: Vec<usize>) {
             to(&mut k.i);
         }
         to(&mut a.peek_pane);
+        if let Some(l) = a.lock.as_mut() {
+            l.panes.iter_mut().for_each(|k| to(k)); // where they went; sync_panes unlinks one the layout leaves out
+        }
         a.zoom = None;
         a.status_key.clear();
         forget_sel(a);

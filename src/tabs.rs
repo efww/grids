@@ -115,8 +115,11 @@ unsafe fn tab_go(i: usize, change: impl FnOnce(&mut Session) -> Option<String>) 
     });
     let mut went = false;
     if let Some(to) = to {
+        // a tab is another place, not a move: a pane navigating together doesn't take its partner along
+        app(|a| hold_lock(a, i, &to));
         went = go_near(i, &to);
         if !went {
+            app(|a| a.panes[i].as_mut().map(|p| p.lock_hold = None));
             app(|a| (a.s.tabs[i], a.s.tab[i]) = before);
             fail(Fail::FolderCantOpen, &to);
         }

@@ -904,6 +904,7 @@ pub(crate) unsafe fn paint_pane(h: HWND) {
     let ilist = if folder >= 0 || tabs.is_some() { small_ilist() } else { app(|a| a.ilist.clone()) };
     let crumbs_on = GetDlgItem(Some(h), ID_EDIT).is_ok_and(|e| !IsWindowVisible(e).as_bool());
     let filtered = i.is_some_and(|i| FILTERS.lock().is_ok_and(|f| !f[i].is_empty()));
+    let linked = i.is_some_and(|i| app(|a| lock_partner(a, i).is_some())); // navigating together (Ctrl+Shift+Y)
     let (head, ink) = header_colors(h);
     let focus = GetFocus();
     let focused = |id: i32| GetDlgItem(Some(h), id).is_ok_and(|e| e == focus);
@@ -934,7 +935,20 @@ pub(crate) unsafe fn paint_pane(h: HWND) {
                 None if active => ink,
                 None => pal().sub,
             };
-            text(dc, pg.num, &(i + 1).to_string(), small_font, ink, DT_CENTER);
+            if linked {
+                // navigating together: the number moves up and a small link mark sits under it, inside the same slot
+                let split = pg.num.top + (pg.num.bottom - pg.num.top) * 3 / 5;
+                text(dc, RECT { bottom: split + s(1), ..pg.num }, &(i + 1).to_string(), small_font, ink, DT_CENTER);
+                let mut lf = LOGFONTW::default();
+                if GetObjectW(icon_font.into(), size_of::<LOGFONTW>() as i32, Some(&mut lf as *mut _ as _)) != 0 {
+                    lf.lfHeight = -s(9);
+                    let f = CreateFontIndirectW(&lf);
+                    text(dc, RECT { top: split - s(1), ..pg.num }, ICON_LINK, f, ink, DT_CENTER);
+                    _ = DeleteObject(f.into());
+                }
+            } else {
+                text(dc, pg.num, &(i + 1).to_string(), small_font, ink, DT_CENTER);
+            }
         }
         // the icon opens the file-type menu: under the mouse its slot is shaded (inside the pill and its focus frame),
         // a ring round the filter badge, whose own colour stays.

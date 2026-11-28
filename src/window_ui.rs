@@ -336,6 +336,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             WM_SIZE_DONE => update_status(), // the selection's size is in: shown now, not at the next tick
             WM_DISK_DONE => disk_done(),
             WM_OPEN_ARGS => open_queued(true),
+            WM_LOCK_GO => lock_follow(wp.0),
             // mid-drag or mid-resize, end_drag / WM_EXITSIZEMOVE pick it up instead
             WM_DRIVES => {
                 bin_count(); // also when Grids comes to the front (WM_ACTIVATEAPP posts this)

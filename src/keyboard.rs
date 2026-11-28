@@ -384,6 +384,11 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
             app(|x| x.held = Some(vk.0));
             diff_key(a);
         }
+        // held, it links (or unlinks) once
+        KeyRoute::Lock => {
+            app(|x| x.held = Some(vk.0));
+            lock_key(a);
+        }
         // held, it steps once (no flicker); the key never reaches the view
         KeyRoute::RenameCycle => {
             if !repeat {
@@ -487,6 +492,7 @@ pub(crate) enum KeyRoute {
     Invert,
     RestoreSel,
     Diff,
+    Lock,
     RenameCycle,
     Recent,
     NewFolder,
@@ -568,6 +574,8 @@ pub(crate) fn key_route(vk: VIRTUAL_KEY, ctrl: bool, shift: bool, alt: bool, c: 
         VK_OEM_2 if ctrl && !shift && !alt => Keys,
         VK_M if ctrl && shift && !alt => Zoom,
         VK_E if ctrl && shift && !alt => Tree,
+        // Ctrl+Shift+Y: two panes navigate together, or stop (Directory Opus' Navigation Lock); from the boxes too
+        VK_Y if ctrl && shift && !alt => Lock,
         VK_O if ctrl && shift && !alt => Gather,
         VK_R if ctrl && shift && !alt => Rename,
         VK_F1 => Help,
@@ -925,6 +933,7 @@ pub(crate) unsafe fn pre_translate(m: &MSG) -> bool {
     ) {
         MENU_ARM.set(None);
         DIFF_KEY.set(None);
+        LOCK_KEY.set(None);
         ctrl_hint_off(); // Ctrl+click, Ctrl+drag, Ctrl+wheel: no keycaps, and the input goes on as ever
         kbd_tip_hide(); // nor the tooltip of a toolbar button picked from the keys
     }
@@ -974,6 +983,10 @@ pub(crate) unsafe fn pre_translate(m: &MSG) -> bool {
             // and so does a fresh F2 without Shift (a missed key-up must not turn a rename into the compare list)
             if !((vk == VK_F2.0 && (repeat || mods[1])) || (vk == VK_SHIFT.0 && repeat)) {
                 DIFF_KEY.set(None);
+            }
+            // Ctrl+Shift+Y's pane list the same way: Y held with Ctrl or Shift, or their repeats, keep it
+            if !((vk == VK_Y.0 && (repeat || mods[0] || mods[1])) || ((vk == VK_SHIFT.0 || vk == VK_CONTROL.0) && repeat)) {
+                LOCK_KEY.set(None);
             }
             let (armed, _) = menu_key_step(MENU_ARM.get(), true, vk, repeat, mods);
             MENU_ARM.set(armed.filter(|_| in_main));
@@ -1049,6 +1062,14 @@ pub(crate) unsafe fn pre_translate(m: &MSG) -> bool {
                 if let Some((i, h)) = DIFF_KEY.take().and_then(|i| app(|a| a.panes.iter().take(a.s.panes()).nth(i)?.as_ref().map(|p| (i, p.hwnd)))) {
                     diff_menu(h, i);
                     return up == VK_F2;
+                }
+            }
+            // Ctrl+Shift+Y with several panes to pick from: their list once Ctrl, Shift and Y are all up, so the pane
+            // digit isn't Ctrl+digit (a jump to that pane)
+            if matches!(up, VK_Y | VK_CONTROL | VK_SHIFT) && ![VK_Y, VK_CONTROL, VK_SHIFT].into_iter().any(down) {
+                if let Some((i, h)) = LOCK_KEY.take().and_then(|i| app(|a| a.panes.iter().take(a.s.panes()).nth(i)?.as_ref().map(|p| (i, p.hwnd)))) {
+                    lock_menu(h, i);
+                    return up == VK_Y;
                 }
             }
             // Ctrl+Alt+arrow: the panes take the moved splitter once the arrow, Ctrl or Alt is let go

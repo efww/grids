@@ -27,6 +27,18 @@ pub(crate) struct Pane {
     pub(crate) moving: Option<Go>,
     pub(crate) wait_first: bool, // made with others at once: its first folder opens in turn (App::load_q)
     pub(crate) pace: FilterPace, // how long the name filter waits after typing (nav.rs filter_wait)
+    // a move navigating together must not pass on (its own follow, a tab change, open in from its partner): (unused,
+    // the folder being opened). on_nav takes the pair's folders as their new starting point once it opens; another
+    // move drops it (rec_step)
+    pub(crate) lock_hold: Option<(String, String)>,
+}
+
+// Two panes navigating together (Ctrl+Shift+Y, nav.rs lock_follow): their slots, and the folders each showed when they
+// were last in step. A move in one opens, in the other, its own starting folder moved the same way. Runtime only.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Lock {
+    pub(crate) panes: [usize; 2],
+    pub(crate) at: [String; 2],
 }
 
 // What sets the name filter's wait in a slow folder (a network share, tens of thousands of items), where every
@@ -163,6 +175,7 @@ pub(crate) struct App {
     pub(crate) note_hwnd: HWND,                 // the note's live region (zero size, nothing drawn); null = no announcements
     pub(crate) say_nav: Option<usize>,          // pane read out once its folder opens (a tab key that browses; runtime only)
     pub(crate) prev_active: Option<usize>,      // the pane active before this one, for Ctrl+` (runtime only)
+    pub(crate) lock: Option<Lock>,              // two panes navigating together (Ctrl+Shift+Y; runtime only)
     pub(crate) drop_hover: HWND,                         // pane whose top bar something openable is being dragged over
     pub(crate) app_away: bool,                           // another app has the keyboard (WM_ACTIVATEAPP; runtime only)
     pub(crate) drop_open: Option<(HWND, usize, IShellItem)>, // folder dropped on a top bar, opened by WM_DROP_OPEN
@@ -295,6 +308,7 @@ thread_local! {
         note_hwnd: HWND::default(),
         say_nav: None,
         prev_active: None,
+        lock: None,
         drop_hover: HWND::default(),
         app_away: false,
         drop_open: None,

@@ -403,14 +403,16 @@ pub(crate) fn follow_text(ko: bool, disp: &str) -> String {
     if ko { format!("폴더 이름이 바뀌어 따라감: {leaf}") } else { format!("Followed renamed folder: {leaf}") }
 }
 
-// Pending / Failed events of a pane with a recovery, a rename follow or a pulled drive's mark; Complete goes through on_nav.
+// Pending / Failed events of a pane with a recovery, a rename follow, a pulled drive's mark or a navigate-together hold;
+// Complete goes through on_nav.
 pub(crate) unsafe fn rec_event(i: usize, ev: Nav, pidl: *const ITEMIDLIST) {
-    if app(|a| a.panes[i].as_ref().is_some_and(|p| p.recover.is_some() || p.follow.is_some() || p.unplugged.is_some())) {
+    if app(|a| a.panes[i].as_ref().is_some_and(|p| p.recover.is_some() || p.follow.is_some() || p.unplugged.is_some() || p.lock_hold.is_some())) {
         let path = name(pidl, SIGDN_DESKTOPABSOLUTEPARSING);
         app(|a| {
             a.panes[i].as_mut().map(|p| {
                 unplug_step(&mut p.unplugged, ev, &path);
                 rec_step(&mut p.recover, ev, &path);
+                rec_step(&mut p.lock_hold, ev, &path);
                 rec_step(&mut p.follow, ev, &path)
             })
         });
@@ -948,6 +950,13 @@ pub(crate) unsafe fn open_in(src: usize, dst: usize) {
                 p.pending = Some(cols);
             }
         });
+        // into its navigate-together partner: a fresh starting point for the pair, not a move to pass back
+        if app(|a| lock_partner(a, src) == Some(dst)) {
+            if let Ok(n) = item.GetDisplayName(SIGDN_DESKTOPABSOLUTEPARSING) {
+                let n = pwstr(n);
+                app(|a| hold_lock(a, dst, &n));
+            }
+        }
         browse_item(dst, &item);
         set_active(dst);
         focus_view(dst);
@@ -1012,7 +1021,8 @@ pub(crate) enum OpenPick {
     Open(usize),                 // open in pane k
     Swap(usize),                 // swap places with pane k
     Diff(usize),                 // select the files that differ from pane k's (Shift+F2)
-    Shell,                       // shell_pick's: which program, checksum, date folders, new folder, WinMerge
+    Lock(usize),                 // navigate together with pane k, or stop (Ctrl+Shift+Y)
+    Shell,                      // shell_pick's: which program, checksum, date folders, new folder, WinMerge
     Elsewhere,                   // send_pick's: a favourite / recent folder or "Choose another folder…"
     Send { mv: bool, k: usize }, // copy / move the selection to pane k's folder
     Unknown,                     // nothing the menu puts up: a beep, never a copy / move
@@ -1030,6 +1040,8 @@ pub(crate) fn open_in_pick(p: usize) -> OpenPick {
         OpenPick::Swap(k)
     } else if let Some(k) = row(ID_DIFF_TO) {
         OpenPick::Diff(k)
+    } else if let Some(k) = row(ID_LOCK_TO) {
+        OpenPick::Lock(k)
     } else if is_shell_pick(p) {
         OpenPick::Shell
     } else if send_pick(p).is_some() {
@@ -1086,6 +1098,16 @@ pub(crate) unsafe fn open_in_menu(h: HWND, src: usize) {
         let flags = if items.is_empty() { MF_POPUP | MF_GRAYED } else { MF_POPUP };
         _ = AppendMenuW(menu, flags, sub.0 as usize, &HSTRING::from(tr2(M_SWAP)));
     }
+    if let Ok(sub) = CreatePopupMenu() {
+        lock_rows(sub, src, &items);
+        // grey with no row to pick: no other pane, or no pair of folders on disk (a linked pane can always unlink)
+        let open = app(|a| lock_partner(a, src).is_some()) || (disk_parts(&here).is_some() && items.iter().any(|(_, _, p, _)| disk_parts(p).is_some()));
+        if items.is_empty() {
+            _ = AppendMenuW(sub, MF_STRING | MF_GRAYED, ID_LOCK_TO + src, &HSTRING::from(tr2(M_LOCK)));
+        }
+        let flags = if open { MF_POPUP } else { MF_POPUP | MF_GRAYED };
+        _ = AppendMenuW(menu, flags, sub.0 as usize, &HSTRING::from(tr2(M_LOCK)));
+    }
     match &picked {
         Ok(srcs) => {
             let n = srcs.len();
@@ -1138,7 +1160,7 @@ pub(crate) unsafe fn open_in_menu(h: HWND, src: usize) {
     let mut chips = MenuSwatches::new(app(|a| a.dpi)); // dropped after DestroyMenu
     for (k, _, _, t) in &items {
         if let Some(c) = tint_color(*t) {
-            for base in [ID_OPEN_TO, ID_SWAP_TO, ID_COPY_TO, ID_MOVE_TO, ID_DIFF_TO, ID_WM_PANE] {
+            for base in [ID_OPEN_TO, ID_SWAP_TO, ID_COPY_TO, ID_MOVE_TO, ID_DIFF_TO, ID_LOCK_TO, ID_WM_PANE] {
                 chips.put(menu, base + k, Some(c));
             }
         }
@@ -1160,6 +1182,7 @@ pub(crate) unsafe fn open_in_menu(h: HWND, src: usize) {
         (OpenPick::Open(k), _) => open_in(src, k),
         (OpenPick::Swap(k), _) => swap_panes(src, k),
         (OpenPick::Diff(k), _) => diff_pick(src, k, &here, &others),
+        (OpenPick::Lock(k), _) => lock_pair(src, k),
         (OpenPick::Shell, picked) => shell_pick(h, src, p, picked, wm, &others),
         (OpenPick::Elsewhere, picked) => {
             let sent = match (send_pick(p), picked) {
@@ -2065,7 +2088,8 @@ pub(crate) fn tabs_on() -> bool {
 pub(crate) unsafe fn on_nav(i: usize, pidl: *const ITEMIDLIST) {
     let parse = name(pidl, SIGDN_DESKTOPABSOLUTEPARSING);
     let disp = name(pidl, SIGDN_DESKTOPABSOLUTEEDITING);
-    let Some((h, eb, view, cols, ticket)) = app(|a| {
+    let mut pass_on = None;
+    let res = app(|a| {
         let fs = is_fs(&parse);
         let old = std::mem::replace(&mut a.s.paths[i], parse.clone());
         if let Some(p) = a.panes[i].as_mut() {
@@ -2081,8 +2105,26 @@ pub(crate) unsafe fn on_nav(i: usize, pidl: *const ITEMIDLIST) {
         } else if !waited {
             visit(&mut a.s.recent, &old, &a.s.paths[i]);
         }
-        if let Some(m) = a.panes[i].as_mut().and_then(|p| rec_step(&mut p.recover, Nav::Complete, &parse)) {
-            gone_note(a, &m, &disp); // update_status shows it
+        let recovered = a.panes[i].as_mut().and_then(|p| rec_step(&mut p.recover, Nav::Complete, &parse));
+        if let Some(m) = &recovered {
+            gone_note(a, m, &disp); // update_status shows it
+        }
+        // navigating together: a move of the user's is passed on to the partner (lock_follow, once this callback is
+        // over); one Grids made (a rename followed, a missing folder's parent, a pulled drive's This PC, a waiting
+        // pane's first folder, the partner's follow, a tab change) only makes the two folders the new starting point
+        let held = a.panes[i].as_mut().and_then(|p| rec_step(&mut p.lock_hold, Nav::Complete, &parse));
+        let unplugged = a.panes[i].as_ref().is_some_and(|p| p.unplugged.is_some());
+        if let Some(l) = a.lock.as_mut().filter(|l| l.panes.contains(&i)) {
+            if followed || waited || held.is_some() || unplugged || recovered.is_some() {
+                l.at = l.panes.map(|k| a.s.paths[k].clone());
+                // a follow pairs its arrival with the partner folder it was worked out from, not wherever the partner
+                // has gone since (that move's WM_LOCK_GO is still queued and goes from here)
+                if let Some(from) = held.filter(|m| !m.is_empty()) {
+                    l.at[if l.panes[0] == i { 1 } else { 0 }] = from;
+                }
+            } else {
+                pass_on = Some(a.main);
+            }
         }
         let (v, own) = (a.s.views[i], a.s.cols[i].clone());
         a.panes[i].as_mut().map(|p| {
@@ -2093,7 +2135,12 @@ pub(crate) unsafe fn on_nav(i: usize, pidl: *const ITEMIDLIST) {
             let cols = p.pending.take().unwrap_or(own);
             (p.hwnd, p.eb.clone(), v, Some(cols).filter(|c| fs && !c.is_empty()), p.ticket)
         })
-    }) else {
+    });
+    // posted, not browsed from here: the partner's own navigation stays out of this one's callback
+    if let Some(main) = pass_on {
+        _ = PostMessageW(Some(main), WM_LOCK_GO, WPARAM(i), LPARAM(0));
+    }
+    let Some((h, eb, view, cols, ticket)) = res else {
         return;
     };
     if let Ok(e) = GetDlgItem(Some(h), ID_EDIT) {
@@ -2145,6 +2192,274 @@ pub(crate) unsafe fn on_nav(i: usize, pidl: *const ITEMIDLIST) {
     // focus change doesn't cut it off. Only while that pane is still the active one; otherwise just drop it.
     if app(|a| a.say_nav == Some(i) && a.say_nav.take().is_some() && a.s.active == i) {
         say_pane(i);
+    }
+}
+
+// ---------- navigate together ----------
+// Like Directory Opus' Navigation Lock, XYplorer's Sync Browse and Total Commander's synchronized directory changes:
+// two panes over folders built alike (a work folder and its backup, v1 and v2, local and NAS) move together. A move
+// of the user's in one is read as "up k folders, then down these names" from where the pair was last in step, and
+// made the same way in the other, from its own starting folder: so a folder the partner lacks leaves it where it is,
+// and coming back puts the two in step again. Ctrl+Shift+Y or the ⇄ menu links and unlinks; runtime only.
+
+pub(crate) const WM_LOCK_GO: u32 = WM_APP + 70; // wParam = the pane whose move its partner follows
+pub(crate) const ID_LOCK_TO: usize = 701; // ⇄ menu: + pane index (701–716)
+pub(crate) const M_LOCK: (&str, &str) = ("Navi&gate together with  (Ctrl+Shift+Y)", "함께 이동할 패널(&G)  (Ctrl+Shift+Y)");
+
+thread_local! {
+    // Ctrl+Shift+Y with several panes to pick from: the pane it was pressed in; their list opens once Ctrl, Shift
+    // and Y are all up (a Ctrl still held would make the pane digit Ctrl+1 … 9, a jump to that pane)
+    pub(crate) static LOCK_KEY: Cell<Option<usize>> = const { Cell::new(None) };
+}
+
+// A folder on disk as its root ("C:" upper-cased, or \\server\share) and the folder names under it. None for shell
+// places (This PC, libraries, a phone), \\?\ paths and a bare \\server.
+pub(crate) fn disk_parts(p: &str) -> Option<(String, Vec<&str>)> {
+    let p = p.trim_end_matches('\\');
+    if let Some(unc) = p.strip_prefix(r"\\") {
+        let mut it = unc.split('\\');
+        let (server, share) = (it.next()?, it.next()?);
+        let rest: Vec<&str> = it.collect();
+        if server.is_empty() || share.is_empty() || matches!(server, "?" | ".") || rest.iter().any(|n| n.is_empty()) {
+            return None;
+        }
+        return Some((format!(r"\\{server}\{share}"), rest));
+    }
+    let (c, rest) = drive_letter(p)?;
+    if !(rest.is_empty() || rest.starts_with('\\')) {
+        return None;
+    }
+    Some((format!("{}:", c as char), rest.split('\\').filter(|n| !n.is_empty()).collect()))
+}
+
+fn same_name(a: &str, b: &str) -> bool {
+    a.to_lowercase() == b.to_lowercase()
+}
+
+// Where the partner goes when the other pane moved from `from` to `to` and the partner showed `there` at `from`:
+// `there` taken up as many folders as the move went up past the common part of `from` and `to`, then down the same
+// names. None when the move left its drive or share, any of the three is no folder on disk, or `there` has fewer
+// folders to go up.
+pub(crate) fn lock_target(from: &str, to: &str, there: &str) -> Option<String> {
+    let ((rf, f), (rt, t), (mut out, b)) = (disk_parts(from)?, disk_parts(to)?, disk_parts(there)?);
+    if !same_name(&rf, &rt) {
+        return None;
+    }
+    let common = f.iter().zip(&t).take_while(|(x, y)| same_name(x, y)).count();
+    let keep = b.len().checked_sub(f.len() - common)?;
+    let names: Vec<&str> = b[..keep].iter().chain(&t[common..]).copied().collect();
+    if out.starts_with(r"\\") {
+        for n in names {
+            out.push('\\');
+            out.push_str(n);
+        }
+    } else {
+        out.push('\\'); // a drive's root keeps its '\'
+        out.push_str(&names.join("\\"));
+    }
+    Some(out)
+}
+
+// Whether the partner already shows that folder (a trailing '\', any case).
+pub(crate) fn lock_same(a: &str, b: &str) -> bool {
+    same_name(a.trim_end_matches('\\'), b.trim_end_matches('\\'))
+}
+
+// "Navigate together: panes 1, 3 linked …"; numbers from 1, the lower first.
+pub(crate) fn lock_note(ko: bool, on: bool, a: usize, b: usize) -> String {
+    let (a, b) = (a.min(b) + 1, a.max(b) + 1);
+    let t = match (on, ko) {
+        (true, false) => "Navigate together: panes {a}, {b} linked · Ctrl+Shift+Y unlinks",
+        (true, true) => "함께 이동: 패널 {a}, {b} 묶음 · Ctrl+Shift+Y로 풀기",
+        (false, false) => "Navigate together off: panes {a}, {b}",
+        (false, true) => "함께 이동 풀림: 패널 {a}, {b}",
+    };
+    t.replace("{a}", &a.to_string()).replace("{b}", &b.to_string())
+}
+
+// The partner couldn't follow: it has no such folder. `k` from 0.
+pub(crate) fn lock_missing_text(ko: bool, k: usize, target: &str) -> String {
+    let leaf = target.trim_end_matches('\\').rsplit('\\').next().unwrap_or(target);
+    let t = if ko { "함께 이동: 패널 {k}에는 '{name}' 폴더가 없음" } else { "Navigate together: pane {k} has no folder '{name}'" };
+    t.replace("{k}", &(k + 1).to_string()).replace("{name}", leaf)
+}
+
+// The other pane of the pair, when pane i is in it.
+pub(crate) fn lock_partner(a: &App, i: usize) -> Option<usize> {
+    match a.lock.as_ref()?.panes {
+        [x, y] if x == i => Some(y),
+        [x, y] if y == i => Some(x),
+        _ => None,
+    }
+}
+
+// The move about to start in pane i (a tab change, open in from its partner) is not passed on: once it opens, the
+// two folders are the new starting point. Marked as lock_browse marks a follow; another move drops it.
+pub(crate) fn hold_lock(a: &mut App, i: usize, to: &str) {
+    if lock_partner(a, i).is_some() {
+        if let Some(p) = a.panes[i].as_mut() {
+            p.lock_hold = Some((String::new(), to.to_string()));
+        }
+    }
+}
+
+// A new pair (or none): both old and new panes repaint, for the link mark under their number. Returns the old pair.
+unsafe fn lock_set(new: Option<Lock>) -> Option<Lock> {
+    let old = app(|a| std::mem::replace(&mut a.lock, new.clone()));
+    let panes: Vec<usize> = old.iter().chain(new.iter()).flat_map(|l| l.panes).collect();
+    for k in panes {
+        if let Some(h) = app(|a| a.panes.get(k)?.as_ref().map(|p| p.hwnd)) {
+            _ = InvalidateRect(Some(h), None, false);
+        }
+    }
+    old
+}
+
+pub(crate) unsafe fn lock_off() {
+    if let Some(l) = lock_set(None) {
+        set_note(lock_note(KO.load(Ordering::Relaxed), false, l.panes[0], l.panes[1]));
+    }
+}
+
+// Links panes src and k (both showing folders on disk), from the folders they show now; already linked, unlinks them.
+pub(crate) unsafe fn lock_pair(src: usize, k: usize) {
+    if app(|a| lock_partner(a, src) == Some(k)) {
+        lock_off();
+        return;
+    }
+    let at = app(|a| {
+        let live = |x: usize| x < a.s.panes() && a.panes[x].is_some();
+        (src != k && live(src) && live(k)).then(|| [a.s.paths[src].clone(), a.s.paths[k].clone()])
+    });
+    match at {
+        Some(at) if at.iter().all(|p| disk_parts(p).is_some()) => {
+            lock_set(Some(Lock { panes: [src, k], at }));
+            set_note(lock_note(KO.load(Ordering::Relaxed), true, src, k));
+        }
+        _ => warn(tr("Navigate together: both panes must show a folder on disk", "함께 이동: 두 패널 모두 디스크의 폴더여야 함").into()),
+    }
+}
+
+// Ctrl+Shift+Y in pane src: a pair already linked comes apart; else, with one other pane on a folder on disk, the two
+// link at once; with more, their list opens when the keys are let go (LOCK_KEY); with none, why not.
+pub(crate) unsafe fn lock_key(src: usize) {
+    if app(|a| a.lock.is_some()) {
+        lock_off();
+        return;
+    }
+    let (here, ok) = app(|a| {
+        let ok: Vec<usize> = (0..a.s.panes()).filter(|&k| k != src && a.panes[k].is_some() && disk_parts(&a.s.paths[k]).is_some()).collect();
+        (a.s.paths[src].clone(), ok)
+    });
+    match ok.as_slice() {
+        _ if disk_parts(&here).is_none() => warn(tr("Navigate together: this pane doesn't show a folder on disk", "함께 이동: 이 패널은 디스크의 폴더가 아님").into()),
+        [] => warn(tr("Navigate together: no other pane shows a folder on disk", "함께 이동: 디스크의 폴더를 보여 주는 다른 패널이 없음").into()),
+        [k] => lock_pair(src, *k),
+        _ => LOCK_KEY.set(Some(src)),
+    }
+}
+
+// The pane rows of the ⇄ menu's "Navigate together with" and of Ctrl+Shift+Y's list: the partner checked (picked
+// again, it unlinks), a pane not on a folder on disk (or this one not) grey.
+unsafe fn lock_rows(menu: HMENU, src: usize, rows: &[(usize, String, String, u8)]) {
+    let (partner, here) = app(|a| (lock_partner(a, src), disk_parts(&a.s.paths[src]).is_some()));
+    for (k, disp, path, t) in rows {
+        let flags = if partner == Some(*k) {
+            MF_STRING | MF_CHECKED
+        } else if here && disk_parts(path).is_some() {
+            MF_STRING
+        } else {
+            MF_STRING | MF_GRAYED
+        };
+        let label = pane_label(tr("Pane", "패널"), *k, if *t == 0 { "" } else { tint_name(*t) }, disp);
+        _ = AppendMenuW(menu, flags, ID_LOCK_TO + k, &HSTRING::from(label));
+    }
+}
+
+// Ctrl+Shift+Y's pane list, under the pane's ⇄ button as Shift+F2's opens.
+pub(crate) unsafe fn lock_menu(h: HWND, src: usize) {
+    let rows = app(|a| (0..a.s.panes()).filter(|&k| k != src).filter_map(|k| Some((k, a.panes[k].as_ref()?.disp.clone(), a.s.paths[k].clone(), a.s.tints[k]))).collect::<Vec<_>>());
+    let Ok(menu) = CreatePopupMenu() else { return };
+    _ = AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, &HSTRING::from(tr("Navigate together with (folders on disk):", "함께 이동할 패널 (디스크의 폴더):")));
+    _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
+    lock_rows(menu, src, &rows);
+    let mut chips = MenuSwatches::new(app(|a| a.dpi)); // dropped after DestroyMenu
+    for (k, _, _, t) in &rows {
+        if let Some(c) = tint_color(*t) {
+            chips.put(menu, ID_LOCK_TO + k, Some(c));
+        }
+    }
+    let mut rc = RECT::default();
+    if let Some(b) = pane_ctl(src, ID_OPEN_IN) {
+        _ = GetWindowRect(b, &mut rc);
+    }
+    let pick = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN, rc.left, rc.bottom, None, h, None).0 as usize;
+    // picked with Enter: its auto-repeats would open a file in the list
+    if GetKeyState(VK_RETURN.0 as i32) < 0 {
+        app(|a| a.held = Some(VK_RETURN.0));
+    }
+    _ = DestroyMenu(menu);
+    match open_in_pick(pick) {
+        OpenPick::Nothing => {}
+        OpenPick::Lock(k) => lock_pair(src, k),
+        _ => _ = MessageBeep(MB_ICONWARNING),
+    }
+}
+
+// Opens `to` in partner pane j, marked so its arrival isn't passed back (on_nav) and is paired with `from`, the
+// moved pane's folder it was worked out from; the partner keeps its focus off.
+unsafe fn lock_browse(j: usize, to: &str, from: &str) -> Result<()> {
+    let eb = eb_of(j).ok_or_else(|| Error::from(E_FAIL))?;
+    let mut pidl = std::ptr::null_mut();
+    SHParseDisplayName(&HSTRING::from(to), None, &mut pidl, 0, None)?;
+    let target = name(pidl, SIGDN_DESKTOPABSOLUTEPARSING);
+    let mark = |set: bool| {
+        app(|a| {
+            if let Some(p) = a.panes[j].as_mut() {
+                if set {
+                    p.lock_hold = Some((from.to_string(), target.clone()));
+                } else if p.lock_hold.as_ref().is_some_and(|(_, t)| *t == target) {
+                    p.lock_hold = None;
+                }
+            }
+        })
+    };
+    mark(true);
+    let r = eb.BrowseToIDList(pidl, SBSP_ABSOLUTE);
+    CoTaskMemFree(Some(pidl as _));
+    if r.is_err() {
+        mark(false);
+    }
+    r
+}
+
+// WM_LOCK_GO: pane i moved on the user's word; its partner follows from the pair's starting folders. A move that
+// can't be read that way (another drive, a shell place, above the partner's root) makes the folders the two show
+// now the new starting point; a folder the partner lacks leaves it where it is, and the status line says so.
+pub(crate) unsafe fn lock_follow(i: usize) {
+    let Some((s, j, from, there, to, now)) = app(|a| {
+        let l = a.lock.as_ref()?;
+        let s = l.panes.iter().position(|&k| k == i)?;
+        let j = l.panes[1 - s];
+        (i < a.s.panes() && j < a.s.panes() && a.panes[j].is_some()).then(|| (s, j, l.at[s].clone(), l.at[1 - s].clone(), a.s.paths[i].clone(), a.s.paths[j].clone()))
+    }) else {
+        return;
+    };
+    match lock_target(&from, &to, &there) {
+        None => app(|a| {
+            if let Some(l) = a.lock.as_mut().filter(|l| l.panes[s] == i) {
+                l.at[s] = to;
+                l.at[1 - s] = now;
+            }
+        }),
+        Some(t) if lock_same(&t, &now) => {}
+        Some(t) => {
+            if let Err(e) = lock_browse(j, &t, &to) {
+                if gone(e.code()) {
+                    set_note(lock_missing_text(KO.load(Ordering::Relaxed), j, &t));
+                }
+            }
+        }
     }
 }
 

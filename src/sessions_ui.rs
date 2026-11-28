@@ -459,6 +459,7 @@ pub(crate) unsafe fn load_session_file(path: &Path) {
         (a.zoom, a.home, a.focus_req) = (None, [None; MAXP], HWND::default());
         a.closed_tabs.clear(); // the last session's closed tabs don't come back into this one
         a.prev_active = None; // nor Ctrl+`'s pane: a number in the last layout
+        a.lock = None; // nor two panes navigating together
         a.s.file = path.to_string_lossy().into_owned();
         (a.base, a.dirty) = (Some(a.s.clone()), false);
     });

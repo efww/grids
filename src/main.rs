@@ -643,7 +643,8 @@ mod tests {
             assert_eq!(open_in_pick(ID_SWAP_TO + k), OpenPick::Swap(k));
             assert_eq!(open_in_pick(ID_WM_PANE + k), OpenPick::Shell);
             assert_eq!(open_in_pick(ID_DIFF_TO + k), OpenPick::Diff(k));
-            menu.extend([ID_OPEN_TO + k, ID_COPY_TO + k, ID_MOVE_TO + k, ID_SWAP_TO + k, ID_WM_PANE + k, ID_DIFF_TO + k]);
+            assert_eq!(open_in_pick(ID_LOCK_TO + k), OpenPick::Lock(k));
+            menu.extend([ID_OPEN_TO + k, ID_COPY_TO + k, ID_MOVE_TO + k, ID_SWAP_TO + k, ID_WM_PANE + k, ID_DIFF_TO + k, ID_LOCK_TO + k]);
         }
         let shell = [ID_INUSE, ID_WM_PAIR, ID_HASH, ID_GROUP, ID_STAMP, ID_ORG, ID_ORG + 1, ID_ORG + 2, ID_EMPTY, ID_USAGE, ID_LIST, ID_CLIPADD, ID_RESTORE, ID_EXPLORER, ID_PHOTO, ID_PHOTO + 1, ID_PHOTO + 2, ID_DUPES, ID_GREP];
         for p in shell {
@@ -662,11 +663,11 @@ mod tests {
         distinct("⇄ menu", &menu);
         assert_eq!(open_in_pick(0), OpenPick::Nothing);
         // just past each range: never an open in, or a copy / move to, a pane
-        for p in [17, 100, 117, 200, 217, 317, 441, 600, 617, 1129, 1138, 3116, 5000] {
+        for p in [17, 100, 117, 200, 217, 317, 441, 600, 617, 700, 717, 1129, 1138, 3116, 5000] {
             assert_eq!(open_in_pick(p), OpenPick::Unknown, "{p}");
         }
         for p in 0..5000 {
-            if let OpenPick::Send { k, .. } | OpenPick::Open(k) | OpenPick::Swap(k) | OpenPick::Diff(k) = open_in_pick(p) {
+            if let OpenPick::Send { k, .. } | OpenPick::Open(k) | OpenPick::Swap(k) | OpenPick::Diff(k) | OpenPick::Lock(k) = open_in_pick(p) {
                 assert!(k < MAXP && menu.contains(&p), "{p}");
             }
         }
@@ -692,7 +693,7 @@ mod tests {
         let msgs = [
             WM_NARROW_AGAIN, WM_DROP_OPEN, WM_PEEK_DONE, WM_PANE_ICON, WM_DRIVES, WM_KIDS, WM_THEME_SYNC, WM_PEEK_LOST, WM_PEEK_HOSTED,
             WM_HASH, WM_SHELL_CHANGE, WM_GROUPED, WM_TOUR, WM_TRAY, WM_COPY_DONE, WM_USAGE, WM_FONT_SYNC, WM_BIN_COUNT, WM_BIN_CHANGE,
-            WM_STAMPED, WM_SIZE_DONE, WM_DISK_DONE, WM_EDITED, WM_OPEN_ARGS, WM_UPDATE, WM_STAR, WM_DUPES, WM_DEVICES,
+            WM_STAMPED, WM_SIZE_DONE, WM_DISK_DONE, WM_EDITED, WM_OPEN_ARGS, WM_UPDATE, WM_STAR, WM_DUPES, WM_DEVICES, WM_LOCK_GO,
         ];
         distinct("main WM_APP messages", &msgs.map(|m| m as usize));
     }
@@ -3415,7 +3416,7 @@ mod tests {
         let mut open: Vec<(usize, (&str, &str), bool)> = vec![];
         for k in [0, MAXP - 1] {
             open.extend([(ID_OPEN_TO + k, ("", ""), false), (ID_SWAP_TO + k, M_SWAP, true), (ID_COPY_TO + k, M_COPY, true), (ID_MOVE_TO + k, M_MOVE, true)]);
-            open.extend([(ID_DIFF_TO + k, M_DIFF, true), (ID_WM_PANE + k, M_WM_PANE, true)]);
+            open.extend([(ID_DIFF_TO + k, M_DIFF, true), (ID_LOCK_TO + k, M_LOCK, true), (ID_WM_PANE + k, M_WM_PANE, true)]);
         }
         for n in [0, SEND_SLOTS - 1] {
             open.extend([(ID_SEND_COPY + n, M_COPY, true), (ID_SEND_MOVE + n, M_MOVE, true)]);
@@ -4068,8 +4069,8 @@ mod tests { tr("in", "안") }
 
     // Every ⇄ menu item that can show at the top level at the same time: one letter each, none a pane digit,
     // none the first letter of an unmarked item (the grey title, "Pane 10" …), in both languages.
-    fn menu_slots() -> [&'static [(&'static str, &'static str)]; 19] {
-        [&[M_SWAP], &[M_COPY], &[M_MOVE], &[M_INUSE], &[M_HASH, M_HASH_STOP], &[M_ORG], &[M_PHOTO], &[M_GROUP_N, M_GROUP], &[M_STAMP_N, M_STAMP], &[M_EMPTY], &[M_DUPES, M_DUPES_STOP], &[M_GREP], &[M_USAGE], &[M_LIST_N, M_LIST], &[M_CLIPADD_N, M_CLIPADD], &[M_RESTORE], &[M_DIFF], &[M_EXPLORER_SEL, M_EXPLORER], &[M_WM_PAIR, M_WM_PANE]]
+    fn menu_slots() -> [&'static [(&'static str, &'static str)]; 20] {
+        [&[M_SWAP], &[M_LOCK], &[M_COPY], &[M_MOVE], &[M_INUSE], &[M_HASH, M_HASH_STOP], &[M_ORG], &[M_PHOTO], &[M_GROUP_N, M_GROUP], &[M_STAMP_N, M_STAMP], &[M_EMPTY], &[M_DUPES, M_DUPES_STOP], &[M_GREP], &[M_USAGE], &[M_LIST_N, M_LIST], &[M_CLIPADD_N, M_CLIPADD], &[M_RESTORE], &[M_DIFF], &[M_EXPLORER_SEL, M_EXPLORER], &[M_WM_PAIR, M_WM_PANE]]
     }
 
     // X is Explorer's own letter: no other ⇄ item (nor the title, a pane row or a digit) takes it
@@ -6362,6 +6363,48 @@ mod tests { tr("in", "안") }
         // Ctrl+Shift+V: the list's paste-and-go; the boxes and an edit box in the list (F2 rename) keep their paste
         assert_eq!((l("Ctrl+Shift+V"), l("Ctrl+V"), route("addr", "Ctrl+Shift+V"), route("filter", "Ctrl+Shift+V")), (PasteGo, Paste, BoxKey, BoxKey));
         assert_eq!((route("rename", "Ctrl+Shift+V"), l("Ctrl+Alt+Shift+V")), (Shell, Typing)); // AltGr+Shift+V: a character
+        // Ctrl+Shift+Y: navigate together, from the list and both boxes; Ctrl+Y stays the view's redo, AltGr+Shift+Y types
+        assert_eq!((l("Ctrl+Shift+Y"), route("addr", "Ctrl+Shift+Y"), route("filter", "Ctrl+Shift+Y")), (Lock, Lock, Lock));
+        assert_eq!((l("Ctrl+Y"), l("Ctrl+Alt+Shift+Y")), (Shell, Typing));
+    }
+
+    // Navigate together: the partner's folder after the other pane's move, from where the two were in step.
+    #[test]
+    fn lock_target_moves() {
+        let cases: &[(&str, &str, &str, Option<&str>)] = &[
+            // (from, to, partner's folder at `from`, partner's folder after)
+            (r"C:\Work", r"C:\Work\src", r"D:\Backup", Some(r"D:\Backup\src")),         // into a subfolder
+            (r"C:\Work\src", r"C:\Work", r"D:\Backup\src", Some(r"D:\Backup")),         // up
+            (r"C:\Work\v1", r"C:\Work\v2", r"D:\B\v1", Some(r"D:\B\v2")),               // next folder (Alt+PgDn)
+            (r"C:\Work", r"C:\Work\a\b", r"D:\B", Some(r"D:\B\a\b")),                   // two down at once (address bar)
+            (r"C:\Work\a", r"C:\", r"D:\B\x", Some(r"D:\")),                            // up to the root: as far up (2)
+            (r"C:\Work", r"C:\", r"D:\B", Some(r"D:\")),                                // the partner's root keeps its '\'
+            (r"C:\Work", r"C:\", r"D:\", None),                                         // nothing above the partner's root
+            (r"C:\Work", r"C:\Work", r"D:\B", Some(r"D:\B")),                           // a reload: where it is
+            (r"c:\WORK\", r"C:\work\Src", r"D:\B\", Some(r"D:\B\Src")),                 // case, trailing '\'
+            (r"C:\Über", r"C:\über\x", r"D:\B", Some(r"D:\B\x")),                        // case beyond ASCII
+            (r"C:\Work", r"E:\Other", r"D:\B", None),                                   // another drive
+            (r"C:\Work", "::{20D04FE0-3AEA-1069-A2D8-08002B30309D}", r"D:\B", None),    // This PC
+            ("::{20D04FE0-3AEA-1069-A2D8-08002B30309D}", r"C:\Work", r"D:\B", None),
+            (r"C:\Work", r"C:\Work\a", "", None),                                       // a partner with no folder yet
+            (r"\\nas\share\v1", r"\\nas\share\v1\docs", r"C:\Local", Some(r"C:\Local\docs")), // a share and a drive
+            (r"C:\Work\docs", r"C:\Work", r"\\nas\share\docs", Some(r"\\nas\share")),    // up to a share's root
+            (r"C:\Work", r"C:\", r"\\nas\share", None),                                 // nothing above a share
+            (r"\\NAS\Share\a", r"\\nas\share\b", r"D:\x\a", Some(r"D:\x\b")),           // same share, any case
+            (r"\\nas\one\a", r"\\nas\two\a", r"D:\x", None),                             // another share
+            (r"\\?\C:\Work", r"\\?\C:\Work\a", r"D:\B", None),                           // \\?\ paths are no folders here
+            (r"\\nas", r"\\nas\share", r"D:\B", None),                                  // a bare server
+        ];
+        for (from, to, there, want) in cases {
+            assert_eq!(lock_target(from, to, there).as_deref(), *want, "{from} → {to} from {there}");
+        }
+        // the partner's arrival read back from the other side lands where that pane already is: nothing to pass back
+        let back = lock_target(r"D:\Backup", r"D:\Backup\src", r"C:\Work").unwrap();
+        assert!(lock_same(&back, r"C:\work\SRC\"));
+        assert_eq!(lock_note(false, true, 2, 0), "Navigate together: panes 1, 3 linked · Ctrl+Shift+Y unlinks");
+        assert_eq!(lock_note(true, false, 0, 1), "함께 이동 풀림: 패널 1, 2");
+        assert_eq!(lock_missing_text(true, 1, r"D:\B\Reports"), "함께 이동: 패널 2에는 'Reports' 폴더가 없음");
+        assert_eq!(lock_missing_text(false, 0, r"D:\B\Reports\"), "Navigate together: pane 1 has no folder 'Reports'");
     }
 
     // Ctrl+Shift+V's reading of the clipboard: the paths to try, best first; none for what is no path.
