@@ -5349,6 +5349,204 @@ mod tests { tr("in", "안") }
         out
     }
 
+    // A ZIP64 archive made by hand (APPNOTE 6.3). Each file: name, bytes, deflate, the unpacked size to claim, and
+    // which of (unpacked size, compressed size, local header offset) are "see ZIP64": those read 0xFFFFFFFF in the
+    // headers and their 64-bit values go in the extra field id 1, in that order (APPNOTE 4.5.3). An extended-timestamp
+    // field comes first, to be skipped. The end record says 0xFFFF / 0xFFFFFFFF everywhere, so only the ZIP64 end
+    // record (+32 entries, +40 directory size, +48 directory start) can be right, found through the locator just
+    // before the end record (+8: where the ZIP64 end record is).
+    pub(crate) fn zip64_bytes(files: &[(&[u8], &[u8], bool, u64, [bool; 3])]) -> Vec<u8> {
+        let (mut out, mut cd) = (Vec::new(), Vec::new());
+        for (name, data, deflate, size, wide) in files {
+            let body = if *deflate { miniz_oxide::deflate::compress_to_vec(data, 6) } else { data.to_vec() };
+            let method: u16 = if *deflate { 8 } else { 0 };
+            let vals = [*size, body.len() as u64, out.len() as u64];
+            let small = |i: usize| if wide[i] { 0xFFFF_FFFFu32 } else { vals[i] as u32 };
+            let z64: Vec<u8> = (0..3).filter(|&i| wide[i]).flat_map(|i| vals[i].to_le_bytes()).collect();
+            let mut extra = vec![0x55, 0x54, 1, 0, 0];
+            extra.extend(1u16.to_le_bytes());
+            extra.extend((z64.len() as u16).to_le_bytes());
+            extra.extend(&z64);
+            // local header: +8 method, +18 compressed size, +22 size, +26 name length, +28 extra length
+            out.extend([0x50, 0x4b, 3, 4, 45, 0, 0, 0]);
+            out.extend(method.to_le_bytes());
+            out.extend([0u8; 8]); // time, date, crc
+            out.extend(small(1).to_le_bytes());
+            out.extend(small(0).to_le_bytes());
+            out.extend((name.len() as u16).to_le_bytes());
+            out.extend((extra.len() as u16).to_le_bytes());
+            out.extend(*name);
+            out.extend(&extra);
+            out.extend(&body);
+            // central header: +10 method, +20 compressed size, +24 size, +28 name, +30 extra length, +42 offset
+            cd.extend([0x50, 0x4b, 1, 2, 45, 0, 45, 0, 0, 0]);
+            cd.extend(method.to_le_bytes());
+            cd.extend([0u8; 8]);
+            cd.extend(small(1).to_le_bytes());
+            cd.extend(small(0).to_le_bytes());
+            cd.extend((name.len() as u16).to_le_bytes());
+            cd.extend((extra.len() as u16).to_le_bytes());
+            cd.extend([0u8; 10]); // comment, disk, attrs
+            cd.extend(small(2).to_le_bytes());
+            cd.extend(*name);
+            cd.extend(&extra);
+        }
+        let (start, n) = (out.len() as u64, files.len() as u64);
+        out.extend(&cd);
+        let z64_at = out.len() as u64;
+        out.extend(0x0606_4b50u32.to_le_bytes());
+        out.extend(44u64.to_le_bytes()); // the record's size, less these first 12 bytes
+        out.extend([45, 0, 45, 0, 0, 0, 0, 0, 0, 0, 0, 0]); // versions, disk numbers
+        for v in [n, n, cd.len() as u64, start] {
+            out.extend(v.to_le_bytes()); // +24, +32, +40, +48
+        }
+        out.extend(0x0706_4b50u32.to_le_bytes());
+        out.extend(0u32.to_le_bytes());
+        out.extend(z64_at.to_le_bytes());
+        out.extend(1u32.to_le_bytes());
+        out.extend([0x50, 0x4b, 5, 6, 0, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0, 0]);
+        out
+    }
+
+    // An archive comment of `comment` after the end record of zip_bytes / zip64_bytes (its last 2 bytes: the length).
+    fn zip_with_comment(mut z: Vec<u8>, comment: &[u8]) -> Vec<u8> {
+        let at = z.len() - 2;
+        z[at..].copy_from_slice(&(comment.len() as u16).to_le_bytes());
+        z.extend(comment);
+        z
+    }
+
+    // Where the central directory of a zip_bytes archive starts (end record +16).
+    fn zip_cd_at(z: &[u8]) -> usize {
+        u32::from_le_bytes(z[z.len() - 6..z.len() - 2].try_into().unwrap()) as usize
+    }
+
+    // Damaged, cut short, commented, ZIP64 and unknown-method archives: what zip_entries and zip_read give now,
+    // never a panic. Opening a downloaded or half-copied file in F3 or the find in files goes through here.
+    #[test]
+    fn zip_damaged_and_zip64() {
+        let names = |es: &[ZipEntry]| es.iter().map(|e| (e.name.clone(), e.size)).collect::<Vec<_>>();
+        let read = |z: &[u8], i: usize, max: usize| {
+            let mut c = std::io::Cursor::new(z);
+            let es = zip_entries(&mut c).unwrap();
+            zip_read(&mut c, &es[i], max)
+        };
+        let zeros = vec![0u8; 3000];
+
+        // (a) ZIP64: every value from the extra field and the ZIP64 end record; one file over 4 GB that keeps its
+        // 32-bit offset, so its extra field holds only the two sizes
+        let z = zip64_bytes(&[(b"a.txt", b"stored", false, 6, [true; 3]), (b"big.bin", &zeros, true, 5_000_000_000, [true, true, false])]);
+        let es = zip_entries(&mut std::io::Cursor::new(&z)).unwrap();
+        assert_eq!(names(&es), [("a.txt".to_string(), 6), ("big.bin".to_string(), 5_000_000_000)]);
+        assert_eq!(read(&z, 0, 100).unwrap(), b"stored");
+        assert_eq!(read(&z, 1, 10).unwrap(), &zeros[..10]); // capped
+        assert_eq!(read(&z, 1, 1 << 20).unwrap(), zeros);
+        // the locator pointing outside the file: no ZIP64 record to read
+        let mut bad = z.clone();
+        let loc = bad.len() - 22 - 20 + 8;
+        bad[loc..loc + 8].copy_from_slice(&u64::MAX.to_le_bytes());
+        assert!(zip_entries(&mut std::io::Cursor::new(bad)).is_none());
+
+        // (b) archive comments up to the longest (65535: the end record is then exactly as far back as is searched)
+        let plain = zip_bytes(&[(b"a.txt", b"stored", false, 0x800), (b"b.txt", b"two", true, 0x800)]);
+        for len in [0, 100, 65535] {
+            for z in [plain.clone(), z.clone()] {
+                let z = zip_with_comment(z, &vec![b'#'; len]);
+                let es = zip_entries(&mut std::io::Cursor::new(&z)).unwrap_or_else(|| panic!("comment of {len}"));
+                assert_eq!(es.len(), 2, "comment of {len}");
+                assert_eq!(read(&z, 0, 100).unwrap(), b"stored", "comment of {len}");
+            }
+        }
+
+        // (c) the end record counts more entries than the directory holds, or the next header has no signature:
+        // the entries up to there
+        let cd = zip_cd_at(&plain);
+        let first = 46 + 5; // first central header: fixed part and "a.txt"
+        let mut more = plain.clone();
+        let at = more.len() - 22;
+        more[at + 8..at + 12].copy_from_slice(&[5, 0, 5, 0]);
+        assert_eq!(zip_entries(&mut std::io::Cursor::new(more)).unwrap().len(), 2);
+        let mut nosig = plain.clone();
+        nosig[cd + first] = 0;
+        assert_eq!(names(&zip_entries(&mut std::io::Cursor::new(nosig)).unwrap()), [("a.txt".to_string(), 6)]);
+
+        // (d) a header whose fixed part or name runs past the directory: not read at all
+        for size in [first + 4, first + 46 + 1] {
+            let mut short = plain.clone();
+            let at = short.len() - 22 + 12;
+            short[at..at + 4].copy_from_slice(&(size as u32).to_le_bytes());
+            assert!(zip_entries(&mut std::io::Cursor::new(short)).is_none(), "directory of {size}");
+        }
+        let mut long = plain.clone();
+        long[cd + 28..cd + 30].copy_from_slice(&[0xFF, 0xFF]);
+        assert!(zip_entries(&mut std::io::Cursor::new(long)).is_none());
+        // a directory said to start past the end, or to be over 64 MB
+        let mut past = plain.clone();
+        let at = past.len() - 6;
+        past[at..at + 4].copy_from_slice(&[0, 0, 0, 1]);
+        assert!(zip_entries(&mut std::io::Cursor::new(past)).is_none());
+        let mut huge = plain.clone();
+        let at = huge.len() - 22 + 12;
+        huge[at..at + 4].copy_from_slice(&(65u32 << 20).to_le_bytes());
+        assert!(zip_entries(&mut std::io::Cursor::new(huge)).is_none());
+        // a file cut short anywhere (a stopped download) has no whole end record: not a ZIP
+        for cut in 0..plain.len() {
+            assert!(zip_entries(&mut std::io::Cursor::new(&plain[..cut])).is_none(), "cut at {cut}");
+        }
+        for cut in 0..z.len() {
+            assert!(zip_entries(&mut std::io::Cursor::new(&z[..cut])).is_none(), "ZIP64 cut at {cut}");
+        }
+        // an empty archive (just the end record) is a ZIP with nothing in it
+        assert_eq!(zip_entries(&mut std::io::Cursor::new(zip_bytes(&[]))).unwrap().len(), 0);
+
+        // (e) a local header without its signature, or an offset outside the file: listed, not read
+        let mut nolocal = plain.clone();
+        nolocal[0] = 0;
+        assert!(read(&nolocal, 0, 100).is_none());
+        assert_eq!(read(&nolocal, 1, 100).unwrap(), b"two");
+        let mut away = plain.clone();
+        away[cd + 42..cd + 46].copy_from_slice(&0x00FF_FFFFu32.to_le_bytes());
+        assert!(read(&away, 0, 100).is_none());
+        // a stored entry claiming more bytes than the file has
+        let mut cut = plain.clone();
+        cut[cd + 20..cd + 24].copy_from_slice(&1000u32.to_le_bytes());
+        assert!(read(&cut, 0, 100_000).is_none());
+
+        // (f) Deflate64 (9) and LZMA (14): listed with their sizes, not read
+        for method in [9u8, 14] {
+            let mut m = plain.clone();
+            m[8] = method; // local header
+            m[cd + 10] = method; // central header
+            assert_eq!(names(&zip_entries(&mut std::io::Cursor::new(&m)).unwrap()), [("a.txt".to_string(), 6), ("b.txt".to_string(), 3)]);
+            assert!(read(&m, 0, 100).is_none(), "method {method}");
+        }
+
+        // (g) damaged deflate data: no panic, and nothing or at most what was asked for
+        // (miniz_oxide may hand back a zero-filled partial buffer on error, so only the length is checked)
+        let text = b"Grids reads deflated entries ".repeat(40);
+        let d = zip_bytes(&[(b"d.txt", &text, true, 0x800)]);
+        let body = 30 + 5..zip_cd_at(&d);
+        let mut junk = d.clone();
+        junk[body.clone()].fill(0xFF);
+        if let Some(v) = read(&junk, 0, 1 << 20) {
+            assert!(v.len() <= 1 << 20);
+        }
+        for at in body.clone().step_by(3) {
+            let mut flip = d.clone();
+            flip[at] ^= 0x5A;
+            if let Some(v) = read(&flip, 0, 500) {
+                assert!(v.len() <= 500, "flip at {at}");
+            }
+        }
+        // compressed size said shorter than it is: no panic, at most what was asked for
+        let mut short = d.clone();
+        let cdd = zip_cd_at(&d);
+        short[cdd + 20..cdd + 24].copy_from_slice(&((body.len() / 2) as u32).to_le_bytes());
+        if let Some(v) = read(&short, 0, 1 << 20) {
+            assert!(v.len() <= 1 << 20);
+        }
+    }
+
     #[test]
     fn zip_reading() {
         let big = "<w:p><w:r><w:t>안녕 &amp; hi</w:t></w:r></w:p>".repeat(50);

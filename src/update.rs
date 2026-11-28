@@ -768,6 +768,12 @@ mod tests {
         assert_eq!(unpack(&z, &good, "9.9.8"), Err(UpFail::Checksum)); // no line for that zip
         let junk = b"not a zip".to_vec();
         assert_eq!(unpack(&junk, &format!("{}  {}", sha256_hex(&junk).unwrap(), zip_name("1.0.0")), "1.0.0"), Err(UpFail::Damaged));
+        // grids.exe packed with a method it can't unpack (Deflate64): the zip's sum is right, the exe still isn't taken
+        let mut d64 = z.clone();
+        d64[8] = 9; // local header
+        d64[cd as usize + 10] = 9; // central header
+        let sums = format!("{}  {}\n{} *grids.exe\n", sha256_hex(&d64).unwrap(), zip_name("9.9.9"), sha256_hex(&exe).unwrap());
+        assert_eq!(unpack(&d64, &sums, "9.9.9"), Err(UpFail::Damaged));
     }
 
     #[test]

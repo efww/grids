@@ -621,11 +621,17 @@ fn folder_list(path: &str) -> Body {
     Body::List { head, rows }
 }
 
+/// The "unpacked" total: sizes come from the archive itself (a ZIP64 field can claim up to u64::MAX), so a damaged
+/// one stops at the largest value instead of wrapping round to a small one.
+fn zip_unpacked_total(sizes: impl IntoIterator<Item = u64>) -> u64 {
+    sizes.into_iter().fold(0u64, u64::saturating_add)
+}
+
 fn zip_list(path: &str) -> Option<Body> {
     let mut f = std::fs::File::open(path).ok()?;
     let es = zip_entries(&mut f)?;
     let files: Vec<&ZipEntry> = es.iter().filter(|e| !e.is_dir()).collect();
-    let total: u64 = files.iter().map(|e| e.size).sum();
+    let total = zip_unpacked_total(files.iter().map(|e| e.size));
     let head = if KO.load(Ordering::Relaxed) {
         format!("파일 {}개, 풀면 {}", files.len(), human(total))
     } else {
@@ -1045,6 +1051,25 @@ mod tests {
             panic!("{test}.{ext}: no plain text");
         };
         text
+    }
+
+    // A damaged ZIP64 archive whose sizes add up past u64::MAX: the total stops at the largest value (it used to
+    // wrap round to "100 B" in a release build and panic in a debug one).
+    #[test]
+    fn zip_total_does_not_wrap() {
+        assert_eq!(zip_unpacked_total([]), 0);
+        assert_eq!(zip_unpacked_total([1, 2, 3]), 6);
+        assert_eq!(zip_unpacked_total([u64::MAX - 1, 5]), u64::MAX);
+        assert_eq!(zip_unpacked_total([1 << 63, (1 << 63) + 100, 7]), u64::MAX);
+
+        let z = crate::tests::zip64_bytes(&[(b"a.bin", b"a", false, 1 << 63, [true; 3]), (b"b.bin", b"b", false, (1 << 63) + 100, [true; 3])]);
+        let path = std::env::temp_dir().join(format!("grids_zip_total_{}.zip", std::process::id()));
+        std::fs::write(&path, z).unwrap();
+        let body = zip_list(path.to_str().unwrap());
+        let _ = std::fs::remove_file(&path);
+        let Some(Body::List { head, rows }) = body else { panic!("not listed") };
+        assert!(head.contains(&human(u64::MAX)), "{head}");
+        assert_eq!(rows[1], ("b.bin".to_string(), human((1 << 63) + 100)));
     }
 
     #[test]
