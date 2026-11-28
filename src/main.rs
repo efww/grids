@@ -5008,11 +5008,64 @@ mod tests { tr("in", "안") }
     #[test]
     fn tab_strip() {
         let strip = RECT { left: 2, top: 30, right: 402, bottom: 56 };
-        let (tabs, plus) = tab_rects(strip, 2, 96);
+        let (tabs, plus) = tab_rects(strip, &[400, 400], 96); // long names: s(170) at most
         assert_eq!((tabs[0].left, tabs[0].right - tabs[0].left, tabs[1].right, plus.left, plus.right), (6, 170, 346, 346, 370));
-        let (tabs, plus) = tab_rects(strip, 10, 96); // squeezed evenly, '+' still inside
+        let (tabs, plus) = tab_rects(strip, &[100, 20], 96); // as wide as wanted, the narrowest keeping icon and ×
+        assert_eq!((tabs[0].right - tabs[0].left, tabs[1].left, tabs[1].right - tabs[1].left, plus.left), (100, 106, 74, 180));
+        let (tabs, plus) = tab_rects(strip, &[100; 10], 96); // even the narrowest don't fit: squeezed evenly, '+' still inside
         assert!(tabs.iter().all(|r| r.right - r.left == 36) && plus.right <= strip.right);
         assert!(tab_close_rect(tabs[0], 96).is_none() && tab_close_rect(RECT { left: 0, top: 0, right: 64, bottom: 20 }, 96).is_some());
+        let (tabs, plus) = tab_rects(strip, &[], 96);
+        assert!(tabs.is_empty() && plus.left == 6);
+    }
+
+    // Tab widths follow the names: short of room, the long tabs give way first to one cap and short names stay
+    // whole; widths and '+' stay in the strip whichever tab is current; every tab keeps its icon and ×.
+    #[test]
+    fn tab_fit() {
+        for dpi in [96, 120, 144, 192] {
+            let s = |v: i32| v * dpi / 96;
+            // a name s(14) wide ("C:"), as the current tab of several: still its × and its icon
+            let least = tab_least(true, dpi);
+            assert!(tab_want(s(14), true, dpi) <= least && tab_least(false, dpi) < least);
+            let strip = RECT { left: s(2), top: 30, right: s(2) + s(476), bottom: 30 + s(26) }; // a 16-pane layout's pane
+            let (tabs, _) = tab_rects(strip, &[tab_want(s(14), true, dpi), tab_want(s(200), true, dpi)], dpi);
+            assert_eq!(tabs[0].right - tabs[0].left, least, "{dpi}");
+            assert!(tab_close_at(tabs[0], 0, 0, 2, dpi).is_some() && tab_icon_rect(tabs[0], true, dpi).is_some(), "{dpi}");
+            for width in [s(240), s(476), s(700), s(1200), s(2000)] {
+                let strip = RECT { right: strip.left + width, ..strip };
+                let room = width - 2 * s(4) - s(24);
+                for names in [&[14, 30][..], &[14, 140, 40, 300, 20], &[300; 5], &[14, 14, 200, 14, 14, 14], &[60; 16], &[14, 500, 500, 30, 30, 30, 30, 30]] {
+                    let n = names.len();
+                    let wants: Vec<i32> = names.iter().map(|&t| tab_want(s(t), n > 1, dpi)).collect();
+                    let (tabs, plus) = tab_rects(strip, &wants, dpi);
+                    let ctx = format!("{dpi} {width} {names:?}");
+                    let w: Vec<i32> = tabs.iter().map(|r| r.right - r.left).collect();
+                    // side by side from the left, '+' right after, all inside the strip
+                    assert_eq!(tabs[0].left, strip.left + s(4), "{ctx}");
+                    assert!(tabs.windows(2).all(|p| p[0].right == p[1].left), "{ctx}");
+                    assert!(plus.left == tabs[n - 1].right && plus.right <= strip.right - s(4), "{ctx}");
+                    if least * n as i32 > room {
+                        // ⑤ not even the narrowest fit: shared evenly as before
+                        assert!(w.iter().all(|&v| v == (room / n as i32).min(s(170))), "{ctx}");
+                        continue;
+                    }
+                    let want: Vec<i32> = wants.iter().map(|&v| v.clamp(least, s(170))).collect();
+                    let cap = *w.iter().max().unwrap();
+                    for k in 0..n {
+                        // ① a tab under the cap is as wide as it wants; one cut is cut to the one cap
+                        assert!(w[k] == want[k] || (w[k] == cap && want[k] > cap), "{ctx} {k}");
+                        assert!(w[k] >= least && tab_icon_rect(tabs[k], n > 1, dpi).is_some(), "{ctx} {k}");
+                        assert!(n == 1 || tab_close_rect(tabs[k], dpi).is_some(), "{ctx} {k}");
+                    }
+                    // the cap is the highest that fits: one pixel more for the cut tabs would overflow
+                    if w != want {
+                        let more: i32 = want.iter().map(|&v| v.min(cap + 1)).sum();
+                        assert!(more > room, "{ctx}");
+                    }
+                }
+            }
+        }
     }
 
     // A tab's folder icon: only while the name keeps s(24) after it (up to the current tab's × with several tabs).
@@ -5036,20 +5089,29 @@ mod tests { tr("in", "안") }
                     }
                 }
             }
-            // one decision for the strip: every tab as wide, so none drops its icon alone
+            // one decision for the strip: every tab has room for its icon, or (shared evenly) none has
+            assert_eq!(tab_least(false, dpi), s(28) + s(8) + s(24));
+            assert_eq!(tab_least(true, dpi), s(28) + s(22) + s(24));
             for width in [200, 300, 400, 1200] {
                 let strip = RECT { left: 2, top: 30, right: 2 + width, bottom: 30 + s(26) };
                 for n in [1, 2, 3, 12] {
-                    let (tabs, _) = tab_rects(strip, n, dpi);
+                    let wants: Vec<i32> = (0..n).map(|k| tab_want(s([14, 90, 40, 250][k % 4]), n > 1, dpi)).collect();
+                    let (tabs, _) = tab_rects(strip, &wants, dpi);
                     let on: Vec<bool> = tabs.iter().map(|r| tab_icon_rect(*r, n > 1, dpi).is_some()).collect();
                     assert!(on.iter().all(|&b| b == on[0]), "{dpi} {width} {n}");
                 }
             }
         }
-        // 96 DPI: 170 px tabs have icons; ten in 400 px (36 px each) don't
+        // 96 DPI: two tabs in 400 px have icons; ten (36 px each) don't
         let strip = RECT { left: 2, top: 30, right: 402, bottom: 56 };
-        assert!(tab_icon_rect(tab_rects(strip, 2, 96).0[0], true, 96).is_some());
-        assert!(tab_icon_rect(tab_rects(strip, 10, 96).0[0], true, 96).is_none());
+        assert!(tab_icon_rect(tab_rects(strip, &[200; 2], 96).0[0], true, 96).is_some());
+        assert!(tab_icon_rect(tab_rects(strip, &[200; 10], 96).0[0], true, 96).is_none());
+        // five tabs in a 16-pane layout's pane (about 476 px): short names whole, icons on (were 89 px each, names cut)
+        let strip = RECT { left: 2, top: 30, right: 478, bottom: 56 };
+        let wants: Vec<i32> = [14, 40, 120, 35, 60].iter().map(|&t| tab_want(t, true, 96)).collect();
+        let (tabs, _) = tab_rects(strip, &wants, 96);
+        assert!(tabs.iter().all(|r| tab_icon_rect(*r, true, 96).is_some()));
+        assert_eq!((tabs[0].right - tabs[0].left, tabs[1].right - tabs[1].left), (74, wants[1]));
     }
 
     #[test]
@@ -5096,14 +5158,15 @@ mod tests { tr("in", "안") }
         use TabHit::*;
         for dpi in [96, 144] {
             let s = |v: i32| v * dpi / 96;
-            // 400 px: 12 tabs are under 64 DIP each (no ×); 1200 px: they keep their ×
+            // 400 px: 12 tabs are under 64 DIP each (no ×); 1200 px: they keep their ×. Names of mixed lengths
             for width in [400, 1200] {
                 let strip = RECT { left: 2, top: 30, right: 2 + width, bottom: 30 + s(26) };
                 let ym = strip.top + s(3) + (strip.bottom - strip.top - s(3)) / 2;
                 for n in [1, 2, 3, 12] {
-                    let (tabs, plus) = tab_rects(strip, n, dpi);
+                    let wants: Vec<i32> = (0..n).map(|k| tab_want(s([14, 250, 40, 90][k % 4]), n > 1, dpi)).collect();
+                    let (tabs, plus) = tab_rects(strip, &wants, dpi);
                     for cur in 0..n {
-                        let hit = |x: i32, y: i32| tab_hit(strip, n, cur, x, y, dpi);
+                        let hit = |x: i32, y: i32| tab_hit(strip, &wants, cur, x, y, dpi);
                         for (k, r) in tabs.iter().enumerate() {
                             assert_eq!(hit((r.left + r.right) / 2, ym), Some(Tab(k)), "{dpi} {width} {n} {cur} {k}");
                             // the pixels either side of a tab's edges
@@ -5131,7 +5194,7 @@ mod tests { tr("in", "안") }
                                 }
                             }
                         }
-                        let wide = tabs[0].right - tabs[0].left >= s(64);
+                        let wide = tabs[cur].right - tabs[cur].left >= s(64);
                         assert_eq!(closes > 0, n > 1 && wide, "{dpi} {width} {n}");
                         // '+', the empty strip after it and the band above the tabs
                         assert_eq!(hit((plus.left + plus.right) / 2, ym), Some(Plus));
@@ -5145,7 +5208,7 @@ mod tests { tr("in", "안") }
                         assert_eq!(hit(x0, strip.top - 1), None);
                         assert_eq!(hit(x0, strip.bottom), None);
                         assert_eq!(hit(strip.left - 1, ym), None);
-                        assert_eq!(tab_hit(RECT { bottom: strip.top, ..strip }, n, cur, x0, strip.top, dpi), None);
+                        assert_eq!(tab_hit(RECT { bottom: strip.top, ..strip }, &wants, cur, x0, strip.top, dpi), None);
                         // double click on another tab's end: the first press picks it, the second
                         // lands on its fresh × and must not close it
                         for (k, r) in tabs.iter().enumerate().filter(|(k, _)| *k != cur) {
@@ -5153,7 +5216,7 @@ mod tests { tr("in", "안") }
                             let at = ((c.left + c.right) / 2, ym);
                             let first = tab_action(hit(at.0, at.1).unwrap(), Click::Left);
                             assert_eq!(first, TabAct::Pick(k));
-                            let now = tab_hit(strip, n, k, at.0, at.1, dpi).unwrap();
+                            let now = tab_hit(strip, &wants, k, at.0, at.1, dpi).unwrap(); // the tabs stay put
                             assert_eq!(now, Close(k));
                             assert_eq!(tab_action(now, Click::Double), TabAct::Pick(k));
                         }
@@ -5226,20 +5289,21 @@ mod tests { tr("in", "안") }
                 pg.tabs = RECT { left: s(2), top: s(30), right: width + 4 - s(2), bottom: s(30) + s(26) }; // tabs on
                 let kind = filter_icon_rect(pg.filt, s(24)).unwrap();
                 for n in [1, 2, 3, 12] {
+                    let wants: Vec<i32> = (0..n).map(|k| tab_want(s([40, 14, 250][k % 3]), n > 1, dpi)).collect();
                     for cur in 0..n {
                         for y in 0..pg.tabs.bottom + 2 {
                             for x in 0..width + 4 {
                                 let want = if inside(kind, x, y) {
                                     Some(HeadHot::Kind)
                                 } else {
-                                    match tab_hit(pg.tabs, n, cur, x, y, dpi) {
+                                    match tab_hit(pg.tabs, &wants, cur, x, y, dpi) {
                                         Some(TabHit::Tab(k)) => Some(HeadHot::Tab(k)),
                                         Some(TabHit::Close(k)) => Some(HeadHot::Close(k)),
                                         Some(TabHit::Plus) => Some(HeadHot::Plus),
                                         Some(TabHit::Strip) | None => None,
                                     }
                                 };
-                                let got = head_hot_at(&pg, n, cur, x, y, dpi);
+                                let got = head_hot_at(&pg, &wants, cur, x, y, dpi);
                                 assert_eq!(got, want, "{dpi} {width} {n} {cur} ({x},{y})");
                                 if let Some(HeadHot::Close(k)) = got {
                                     assert!(k == cur && n > 1);
@@ -5250,15 +5314,15 @@ mod tests { tr("in", "안") }
                 }
                 // tabs off: a strip of no height shades nothing below the bar
                 let off = PaneGeo { tabs: RECT { bottom: pg.tabs.top, ..pg.tabs }, ..pane_geo(width + 4, s(300), dpi) };
-                let (tabs, _) = tab_rects(pg.tabs, 3, dpi);
-                assert_eq!(head_hot_at(&off, 3, 0, (tabs[1].left + tabs[1].right) / 2, pg.tabs.top + s(10), dpi), None);
+                let (tabs, _) = tab_rects(pg.tabs, &[90; 3], dpi);
+                assert_eq!(head_hot_at(&off, &[90; 3], 0, (tabs[1].left + tabs[1].right) / 2, pg.tabs.top + s(10), dpi), None);
             }
         }
         // a pill too narrow for the icon: shaded only inside it
         let mut pg = pane_geo(800, 300, 96);
         pg.filt.right = pg.filt.left + 10;
-        assert_eq!(head_hot_at(&pg, 1, 0, pg.filt.left + 9, pg.filt.top + 5, 96), Some(HeadHot::Kind));
-        assert_eq!(head_hot_at(&pg, 1, 0, pg.filt.left + 10, pg.filt.top + 5, 96), None);
+        assert_eq!(head_hot_at(&pg, &[90], 0, pg.filt.left + 9, pg.filt.top + 5, 96), Some(HeadHot::Kind));
+        assert_eq!(head_hot_at(&pg, &[90], 0, pg.filt.left + 10, pg.filt.top + 5, 96), None);
     }
 
     // The hover shades must show against what they cover, and keep the text on them readable, in both themes:

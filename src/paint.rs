@@ -832,8 +832,9 @@ unsafe fn track_leave(h: HWND) {
 // What in pane window h's header is under a client point (tabs, ×, '+', filter icon).
 pub(crate) unsafe fn head_hot_of(h: HWND, x: i32, y: i32) -> Option<HeadHot> {
     let i = app(|a| a.panes.iter().position(|p| p.as_ref().is_some_and(|p| p.hwnd == h)))?;
-    let (n, cur, dpi) = app(|a| (a.s.tab_list(i).len(), a.s.tab[i], a.dpi));
-    head_hot_at(&pane_geo_of(h, dpi), n, cur, x, y, dpi)
+    let dpi = app(|a| a.dpi);
+    let (wants, cur) = tab_wants_of(i);
+    head_hot_at(&pane_geo_of(h, dpi), &wants, cur, x, y, dpi)
 }
 
 // Where a header target is painted in h: the whole tab strip (a tab lightening moves its neighbours' hairlines),

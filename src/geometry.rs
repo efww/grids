@@ -366,15 +366,50 @@ pub(crate) fn tab_strip_h_at(dpi: i32, grow: i32, tabs: bool) -> i32 {
     if tabs { 26 * dpi / 96 + grow } else { 0 }
 }
 
-// Tabs share the strip evenly up to a comfortable width, then a '+' after the last. (tabs, '+')
-pub(crate) fn tab_rects(strip: RECT, n: usize, dpi: i32) -> (Vec<RECT>, RECT) {
+// The narrowest tab that keeps its folder icon and s(24) of name (up to the × with several tabs): tab_icon_rect's
+// own bound, so every tab at least this wide has its icon and (several, over s(64)) its ×.
+pub(crate) fn tab_least(several: bool, dpi: i32) -> i32 {
+    let s = |v: i32| v * dpi / 96;
+    s(28) + if several { s(22) } else { s(8) } + s(24)
+}
+
+// Tabs as wide as their names want (`wants`, tab_want), each within [tab_least, s(170)], then a '+' after the last.
+// Short of room, the longest give way first to one cap (as water filling), so short names stay whole; when even
+// the narrowest tabs don't fit, all share the strip evenly as before. Never depends on which tab is current.
+pub(crate) fn tab_rects(strip: RECT, wants: &[i32], dpi: i32) -> (Vec<RECT>, RECT) {
     let s = |v: i32| v * dpi / 96;
     let (pad, plus) = (s(4), s(24));
+    let n = wants.len() as i32;
     let room = (strip.right - strip.left - 2 * pad - plus).max(0);
-    let w = (room / n.max(1) as i32).min(s(170));
-    let tab = |k: i32| RECT { left: strip.left + pad + k * w, top: strip.top + s(3), right: strip.left + pad + (k + 1) * w, bottom: strip.bottom };
-    let tabs: Vec<RECT> = (0..n as i32).map(tab).collect();
-    let x = tabs.last().map_or(strip.left + pad, |r| r.right);
+    let least = tab_least(n > 1, dpi);
+    let widths: Vec<i32> = if n == 0 {
+        Vec::new()
+    } else if least * n > room {
+        vec![(room / n).min(s(170)); n as usize]
+    } else {
+        let want: Vec<i32> = wants.iter().map(|&w| w.clamp(least, s(170))).collect();
+        let mut sorted = want.clone();
+        sorted.sort_unstable();
+        // the highest cap that fits: tabs under it keep their width, the rest share what is left
+        let (mut left, mut cap) = (room, i32::MAX);
+        for (k, &w) in sorted.iter().enumerate() {
+            let rest = n - k as i32;
+            if w * rest > left {
+                cap = left / rest;
+                break;
+            }
+            left -= w;
+        }
+        want.iter().map(|&w| w.min(cap)).collect()
+    };
+    let mut x = strip.left + pad;
+    let tabs: Vec<RECT> = widths
+        .iter()
+        .map(|&w| {
+            x += w;
+            RECT { left: x - w, top: strip.top + s(3), right: x, bottom: strip.bottom }
+        })
+        .collect();
     (tabs, RECT { left: x, top: strip.top + s(3), right: x + plus, bottom: strip.bottom })
 }
 
@@ -385,8 +420,8 @@ pub(crate) fn tab_close_rect(tab: RECT, dpi: i32) -> Option<RECT> {
 }
 
 // The folder icon's square at a tab's left (s(16), centred top to bottom); the name then starts at s(28).
-// Decided for the whole strip (all tabs are as wide): `close` = several tabs, so the tightest name room is
-// the current tab's, up to its ×. None when that would leave under s(24) of name: names only, as before.
+// Decided for the whole strip (all tabs at least tab_least, or all as wide): `close` = several tabs, so the
+// tightest name room is the current tab's, up to its ×. None when that would leave under s(24) of name.
 pub(crate) fn tab_icon_rect(tab: RECT, close: bool, dpi: i32) -> Option<RECT> {
     let s = |v: i32| v * dpi / 96;
     let end = if close { s(22) } else { s(8) };
@@ -608,7 +643,7 @@ mod tests {
                 }
                 // the fields keep their distance from the top, so the colour label band above them stays as it is
                 assert_eq!(pg.addr.top, pane_geo_at(800, 400, dpi, 0, true, Wide::No).addr.top, "{ctx}");
-                let (tabs, plus) = tab_rects(pg.tabs, 3, dpi);
+                let (tabs, plus) = tab_rects(pg.tabs, &[40, 120, 300], dpi);
                 for t in tabs.iter().chain([&plus]) {
                     assert!(t.bottom - t.top >= tm && t.bottom <= pg.view.top, "tab {ctx}");
                 }

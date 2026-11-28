@@ -2563,8 +2563,9 @@ impl PaneDrop {
             return DropAt::Open;
         }
         let i = self.slot.load(Ordering::SeqCst);
-        let (list, cur, dpi) = app(|a| (a.s.tab_list(i), a.s.tab[i], a.dpi));
-        let hit = tab_hit(pane_geo(rc.right, rc.bottom, dpi).tabs, list.len(), cur, p.x, p.y, dpi);
+        let (list, dpi) = app(|a| (a.s.tab_list(i), a.dpi));
+        let (wants, cur) = tab_wants_of(i);
+        let hit = tab_hit(pane_geo(rc.right, rc.bottom, dpi).tabs, &wants, cur, p.x, p.y, dpi);
         drop_at(hit, cur, &list)
     }
     // Shades tab k as the mouse does (None: off again).

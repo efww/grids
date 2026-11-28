@@ -22,6 +22,8 @@ pub(crate) unsafe fn repaint_tabs(i: usize) {
     let strip = pane_geo(rc.right, rc.bottom, app(|a| a.dpi)).tabs;
     if strip.bottom > strip.top {
         _ = InvalidateRect(Some(h), Some(&strip), false);
+        // a name that changed moves the tabs after it (tab_rects): shade what is under a still pointer now
+        head_rehover(h);
     }
 }
 
@@ -342,12 +344,48 @@ pub(crate) fn tab_close_at(tab: RECT, k: usize, cur: usize, n: usize, dpi: i32) 
     tab_close_rect(tab, dpi).filter(|_| k == cur && n > 1)
 }
 
+// The width a tab's name wants (tab_rects): its icon's s(28), the name with s(2) to spare (no '…' at an exact fit),
+// and the ×'s s(22) on every tab while there are several (so picking another tab never moves the strip), else s(8).
+pub(crate) fn tab_want(text_w: i32, several: bool, dpi: i32) -> i32 {
+    let s = |v: i32| v * dpi / 96;
+    s(28) + text_w.max(0) + s(2) + if several { s(22) } else { s(8) }
+}
+
+// The name a tab shows: its folder's place_label, '…' for none.
+pub(crate) fn tab_name(path: &str) -> String {
+    match place_label(path) {
+        n if n.is_empty() => "…".to_string(),
+        n => n,
+    }
+}
+
+// Each tab's tab_want, its name measured in `font` on a screen DC. The painter (with the font it draws in, a.font)
+// and every hit test (tab_wants_of) come here, so what is clicked is what was drawn.
+pub(crate) unsafe fn tab_wants(list: &[String], font: HFONT, dpi: i32) -> Vec<i32> {
+    let dc = GetDC(None);
+    let wants = list.iter().map(|p| tab_want(text_w(dc, &tab_name(p), font), list.len() > 1, dpi)).collect();
+    ReleaseDC(None, dc);
+    wants
+}
+
+// Pane i's tab wants (tab_wants in the UI font) and current tab, for the hit tests. Tabs off: no strip to hit,
+// nothing measured.
+pub(crate) unsafe fn tab_wants_of(i: usize) -> (Vec<i32>, usize) {
+    let (list, cur, font, dpi) = app(|a| (a.s.tab_list(i), a.s.tab[i], a.font, a.dpi));
+    if !tabs_on() {
+        return (vec![0; list.len()], cur);
+    }
+    (tab_wants(&list, font, dpi), cur)
+}
+
 // What is under (x, y) in a pane's strip; None outside it (or with tabs off: a strip of no height).
-pub(crate) fn tab_hit(strip: RECT, n: usize, cur: usize, x: i32, y: i32, dpi: i32) -> Option<TabHit> {
+// `wants`: tab_wants, one per tab.
+pub(crate) fn tab_hit(strip: RECT, wants: &[i32], cur: usize, x: i32, y: i32, dpi: i32) -> Option<TabHit> {
     if !inside(strip, x, y) {
         return None;
     }
-    let (tabs, plus) = tab_rects(strip, n, dpi);
+    let n = wants.len();
+    let (tabs, plus) = tab_rects(strip, wants, dpi);
     if inside(plus, x, y) {
         return Some(TabHit::Plus);
     }
@@ -396,11 +434,11 @@ pub(crate) enum HeadHot {
 }
 
 // Asks the clicks' own hit tests (tab_hit, filter_icon_rect), so what is shaded is what a click does there.
-pub(crate) fn head_hot_at(pg: &PaneGeo, n: usize, cur: usize, x: i32, y: i32, dpi: i32) -> Option<HeadHot> {
+pub(crate) fn head_hot_at(pg: &PaneGeo, wants: &[i32], cur: usize, x: i32, y: i32, dpi: i32) -> Option<HeadHot> {
     if filter_icon_rect(pg.filt, 24 * dpi / 96).is_some_and(|r| inside(r, x, y)) {
         return Some(HeadHot::Kind);
     }
-    match tab_hit(pg.tabs, n, cur, x, y, dpi)? {
+    match tab_hit(pg.tabs, wants, cur, x, y, dpi)? {
         TabHit::Tab(k) => Some(HeadHot::Tab(k)),
         TabHit::Close(k) => Some(HeadHot::Close(k)),
         TabHit::Plus => Some(HeadHot::Plus),
@@ -425,8 +463,9 @@ pub(crate) unsafe fn tab_mouse(h: HWND, i: usize, x: i32, y: i32, click: TabClic
     let mut rc = RECT::default();
     _ = GetClientRect(h, &mut rc);
     let dpi = app(|a| a.dpi);
-    let (n, cur) = app(|a| (a.s.tab_list(i).len(), a.s.tab[i]));
-    let Some(hit) = tab_hit(pane_geo(rc.right, rc.bottom, dpi).tabs, n, cur, x, y, dpi) else { return false };
+    let (wants, cur) = tab_wants_of(i);
+    let n = wants.len();
+    let Some(hit) = tab_hit(pane_geo(rc.right, rc.bottom, dpi).tabs, &wants, cur, x, y, dpi) else { return false };
     set_active(i);
     let act = tab_action(hit, click);
     match act {
@@ -467,9 +506,9 @@ pub(crate) unsafe fn paint_tabs(
         return;
     }
     fill(dc, pg.tabs, pal().bg);
-    let (rects, plus) = tab_rects(pg.tabs, tabs.len(), dpi);
+    let (rects, plus) = tab_rects(pg.tabs, &tab_wants(tabs, font, dpi), dpi);
     // icons or not, once for the whole strip (tab_icon_rect), so no single tab drops its icon
-    let icons = icons.filter(|_| rects.first().is_some_and(|r| tab_icon_rect(*r, tabs.len() > 1, dpi).is_some()));
+    let icons = icons.filter(|_| !rects.is_empty() && rects.iter().all(|r| tab_icon_rect(*r, tabs.len() > 1, dpi).is_some()));
     // a hot × / '+': a square centred on the glyph, shaded as a pressed header button
     let square = |c: RECT, under: u32| {
         let (d, x, y) = (s(16), (c.left + c.right) / 2 - s(8), (c.top + c.bottom) / 2 - s(8));
@@ -478,10 +517,7 @@ pub(crate) unsafe fn paint_tabs(
     let lit = |k: usize| k != cur && hot == Some(HeadHot::Tab(k)); // hot may be stale (k >= n): then nothing matches
     for (k, (r, path)) in rects.iter().zip(tabs).enumerate() {
         let on = k == cur;
-        let name = match place_label(path) {
-            n if n.is_empty() => "…".to_string(),
-            n => n,
-        };
+        let name = tab_name(path);
         let close = tab_close_at(*r, k, cur, tabs.len(), dpi);
         if on {
             fill(dc, *r, pal().card);

@@ -905,9 +905,12 @@ pub(crate) extern "system" fn pane_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 _ = GetClientRect(h, &mut rc);
                 let dpi = app(|a| a.dpi);
                 let pg = pane_geo(rc.right, rc.bottom, dpi);
-                let tab = |i: usize| match tab_hit(pg.tabs, app(|a| a.s.tab_list(i).len()), app(|a| a.s.tab[i]), p.x, p.y, dpi) {
-                    Some(TabHit::Tab(k) | TabHit::Close(k)) => Some(k),
-                    _ => None,
+                let tab = |i: usize| {
+                    let (wants, cur) = tab_wants_of(i);
+                    match tab_hit(pg.tabs, &wants, cur, p.x, p.y, dpi) {
+                        Some(TabHit::Tab(k) | TabHit::Close(k)) => Some(k),
+                        _ => None,
+                    }
                 };
                 match pane_of(h).filter(|_| lp.0 != -1).map(|i| (i, tab(i))) {
                     Some((i, Some(k))) => tab_menu(h, i, k, screen),
