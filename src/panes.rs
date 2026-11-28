@@ -1268,8 +1268,220 @@ pub(crate) unsafe fn set_caption(h: HWND) {
     _ = DwmSetWindowAttribute(h, DWMWA_CAPTION_COLOR, &caption as *const _ as _, 4);
 }
 
+// ---------- a cross-fade over a theme or language switch ----------
+// Like macOS's and Android's whole-screen cross-fade when dark mode changes: apply_theme rebuilds every pane (Windows
+// 11's newer list takes its colours only when made, and a new language needs new tooltips), so the panes would blink
+// empty and their lists pop in one by one. Instead a photo of the window as it was is laid over it (no clicks, no
+// focus, as the ring), held while the panes are made again, then faded out onto the new theme. Only while Grids is
+// in front, shown and not minimised (the screen there is Grids'), with Windows' animation effects on, and never at
+// start; otherwise as before. Timed by the clock: making the panes holds the message loop, so ticks come late.
+
+#[derive(Clone, Copy)]
+struct Fade {
+    t0: Instant,            // the photo went up
+    built: Option<Instant>, // apply_theme finished then: the hold counts from here
+    lift: Option<u64>,      // ms after t0 the fade-out began
+    at: RECT,               // main's window rect then: moved, resized or a new DPI takes the photo off at once
+    bmp: HBITMAP,
+}
+
+thread_local! {
+    static FADE: Cell<Option<Fade>> = const { Cell::new(None) };
+    static FADE_WND: Cell<HWND> = const { Cell::new(HWND(std::ptr::null_mut())) };
+}
+
+const FADE_TIMER: usize = 1;
+const FADE_TICK_MS: u32 = 16;
+const FADE_HOLD_MIN: u64 = 120; // after apply_theme, at least this long before the fade-out
+const FADE_HOLD_MAX: u64 = 1200; // and no longer than this, panes ready or not
+const FADE_OUT: u64 = 200;
+const FADE_MAX: u64 = 2000; // from the photo going up: gone by then whatever happens
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum FadePhase {
+    Hold,
+    Lift,
+    Done,
+}
+
+/// Whether a theme or language switch is covered by the photo: animations on, Grids in front, and panes already
+/// there (the first apply_theme at start makes them, with nothing on screen to keep).
+pub(crate) fn fade_wanted(animate: bool, front: bool, had: bool) -> bool {
+    animate && front && had
+}
+
+/// What the photo does `ms` after it went up, `built_ms` after apply_theme finished (None: not yet), with every
+/// shown pane's list made and nothing loading (`ready`) or not.
+pub(crate) fn fade_phase(ms: u64, built_ms: Option<u64>, ready: bool) -> FadePhase {
+    match built_ms {
+        _ if ms >= FADE_MAX => FadePhase::Done,
+        Some(b) if b >= FADE_HOLD_MAX || (b >= FADE_HOLD_MIN && ready) => FadePhase::Lift,
+        _ => FadePhase::Hold,
+    }
+}
+
+/// The photo's opacity `ms` after it went up, the fade-out having begun at `lift` ms (None: still held); None once
+/// it is gone. Fast first, slow at the end, from 255 to 0 in FADE_OUT ms.
+pub(crate) fn fade_alpha(ms: u64, lift: Option<u64>) -> Option<u8> {
+    if ms >= FADE_MAX {
+        return None;
+    }
+    let Some(l) = lift else { return Some(255) };
+    let left = 1.0 - ms.saturating_sub(l) as f64 / FADE_OUT as f64;
+    (left > 0.0).then(|| (255.0 * left * left).round() as u8)
+}
+
+// Called first thing in apply_theme and set_language, before anything on screen changes. With the photo already up
+// (a setting burst, set_language's own apply_theme) it stays and the hold counts again; a fade-out under way goes on
+// (the old screen springing back would be the flash this is here to stop).
+pub(crate) unsafe fn fade_begin() {
+    use windows::Win32::Graphics::Dwm::{DwmFlush, DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
+    if let Some(mut f) = FADE.get() {
+        if f.lift.is_none() {
+            f.built = None;
+            FADE.set(Some(f));
+        }
+        return;
+    }
+    let (main, had) = app(|a| (a.main, a.panes.iter().any(Option::is_some)));
+    let front = GetForegroundWindow() == main && IsWindowVisible(main).as_bool() && !IsIconic(main).as_bool();
+    if !fade_wanted(load_animate(), front, had) {
+        return;
+    }
+    let mut at = RECT::default();
+    if GetWindowRect(main, &mut at).is_err() {
+        return;
+    }
+    // what shows of the window, title bar included, without the invisible resize borders round it
+    let mut r = at;
+    _ = DwmGetWindowAttribute(main, DWMWA_EXTENDED_FRAME_BOUNDS, &mut r as *mut RECT as _, size_of::<RECT>() as u32);
+    let (cw, ch) = (r.right - r.left, r.bottom - r.top);
+    let w = fade_wnd(main);
+    if cw <= 0 || ch <= 0 || w.is_invalid() {
+        return;
+    }
+    let screen = GetDC(None);
+    let dc = CreateCompatibleDC(Some(screen));
+    let bmp = CreateCompatibleBitmap(screen, cw, ch);
+    let old = SelectObject(dc, bmp.into());
+    let ok = !bmp.is_invalid() && BitBlt(dc, 0, 0, cw, ch, Some(screen), r.left, r.top, SRCCOPY).is_ok();
+    SelectObject(dc, old);
+    _ = DeleteDC(dc);
+    ReleaseDC(None, screen);
+    if !ok {
+        _ = DeleteObject(bmp.into());
+        return;
+    }
+    FADE.set(Some(Fade { t0: Instant::now(), built: None, lift: None, at, bmp }));
+    // placed and painted while see-through, then made opaque (as the ring: no background brush to show first),
+    // above the ring and any other popup of main's; on screen before the first pane goes
+    _ = SetLayeredWindowAttributes(w, COLORREF(0), 0, LWA_ALPHA);
+    _ = SetWindowPos(w, Some(HWND_TOP), r.left, r.top, cw, ch, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    _ = InvalidateRect(Some(w), None, false);
+    _ = UpdateWindow(w);
+    _ = SetLayeredWindowAttributes(w, COLORREF(0), 255, LWA_ALPHA);
+    _ = DwmFlush();
+    SetTimer(Some(w), FADE_TIMER, FADE_TICK_MS, None);
+}
+
+// apply_theme is done: the hold counts from now (not from the photo, as making the panes may take a while).
+unsafe fn fade_built() {
+    if let Some(mut f) = FADE.get().filter(|f| f.built.is_none() && f.lift.is_none()) {
+        f.built = Some(Instant::now());
+        FADE.set(Some(f));
+    }
+}
+
+// The see-through popup, made the first time it is wanted (main owns it: it goes with main).
+unsafe fn fade_wnd(main: HWND) -> HWND {
+    let w = FADE_WND.get();
+    if !w.is_invalid() && IsWindow(Some(w)).as_bool() {
+        return w;
+    }
+    let ex = WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
+    let w = CreateWindowExW(ex, w!("GridsFade"), w!(""), WS_POPUP, 0, 0, 0, 0, Some(main), None, None, None).unwrap_or_default();
+    FADE_WND.set(w);
+    w
+}
+
+// The photo goes, and its bitmap (some 30 MB on a 4K window) with it.
+pub(crate) unsafe fn fade_off() {
+    let Some(f) = FADE.take() else { return };
+    let w = FADE_WND.get();
+    _ = KillTimer(Some(w), FADE_TIMER);
+    _ = SetLayeredWindowAttributes(w, COLORREF(0), 0, LWA_ALPHA);
+    _ = ShowWindow(w, SW_HIDE);
+    _ = DeleteObject(f.bmp.into());
+}
+
+// Every shown pane has its Explorer list and none is still opening its folder.
+unsafe fn panes_ready() -> bool {
+    let panes: Vec<(usize, HWND, bool)> = app(|a| a.panes.iter().enumerate().filter_map(|(i, p)| p.as_ref().map(|p| (i, p.hwnd, p.loading.is_some()))).collect());
+    panes.into_iter().filter(|&(_, h, _)| IsWindowVisible(h).as_bool()).all(|(i, _, loading)| {
+        let view = view_of::<IShellView>(i).and_then(|v| v.GetWindow().ok());
+        !loading && view.is_some_and(|v| [w!("DirectUIHWND"), w!("SysListView32")].into_iter().any(|c| FindWindowExW(Some(v), None, c, PCWSTR::null()).is_ok()))
+    })
+}
+
+// Each tick: held until the panes are ready, then faded out; gone at once when main moved, resized, took a new DPI,
+// was minimised or hid to the tray (the photo would no longer be where the window is).
+unsafe fn fade_tick(w: HWND) {
+    let Some(mut f) = FADE.get() else {
+        _ = KillTimer(Some(w), FADE_TIMER);
+        return;
+    };
+    let main = app(|a| a.main);
+    let mut r = RECT::default();
+    let same = IsWindowVisible(main).as_bool() && !IsIconic(main).as_bool() && GetWindowRect(main, &mut r).is_ok() && r == f.at;
+    let ms = f.t0.elapsed().as_millis() as u64;
+    if f.lift.is_none() {
+        let built = f.built.map(|b| b.elapsed().as_millis() as u64);
+        // the panes are asked only once the shortest hold is over
+        let ready = built.is_some_and(|b| b >= FADE_HOLD_MIN) && panes_ready();
+        if fade_phase(ms, built, ready) == FadePhase::Lift {
+            f.lift = Some(ms);
+        }
+    }
+    // past FADE_MAX (fade_phase's Done) fade_alpha is None too
+    match fade_alpha(ms, f.lift).filter(|_| same) {
+        Some(alpha) => {
+            FADE.set(Some(f));
+            _ = SetLayeredWindowAttributes(w, COLORREF(0), alpha, LWA_ALPHA);
+        }
+        None => fade_off(),
+    }
+}
+
+pub(crate) extern "system" fn fade_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    unsafe {
+        match msg {
+            WM_TIMER if wp.0 == FADE_TIMER => fade_tick(h),
+            WM_ERASEBKGND => return LRESULT(1),
+            WM_PAINT => {
+                let mut ps = PAINTSTRUCT::default();
+                let dc = BeginPaint(h, &mut ps);
+                if let Some(f) = FADE.get() {
+                    let mut rc = RECT::default();
+                    _ = GetClientRect(h, &mut rc);
+                    let src = CreateCompatibleDC(Some(dc));
+                    let old = SelectObject(src, f.bmp.into());
+                    _ = BitBlt(dc, 0, 0, rc.right, rc.bottom, Some(src), 0, 0, SRCCOPY);
+                    SelectObject(src, old);
+                    _ = DeleteDC(src);
+                }
+                _ = EndPaint(h, &ps);
+            }
+            // main minimised and back: an owned popup comes back with it; the photo is not to (fade_tick took it off)
+            WM_SHOWWINDOW if lp.0 != 0 => {}
+            _ => return DefWindowProcW(h, msg, wp, lp),
+        }
+        LRESULT(0)
+    }
+}
+
 // Applies the current theme everywhere; panes are rebuilt so their Explorer views pick it up.
 pub(crate) unsafe fn apply_theme() {
+    fade_begin(); // before theme_chrome recolours the title bar and tree: the photo is all of the old theme
     theme_chrome();
     // every pane at once on a real theme switch (filling panes in turn would read as flicker); at start, when this
     // makes the first panes, the active one first like any other start
@@ -1281,6 +1493,7 @@ pub(crate) unsafe fn apply_theme() {
     relayout();
     app(|a| a.fill_now = false);
     redraw_all();
+    fade_built();
 }
 
 // Everything but the panes' Explorer lists: tooltips, app mode (menus, scrollbars), title bar, tree, accent.
@@ -1902,5 +2115,56 @@ mod tests {
         assert_eq!(ring_hole(8, 200, 4), None); // nothing left inside
         assert_eq!(ring_hole(300, 8, 4), None);
         assert_eq!(ring_hole(300, 200, 0), None);
+    }
+
+    #[test]
+    fn theme_fade_covers_only_in_front_with_animations_and_panes() {
+        assert!(fade_wanted(true, true, true));
+        assert!(!fade_wanted(false, true, true)); // animation effects off: as before
+        assert!(!fade_wanted(true, false, true)); // another app in front: the screen there is not Grids'
+        assert!(!fade_wanted(true, true, false)); // the first apply_theme at start
+    }
+
+    #[test]
+    fn theme_fade_holds_until_ready_or_its_limits() {
+        use FadePhase::*;
+        // apply_theme still running (or begun again): held
+        assert_eq!(fade_phase(0, None, true), Hold);
+        assert_eq!(fade_phase(1500, None, true), Hold);
+        // the shortest hold, ready or not
+        assert_eq!(fade_phase(300, Some(0), true), Hold);
+        assert_eq!(fade_phase(300, Some(119), true), Hold);
+        assert_eq!(fade_phase(300, Some(120), true), Lift);
+        // panes not ready yet: held up to 1200 ms after apply_theme, then lifted anyway
+        assert_eq!(fade_phase(900, Some(600), false), Hold);
+        assert_eq!(fade_phase(1499, Some(1199), false), Hold);
+        assert_eq!(fade_phase(1500, Some(1200), false), Lift);
+        // 2 s after the photo went up it goes whatever else
+        assert_eq!(fade_phase(2000, None, false), Done);
+        assert_eq!(fade_phase(2000, Some(130), true), Done);
+        assert_eq!(fade_phase(9000, Some(50), false), Done);
+    }
+
+    #[test]
+    fn theme_fade_is_opaque_then_eases_out_to_nothing() {
+        // held: fully opaque
+        for ms in [0, 16, 500, 1999] {
+            assert_eq!(fade_alpha(ms, None), Some(255));
+        }
+        let lift = 400;
+        assert_eq!(fade_alpha(lift, Some(lift)), Some(255));
+        let mut last = 255;
+        for ms in lift..lift + 200 {
+            let a = fade_alpha(ms, Some(lift)).expect("still fading before 200 ms");
+            assert!(a <= last, "{ms} ms: {a} after {last}");
+            last = a;
+        }
+        assert_eq!(last, 0, "ends at nothing");
+        // ease-out: most of it is gone half way through
+        assert!(fade_alpha(lift + 100, Some(lift)).is_some_and(|a| a > 0 && a < 128));
+        assert_eq!(fade_alpha(lift + 200, Some(lift)), None);
+        // a fade-out not done by 2 s is cut off there
+        assert_eq!(fade_alpha(2000, Some(1900)), None);
+        assert_eq!(fade_alpha(2000, None), None);
     }
 }

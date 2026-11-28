@@ -2391,6 +2391,7 @@ pub(crate) fn place_buttons(a: &App) -> Vec<HWND> {
 
 // Switches the UI language now: menu, toolbar tooltips, and the panes (rebuilt with their tooltips).
 pub(crate) unsafe fn set_language(ko: bool) {
+    fade_begin(); // before the menu and buttons change: the photo is all of the old language (apply_theme below)
     KO.store(ko, Ordering::Relaxed);
     let (main, old) = app(|a| {
         a.s.ko = ko;

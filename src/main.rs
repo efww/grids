@@ -301,6 +301,12 @@ fn main() -> Result<()> {
             ..Default::default()
         });
         RegisterClassW(&WNDCLASSW {
+            lpfnWndProc: Some(fade_proc), // the old screen laid over a theme or language switch (fade_begin)
+            hInstance: hinst,
+            lpszClassName: w!("GridsFade"),
+            ..Default::default()
+        });
+        RegisterClassW(&WNDCLASSW {
             style: CS_DROPSHADOW,
             lpfnWndProc: Some(fav_proc),
             hInstance: hinst,
