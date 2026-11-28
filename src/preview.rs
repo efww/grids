@@ -636,8 +636,18 @@ fn zip_list(path: &str) -> Option<Body> {
 
 // ---------- documents read without their programs ----------
 
+/// A Word or PowerPoint file's words, for find in files (grep.rs); None when it can't be read.
+pub(crate) fn office_words(path: &str) -> Option<String> {
+    // no slide heads: searching "slide" would otherwise match every deck
+    match office_body(path, &path.rsplit_once('.')?.1.to_ascii_lowercase(), false)? { Body::Text { text, .. } => Some(text), _ => None }
+}
+
 /// Word, Excel, PowerPoint and OpenDocument files as their words (the second best, when no preview handler).
 fn office_text(path: &str, ext: &str) -> Option<Body> {
+    office_body(path, ext, true)
+}
+
+fn office_body(path: &str, ext: &str, heads: bool) -> Option<Body> {
     let mut f = std::fs::File::open(path).ok()?;
     let es = zip_entries(&mut f)?;
     let mut part = |name: &str| zip_find(&es, name).and_then(|e| zip_read(&mut f, e, 32 << 20)).map(|b| decode_text(&b));
@@ -669,7 +679,10 @@ fn office_text(path: &str, ext: &str) -> Option<Body> {
             let mut out = String::new();
             for (n, name) in slides.iter().take(300) {
                 let t = text(part(name).unwrap_or_default(), &["a:t"], &["a:p"]);
-                out += &format!("── {label} {n} ──\n{}\n\n", t.trim());
+                if heads {
+                    out += &format!("── {label} {n} ──\n");
+                }
+                out += &format!("{}\n\n", t.trim());
             }
             out
         }

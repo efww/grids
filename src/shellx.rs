@@ -1266,6 +1266,8 @@ pub(crate) unsafe fn shell_menu(menu: HMENU, src: usize, picked: &std::result::R
         None => (MF_STRING | MF_GRAYED, tr2(M_DUPES).to_string()),
     };
     _ = AppendMenuW(menu, flags, ID_DUPES, &HSTRING::from(label));
+    let flags = if disk_folder(&here) { MF_STRING } else { MF_STRING | MF_GRAYED };
+    _ = AppendMenuW(menu, flags, ID_GREP, &HSTRING::from(tr2(M_GREP)));
     let flags = if is_fs(&here) { MF_STRING } else { MF_STRING | MF_GRAYED };
     _ = AppendMenuW(menu, flags, ID_USAGE, &HSTRING::from(tr2(M_USAGE)));
     list_menu(menu, src); // the selection, or with none the whole view
@@ -1364,7 +1366,7 @@ pub(crate) unsafe fn reveal_in_explorer(src: usize) {
 }
 
 pub(crate) fn is_shell_pick(p: usize) -> bool {
-    p == ID_INUSE || p == ID_WM_PAIR || p == ID_HASH || p == ID_GROUP || p == ID_STAMP || p == ID_EMPTY || p == ID_DUPES || p == ID_USAGE || p == ID_LIST || p == ID_CLIPADD || p == ID_RESTORE || p == ID_EXPLORER || is_org_pick(p) || is_photo_pick(p) || (ID_WM_PANE..ID_WM_PANE + MAXP).contains(&p)
+    p == ID_INUSE || p == ID_WM_PAIR || p == ID_HASH || p == ID_GROUP || p == ID_STAMP || p == ID_EMPTY || p == ID_DUPES || p == ID_GREP || p == ID_USAGE || p == ID_LIST || p == ID_CLIPADD || p == ID_RESTORE || p == ID_EXPLORER || is_org_pick(p) || is_photo_pick(p) || (ID_WM_PANE..ID_WM_PANE + MAXP).contains(&p)
 }
 
 pub(crate) unsafe fn shell_pick(h: HWND, src: usize, p: usize, picked: std::result::Result<Vec<String>, Pick>, exe: Option<String>, others: &[(usize, HSTRING, String)]) {
@@ -1379,6 +1381,7 @@ pub(crate) unsafe fn shell_pick(h: HWND, src: usize, p: usize, picked: std::resu
         // no selection needed: the folder the pane shows now, checked again there
         (ID_EMPTY, _, _) => remove_empty(src),
         (ID_DUPES, _, _) => dupes_pick(src), // the folder the pane shows now (or stops the run going on)
+        (ID_GREP, _, _) => open_grep(src),
         (ID_USAGE, _, _) => open_usage(src),
         (ID_LIST, _, _) => copy_list(src), // the view's selection (or all its items), read again now
         (ID_CLIPADD, picked, _) => add_to_clip(picked), // the selection the menu counted

@@ -1119,6 +1119,7 @@ pub(crate) fn open_in_help(id: usize, head: bool, ko: bool) -> Option<&'static s
             ID_STAMP => ("Copies with the date and time in the name; Ctrl+Z removes them", "이름에 날짜·시각을 붙인 사본을 만듭니다 (Ctrl+Z로 지움)"),
             ID_EMPTY => ("Empty subfolders here go to the Recycle Bin after asking; Ctrl+Z", "하위의 빈 폴더를 물어본 뒤 휴지통으로 보냅니다 (Ctrl+Z로 되돌림)"),
             ID_DUPES => ("Selects all but one of each set of same-content files; again stops", "내용이 같은 파일을 하나씩만 남기고 선택합니다 (다시 누르면 중지)"),
+            ID_GREP => ("Files here and in subfolders with that text inside, with the line", "이 폴더와 하위 폴더에서 그 글자가 든 파일을 맞은 줄과 함께 찾습니다"),
             ID_USAGE => ("What takes up the most space in this folder", "이 폴더에서 무엇이 용량을 많이 차지하는지 봅니다"),
             ID_LIST => ("Names, sizes and dates as a table, to paste into Excel", "이름·크기·날짜를 표로 복사해 엑셀에 붙여 넣게 합니다"),
             ID_CLIPADD => ("Adds the selection to what's already copied, for one paste", "이미 복사한 것에 선택을 더해 한 번에 붙여 넣게 합니다"),

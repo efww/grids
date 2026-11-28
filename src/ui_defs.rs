@@ -400,7 +400,7 @@ Ctrl+Shift+C\tCopy the full path of the selected items (or of the current folder
 Ctrl+Shift+V\tGo to the path on the clipboard: a folder opens, a file is shown selected in its folder, never run (a copied path, file:/// address or file with :line, or a file copied with Ctrl+C)\n\
 Ctrl+E\tOpen the selected files (or the focused one) in an editor instead of running them: .bat, .ps1, .reg, .json, .log, config files … (the file type's Edit, else your text editor or Notepad; up to 10 at a time; binary files are skipped)\n\
 Ctrl+Shift+U\tFolder usage: what takes up space in this folder, biggest first with bars, filled in as the subfolders are summed (→ into a folder, ← up, Enter selects the item in the pane, Ctrl+Enter opens the folder, Esc closes; also in the ⇄ menu)\n\
-Ctrl+M\t⇄ menu from the file list: open in another pane, copy / move the selected items to one, swap places and the other ⇄ items. Then one key: a pane's number opens there, C / M then a number copies / moves, S swaps, W which program is using the files, K checksum (files only), D date folders (files only; then Y / M / D), H smaller copies of the selected photos (then S / M / L), N into a new folder, B dated backup copies, E removes empty folders, F selects duplicate files (same content), U folder usage, L copies the file list as a table, A adds the selected items to the clipboard, T restores the earlier selection, I then a number selects the files different from that pane's (Shift+F2), X opens it in Explorer with the selection, R WinMerge (when installed)\n\
+Ctrl+M\t⇄ menu from the file list: open in another pane, copy / move the selected items to one, swap places and the other ⇄ items. Then one key: a pane's number opens there, C / M then a number copies / moves, S swaps, W which program is using the files, K checksum (files only), D date folders (files only; then Y / M / D), H smaller copies of the selected photos (then S / M / L), N into a new folder, B dated backup copies, E removes empty folders, F selects duplicate files (same content), Y finds files by the text inside (Alt+F7), U folder usage, L copies the file list as a table, A adds the selected items to the clipboard, T restores the earlier selection, I then a number selects the files different from that pane's (Shift+F2), X opens it in Explorer with the selection, R WinMerge (when installed)\n\
 Ctrl+Shift+R\tBatch rename the selected items (none selected: every file in the folder): rules such as replace, numbering, date, case; live preview, Undo, presets. In the window: Ctrl+Enter renames, Esc closes; in the rule list Space switches a rule on/off, Ins adds, Del removes, Alt+↑/↓ moves it\n\
 Num+ / Ctrl+Shift+A\tSelect files by pattern (*.jpg;*.png or part of a name; by size or date modified too: >10MB, <7d; Shift+Enter deselects)\n\
 Num−\tDeselect files by pattern\n\
@@ -422,6 +422,7 @@ Ctrl+F3 / Ctrl+F5 / Ctrl+F6\tSort by name / date modified / size (again: reverse
 F7\tNew folder\n\
 Shift+F7\tNew text file (named, selected and ready to rename)\n\
 Ctrl+F7\tMove the selected items into a new folder named after them, ready to rename (Ctrl+Z moves them back)\n\
+Alt+F7\tFind text inside the files of this folder and its subfolders: each file with its line number and the matching line, ↑/↓ choose, Enter shows the file selected in this pane, Esc closes (also Y in the ⇄ menu)\n\
 Shift+F5\tCopy the selected items next to them with the date and time added: Report.docx → Report (2026-11-27 14.30).docx (Ctrl+Z removes the copies)\n\
 F6 / Shift+F6\tMove between file list, address bar, filter, folder tree and the top toolbar (on the toolbar: ←/→ pick a button (its name and keys show under it), Enter press, Shift+F10 drive / Recycle Bin menu, Esc back to the list)\n\
 Enter / Esc\tApply / cancel the address or filter\n\
@@ -475,7 +476,7 @@ Ctrl+Shift+C\t선택한 항목(없으면 현재 폴더)의 전체 경로 복사\
 Ctrl+Shift+V\t클립보드의 경로로 이동: 폴더는 열고, 파일은 실행하지 않고 그 폴더에서 선택해 보여 줌 (복사한 경로, file:/// 주소, :줄 번호가 붙은 파일, Ctrl+C로 복사한 파일)\n\
 Ctrl+E\t선택한 파일(또는 포커스한 파일)을 실행하지 않고 편집기로 열기: .bat·.ps1·.reg·.json·.log·설정 파일 … (그 형식의 '편집', 없으면 쓰는 텍스트 편집기나 메모장, 한 번에 10개까지, 이진 파일은 건너뜀)\n\
 Ctrl+Shift+U\t이 폴더 용량 분석: 공간을 차지하는 항목을 큰 순서로 막대와 함께, 하위 폴더를 계산하는 대로 채움 (→ 폴더 안으로, ← 위로, Enter는 패널에서 그 항목 선택, Ctrl+Enter는 폴더 열기, Esc 닫기, ⇄ 메뉴에도 있음)\n\
-Ctrl+M\t파일 목록에서 ⇄ 메뉴 열기: 다른 패널에서 열기, 선택 항목 복사·이동, 자리 바꾸기와 그 밖의 ⇄ 항목. 이어서 키 하나로: 패널 번호는 그 패널에서 열기, C / M 다음 번호는 복사 / 이동, S는 자리 바꾸기, W는 파일을 쓰고 있는 프로그램, K는 체크섬(파일만), D는 날짜별 폴더(파일만, 이어서 Y / M / D), H는 사진 크기 줄인 사본(이어서 S / M / L), N은 새 폴더로 묶기, B는 날짜 붙인 사본, E는 빈 폴더 지우기, F는 중복 파일 찾아 선택(내용 기준), U는 용량 분석, L은 파일 목록을 표로 복사, A는 선택 항목을 클립보드에 더하기, T는 이전 선택 되살리기, I 다음 번호는 그 패널과 비교해 다른 파일 선택(Shift+F2), X는 탐색기에서 선택 그대로 열기, R은 WinMerge 비교(설치된 경우)\n\
+Ctrl+M\t파일 목록에서 ⇄ 메뉴 열기: 다른 패널에서 열기, 선택 항목 복사·이동, 자리 바꾸기와 그 밖의 ⇄ 항목. 이어서 키 하나로: 패널 번호는 그 패널에서 열기, C / M 다음 번호는 복사 / 이동, S는 자리 바꾸기, W는 파일을 쓰고 있는 프로그램, K는 체크섬(파일만), D는 날짜별 폴더(파일만, 이어서 Y / M / D), H는 사진 크기 줄인 사본(이어서 S / M / L), N은 새 폴더로 묶기, B는 날짜 붙인 사본, E는 빈 폴더 지우기, F는 중복 파일 찾아 선택(내용 기준), Y는 파일 내용에서 찾기(Alt+F7), U는 용량 분석, L은 파일 목록을 표로 복사, A는 선택 항목을 클립보드에 더하기, T는 이전 선택 되살리기, I 다음 번호는 그 패널과 비교해 다른 파일 선택(Shift+F2), X는 탐색기에서 선택 그대로 열기, R은 WinMerge 비교(설치된 경우)\n\
 Ctrl+Shift+R\t선택한 항목(선택 없으면 폴더의 모든 파일) 일괄 이름 바꾸기: 바꾸기·번호·날짜·대소문자 같은 규칙, 실시간 미리보기, 되돌리기, 프리셋. 창 안에서 Ctrl+Enter 바꾸기, Esc 닫기, 규칙 목록에서 Space 켜기/끄기, Ins 추가, Del 빼기, Alt+↑/↓ 순서 바꾸기\n\
 Num+ / Ctrl+Shift+A\t패턴으로 파일 선택 (*.jpg;*.png 또는 이름 일부, 크기·수정한 날짜로도: >10MB, <7d, Shift+Enter는 선택 해제)\n\
 Num−\t패턴으로 파일 선택 해제\n\
@@ -497,6 +498,7 @@ Ctrl+F3 / Ctrl+F5 / Ctrl+F6\t이름 / 수정한 날짜 / 크기순 정렬 (다�
 F7\t새 폴더\n\
 Shift+F7\t새 텍스트 파일 (이름 짓기 바로 시작)\n\
 Ctrl+F7\t선택한 항목을 공통 이름의 새 폴더로 묶고 이름 짓기 바로 시작 (Ctrl+Z로 이동 되돌리기)\n\
+Alt+F7\t이 폴더와 하위 폴더의 파일 내용에서 글자 찾기: 파일마다 줄 번호와 맞은 줄을 보여 줌, ↑/↓ 고르기, Enter는 이 패널에서 그 파일을 선택해 보여 줌, Esc는 닫기 (⇄ 메뉴의 Y도 같음)\n\
 Shift+F5\t선택한 항목 옆에 날짜·시각을 붙인 사본 만들기: 보고서.docx → 보고서 (2026-11-27 14.30).docx (Ctrl+Z로 사본 지우기)\n\
 F6 / Shift+F6\t파일 목록·주소창·필터·폴더 트리·상단 도구줄 사이 이동 (도구줄에서 ←/→ 고르기 — 고른 버튼의 이름·단축키가 아래에 뜸, Enter 누르기, Shift+F10 드라이브·휴지통 메뉴, Esc 목록으로)\n\
 Enter / Esc\t주소창·필터 적용 / 취소\n\

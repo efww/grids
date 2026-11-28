@@ -87,6 +87,7 @@ mod usage;
 mod listing;
 mod clipadd;
 mod switcher;
+mod grep;
 mod photos;
 mod dupes;
 
@@ -131,6 +132,7 @@ use usage::*;
 use listing::*;
 use clipadd::*;
 use switcher::*;
+use grep::*;
 use photos::*;
 use dupes::*;
 
@@ -393,6 +395,14 @@ fn main() -> Result<()> {
             lpszClassName: w!("GridsSwitch"),
             ..Default::default()
         });
+        RegisterClassW(&WNDCLASSW {
+            style: CS_DROPSHADOW,
+            lpfnWndProc: Some(gr_proc),
+            hInstance: hinst,
+            hCursor: arrow,
+            lpszClassName: w!("GridsGrep"),
+            ..Default::default()
+        });
         KO.store(s.ko, Ordering::Relaxed);
         TABS_ON.store(s.tabs_on, Ordering::Relaxed);
         refresh_hc(); // a contrast theme already on: its colours from the first paint
@@ -638,7 +648,7 @@ mod tests {
             assert_eq!(open_in_pick(ID_DIFF_TO + k), OpenPick::Diff(k));
             menu.extend([ID_OPEN_TO + k, ID_COPY_TO + k, ID_MOVE_TO + k, ID_SWAP_TO + k, ID_WM_PANE + k, ID_DIFF_TO + k]);
         }
-        let shell = [ID_INUSE, ID_WM_PAIR, ID_HASH, ID_GROUP, ID_STAMP, ID_ORG, ID_ORG + 1, ID_ORG + 2, ID_EMPTY, ID_USAGE, ID_LIST, ID_CLIPADD, ID_RESTORE, ID_EXPLORER, ID_PHOTO, ID_PHOTO + 1, ID_PHOTO + 2, ID_DUPES];
+        let shell = [ID_INUSE, ID_WM_PAIR, ID_HASH, ID_GROUP, ID_STAMP, ID_ORG, ID_ORG + 1, ID_ORG + 2, ID_EMPTY, ID_USAGE, ID_LIST, ID_CLIPADD, ID_RESTORE, ID_EXPLORER, ID_PHOTO, ID_PHOTO + 1, ID_PHOTO + 2, ID_DUPES, ID_GREP];
         for p in shell {
             assert_eq!(open_in_pick(p), OpenPick::Shell, "{p}");
         }
@@ -3358,7 +3368,7 @@ mod tests {
         open.extend([(ID_CHOOSE_COPY, M_CHOOSE, true), (ID_CHOOSE_MOVE, M_CHOOSE, true)]);
         let shell = [
             (ID_INUSE, M_INUSE), (ID_WM_PAIR, M_WM_PAIR), (ID_HASH, M_HASH), (ID_HASH, M_HASH_STOP), (ID_GROUP, M_GROUP), (ID_GROUP, M_GROUP_N),
-            (ID_STAMP, M_STAMP), (ID_STAMP, M_STAMP_N), (ID_EMPTY, M_EMPTY), (ID_DUPES, M_DUPES), (ID_DUPES, M_DUPES_STOP), (ID_USAGE, M_USAGE),
+            (ID_STAMP, M_STAMP), (ID_STAMP, M_STAMP_N), (ID_EMPTY, M_EMPTY), (ID_DUPES, M_DUPES), (ID_DUPES, M_DUPES_STOP), (ID_GREP, M_GREP), (ID_USAGE, M_USAGE),
             (ID_LIST, M_LIST), (ID_LIST, M_LIST_N), (ID_CLIPADD, M_CLIPADD), (ID_CLIPADD, M_CLIPADD_N), (ID_RESTORE, M_RESTORE),
             (ID_EXPLORER, M_EXPLORER), (ID_EXPLORER, M_EXPLORER_SEL),
         ];
@@ -3476,7 +3486,7 @@ mod tests {
 
     // Every source file, compiled in: the test exe runs on the Windows runner without the source tree.
     // A new module must be listed here too (ui_text_pairs_match checks this against main.rs's `mod` lines).
-    const SOURCES: [(&str, &str); 45] = [
+    const SOURCES: [(&str, &str); 46] = [
         ("main.rs", include_str!("main.rs")),
         ("autostart.rs", include_str!("autostart.rs")),
         ("clipadd.rs", include_str!("clipadd.rs")),
@@ -3488,6 +3498,7 @@ mod tests {
         ("favourites.rs", include_str!("favourites.rs")),
         ("fonts.rs", include_str!("fonts.rs")),
         ("geometry.rs", include_str!("geometry.rs")),
+        ("grep.rs", include_str!("grep.rs")),
         ("hashsum.rs", include_str!("hashsum.rs")),
         ("hwpdoc.rs", include_str!("hwpdoc.rs")),
         ("jumplist.rs", include_str!("jumplist.rs")),
@@ -4002,8 +4013,8 @@ mod tests { tr("in", "안") }
 
     // Every ⇄ menu item that can show at the top level at the same time: one letter each, none a pane digit,
     // none the first letter of an unmarked item (the grey title, "Pane 10" …), in both languages.
-    fn menu_slots() -> [&'static [(&'static str, &'static str)]; 18] {
-        [&[M_SWAP], &[M_COPY], &[M_MOVE], &[M_INUSE], &[M_HASH, M_HASH_STOP], &[M_ORG], &[M_PHOTO], &[M_GROUP_N, M_GROUP], &[M_STAMP_N, M_STAMP], &[M_EMPTY], &[M_DUPES, M_DUPES_STOP], &[M_USAGE], &[M_LIST_N, M_LIST], &[M_CLIPADD_N, M_CLIPADD], &[M_RESTORE], &[M_DIFF], &[M_EXPLORER_SEL, M_EXPLORER], &[M_WM_PAIR, M_WM_PANE]]
+    fn menu_slots() -> [&'static [(&'static str, &'static str)]; 19] {
+        [&[M_SWAP], &[M_COPY], &[M_MOVE], &[M_INUSE], &[M_HASH, M_HASH_STOP], &[M_ORG], &[M_PHOTO], &[M_GROUP_N, M_GROUP], &[M_STAMP_N, M_STAMP], &[M_EMPTY], &[M_DUPES, M_DUPES_STOP], &[M_GREP], &[M_USAGE], &[M_LIST_N, M_LIST], &[M_CLIPADD_N, M_CLIPADD], &[M_RESTORE], &[M_DIFF], &[M_EXPLORER_SEL, M_EXPLORER], &[M_WM_PAIR, M_WM_PANE]]
     }
 
     // X is Explorer's own letter: no other ⇄ item (nor the title, a pane row or a digit) takes it
@@ -6029,6 +6040,8 @@ mod tests { tr("in", "안") }
         // Ctrl+P: from the list and both boxes; Ctrl+Shift+P stays the view's / the box's
         assert_eq!((l("Ctrl+P"), route("addr", "Ctrl+P"), route("filter", "Ctrl+P")), (Switch, Switch, Switch));
         assert_eq!((l("Ctrl+Shift+P"), route("addr", "Ctrl+Shift+P")), (Shell, BoxKey));
+        // Alt+F7: find in files, from the list and both boxes; F7's other forms stay as they were
+        assert_eq!((l("Alt+F7"), route("addr", "Alt+F7"), route("filter", "Alt+F7"), l("F7"), l("Shift+F7"), l("Ctrl+F7"), l("Ctrl+Alt+F7")), (Grep, Grep, Grep, NewFolder, NewText, Group, Shell));
         // Ctrl+Shift+V: the list's paste-and-go; the boxes and an edit box in the list (F2 rename) keep their paste
         assert_eq!((l("Ctrl+Shift+V"), l("Ctrl+V"), route("addr", "Ctrl+Shift+V"), route("filter", "Ctrl+Shift+V")), (PasteGo, Paste, BoxKey, BoxKey));
         assert_eq!((route("rename", "Ctrl+Shift+V"), l("Ctrl+Alt+Shift+V")), (Shell, Typing)); // AltGr+Shift+V: a character

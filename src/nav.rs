@@ -983,6 +983,7 @@ pub(crate) const M_EXPLORER_SEL: (&str, &str) = ("Open in E&xplorer (with the se
 pub(crate) const M_EXPLORER: (&str, &str) = ("Open in E&xplorer", "탐색기에서 열기(&X)");
 pub(crate) const M_RESTORE: (&str, &str) = ("Res&tore the earlier selection ({n})  (Num/)", "이전 선택 {n}개 되살리기(&T)  (Num/)");
 pub(crate) const M_DIFF: (&str, &str) = ("Select the files d&ifferent from  (Shift+F2)", "다른 패널과 비교해 다른 파일 선택(&I)  (Shift+F2)");
+pub(crate) const M_GREP: (&str, &str) = ("Find files b&y the text inside  (Alt+F7)", "파일 내용에서 찾기(&Y)  (Alt+F7)");
 pub(crate) const M_USAGE: (&str, &str) = ("Folder &usage: what takes up space here  (Ctrl+Shift+U)", "이 폴더 용량 분석(&U)  (Ctrl+Shift+U)");
 pub(crate) const M_WM_PAIR: (&str, &str) = ("Compa&re the 2 selected items with WinMerge", "선택한 2개를 WinMerge로 비교(&R)");
 pub(crate) const M_WM_PANE: (&str, &str) = ("Compa&re this folder with WinMerge", "이 폴더를 WinMerge로 비교(&R)");

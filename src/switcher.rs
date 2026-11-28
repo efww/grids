@@ -11,8 +11,8 @@ use windows::Win32::UI::Controls::{EM_SETCUEBANNER, MEASUREITEMSTRUCT};
 const SW_EDIT: i32 = 1;
 const SW_LIST: i32 = 2;
 const SW_ROWS: usize = 12; // rows on screen at most; more scroll
-const WM_SW_PICK: u32 = WM_APP + 90; // a row clicked: go there once the list box is done with the click
-const WM_SW_REFOCUS: u32 = WM_APP + 91; // the list box took the focus (a click beside the rows): back to the find box
+pub(crate) const WM_SW_PICK: u32 = WM_APP + 90; // a row clicked: go there once the list box is done with the click
+pub(crate) const WM_SW_REFOCUS: u32 = WM_APP + 91; // the list box took the focus (a click beside the rows): back to the find box
 
 /// One row: a pane, or one tab of it (only with tabs on).
 #[derive(Clone, Debug, PartialEq)]
@@ -384,7 +384,7 @@ unsafe fn sw_paint(h: HWND) {
 // The list box: a click on a row goes there when the button is let go (the row already picked too, which sends no
 // LBN_SELCHANGE); posted, so the popup goes away only after the list box is done with the click. A click beside
 // the rows gives the find box its keys back.
-unsafe extern "system" fn sw_list_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM, _: usize, _: usize) -> LRESULT {
+pub(crate) unsafe extern "system" fn sw_list_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM, _: usize, _: usize) -> LRESULT {
     let r = DefSubclassProc(h, msg, wp, lp);
     if msg == WM_LBUTTONUP {
         let parent = GetParent(h).unwrap_or_default();

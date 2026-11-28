@@ -57,6 +57,10 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
     if let Some(used) = sw_key(m) {
         return used;
     }
+    // Alt+F7's find in files: its list keys, Enter, Esc and Alt+F7; the rest is typing
+    if let Some(used) = gr_key(m) {
+        return used;
+    }
     // folder usage: every key is its own while it has the focus (no Ctrl+W, Alt+← … on the pane behind)
     if let Some(used) = usage_key(m) {
         return used;
@@ -241,6 +245,8 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
                 open_switcher();
             }
         }
+        KeyRoute::Grep if !repeat => open_grep(a), // held, it opens once
+        KeyRoute::Grep => {}
         KeyRoute::Favs => {
             key_used(TIP_FAVS);
             open_favs();
@@ -452,6 +458,7 @@ pub(crate) enum KeyRoute {
     Save,
     Load,
     Switch,
+    Grep,
     Favs,
     FavToggle,
     Keys,
@@ -552,6 +559,8 @@ pub(crate) fn key_route(vk: VIRTUAL_KEY, ctrl: bool, shift: bool, alt: bool, c: 
         VK_O if ctrl && !shift && !alt => Load,
         // Ctrl+P: go to an open pane or tab by part of its folder's name, from the boxes too (held, it opens once)
         VK_P if ctrl && !shift && !alt => Switch,
+        // Alt+F7: find text in the files of this folder and its subfolders (Total Commander's), from the boxes too
+        VK_F7 if alt && !ctrl && !shift => Grep,
         VK_B if ctrl && !shift && !alt => Favs,
         // Ctrl+Shift+B: the active pane's ☆+ from the keys (a browser's "bookmark this page"); held, it toggles once
         VK_B if ctrl && shift && !alt => FavToggle,
