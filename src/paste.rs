@@ -867,7 +867,8 @@ pub(crate) fn keep_job(job: std::thread::JoinHandle<()>) {
 }
 
 // Copies (or, with `mv`, moves) `srcs` into `dst` on a worker thread. False = the thread didn't start.
-// Once it is done (not after an error or a cancel), the main window hears of it: WM_COPY_DONE.
+// Once it is done (not after an error or a cancel), the main window hears of it: WM_COPY_DONE. Sources gone
+// since they were picked (a clipboard list from earlier) are skipped and named there, not a failure of the rest.
 pub(crate) unsafe fn start_copy(srcs: Vec<String>, dst: String, rename: bool, mv: bool) -> bool {
     let busy = Busy::new();
     // the worker can't use app(): the main window and the start time are taken here, on the UI thread
@@ -880,8 +881,9 @@ pub(crate) unsafe fn start_copy(srcs: Vec<String>, dst: String, rename: bool, mv
             run_copy(&srcs, &dst, rename, mv)
         };
         match res {
-            Ok(aborted) => {
-                let done = CopyDone { mv, n: srcs.len(), to: short_name(&dst), aborted, took: start.elapsed() };
+            Ok((aborted, n, missing)) => {
+                let first_missing = missing.first().map_or(String::new(), |m| mid_cut(&short_name(m), 40));
+                let done = CopyDone { mv, n, to: short_name(&dst), aborted, missing: missing.len(), first_missing, took: start.elapsed() };
                 COPY_DONE.lock().unwrap_or_else(|e| e.into_inner()).push(done);
                 // Grids already closing: the post just fails (JOBS are joined after the message loop)
                 _ = PostMessageW(Some(HWND(main as _)), WM_COPY_DONE, WPARAM(0), LPARAM(0));
@@ -904,10 +906,12 @@ pub(crate) unsafe fn start_copy(srcs: Vec<String>, dst: String, rename: bool, mv
 }
 
 // No owner window: the progress and conflict dialogs belong to the worker thread.
-// Ok(true) = done, but something was skipped or cancelled on the way.
-pub(crate) unsafe fn run_copy(srcs: &[String], dst: &str, rename: bool, mv: bool) -> Result<bool> {
-    let op = run_op(srcs, dst, rename, mv)?;
-    Ok(op.GetAnyOperationsAborted().map_or(true, |b| b.as_bool()))
+// Ok((aborted, handed over, not found)): aborted = done, but something was skipped or cancelled on the way;
+// the count is of the sources the copy engine got, the paths of the ones no longer found apart.
+pub(crate) unsafe fn run_copy(srcs: &[String], dst: &str, rename: bool, mv: bool) -> Result<(bool, usize, Vec<String>)> {
+    let (op, n, missing) = run_op_skip(srcs, dst, rename, mv)?;
+    let aborted = op.is_some_and(|op| op.GetAnyOperationsAborted().map_or(true, |b| b.as_bool()));
+    Ok((aborted, n, missing))
 }
 
 // ---------- a finished copy / move says so (TeraCopy, a browser's "download complete") ----------
@@ -916,9 +920,11 @@ pub(crate) const WM_COPY_DONE: u32 = WM_APP + 56; // a start_copy is over; the d
 
 pub(crate) struct CopyDone {
     pub(crate) mv: bool,
-    pub(crate) n: usize,     // items picked (not the files inside folders)
+    pub(crate) n: usize,     // items handed to the copy (not the files inside folders, nor the ones not found)
     pub(crate) to: String,   // the folder's short name
     pub(crate) aborted: bool, // some skipped, or the rest cancelled: no count is claimed then
+    pub(crate) missing: usize, // picked, but no longer found when the copy started: skipped
+    pub(crate) first_missing: String, // the first of those by its (cut) name
     pub(crate) took: Duration,
 }
 
@@ -946,6 +952,31 @@ pub(crate) fn done_notice(took: Duration, in_front: bool, hidden: bool, tray_on:
 }
 
 pub(crate) fn done_text(ko: bool, d: &CopyDone) -> String {
+    let m = d.missing;
+    // the name last: a Windows notification cuts the end off (utf16_cut), the count stays
+    let name = if m > 1 { format!("{}, …", d.first_missing) } else { d.first_missing.clone() };
+    if m > 0 && d.n == 0 && !d.aborted {
+        return match (ko, d.mv, m) {
+            (true, false, 1) => format!("복사하지 않음: 항목을 찾을 수 없음 ({name})"),
+            (true, true, 1) => format!("이동하지 않음: 항목을 찾을 수 없음 ({name})"),
+            (true, false, _) => format!("복사하지 않음: {m}개 모두 찾을 수 없음 ({name})"),
+            (true, true, _) => format!("이동하지 않음: {m}개 모두 찾을 수 없음 ({name})"),
+            (false, false, 1) => format!("Nothing copied: the item was not found ({name})"),
+            (false, true, 1) => format!("Nothing moved: the item was not found ({name})"),
+            (false, false, _) => format!("Nothing copied: none of the {m} items were found ({name})"),
+            (false, true, _) => format!("Nothing moved: none of the {m} items were found ({name})"),
+        };
+    }
+    let done = done_head(ko, d);
+    match (m, ko) {
+        (0, _) => done,
+        (_, true) => format!("{done} · {m}개는 찾을 수 없어 건너뜀 ({name})"),
+        (_, false) => format!("{done} · {m} not found, skipped ({name})"),
+    }
+}
+
+// The finished copy / move alone, before any "not found" part.
+fn done_head(ko: bool, d: &CopyDone) -> String {
     let (n, to) = (d.n, &d.to);
     match (ko, d.mv, d.aborted) {
         (true, false, false) => format!("복사 끝: {n}개 → {to}"),
@@ -973,8 +1004,13 @@ pub(crate) fn utf16_cut(s: &str, cap: usize) -> Vec<u16> {
 // WM_COPY_DONE on the main window.
 pub(crate) unsafe fn copy_done_msg(main: HWND) {
     let done: Vec<CopyDone> = std::mem::take(&mut *COPY_DONE.lock().unwrap_or_else(|e| e.into_inner()));
-    let Some(d) = done.into_iter().last() else { return };
-    let text = done_text(KO.load(Ordering::Relaxed), &d);
+    // one that skipped sources not found is said over a plain "done" ending at the same time
+    let Some(d) = done.iter().rposition(|d| d.missing > 0).or(done.len().checked_sub(1)).map(|i| &done[i]) else { return };
+    let text = done_text(KO.load(Ordering::Relaxed), d);
+    if d.missing > 0 {
+        // the status chip goes in 5 s and a short copy has no notification: the beep says to look
+        _ = MessageBeep(MB_ICONWARNING);
+    }
     let how = done_notice(d.took, app_in_front(), !IsWindowVisible(main).as_bool(), app(|a| a.tray_on));
     // Grids in front, but by another of its windows (a progress window, the preview) while the main one is
     // minimized or hidden: its status line is not seen, so keep the text for when it is shown again (WM_SIZE)
@@ -1009,6 +1045,42 @@ pub(crate) unsafe fn copy_done_back() {
 // once Grids is back in front.
 pub(crate) fn say_when_back(text: String) {
     *COPY_LATER.lock().unwrap_or_else(|e| e.into_inner()) = Some(text);
+}
+
+// Splits `srcs` into what `probe` made of each and the paths it found gone (file / path not found); any
+// other failure (denied, a share not ready) stops there. Each source is looked at once.
+pub(crate) fn split_missing<T>(srcs: &[String], mut probe: impl FnMut(&str) -> Result<T>) -> Result<(Vec<T>, Vec<String>)> {
+    let (mut found, mut missing) = (Vec::new(), Vec::new());
+    for s in srcs {
+        match probe(s) {
+            Ok(t) => found.push(t),
+            Err(e) if crate::nav::gone(e.code()) => missing.push(s.clone()),
+            Err(e) => return Err(e),
+        }
+    }
+    Ok((found, missing))
+}
+
+// run_op, but a source no longer there is skipped (Explorer's "Skip" for an item it can't find) and handed back
+// by path with the count of the rest; none left: no operation at all (nothing to undo either).
+pub(crate) unsafe fn run_op_skip(srcs: &[String], dst: &str, rename: bool, mv: bool) -> Result<(Option<IFileOperation>, usize, Vec<String>)> {
+    let op: IFileOperation = CoCreateInstance(&FileOperation, None, CLSCTX_ALL)?;
+    let flags = FOF_ALLOWUNDO | FOF_NOCONFIRMMKDIR | FOFX_ADDUNDORECORD;
+    op.SetOperationFlags(if rename { flags | FOF_RENAMEONCOLLISION } else { flags })?;
+    let to: IShellItem = SHCreateItemFromParsingName(&HSTRING::from(dst), None)?;
+    let (items, missing) = split_missing(srcs, |s| SHCreateItemFromParsingName::<_, _, IShellItem>(&HSTRING::from(s), None))?;
+    if items.is_empty() {
+        return Ok((None, 0, missing));
+    }
+    for item in &items {
+        if mv {
+            op.MoveItem(item, &to, PCWSTR::null(), None)?;
+        } else {
+            op.CopyItem(item, &to, PCWSTR::null(), None)?;
+        }
+    }
+    op.PerformOperations()?;
+    Ok((Some(op), items.len(), missing))
 }
 
 // run_copy, handing back the operation so the caller can ask whether anything was skipped or cancelled.
@@ -1260,7 +1332,7 @@ mod tests {
 
     #[test]
     fn done_texts() {
-        let d = |mv, n, aborted| CopyDone { mv, n, to: "Backup".into(), aborted, took: Duration::ZERO };
+        let d = |mv, n, aborted| CopyDone { mv, n, to: "Backup".into(), aborted, missing: 0, first_missing: String::new(), took: Duration::ZERO };
         assert_eq!(done_text(false, &d(false, 12, false)), "Copied 12 items to Backup");
         assert_eq!(done_text(false, &d(false, 1, false)), "Copied 1 item to Backup");
         assert_eq!(done_text(false, &d(true, 3, false)), "Moved 3 items to Backup");
@@ -1273,6 +1345,57 @@ mod tests {
                 assert!(!t.contains("12") && t.contains("Backup"), "{t}");
             }
         }
+    }
+
+    // Sources gone since they were picked: the rest are counted, the gone ones named last; none left says so.
+    #[test]
+    fn done_texts_not_found() {
+        let d = |mv, n, aborted, missing| CopyDone { mv, n, to: "Docs".into(), aborted, missing, first_missing: "report.docx".into(), took: Duration::ZERO };
+        assert_eq!(done_text(false, &d(false, 3, false, 1)), "Copied 3 items to Docs · 1 not found, skipped (report.docx)");
+        assert_eq!(done_text(true, &d(false, 3, false, 1)), "복사 끝: 3개 → Docs · 1개는 찾을 수 없어 건너뜀 (report.docx)");
+        assert_eq!(done_text(false, &d(true, 1, false, 2)), "Moved 1 item to Docs · 2 not found, skipped (report.docx, …)");
+        assert_eq!(done_text(true, &d(true, 1, false, 2)), "이동 끝: 1개 → Docs · 2개는 찾을 수 없어 건너뜀 (report.docx, …)");
+        assert_eq!(done_text(false, &d(false, 0, false, 1)), "Nothing copied: the item was not found (report.docx)");
+        assert_eq!(done_text(true, &d(false, 0, false, 1)), "복사하지 않음: 항목을 찾을 수 없음 (report.docx)");
+        assert_eq!(done_text(false, &d(true, 0, false, 4)), "Nothing moved: none of the 4 items were found (report.docx, …)");
+        assert_eq!(done_text(true, &d(true, 0, false, 4)), "이동하지 않음: 4개 모두 찾을 수 없음 (report.docx, …)");
+        for ko in [false, true] {
+            for mv in [false, true] {
+                // skipped or cancelled as well: still no count claimed, but the not found part stays
+                let t = done_text(ko, &d(mv, 12, true, 1));
+                assert!(!t.contains("12") && t.contains("Docs") && t.ends_with("(report.docx)"), "{t}");
+                // the same count in both languages, the name last
+                let (en, ko_t) = (done_text(false, &d(mv, 5, false, 3)), done_text(true, &d(mv, 5, false, 3)));
+                assert!(en.contains('5') && ko_t.contains('5') && en.contains('3') && ko_t.contains('3'), "{en} / {ko_t}");
+                assert!(en.ends_with("(report.docx, …)") && ko_t.ends_with("(report.docx, …)"));
+            }
+        }
+    }
+
+    #[test]
+    fn split_missing_skips_only_gone() {
+        let srcs: Vec<String> = ["a", "gone-file", "b", "gone-dir"].iter().map(|s| s.to_string()).collect();
+        let probe = |s: &str| match s {
+            "gone-file" => Err(Error::from(HRESULT::from_win32(ERROR_FILE_NOT_FOUND.0))),
+            "gone-dir" => Err(Error::from(HRESULT::from_win32(ERROR_PATH_NOT_FOUND.0))),
+            "denied" => Err(Error::from(E_ACCESSDENIED)),
+            s => Ok(s.to_uppercase()),
+        };
+        let (found, missing) = split_missing(&srcs, probe).unwrap();
+        assert_eq!(found, ["A", "B"]);
+        assert_eq!(missing, ["gone-file", "gone-dir"]);
+        // all gone: nothing found, no failure
+        let (found, missing) = split_missing(&srcs[1..2], probe).unwrap();
+        assert!(found.is_empty() && missing == ["gone-file"]);
+        // any other failure stops the whole copy as before
+        let bad: Vec<String> = ["a", "gone-file", "denied", "b"].iter().map(|s| s.to_string()).collect();
+        let mut seen = Vec::new();
+        let r = split_missing(&bad, |s| {
+            seen.push(s.to_string());
+            probe(s)
+        });
+        assert_eq!(r.err().map(|e| e.code()), Some(E_ACCESSDENIED));
+        assert_eq!(seen, ["a", "gone-file", "denied"]); // each looked at once, none after the failure
     }
 
     #[test]
