@@ -574,6 +574,12 @@ pub(crate) fn permute_in(cur: &mut Session, base: Option<&mut Session>, perm: &[
     }
 }
 
+/// Ctrl+`'s previous pane after a layout change (slot j now shows what slot perm[j] held): the slot it moved to,
+/// or none once that is past the new pane count `n` (its cell went).
+pub(crate) fn prev_after_perm(prev: Option<usize>, perm: &[usize; MAXP], n: usize) -> Option<usize> {
+    prev.and_then(|k| perm.iter().position(|&p| p == k)).filter(|&j| j < n)
+}
+
 fn moved(order: &[u8]) -> bool {
     order.iter().enumerate().any(|(k, &o)| k != o as usize)
 }

@@ -720,6 +720,7 @@ pub(crate) unsafe fn set_active(i: usize) {
         let old = std::mem::replace(&mut a.s.active, i);
         if old != i {
             a.focus_req = HWND::default();
+            a.prev_active = Some(old); // Ctrl+` goes back to it
         }
         (old, [old, i].map(|k| a.panes[k].as_ref().map(|p| p.hwnd)))
     });
@@ -1430,6 +1431,9 @@ pub(crate) unsafe fn swap_panes(i: usize, j: usize) {
         if let Some(p) = a.say_nav.as_mut() {
             to(p);
         }
+        if let Some(p) = a.prev_active.as_mut() {
+            to(p);
+        }
         for c in &mut a.closed_tabs {
             to(&mut c.pane);
         }
@@ -1538,6 +1542,7 @@ pub(crate) unsafe fn set_layout(h: Vec<usize>) {
         a.status_key.clear();
         forget_sel(a);
         let n: usize = h.iter().sum();
+        a.prev_active = prev_after_perm(a.prev_active, &perm, n);
         let gone = a.s.active >= n;
         if gone {
             // the active pane's cell went: the nearest cell left takes over

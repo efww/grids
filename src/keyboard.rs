@@ -123,7 +123,11 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
     };
     let list = || view_of::<IShellView>(a).and_then(|v| v.GetWindow().ok()).is_some_and(|v| in_view_list(v, m.hwnd));
     // Explorer's type-to-find takes a space inside a name: a Space soon after typing stays the list's
-    let vk = VIRTUAL_KEY(m.wParam.0 as u16);
+    // Ctrl+`: the key left of 1 by its place (scan code 0x29, not extended), whatever the layout or an IME calls it
+    let vk = match VIRTUAL_KEY(m.wParam.0 as u16) {
+        _ if ctrl && !shift && !alt && (m.lParam.0 >> 16) & 0x1FF == 0x29 => VK_OEM_3,
+        k => k,
+    };
     let repeat = m.lParam.0 & (1 << 30) != 0; // a held key's auto-repeat: still acts, but isn't read out
     let typed_ago = LAST_TYPED.get().map(|t| t.elapsed());
     if key_types(vk, ctrl, alt) && list() {
@@ -178,6 +182,22 @@ pub(crate) unsafe fn key(m: &MSG) -> bool {
             set_active(i);
             focus_view(i);
             pane_said(a, repeat);
+        }
+        // the pane active before this one (tmux's last-pane); again, back here. Held, it goes once (no flicker).
+        KeyRoute::LastPane => {
+            if !repeat {
+                match app(|x| x.prev_active.filter(|&k| k != x.s.active && k < x.s.panes() && x.panes[k].is_some())) {
+                    Some(k) => {
+                        set_active(k);
+                        focus_view(k);
+                        pane_said(a, false);
+                    }
+                    None => {
+                        _ = MessageBeep(MB_ICONWARNING);
+                        set_note(no_prev_pane_note(KO.load(Ordering::Relaxed)).into());
+                    }
+                }
+            }
         }
         KeyRoute::MovePane(dx, dy) => {
             move_pane(dx, dy);
@@ -417,6 +437,7 @@ pub(crate) enum KeyRoute {
     MoveTab(i32),
     NthTab(usize),
     Pane(usize),
+    LastPane,
     MovePane(i32, i32),
     Swap(i32, i32),
     Nudge(i32, i32),
@@ -510,6 +531,8 @@ pub(crate) fn key_route(vk: VIRTUAL_KEY, ctrl: bool, shift: bool, alt: bool, c: 
         // Alt+1 … Alt+9: the nth tab, 9 the last (as a browser's Ctrl+1 … 9; Ctrl+digits are the panes). Number pad keys stay out.
         k if alt && !ctrl && !shift && tabs && (VK_1.0..=VK_9.0).contains(&k.0) => NthTab((k.0 - VK_1.0 + 1) as usize),
         k if ctrl && !shift && !alt && (VK_1.0..=VK_9.0).contains(&k.0) && ((k.0 - VK_1.0) as usize) < c.panes => Pane((k.0 - VK_1.0) as usize),
+        // Ctrl+`: back to the pane used before (key() reads the key left of 1 as `); from the boxes too
+        VK_OEM_3 if ctrl && !shift && !alt => LastPane,
         k @ (VK_LEFT | VK_RIGHT | VK_UP | VK_DOWN) if alt && shift && !ctrl => MovePane(dir(k).0, dir(k).1),
         k @ (VK_LEFT | VK_RIGHT | VK_UP | VK_DOWN) if alt && shift && ctrl => Swap(dir(k).0, dir(k).1),
         k @ (VK_LEFT | VK_RIGHT | VK_UP | VK_DOWN) if alt && ctrl && !shift => Nudge(dir(k).0, dir(k).1),
@@ -1075,6 +1098,11 @@ pub(crate) fn types_char(vk: VIRTUAL_KEY) -> bool {
 /// A character typed: a character key with neither Ctrl nor Alt, or with both (AltGr, which Windows reports as Ctrl+Alt).
 pub(crate) fn key_types(vk: VIRTUAL_KEY, ctrl: bool, alt: bool) -> bool {
     ctrl == alt && types_char(vk)
+}
+
+/// Ctrl+` with no pane to go back to (none used before in this layout, or its cell went).
+pub(crate) fn no_prev_pane_note(ko: bool) -> &'static str {
+    if ko { "돌아갈 이전 패널이 없음 — 다른 패널로 옮긴 뒤 Ctrl+`로 오갈 수 있음" } else { "No previous pane to go back to — after you move to another pane, Ctrl+` goes back and forth" }
 }
 
 /// Space opens the preview unless a name is being typed (a key within the last second).

@@ -5892,6 +5892,7 @@ mod tests { tr("in", "안") }
             "↑" => VK_UP,
             "↓" => VK_DOWN,
             "/" => VK_OEM_2,
+            "`" => VK_OEM_3,
             "Num+" => VK_ADD,
             "Num\u{2212}" => VK_SUBTRACT,
             "Num*" => VK_MULTIPLY,
@@ -5947,6 +5948,20 @@ mod tests { tr("in", "안") }
         assert!(seen >= 60, "only {seen} keys checked");
     }
 
+    // Ctrl+`'s previous pane follows a layout change to its new slot, and is dropped when its cell goes.
+    #[test]
+    fn prev_pane_follows_layout() {
+        let mut perm: [usize; MAXP] = std::array::from_fn(|k| k);
+        assert_eq!(prev_after_perm(Some(2), &perm, 4), Some(2));
+        assert_eq!(prev_after_perm(None, &perm, 4), None);
+        // a swap is a two-slot permutation: panes 1 and 6 trade places, the rest stay
+        perm.swap(1, 6);
+        assert_eq!((prev_after_perm(Some(1), &perm, 9), prev_after_perm(Some(6), &perm, 9), prev_after_perm(Some(3), &perm, 9)), (Some(6), Some(1), Some(3)));
+        // 9 panes down to 4: pane 6 went to slot 1 and stays; pane 5 is past the new count, so there's nothing to go back to
+        assert_eq!((prev_after_perm(Some(6), &perm, 4), prev_after_perm(Some(5), &perm, 4)), (Some(1), None));
+        assert!(no_prev_pane_note(false).contains("Ctrl+`") && no_prev_pane_note(true).contains("Ctrl+`"));
+    }
+
     // The arms whose order or conditions decide a key: one moved or loosened sends it elsewhere without a compile error.
     #[test]
     fn key_routes() {
@@ -5976,6 +5991,9 @@ mod tests { tr("in", "안") }
         assert_eq!(route("addr", "Ctrl+Alt+Shift+Enter"), AddrGo(false));
         assert_eq!(route("filter", "Ctrl+Shift+Enter"), FilterApply);
         assert_eq!((route_with("", "Ctrl+4", true, 4, None), route_with("", "Ctrl+5", true, 4, None)), (Pane(3), Shell));
+        // Ctrl+`: the last pane, from the list and the boxes; AltGr+` (Ctrl+Alt) types, Ctrl+Shift+` stays the view's
+        assert_eq!((l("Ctrl+`"), route("addr", "Ctrl+`"), route("filter", "Ctrl+`")), (LastPane, LastPane, LastPane));
+        assert_eq!((l("Ctrl+Alt+`"), route("addr", "Ctrl+Alt+`"), l("Ctrl+Shift+`"), l("`")), (Typing, Typing, Shell, Shell));
         for k in ["Alt+PgDn", "F3", "F7", "Insert"] {
             assert_eq!(route("addr", k), BoxKey, "{k}");
         }

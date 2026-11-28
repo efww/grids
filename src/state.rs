@@ -148,6 +148,7 @@ pub(crate) struct App {
     pub(crate) status_hwnd: HWND,               // the status line control (screen readers); null = the main window paints it
     pub(crate) note_hwnd: HWND,                 // the note's live region (zero size, nothing drawn); null = no announcements
     pub(crate) say_nav: Option<usize>,          // pane read out once its folder opens (a tab key that browses; runtime only)
+    pub(crate) prev_active: Option<usize>,      // the pane active before this one, for Ctrl+` (runtime only)
     pub(crate) drop_hover: HWND,                         // pane whose top bar something openable is being dragged over
     pub(crate) app_away: bool,                           // another app has the keyboard (WM_ACTIVATEAPP; runtime only)
     pub(crate) drop_open: Option<(HWND, usize, IShellItem)>, // folder dropped on a top bar, opened by WM_DROP_OPEN
@@ -277,6 +278,7 @@ thread_local! {
         status_hwnd: HWND::default(),
         note_hwnd: HWND::default(),
         say_nav: None,
+        prev_active: None,
         drop_hover: HWND::default(),
         app_away: false,
         drop_open: None,
