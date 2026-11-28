@@ -700,6 +700,48 @@ mod tests {
         distinct("main WM_APP messages", &msgs.map(|m| m as usize));
     }
 
+    // The name filter's wait: a quick local folder keeps 250 ms; a slow, big or unknown network one waits 800..=1500.
+    #[test]
+    fn filter_wait_by_folder() {
+        // (opened in ms, items, network) -> wait
+        let cases = [
+            (Some(40), Some(120), false, 250),
+            (None, None, false, 250),           // not timed (a pane's first folder): as before
+            (Some(299), Some(4999), false, 250),
+            (Some(80), Some(200), true, 250),   // a small share that opened quickly: as before
+            (None, None, true, 1000),           // a share not timed yet
+            (Some(300), None, false, 800),      // the lower bound
+            (Some(600), None, true, 1100),
+            (Some(1000), None, false, 1500),
+            (Some(60_000), None, true, 1500),   // given up on (LOAD_GIVE_UP): the upper bound
+            (Some(50), Some(5000), false, 800), // tens of thousands of items, even on a quick disk
+            (Some(50), Some(40_000), true, 800),
+        ];
+        for (ms, items, remote, want) in cases {
+            assert_eq!(filter_wait(ms, items, remote), want, "{ms:?} {items:?} {remote}");
+            assert_eq!(filter_slow(ms, items, remote), want > FILTER_WAIT, "{ms:?} {items:?} {remote}");
+        }
+    }
+
+    // The wait ran out: a re-read guessed still going puts the apply off once, never past 1.5 s; else apply now.
+    #[test]
+    fn filter_due_waits_once() {
+        // (re-read began ms ago, opened in ms, slow, already put off) -> more ms
+        let cases = [
+            (Some(200), Some(1000), true, false, Some(800)),
+            (Some(100), Some(60_000), true, false, Some(1500)),
+            (Some(1000), Some(1000), true, false, None), // its time is up
+            (Some(1200), Some(1000), true, false, None),
+            (Some(200), Some(1000), true, true, None),   // once only: the newest words apply
+            (Some(100), Some(200), false, false, None),  // a quick folder never waits more
+            (None, Some(1000), true, false, None),       // no re-read yet
+            (Some(100), None, true, false, None),        // no time to guess by
+        ];
+        for (since, ms, slow, deferred, want) in cases {
+            assert_eq!(filter_due(since, ms, slow, deferred), want, "{since:?} {ms:?} {slow} {deferred}");
+        }
+    }
+
     // A slow folder's bar: nothing for a quick move, then a run inside the list's width that flows and repeats.
     #[test]
     fn load_bar_flows() {

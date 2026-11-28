@@ -1609,17 +1609,114 @@ unsafe fn recent_files_menu(i: usize, h: HWND, x: i32, y: i32) {
     }
 }
 
+// ---------- the name filter's wait after typing ----------
+// Every apply re-reads the whole folder (apply_filter). A quick local folder: 250 ms, as always. A slow one (it took
+// LOAD_SHOW or more to open, or it holds FILTER_MANY items) or a network one not known to be quick: wait longer,
+// so typing "report" re-reads it once, not once per pause between letters (VS Code's search, Everything; Directory
+// Opus and XYplorer filter a network folder once typing stops). Enter / Esc / the kind menu still apply at once.
+pub(crate) const FILTER_WAIT: u32 = 250;
+const FILTER_MANY: u32 = 5000;
+const FILTER_WAIT_MAX: u32 = 1500;
+static SLOW_FILTER_SAID: AtomicBool = AtomicBool::new(false); // its status line hint, once a run
+
+pub(crate) fn filter_slow(list_ms: Option<u32>, items: Option<u32>, remote: bool) -> bool {
+    let slow = list_ms.is_some_and(|ms| ms >= LOAD_SHOW.as_millis() as u32) || items.is_some_and(|n| n >= FILTER_MANY);
+    slow || remote && list_ms.is_none()
+}
+
+/// ms from the last keystroke to the apply: FILTER_WAIT, or 800..=FILTER_WAIT_MAX by how slowly the folder opened.
+pub(crate) fn filter_wait(list_ms: Option<u32>, items: Option<u32>, remote: bool) -> u32 {
+    if !filter_slow(list_ms, items, remote) {
+        return FILTER_WAIT;
+    }
+    list_ms.unwrap_or(500).saturating_add(500).clamp(800, FILTER_WAIT_MAX)
+}
+
+/// The wait ran out: Some(ms) to put the apply off while the last re-read (begun `since` ms ago, guessed to take as
+/// long as opening did) may still run; once only, so the newest words always apply. None = apply now.
+pub(crate) fn filter_due(since: Option<u32>, list_ms: Option<u32>, slow: bool, deferred: bool) -> Option<u32> {
+    if !slow || deferred {
+        return None;
+    }
+    let left = list_ms?.saturating_sub(since?);
+    (left > 0).then(|| left.min(FILTER_WAIT_MAX))
+}
+
+// A share (\\server\…) or a mapped network drive; This PC and other shell places are not. GetDriveTypeW asks
+// Windows' own table, not the network.
+fn remote_path(path: &str) -> bool {
+    let unc = path.starts_with(r"\\") && !path.starts_with(r"\\?\") || path.starts_with(r"\\?\UNC\");
+    unc || path.get(1..3) == Some(":\\") && unsafe { GetDriveTypeW(&HSTRING::from(&path[..3])) } == 4 // DRIVE_REMOTE
+}
+
+// EN_CHANGE in pane i's filter: the wait to arm. The list counted while no filter is on is the whole folder.
+pub(crate) unsafe fn filter_typed(i: usize) -> u32 {
+    let items = if filter_of(i).is_empty() {
+        view_of::<IFolderView2>(i).and_then(|fv| fv.ItemCount(SVGIO_ALLVIEW).ok()).map(|n| n.max(0) as u32)
+    } else {
+        None
+    };
+    let remote = remote_path(&app(|a| a.s.paths.get(i).cloned()).unwrap_or_default());
+    app(|a| {
+        let Some(p) = a.panes.get_mut(i).and_then(|p| p.as_mut()) else { return FILTER_WAIT };
+        // the larger count: one taken mid re-read (just after Esc) is partial; load_start clears it per folder
+        p.pace.items = items.max(p.pace.items);
+        let wait = filter_wait(p.pace.list_ms, p.pace.items, remote);
+        (p.pace.slow, p.pace.deferred) = (wait > FILTER_WAIT, false);
+        wait
+    })
+}
+
+// TIMER_FILTER on pane i's window h: apply, or wait out a re-read still going (once; one timer, re-armed).
+pub(crate) unsafe fn filter_tick(h: HWND, i: usize) {
+    _ = KillTimer(Some(h), TIMER_FILTER);
+    let (more, slow) = app(|a| {
+        let p = a.panes.get_mut(i)?.as_mut()?;
+        let since = p.pace.at.map(|t| t.elapsed().as_millis().min(u32::MAX as u128) as u32);
+        let more = filter_due(since, p.pace.list_ms, p.pace.slow, p.pace.deferred);
+        p.pace.deferred |= more.is_some();
+        Some((more, p.pace.slow))
+    })
+    .unwrap_or((None, false));
+    if let Some(ms) = more {
+        SetTimer(Some(h), TIMER_FILTER, ms, None);
+        return;
+    }
+    apply_filter(i);
+    // the first longer wait that ran out says why; another note showing or waiting to show keeps it for the next one
+    if slow && !SLOW_FILTER_SAID.load(Ordering::Relaxed) && SAVED.lock().unwrap_or_else(|e| e.into_inner()).is_none() {
+        let now = Instant::now();
+        let shown = app(|a| {
+            if a.note.as_ref().is_some_and(|(_, t)| now < *t) {
+                return false;
+            }
+            let text = tr("Slow folder: filters once you pause · Enter applies now", "느린 폴더: 다 친 뒤 거르기 · Enter로 바로 적용");
+            a.note = Some((text.into(), now + Duration::from_secs(4)));
+            true
+        });
+        if shown {
+            SLOW_FILTER_SAID.store(true, Ordering::Relaxed);
+            update_status();
+        }
+    }
+}
+
 pub(crate) unsafe fn apply_filter(i: usize) {
     let Some(f) = pane_ctl(i, ID_FILTER) else { return };
+    let pane = app(|a| a.panes[i].as_ref().map(|p| p.hwnd));
+    if let Some(h) = pane {
+        _ = KillTimer(Some(h), TIMER_FILTER); // Enter, Esc, the kind menu: now, with no typed wait left to apply again
+    }
     let spec = filter_spec(&text_of(f));
     let changed = FILTERS.lock().map(|mut fl| std::mem::replace(&mut fl[i], spec.clone()) != spec).unwrap_or(false);
     if let (true, Some(fv)) = (changed, view_of::<IFolderView2>(i)) {
         set_empty_text(&fv, &spec); // before the refresh, so an emptied list shows the new words
     }
     if let (true, Some(sv)) = (changed, view_of::<IShellView>(i)) {
+        app(|a| a.panes[i].as_mut().map(|p| p.pace.at = Some(Instant::now())));
         _ = sv.Refresh(); // re-enumerates, asking IncludeObject again
     }
-    if let (true, Some(pane)) = (changed, app(|a| a.panes[i].as_ref().map(|p| p.hwnd))) {
+    if let (true, Some(pane)) = (changed, pane) {
         _ = InvalidateRect(Some(pane), None, false); // filter badge on/off
     }
 }
@@ -2177,6 +2274,7 @@ impl IExplorerBrowserEvents_Impl for Events_Impl {
     fn OnNavigationComplete(&self, pidl: *const ITEMIDLIST) -> Result<()> {
         NAV_GEN.fetch_add(1, Ordering::SeqCst);
         let i = self.0.load(Ordering::SeqCst);
+        load_timed(i);
         unsafe {
             load_end(i, None); // here, not in on_nav, which returns early without its pane
             on_nav(i, pidl)

@@ -874,16 +874,14 @@ pub(crate) extern "system" fn pane_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                         toggle_fav(i);
                     }
                 }
-                // typing in the filter box applies after a short pause
-                (ID_FILTER, EN_CHANGE) => _ = SetTimer(Some(h), TIMER_FILTER, 250, None),
+                // typing in the filter box applies after a pause: short, longer in a slow folder (filter_wait)
+                (ID_FILTER, EN_CHANGE) => _ = SetTimer(Some(h), TIMER_FILTER, pane_of(h).map_or(FILTER_WAIT, |i| filter_typed(i)), None),
                 _ => {}
             },
-            WM_TIMER if wp.0 == TIMER_FILTER => {
-                _ = KillTimer(Some(h), TIMER_FILTER);
-                if let Some(i) = pane_of(h) {
-                    apply_filter(i);
-                }
-            }
+            WM_TIMER if wp.0 == TIMER_FILTER => match pane_of(h) {
+                Some(i) => filter_tick(h, i),
+                None => _ = KillTimer(Some(h), TIMER_FILTER),
+            },
             // right-click on ← / →: recent folders; anywhere else as before
             WM_CONTEXTMENU if [ID_BACK, ID_FWD].iter().any(|&id| GetDlgItem(Some(h), id).is_ok_and(|b| b.0 as usize == wp.0)) => {
                 if let Some(i) = pane_of(h) {

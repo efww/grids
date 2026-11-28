@@ -26,6 +26,18 @@ pub(crate) struct Pane {
     pub(crate) going: Option<Go>,
     pub(crate) moving: Option<Go>,
     pub(crate) wait_first: bool, // made with others at once: its first folder opens in turn (App::load_q)
+    pub(crate) pace: FilterPace, // how long the name filter waits after typing (nav.rs filter_wait)
+}
+
+// What sets the name filter's wait in a slow folder (a network share, tens of thousands of items), where every
+// apply re-reads the whole folder: like Directory Opus / XYplorer on a network folder, filter once typing pauses.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct FilterPace {
+    pub(crate) list_ms: Option<u32>, // how long the folder took to open (Pending to Complete); None = not known
+    pub(crate) items: Option<u32>,   // items it showed with no filter on; None = not counted yet
+    pub(crate) at: Option<Instant>,  // its last filter re-read began then
+    pub(crate) slow: bool,           // the wait now armed is the longer one
+    pub(crate) deferred: bool,       // that wait was already put off once for a re-read still going
 }
 
 // A cloud folder as Explorer's navigation pane registers it (window_ui.rs cloud_regs): name, pinned there, folder

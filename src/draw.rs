@@ -492,6 +492,7 @@ pub(crate) unsafe fn load_start(i: usize) {
         let shown = p.loading.is_some_and(|t| now - t >= LOAD_SHOW);
         p.loading = Some(now);
         p.load_framed = false; // the timer below is the LOAD_SHOW wait again
+        (p.pace.list_ms, p.pace.items) = (None, None); // the last folder's pace is not this one's
         Some((p.hwnd, shown))
     }) else {
         return;
@@ -500,6 +501,18 @@ pub(crate) unsafe fn load_start(i: usize) {
     if shown {
         _ = InvalidateRect(Some(h), Some(&load_band(h)), false); // the earlier move's bar goes until this one's shows
     }
+}
+
+// OnNavigationComplete, before load_end: how long the folder took to open, the name filter's guess at a re-read.
+// Not on Failed or a refused move, whose time says nothing about a listing.
+pub(crate) fn load_timed(i: usize) {
+    app(|a| {
+        if let Some(p) = a.panes.get_mut(i).and_then(|p| p.as_mut()) {
+            if let Some(t) = p.loading {
+                p.pace.list_ms = Some(t.elapsed().as_millis().min(u32::MAX as u128) as u32);
+            }
+        }
+    });
 }
 
 // The move ended (OnNavigationComplete / Failed, or browse() refused it): the bar goes, repainted only if it showed.
@@ -525,6 +538,9 @@ pub(crate) unsafe fn load_end(i: usize, since: Option<Instant>) {
 pub(crate) unsafe fn load_tick(h: HWND) {
     let left = app(|a| {
         let p = a.panes.iter_mut().flatten().find(|p| p.hwnd == h)?;
+        if p.loading.is_some_and(|t| t.elapsed() >= LOAD_GIVE_UP) {
+            p.pace.list_ms = Some(LOAD_GIVE_UP.as_millis() as u32); // given up on: its Complete finds no clock, a slow one
+        }
         p.loading = p.loading.filter(|t| t.elapsed() < LOAD_GIVE_UP);
         let e = p.loading?.elapsed();
         let first = e >= LOAD_SHOW && !p.load_framed;
