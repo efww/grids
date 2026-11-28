@@ -375,6 +375,29 @@ unsafe fn draw_button_face(d: &DRAWITEMSTRUCT) {
         }
         return text(dc, rc, glyph(ID_DEVICE), icon_font, if marked { pal().text } else { fg }, DT_CENTER);
     }
+    if (ID_WSL..ID_WSL + MAX_WSL as i32).contains(&id) {
+        // Explorer's Linux icon (a prompt glyph without it), centred; with two distributions or more each also shows
+        // its first letter after the icon, so they tell apart without the tooltip. Underlined while the active pane is in it.
+        let (ix, first, marked, accent) = app(|a| {
+            let k = a.wsls.iter().position(|w| w.h == d.hwndItem);
+            let tag = k.and_then(|k| wsl_tags(a.wsls.iter().map(|w| w.reg.name.as_str())).into_iter().nth(k)).unwrap_or_default();
+            (k.map_or(-1, |k| a.wsls[k].ix), tag, a.cloud_mark == d.hwndItem, a.s.accent_now())
+        });
+        if marked {
+            fill(dc, RECT { left: rc.left + s(7), top: rc.bottom - s(2), right: rc.right - s(7), bottom: rc.bottom }, accent);
+        }
+        let ink = if marked { pal().text } else { fg };
+        let fw = if first.is_empty() { 0 } else { s(1) + text_w(dc, &first, font) };
+        let (x, y) = (rc.left + (rc.right - rc.left - s(16) - fw) / 2, rc.top + (rc.bottom - rc.top - s(16)) / 2);
+        let icon = RECT { left: x, top: y, right: x + s(16), bottom: y + s(16) };
+        if !(ix >= 0 && small_ilist().is_some_and(|il| shell_icon(dc, &il, ix, icon))) {
+            text(dc, RECT { left: x - s(4), right: x + s(20), ..rc }, glyph(ID_WSL), icon_font, ink, DT_CENTER);
+        }
+        if !first.is_empty() {
+            text(dc, RECT { left: icon.right + s(1), ..rc }, &first, font, ink, DT_LEFT);
+        }
+        return;
+    }
     if id == ID_BIN {
         // the desktop's bin, empty or full, centred; a glyph bin when the shell gave no icon
         let ix = bin_icon();

@@ -27,6 +27,8 @@ pub(crate) const ID_CLOUD: i32 = 1540; // + 0..MAX_CLOUD: cloud folder buttons (
 pub(crate) const MAX_CLOUD: usize = 8;
 pub(crate) const ID_DEVICE: i32 = 1550; // + 0..MAX_DEVICE: plugged-in phones / cameras (no drive letter), after the drives
 pub(crate) const MAX_DEVICE: usize = 4;
+pub(crate) const ID_WSL: i32 = 1560; // + 0..MAX_WSL: WSL Linux distributions (Ubuntu …), between the devices and the clouds
+pub(crate) const MAX_WSL: usize = 4;
 pub(crate) const TIMER_DEVICES: usize = 1550; // on main: a device came or went, looked for once the notices settle
 pub(crate) const TIMER_DEVICES_AGAIN: usize = 1551; // on main: and once more a little later (Android's File transfer)
 pub(crate) const TIMER_BIN: usize = 1530; // on main: the Recycle Bin is counted again after a short pause
@@ -363,6 +365,7 @@ pub(crate) fn glyph(id: i32) -> &'static str {
         ID_BIN => "\u{E74D}", // a bin, only when the shell's own icon isn't there
         ID_CLOUD => "\u{E753}", // a cloud, only when neither its own nor the folder icon is there
         ID_DEVICE => "\u{E8EA}", // a phone, only when the device's own icon isn't there
+        ID_WSL => "\u{E756}",    // a command prompt, only when Explorer's Linux icon isn't there
         ID_TB_THEME if DARK_ON.load(Ordering::Relaxed) => "\u{E706}", // sun: back to light
         ID_TB_THEME => "\u{E708}",                                     // moon: go dark
         _ => "\u{E890}",

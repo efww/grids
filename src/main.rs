@@ -475,6 +475,7 @@ fn main() -> Result<()> {
         apply_font();
         refresh_drives(); // laid out by the relayout below
         refresh_clouds(); // after them, before the bin
+        refresh_wsl(); // WSL distributions: the registry only, nothing woken
         find_devices(); // phones / cameras: a worker looks, the buttons come with its answer
         cache_folder_icon(); // tabs of folders not opened yet this run
         cache_pc_icon(); // This PC in the Ctrl+G and recent folder menus
@@ -686,6 +687,7 @@ mod tests {
         main.push(ID_BIN as usize);
         main.extend((0..MAX_CLOUD).map(|k| ID_CLOUD as usize + k));
         main.extend((0..MAX_DEVICE).map(|k| ID_DEVICE as usize + k));
+        main.extend((0..MAX_WSL).map(|k| ID_WSL as usize + k));
         main.extend(VIEW_TOP.iter().chain(&VIEW_END).map(|v| v.0));
         main.push(ID_LANG);
         main.extend((0..LIGHT.accents.len()).map(|k| ID_ACCENT + k));
@@ -694,14 +696,14 @@ mod tests {
         // the view menu's copies of toolbar buttons send those buttons' commands, already counted once above
         assert!(VIEW_BUTTONS.iter().all(|v| main.iter().filter(|&&id| id == v.0).count() == 1));
         // (c) timers, per window: SetTimer with a number already running replaces that timer
-        distinct("main timers", &[TIMER_STATUS, TIMER_REVEAL, TIMER_FOCUS, dialog_jump::TIMER_DLG_RETRY, dialog_jump::TIMER_DLG_RESTORE, TIMER_SHELL, TIMER_EV_SELECT, TIMER_BIN, TIMER_TREE_SYNC, TIMER_PANE_LOAD, TIMER_CTRL_HINT, TIMER_DEVICES, TIMER_DEVICES_AGAIN, TIMER_PANE_FX]);
+        distinct("main timers", &[TIMER_STATUS, TIMER_REVEAL, TIMER_FOCUS, dialog_jump::TIMER_DLG_RETRY, dialog_jump::TIMER_DLG_RESTORE, TIMER_SHELL, TIMER_EV_SELECT, TIMER_BIN, TIMER_TREE_SYNC, TIMER_PANE_LOAD, TIMER_CTRL_HINT, TIMER_DEVICES, TIMER_DEVICES_AGAIN, TIMER_PANE_FX, TIMER_WSL]);
         distinct("pane timers", &[TIMER_FILTER, TIMER_SETTLE, TIMER_SPIN, TIMER_LOAD]);
         // (d) WM_APP messages main_proc handles (not other windows' own: WM_TOUR_END, WM_RENAMED, the switcher's)
         let msgs = [
             WM_NARROW_AGAIN, WM_DROP_OPEN, WM_PEEK_DONE, WM_PANE_ICON, WM_DRIVES, WM_KIDS, WM_THEME_SYNC, WM_PEEK_LOST, WM_PEEK_HOSTED,
             WM_HASH, WM_SHELL_CHANGE, WM_GROUPED, WM_TOUR, WM_TRAY, WM_COPY_DONE, WM_USAGE, WM_FONT_SYNC, WM_BIN_COUNT, WM_BIN_CHANGE,
             WM_STAMPED, WM_SIZE_DONE, WM_DISK_DONE, WM_EDITED, WM_OPEN_ARGS, WM_UPDATE, WM_STAR, WM_DUPES, WM_DEVICES, WM_LOCK_GO,
-            WM_MENDED,
+            WM_MENDED, WM_WSL_UP,
         ];
         distinct("main WM_APP messages", &msgs.map(|m| m as usize));
     }
@@ -1150,6 +1152,58 @@ mod tests {
         assert_eq!(cloud_mark(cam, roots), Some(1));
         assert_eq!(cloud_mark(THIS_PC, roots), None);
         assert_eq!(cloud_mark(&format!("{phone}x"), roots), None);
+    }
+
+    // WSL distribution buttons: installed ones with a usable name, not Docker Desktop's, one per name (any case), the
+    // default first then by name, at most 4; opened by \\wsl$, underlined by either share name Windows gives.
+    #[test]
+    fn wsl_buttons() {
+        let reg = |name: &str, ready: bool, default: bool| WslReg { name: name.into(), ready, default };
+        let got = wsl_list(vec![
+            reg("Ubuntu-22.04", true, false),
+            reg("Debian", true, false),
+            reg("Arch", false, false),               // still installing (State 3) or being removed
+            reg("  ", true, false),                  // no name
+            reg("docker-desktop", true, false),      // Docker Desktop's own
+            reg("Docker-Desktop-Data", true, false), // in any case
+            reg("a\\b", true, false),                // a name no path can hold
+            reg("ubuntu-22.04", true, false),        // the same name in another case
+            reg(" Ubuntu ", true, true),             // the default: first, trimmed
+        ]);
+        let names: Vec<&str> = got.iter().map(|w| w.name.as_str()).collect();
+        assert_eq!(names, ["Ubuntu", "Debian", "Ubuntu-22.04"]);
+        assert!(got[0].default && !got[1].default);
+        // a duplicate of the default keeps the default one
+        let got = wsl_list(vec![reg("ubuntu", true, false), reg("Ubuntu", true, true)]);
+        assert_eq!((got.len(), got[0].name.as_str(), got[0].default), (1, "Ubuntu", true));
+        let many: Vec<WslReg> = (0..7).rev().map(|k| reg(&format!("d{k}"), true, k == 5)).collect();
+        let got = wsl_list(many);
+        assert_eq!(got.len(), MAX_WSL);
+        let names: Vec<&str> = got.iter().map(|w| w.name.as_str()).collect();
+        assert_eq!(names, ["d5", "d0", "d1", "d2"]);
+        assert!(wsl_list(Vec::new()).is_empty());
+        // the path: \\wsl$ on Windows 10 and 11 alike
+        assert_eq!(wsl_path("Ubuntu"), r"\\wsl$\Ubuntu");
+        assert!(wsl_tip("Ubuntu").starts_with(r"Ubuntu — \\wsl$\Ubuntu · open in the active pane"));
+        // the underline: either share name, any case, whole names only
+        let names = ["Ubuntu", "Ubuntu-22.04", "Debian"];
+        let at = |p: &str| wsl_mark(p, names);
+        assert_eq!(at(r"\\wsl$\Ubuntu"), Some(0));
+        assert_eq!(at(r"\\wsl$\Ubuntu\home\me"), Some(0));
+        assert_eq!(at(r"\\wsl.localhost\Ubuntu\home\me"), Some(0));
+        assert_eq!(at(r"\\WSL.LOCALHOST\ubuntu-22.04\etc"), Some(1));
+        assert_eq!(at(r"\\wsl$\Debian"), Some(2));
+        assert_eq!(at(r"\\wsl$\Ubuntu2"), None);
+        assert_eq!(at(r"\\wsl$"), None);
+        assert_eq!(at(r"\\server\Ubuntu"), None);
+        assert_eq!(at(r"C:\Users"), None);
+        // the mark after the icon: none alone, first letters, a digit where they share one, else numbers
+        assert_eq!(wsl_tags(["Ubuntu"]), [""]);
+        assert_eq!(wsl_tags(["Ubuntu", "debian"]), ["U", "D"]);
+        assert_eq!(wsl_tags(["Ubuntu", "Ubuntu-22.04", "Debian"]), ["U", "2", "D"]);
+        assert_eq!(wsl_tags(["Ubuntu-20.04", "Ubuntu-22.04"]), ["1", "2"]);
+        assert_eq!(wsl_tags(["Ubuntu", "ubuntu2"]), ["U", "2"]);
+        assert_eq!(wsl_mark(r"\\wsl$\Ubuntu", []), None);
     }
 
     // Every drive check on one path, side by side, all built on drive_letter: what may follow "X:" is each one's

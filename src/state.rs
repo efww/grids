@@ -96,6 +96,22 @@ pub(crate) struct Device {
     pub(crate) h: HWND,
 }
 
+// A WSL Linux distribution as its registration under HKCU\…\Lxss gives it (window_ui.rs wsl_regs): its name,
+// installed (State 1, or none given), the default one. Only the registry: the distribution is never woken for it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct WslReg {
+    pub(crate) name: String,
+    pub(crate) ready: bool,
+    pub(crate) default: bool,
+}
+
+// A WSL distribution button on the top toolbar: what it was made for, its icon (system image list, -1 = none), the button.
+pub(crate) struct Wsl {
+    pub(crate) reg: WslReg,
+    pub(crate) ix: i32,
+    pub(crate) h: HWND,
+}
+
 pub(crate) struct App {
     pub(crate) s: Session,
     pub(crate) main: HWND,
@@ -213,6 +229,7 @@ pub(crate) struct App {
     pub(crate) clouds: Vec<Cloud>,           // cloud folder buttons after the drives, by name (refresh_clouds)
     pub(crate) cloud_mark: HWND,             // the cloud (or device) button of the active pane's folder (underlined, not its drive)
     pub(crate) devices: Vec<Device>,         // phone / camera buttons between the drives and the clouds, by name (devices_found)
+    pub(crate) wsls: Vec<Wsl>,               // WSL distribution buttons between the devices and the clouds, default first (refresh_wsl)
     pub(crate) hot_on: bool,                 // Win+Alt+E actually registered (s.hotkey is only the wish)
     pub(crate) tray_on: bool,                // the notification area icon is really there (s.tray is only the wish)
     pub(crate) focus_keep: HWND,             // focus when Grids last went to the back; coming back puts it there again
@@ -348,6 +365,7 @@ thread_local! {
         clouds: Vec::new(),
         cloud_mark: HWND::default(),
         devices: Vec::new(),
+        wsls: Vec::new(),
         hot_on: false,
         tray_on: false,
         focus_keep: HWND::default(),

@@ -444,13 +444,15 @@ pub(crate) unsafe fn relayout() {
         // after them: the first to hide, the clouds next; all counted in so wide drive buttons never push them out
         // alone. No cloud folders: everything exactly where it was without them. Plugged-in phones / cameras go
         // between the drives and the clouds, the same way: hidden after the clouds, before the drives; none, no change.
+        // WSL distributions between the devices and the clouds: hidden after the clouds, before the devices.
         x += s(6);
         let n = a.drives.len() as i32;
         let m = a.clouds.len() as i32;
         let k = a.devices.len() as i32;
-        let cw = if m > 0 { m * (s(30) + s(2)) - s(2) + s(6) } else { 0 };
-        let vw = if k > 0 { k * (s(30) + s(2)) - s(2) + s(6) } else { 0 };
-        let dw = if x + n * (s(46) + s(2)) - s(2) + s(6) + vw + cw + s(30) <= edge - s(12) { s(46) } else { s(32) };
+        let l = a.wsls.len() as i32;
+        let group = |c: i32| if c > 0 { c * (s(30) + s(2)) - s(2) + s(6) } else { 0 };
+        let (cw, vw, lw) = (group(m), group(k), group(l));
+        let dw = if x + n * (s(46) + s(2)) - s(2) + s(6) + vw + lw + cw + s(30) <= edge - s(12) { s(46) } else { s(32) };
         let mut bx = x;
         for &(_, _, h) in &a.drives {
             moves.push((h, RECT { left: x, top: s(5), right: x + dw, bottom: s(5) + btn_h }));
@@ -464,6 +466,14 @@ pub(crate) unsafe fn relayout() {
             bx += s(30) + s(2);
         }
         if k > 0 {
+            bx += s(6) - s(2);
+        }
+        for w in &a.wsls {
+            moves.push((w.h, RECT { left: bx, top: s(5), right: bx + s(30), bottom: s(5) + btn_h }));
+            shown.push((w.h, bx + s(30) <= edge - s(12)));
+            bx += s(30) + s(2);
+        }
+        if l > 0 {
             bx += s(6) - s(2);
         }
         for c in &a.clouds {
@@ -800,6 +810,7 @@ pub(crate) unsafe fn end_drag() {
     }
     refresh_drives(); // one that came or went mid-drag
     refresh_clouds();
+    refresh_wsl();
     devices_found(); // a phone found mid-drag
     relayout();
     redraw_all();

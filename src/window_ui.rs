@@ -204,6 +204,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 }
                 refresh_drives(); // one that came or went mid-resize
                 refresh_clouds();
+                refresh_wsl();
                 devices_found(); // a phone found mid-resize
                 relayout();
                 redraw_all();
@@ -339,11 +340,16 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
             WM_OPEN_ARGS => open_queued(true),
             WM_LOCK_GO => lock_follow(wp.0),
             WM_MENDED => mended(),
+            WM_WSL_UP => wsl_up(wp.0, lp.0 != 0),
+            WM_TIMER if wp.0 == TIMER_WSL => {
+                _ = KillTimer(Some(h), TIMER_WSL);
+                wsl_slow();
+            }
             // mid-drag or mid-resize, end_drag / WM_EXITSIZEMOVE pick it up instead
             WM_DRIVES => {
                 bin_count(); // also when Grids comes to the front (WM_ACTIVATEAPP posts this)
-                // both looked at: a cloud folder can come or go with the drive letters unchanged
-                if !app(|a| a.drag.is_some() || a.sizing) && refresh_drives() | refresh_clouds() {
+                // all looked at: a cloud folder or WSL distribution can come or go with the drive letters unchanged
+                if !app(|a| a.drag.is_some() || a.sizing) && refresh_drives() | refresh_clouds() | refresh_wsl() {
                     relayout();
                     redraw_all();
                 }
@@ -491,6 +497,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 id if id == ID_BIN as usize => open_bin(),
                 id if (ID_CLOUD as usize..ID_CLOUD as usize + MAX_CLOUD).contains(&id) => open_cloud(id - ID_CLOUD as usize),
                 id if (ID_DEVICE as usize..ID_DEVICE as usize + MAX_DEVICE).contains(&id) => open_device(id - ID_DEVICE as usize),
+                id if (ID_WSL as usize..ID_WSL as usize + MAX_WSL).contains(&id) => wake_wsl(id - ID_WSL as usize, None),
                 ID_TREE => toggle_tree(),
                 ID_TREE_QUICK => toggle_tree_quick(),
                 ID_HIDDEN => toggle_hidden(),
@@ -582,7 +589,7 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                     accent_chips(sub, dark);
                 }
             }
-            // right-click (or Shift+F10 / the menu key) on a drive, device or cloud folder button: its shell menu;
+            // right-click (or Shift+F10 / the menu key) on a drive, device, WSL or cloud folder button: its shell menu;
             // on the Recycle Bin button: the bin's
             WM_CONTEXTMENU => {
                 let bin = GetDlgItem(Some(h), ID_BIN).ok().filter(|b| b.0 as usize == wp.0);
@@ -590,7 +597,8 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 let cloud = app(|a| a.clouds.iter().position(|c| c.h.0 as usize == wp.0).map(|k| (k, a.clouds[k].h)));
                 // name and path copied now: the button may go (WM_DEVICES) while its menu is up
                 let device = app(|a| a.devices.iter().find(|d| d.h.0 as usize == wp.0).map(|d| (device_label(&d.reg.name), d.reg.parse.clone(), d.h)));
-                let Some(b) = bin.or(drive.map(|d| d.1)).or(cloud.map(|c| c.1)).or(device.as_ref().map(|d| d.2)) else {
+                let wsl = app(|a| a.wsls.iter().position(|w| w.h.0 as usize == wp.0).map(|k| (k, a.wsls[k].h)));
+                let Some(b) = bin.or(drive.map(|d| d.1)).or(cloud.map(|c| c.1)).or(device.as_ref().map(|d| d.2)).or(wsl.map(|w| w.1)) else {
                     return DefWindowProcW(h, msg, wp, lp);
                 };
                 // where now: the button may be gone (WM_DRIVES) by the time the menu closes
@@ -602,11 +610,12 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                     }
                     (x, y) => POINT { x, y },
                 };
-                match (drive, cloud, device) {
-                    (Some((c, _)), _, _) => drive_menu(c, at),
-                    (None, Some((k, _)), _) => cloud_menu(k, at),
-                    (None, None, Some((name, parse, _))) => device_menu(name, parse, at),
-                    (None, None, None) => bin_menu(at),
+                match (drive, cloud, device, wsl) {
+                    (Some((c, _)), _, _, _) => drive_menu(c, at),
+                    (None, Some((k, _)), _, _) => cloud_menu(k, at),
+                    (None, None, Some((name, parse, _)), _) => device_menu(name, parse, at),
+                    (None, None, None, Some((k, _))) => wake_wsl(k, Some(at)), // its menu once the distribution answers
+                    (None, None, None, None) => bin_menu(at),
                 }
             }
             WM_COPYDATA => {
@@ -2062,12 +2071,16 @@ pub(crate) fn cloud_tip(name: &str, path: &str) -> String {
 
 // A REG_SZ / REG_EXPAND_SZ under HKCU as stored (variables left for expand_vars); None = the value's default.
 unsafe fn cloud_text(key: &str, name: Option<&str>) -> Option<String> {
-    use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_NOEXPAND, RRF_RT_REG_EXPAND_SZ, RRF_RT_REG_SZ};
+    reg_text(windows::Win32::System::Registry::HKEY_CURRENT_USER, key, name)
+}
+
+unsafe fn reg_text(root: windows::Win32::System::Registry::HKEY, key: &str, name: Option<&str>) -> Option<String> {
+    use windows::Win32::System::Registry::{RegGetValueW, RRF_NOEXPAND, RRF_RT_REG_EXPAND_SZ, RRF_RT_REG_SZ};
     let (mut buf, mut n) = ([0u16; 1024], 2048u32);
     let name = name.map(HSTRING::from);
     let v = name.as_ref().map_or(PCWSTR::null(), |s| PCWSTR(s.as_ptr()));
     let flags = RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ | RRF_NOEXPAND;
-    RegGetValueW(HKEY_CURRENT_USER, &HSTRING::from(key), v, flags, None, Some(buf.as_mut_ptr() as _), Some(&mut n)).ok().ok()?;
+    RegGetValueW(root, &HSTRING::from(key), v, flags, None, Some(buf.as_mut_ptr() as _), Some(&mut n)).ok().ok()?;
     Some(String::from_utf16_lossy(&buf[..(n as usize / 2).min(1024)]).trim_end_matches('\0').to_string())
 }
 
@@ -2080,9 +2093,14 @@ unsafe fn cloud_dword(key: &str, name: &str) -> Option<u32> {
 
 // The CLSIDs registered under Explorer's navigation pane root, each with what its class says.
 unsafe fn cloud_regs() -> Vec<CloudReg> {
+    hkcu_subkeys(CLOUD_NS).iter().filter(|id| id.starts_with('{')).map(|id| cloud_reg(id)).collect()
+}
+
+// The names of the keys right under an HKCU key (at most 64); none when it isn't there.
+unsafe fn hkcu_subkeys(path: &str) -> Vec<String> {
     use windows::Win32::System::Registry::{RegCloseKey, RegEnumKeyExW, RegOpenKeyExW, HKEY, HKEY_CURRENT_USER, KEY_READ};
     let mut k = HKEY::default();
-    if RegOpenKeyExW(HKEY_CURRENT_USER, &HSTRING::from(CLOUD_NS), None, KEY_READ, &mut k).is_err() {
+    if RegOpenKeyExW(HKEY_CURRENT_USER, &HSTRING::from(path), None, KEY_READ, &mut k).is_err() {
         return Vec::new();
     }
     let mut ids = Vec::new();
@@ -2095,7 +2113,7 @@ unsafe fn cloud_regs() -> Vec<CloudReg> {
         ids.push(String::from_utf16_lossy(&buf[..(n as usize).min(buf.len())]));
     }
     _ = RegCloseKey(k);
-    ids.iter().filter(|id| id.starts_with('{')).map(|id| cloud_reg(id)).collect()
+    ids
 }
 
 unsafe fn cloud_reg(id: &str) -> CloudReg {
@@ -2175,6 +2193,226 @@ pub(crate) unsafe fn cloud_menu(k: usize, at: POINT) {
     if let Some((name, path)) = app(|a| a.clouds.get(k).map(|c| (c.reg.name.clone(), c.reg.path.clone()))) {
         // no Delete / Cut: a slip would send the whole cloud folder to the bin, and the provider syncs that
         shell_menu(&path, at, &["delete", "cut"], || open_cloud_at(&name, &path));
+    }
+}
+
+// ---------- WSL distribution buttons (top toolbar) ----------
+// Ubuntu, Debian … under WSL: Windows 11's Explorer and the Files app list them under "Linux" in the navigation pane,
+// Directory Opus and XYplorer put such places on their drive bars. Here a square icon button between the devices and
+// the cloud folders. Read from the registry only, checked when the clouds are: the first look at \\wsl$\<name>
+// starts a stopped distribution (seconds), so that happens only on a click, and off the window's thread.
+
+const LXSS: &str = r"Software\Microsoft\Windows\CurrentVersion\Lxss";
+// Explorer's "Linux" navigation pane item: its icon, the penguin
+const LINUX_ICON: &str = r"CLSID\{B2B4A4D1-2754-4140-A2EB-9A76D9D7CDC6}\DefaultIcon";
+
+pub(crate) const WM_WSL_UP: u32 = WM_APP + 72; // from the waker: wParam = gen, lParam = 1 the distribution answered / 0 not
+pub(crate) const TIMER_WSL: usize = 1560; // on main: a distribution still starting after a moment says so
+
+// The buttons to show from the registrations: installed ones with a name a path can hold, not Docker Desktop's own
+// (docker-desktop, docker-desktop-data), one per name (any case), the default first, then by name, at most MAX_WSL.
+pub(crate) fn wsl_list(raw: Vec<WslReg>) -> Vec<WslReg> {
+    let mut v: Vec<WslReg> = raw
+        .into_iter()
+        .filter(|w| w.ready)
+        .filter_map(|mut w| {
+            w.name = w.name.trim().to_string();
+            let bad = w.name.is_empty() || w.name.contains(['\\', '/']) || w.name.to_lowercase().starts_with("docker-desktop");
+            (!bad).then_some(w)
+        })
+        .collect();
+    v.sort_by_cached_key(|w| (!w.default, w.name.to_lowercase()));
+    let mut seen: Vec<String> = Vec::new();
+    v.retain(|w| {
+        let k = w.name.to_lowercase();
+        let new = !seen.contains(&k);
+        seen.push(k);
+        new
+    });
+    v.truncate(MAX_WSL);
+    v
+}
+
+// Where a click goes: \\wsl$ works on Windows 10 and 11 alike (\\wsl.localhost only on newer builds).
+pub(crate) fn wsl_path(name: &str) -> String {
+    format!(r"\\wsl$\{name}")
+}
+
+// Which distribution `path` is in, by either name Windows gives its share (a pane may have come by \\wsl.localhost).
+pub(crate) fn wsl_mark<'a>(path: &str, names: impl IntoIterator<Item = &'a str>) -> Option<usize> {
+    let roots: Vec<String> = names.into_iter().flat_map(|n| [wsl_path(n), format!(r"\\wsl.localhost\{n}")]).collect();
+    cloud_mark(path, roots.iter().map(String::as_str)).map(|k| k / 2)
+}
+
+// The short mark each button draws after its icon when there are two or more: the first letter; for names sharing
+// it, the first digit instead (Ubuntu, Ubuntu-22.04: U, 2); still not all different, the button's number.
+pub(crate) fn wsl_tags<'a>(names: impl IntoIterator<Item = &'a str>) -> Vec<String> {
+    let names: Vec<&str> = names.into_iter().collect();
+    if names.len() < 2 {
+        return vec![String::new(); names.len()];
+    }
+    let first = |n: &str| n.chars().next().map(|c| c.to_uppercase().collect::<String>()).unwrap_or_default();
+    let firsts: Vec<String> = names.iter().map(|n| first(n)).collect();
+    let tags: Vec<String> = names
+        .iter()
+        .zip(&firsts)
+        .map(|(n, f)| match (firsts.iter().filter(|g| *g == f).count() > 1, n.chars().find(char::is_ascii_digit)) {
+            (true, Some(d)) => d.to_string(),
+            _ => f.clone(),
+        })
+        .collect();
+    let unique = tags.iter().enumerate().all(|(k, t)| !t.is_empty() && !tags[..k].contains(t));
+    if unique {
+        tags
+    } else {
+        (1..=names.len()).map(|k| k.to_string()).collect()
+    }
+}
+
+pub(crate) fn wsl_tip(name: &str) -> String {
+    format!(
+        "{name} — {} · {}",
+        wsl_path(name),
+        tr("open in the active pane · Right-click: folder menu", "지금 패널에서 열기 · 오른쪽 클릭: 폴더 메뉴")
+    )
+}
+
+fn wsl_starting(name: &str) -> String {
+    if KO.load(Ordering::Relaxed) {
+        format!("{name} 시작 중…")
+    } else {
+        format!("Starting {name}…")
+    }
+}
+
+// Each distribution key under Lxss: its name, its State (1 installed; 3 installing, 4 removing), the default one.
+unsafe fn wsl_regs() -> Vec<WslReg> {
+    let ids = hkcu_subkeys(LXSS);
+    if ids.is_empty() {
+        return Vec::new();
+    }
+    let def = cloud_text(LXSS, Some("DefaultDistribution")).unwrap_or_default();
+    ids.iter()
+        .filter(|id| id.starts_with('{'))
+        .map(|id| {
+            let key = format!(r"{LXSS}\{id}");
+            WslReg {
+                name: cloud_text(&key, Some("DistributionName")).unwrap_or_default(),
+                ready: cloud_dword(&key, "State").is_none_or(|s| s == 1),
+                default: id.eq_ignore_ascii_case(def.trim()),
+            }
+        })
+        .collect()
+}
+
+// Reads the registrations again and remakes the buttons when the list differs; true if it did (the caller lays
+// them out). No distributions (no WSL): no buttons, the toolbar as it was.
+pub(crate) unsafe fn refresh_wsl() -> bool {
+    let list = wsl_list(wsl_regs());
+    let Some((main, hover, gone)) = app(|a| {
+        let same = a.wsls.len() == list.len() && a.wsls.iter().zip(&list).all(|(w, r)| w.reg == *r);
+        (!same).then(|| (a.main, a.hover, std::mem::take(&mut a.wsls)))
+    }) else {
+        return false;
+    };
+    for w in gone {
+        unmake_place_button(w.h, hover);
+    }
+    // the class may be HKLM's: read through HKCR; none, a prompt glyph is drawn instead
+    let ix = if list.is_empty() { -1 } else { reg_text(windows::Win32::System::Registry::HKEY_CLASSES_ROOT, LINUX_ICON, None).map_or(-1, |s| cloud_icon(&s)) };
+    let mut made = Vec::new();
+    for (k, reg) in list.into_iter().enumerate() {
+        let name = HSTRING::from(reg.name.as_str()); // also the accessible name
+        let h = child(main, w!("BUTTON"), PCWSTR(name.as_ptr()), BS_OWNERDRAW as u32, WINDOW_EX_STYLE(0), ID_WSL + k as i32, HFONT::default());
+        add_tip(h, &wsl_tip(&reg.name));
+        made.push(Wsl { reg, ix, h });
+    }
+    app(|a| a.wsls = made);
+    mark_drive();
+    true
+}
+
+// A click (or right-click) waiting for its distribution to answer: where the user was, what to do then.
+struct WslWake {
+    gen: usize,
+    pane: usize,
+    from: String, // that pane's folder: moved on meanwhile, the click is stale
+    name: String,
+    note: String,
+    menu: Option<POINT>, // the folder menu there instead of opening it
+}
+
+static WSL_GEN: AtomicUsize = AtomicUsize::new(0);
+
+thread_local! {
+    static WSL_WAKE: RefCell<Option<WslWake>> = const { RefCell::new(None) };
+}
+
+// Left click (menu None), right-click / Shift+F10 (its point): a worker looks at the distribution's folder, which
+// starts it when stopped, and WM_WSL_UP carries on here; the window never waits. Still starting after 300 ms, the
+// status line says so.
+pub(crate) unsafe fn wake_wsl(k: usize, menu: Option<POINT>) {
+    let Some((main, name, pane, from)) = app(|a| a.wsls.get(k).map(|w| (a.main, w.reg.name.clone(), a.s.active, a.s.paths[a.s.active].clone()))) else {
+        return;
+    };
+    let path = wsl_path(&name);
+    let gen = WSL_GEN.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
+    let note = wsl_starting(&name);
+    WSL_WAKE.with(|w| *w.borrow_mut() = Some(WslWake { gen, pane, from, name, note, menu }));
+    SetTimer(Some(main), TIMER_WSL, 300, None);
+    let to = main.0 as usize;
+    let looked = std::thread::Builder::new().spawn(move || {
+        let ok = std::fs::metadata(&path).is_ok_and(|m| m.is_dir());
+        _ = PostMessageW(Some(HWND(to as _)), WM_WSL_UP, WPARAM(gen), LPARAM(ok as isize));
+    });
+    if looked.is_err() {
+        wsl_up(gen, false);
+    }
+}
+
+// TIMER_WSL: the distribution has not answered yet: "Starting Ubuntu…" until it does (or 30 s).
+pub(crate) unsafe fn wsl_slow() {
+    if let Some(note) = WSL_WAKE.with(|w| w.borrow().as_ref().map(|w| w.note.clone())) {
+        app(|a| a.note = Some((note, Instant::now() + Duration::from_secs(30))));
+        update_status();
+    }
+}
+
+// WM_WSL_UP: the answer to the latest click only, and only while the user is still where they clicked.
+pub(crate) unsafe fn wsl_up(gen: usize, ok: bool) {
+    let Some(w) = WSL_WAKE.with(|s| {
+        let mut s = s.borrow_mut();
+        if s.as_ref().is_some_and(|w| w.gen == gen) {
+            s.take()
+        } else {
+            None
+        }
+    }) else {
+        return;
+    };
+    let main = app(|a| a.main);
+    _ = KillTimer(Some(main), TIMER_WSL);
+    if app(|a| a.note.as_ref().is_some_and(|n| n.0 == w.note) && a.note.take().is_some()) {
+        update_status(); // the "starting" note goes with the answer
+    }
+    if !app(|a| a.s.active == w.pane && a.s.paths.get(w.pane) == Some(&w.from)) {
+        return; // another pane or folder since: that is where the user is now
+    }
+    if !ok {
+        fail(Fail::FolderCantOpen, &w.name); // removed since, or WSL refused to start it
+        return;
+    }
+    // A dialog, another menu or a drag came up while it started (or, for the folder menu, Grids is no longer in
+    // front): the click is stale, dropped quietly rather than popping a menu over it or navigating under it.
+    let (enabled, menu, busy) = hold_state(main);
+    if !enabled || menu || busy || (w.menu.is_some() && GetForegroundWindow() != main) {
+        return;
+    }
+    let path = wsl_path(&w.name);
+    match w.menu {
+        // no Delete / Cut: a slip would bin the whole Linux file system's root
+        Some(at) => shell_menu(&path, at, &["delete", "cut"], || open_cloud_at(&w.name, &path)),
+        None => open_cloud_at(&w.name, &path),
     }
 }
 
@@ -2373,6 +2611,7 @@ pub(crate) unsafe fn mark_drive() {
         let cm = cloud_mark(p, a.clouds.iter().map(|c| c.reg.path.as_str()))
             .map(|k| a.clouds[k].h)
             .or_else(|| cloud_mark(p, a.devices.iter().map(|d| d.reg.parse.as_str())).map(|k| a.devices[k].h))
+            .or_else(|| wsl_mark(p, a.wsls.iter().map(|w| w.reg.name.as_str())).map(|k| a.wsls[k].h))
             .unwrap_or_default();
         let m = if cm.0.is_null() { drive_of(p) } else { None };
         (a.drive_mark != m || a.cloud_mark != cm).then(|| {
@@ -2388,9 +2627,10 @@ pub(crate) unsafe fn mark_drive() {
     }
 }
 
-// The drive, device and cloud folder buttons: the ones an underline may move between.
+// The drive, device, WSL and cloud folder buttons: the ones an underline may move between.
 pub(crate) fn place_buttons(a: &App) -> Vec<HWND> {
-    a.drives.iter().map(|d| d.2).chain(a.devices.iter().map(|d| d.h)).chain(a.clouds.iter().map(|c| c.h)).collect()
+    let wsl = a.wsls.iter().map(|w| w.h);
+    a.drives.iter().map(|d| d.2).chain(a.devices.iter().map(|d| d.h)).chain(wsl).chain(a.clouds.iter().map(|c| c.h)).collect()
 }
 
 // Switches the UI language now: menu, toolbar tooltips, and the panes (rebuilt with their tooltips).
@@ -2429,6 +2669,9 @@ pub(crate) unsafe fn set_language(ko: bool) {
         tip_text(h, &drive_tip(c, kind), TTM_UPDATETIPTEXTW);
     }
     for (tip, h) in app(|a| a.clouds.iter().map(|c| (cloud_tip(&c.reg.name, &c.reg.path), c.h)).collect::<Vec<_>>()) {
+        tip_text(h, &tip, TTM_UPDATETIPTEXTW);
+    }
+    for (tip, h) in app(|a| a.wsls.iter().map(|w| (wsl_tip(&w.reg.name), w.h)).collect::<Vec<_>>()) {
         tip_text(h, &tip, TTM_UPDATETIPTEXTW);
     }
     // a device without a name of its own is called that in the new language, on screen readers too
