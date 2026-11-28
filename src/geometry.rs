@@ -264,6 +264,22 @@ pub(crate) fn remap(old: &[usize], new: &[usize], home: &Homes) -> ([usize; MAXP
     (perm, out)
 }
 
+/// Where pane number `k` is after remap's `perm`: the slot now showing it. Anything holding a pane number across
+/// a layout change (closed tabs, the batch rename window, a pending read-out) follows it with this.
+pub(crate) fn held_pane(perm: &[usize; MAXP], k: usize) -> usize {
+    perm.iter().position(|&p| p == k).unwrap_or(k)
+}
+
+/// Whether a splitter held since the press is still in the layout: the grid may have changed under it (a session
+/// opened by key mid-drag). Not, and the drag ends rather than indexing a column or row that is gone.
+pub(crate) fn drag_fits(d: Hit, colr: &[f64], rowr: &[Vec<f64>]) -> bool {
+    match d {
+        Hit::Side => true,
+        Hit::Col(k) => k + 1 < colr.len(),
+        Hit::Row(c, k) => rowr.get(c).is_some_and(|r| k + 1 < r.len()),
+    }
+}
+
 pub(crate) fn cell_rect(g: &Geo, h: &[usize], i: usize) -> RECT {
     let (c, r) = slot(h, i);
     let ((x0, x1), (y0, y1)) = (g.xs[c], g.ys[c][r]);
@@ -841,5 +857,46 @@ mod tests {
             }
             (cur, id, home) = (new, nid, h);
         }
+    }
+
+    #[test]
+    fn held_pane_follows_the_pane() {
+        // 2×2 -> [3, 2]: the bottom-right pane (3) goes from slot 3 to slot 4, the top-right one (2) to slot 3
+        let (perm, home) = remap(&[2, 2], &[3, 2], &[None; MAXP]);
+        let mut closed = [ClosedTab { pane: 3, at: 1, path: "C:\\a".into() }, ClosedTab { pane: 0, at: 0, path: "C:\\b".into() }];
+        closed.iter_mut().for_each(|c| c.pane = held_pane(&perm, c.pane));
+        assert_eq!(closed.map(|c| c.pane), [4, 0]);
+        assert_eq!([0, 1, 2, 3].map(|k| held_pane(&perm, k)), [0, 1, 3, 4]);
+        // and back: each is where it started
+        let (back, _) = remap(&[3, 2], &[2, 2], &home);
+        assert_eq!([0, 1, 3, 4].map(|k| held_pane(&back, k)), [0, 1, 2, 3]);
+        // 2×2 -> one cell: pane 3 is off the grid (slot 1 and up), and comes back to slot 3 with the 2×2
+        let (perm, home) = remap(&[2, 2], &[1], &[None; MAXP]);
+        let off = held_pane(&perm, 3);
+        assert!(off >= 1);
+        let (back, _) = remap(&[1], &[2, 2], &home);
+        assert_eq!(held_pane(&back, off), 3);
+        // always the slot that shows it
+        for k in 0..MAXP {
+            assert_eq!(perm[held_pane(&perm, k)], k);
+        }
+    }
+
+    #[test]
+    fn drag_fits_the_layout() {
+        let (colr, rowr) = (vec![0.5, 0.5], vec![vec![0.5, 0.5], vec![1.0]]); // [2, 1]
+        for (d, fits) in [
+            (Hit::Side, true),
+            (Hit::Col(0), true),
+            (Hit::Col(1), false), // no third column
+            (Hit::Row(0, 0), true),
+            (Hit::Row(1, 0), false), // the second column has one row
+            (Hit::Row(2, 0), false), // no third column
+            (Hit::Row(0, 1), false),
+        ] {
+            assert_eq!(drag_fits(d, &colr, &rowr), fits, "{d:?}");
+        }
+        assert!(!drag_fits(Hit::Col(0), &[1.0], &[vec![1.0]])); // a held column boundary, then one column
+        assert!(drag_fits(Hit::Side, &[], &[]));
     }
 }

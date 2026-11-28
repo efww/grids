@@ -450,6 +450,11 @@ pub(crate) unsafe fn load_session_file(path: &Path) {
             return;
         }
     };
+    if app(|a| a.drag.is_some()) {
+        // a splitter held (Ctrl+O mid-drag): let go first, so the drag can't reach a column or row the session drops
+        _ = ReleaseCapture();
+        end_drag();
+    }
     for i in 0..MAXP {
         destroy_pane(i);
     }

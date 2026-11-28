@@ -74,6 +74,11 @@ fn rn<R>(f: impl FnOnce(&mut Rn) -> R) -> R {
     RN.with(|r| f(&mut r.borrow_mut()))
 }
 
+// Panes moved (a layout change, a swap): the pane the window was opened from, under its new number. Outside app().
+pub(crate) fn rename_pane_moved(to: impl Fn(usize) -> usize) {
+    rn(|r| r.pane = to(r.pane));
+}
+
 // The UI language now; the _in forms take it, so the tests can ask for both.
 fn ko_now() -> bool {
     KO.load(Ordering::Relaxed)
@@ -2063,7 +2068,8 @@ pub(crate) extern "system" fn rename_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPA
                     new_batch(r); // a reading under way stops; the next opening reads again if the rule asks
                     r.pane
                 });
-                let main = app(|a| a.main);
+                // its pane left the grid (a smaller layout or session): the active one instead
+                let (main, pane) = app(|a| (a.main, if pane < a.s.panes() { pane } else { a.s.active }));
                 _ = SetForegroundWindow(main);
                 focus_view(pane);
             }

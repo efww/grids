@@ -415,6 +415,9 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                 }
                 let moved = app(|a| {
                     let d = a.drag?;
+                    if !drag_fits(d, &a.s.colr, &a.s.rowr) {
+                        return Some(false); // the layout changed under the held splitter
+                    }
                     let g = geo(a);
                     let min = 60 * a.dpi / 96;
                     match d {
@@ -423,10 +426,16 @@ pub(crate) extern "system" fn main_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARA
                         Hit::Row(c, k) => drag_ratio(&mut a.s.rowr[c], k, y - g.gap / 2, g.top, g.bot - g.top, g.gap, min),
                     }
                     a.s.side = kept_side(a.s.tree, a.s.side, geo(a).side);
-                    Some(())
+                    Some(true)
                 });
-                if moved.is_some() {
-                    show_bars(); // panes stay put until release: relaying out 16 Explorer views per mouse move is ~120ms
+                match moved {
+                    Some(true) => show_bars(), // panes stay put until release: relaying out 16 Explorer views per mouse move is ~120ms
+                    Some(false) => {
+                        // the drag ends there, capture and guide bars with it
+                        _ = ReleaseCapture();
+                        end_drag();
+                    }
+                    None => {}
                 }
             }
             WM_LBUTTONUP => {

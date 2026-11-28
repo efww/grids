@@ -1625,6 +1625,7 @@ pub(crate) unsafe fn swap_panes(i: usize, j: usize) {
         forget_sel(a);
         a.dirty = session_dirty(&a.s, a.base.as_ref());
     });
+    rename_pane_moved(|k| if k == i { j } else if k == j { i } else { k });
     for k in [i, j] {
         SEL_REV[k].fetch_add(1, Ordering::Relaxed);
         if let Some(h) = app(|a| a.panes[k].as_ref().map(|p| p.hwnd)) {
@@ -1725,7 +1726,7 @@ pub(crate) unsafe fn set_layout(h: Vec<usize>) {
         let mut taken: Vec<Option<Pane>> = a.panes.iter_mut().map(Option::take).collect();
         a.panes = perm.iter().map(|&k| taken[k].take()).collect();
         permute_in(&mut a.s, a.base.as_mut(), &perm);
-        let to = |k: &mut usize| *k = perm.iter().position(|&p| p == *k).unwrap_or(*k);
+        let to = |k: &mut usize| *k = held_pane(&perm, *k);
         if let Some(d) = a.drop_open.as_mut() {
             to(&mut d.1);
         }
@@ -1736,6 +1737,12 @@ pub(crate) unsafe fn set_layout(h: Vec<usize>) {
             to(&mut k.i);
         }
         to(&mut a.peek_pane);
+        if let Some(p) = a.say_nav.as_mut() {
+            to(p);
+        }
+        for c in &mut a.closed_tabs {
+            to(&mut c.pane); // Ctrl+Shift+T puts it back at its place in the pane it went with
+        }
         if let Some(l) = a.lock.as_mut() {
             l.panes.iter_mut().for_each(|k| to(k)); // where they went; sync_panes unlinks one the layout leaves out
         }
@@ -1754,6 +1761,7 @@ pub(crate) unsafe fn set_layout(h: Vec<usize>) {
         a.s.set_heights(h);
         gone
     });
+    rename_pane_moved(|k| held_pane(&perm, k)); // the batch rename window gives focus back to the pane it came from
     for (j, &k) in perm.iter().enumerate() {
         // a pane that changed slot is read out under its new number, as in swap_panes
         if let Some(pw) = app(|a| a.panes[j].as_ref().map(|p| p.hwnd)).filter(|_| j != k) {
